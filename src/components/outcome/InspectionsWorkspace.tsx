@@ -1,5 +1,4 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,7 +22,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { fmtUSD } from "@/lib/format";
 import type { InspectionResult, InspectionRow, InspectionStatus } from "@/lib/projects.functions";
 import { cn } from "@/lib/utils";
-import { ClipboardList, Pencil, Plus, RotateCcw, ShieldAlert, Trash2 } from "lucide-react";
+import { Check, Plus, ShieldAlert } from "lucide-react";
+import {
+  canSendInspectionToRisk,
+  formatImpactWeeks,
+  groupInspections,
+  INSPECTION_RESULT_OPTIONS,
+  INSPECTION_STATUS_OPTIONS,
+  InspectionLogRow,
+  InspectionsBoard,
+} from "./InspectionsBoard";
 
 export type InspectionDraft = {
   parent_inspection_id?: string | null;
@@ -57,24 +65,6 @@ type InspectionsWorkspaceProps = {
   savingInspection?: boolean;
   creatingRiskId?: string | null;
 };
-
-const STATUS_OPTIONS: Array<{ value: InspectionStatus; label: string }> = [
-  { value: "planned", label: "Planned" },
-  { value: "requested", label: "Requested" },
-  { value: "scheduled", label: "Scheduled" },
-  { value: "passed", label: "Passed" },
-  { value: "failed", label: "Failed" },
-  { value: "partial", label: "Partial" },
-  { value: "cancelled", label: "Cancelled" },
-];
-
-const RESULT_OPTIONS: Array<{ value: InspectionResult; label: string }> = [
-  { value: "pending", label: "Pending" },
-  { value: "pass", label: "Pass" },
-  { value: "fail", label: "Fail" },
-  { value: "partial", label: "Partial" },
-  { value: "cancelled", label: "Cancelled" },
-];
 
 const emptyInspectionDraft = (): InspectionDraft => ({
   parent_inspection_id: null,
@@ -165,6 +155,8 @@ export function InspectionsWorkspace({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<InspectionDraft>(() => emptyInspectionDraft());
+  const [view, setView] = useState<"list" | "board">("list");
+  const [showPassed, setShowPassed] = useState(false);
 
   const orderedInspections = useMemo(
     () =>
@@ -212,6 +204,25 @@ export function InspectionsWorkspace({
       ),
     };
   }, [inspections]);
+
+  const groups = useMemo(() => groupInspections(orderedInspections), [orderedInspections]);
+
+  const unlinked = useMemo(
+    () => orderedInspections.filter(canSendInspectionToRisk),
+    [orderedInspections],
+  );
+  const unlinkedCost = unlinked.reduce((sum, inspection) => sum + inspection.cost_impact, 0);
+  const unlinkedWeeks = unlinked.reduce(
+    (sum, inspection) => sum + Number(inspection.schedule_impact_weeks ?? 0),
+    0,
+  );
+  const hasUnlinkedExposure = unlinkedCost > 0 || unlinkedWeeks > 0;
+
+  const passedNames = groups.passed.map((inspection) => inspection.inspection_type);
+  const passedSummary =
+    passedNames.length <= 3
+      ? passedNames.join(", ")
+      : `${passedNames.slice(0, 3).join(", ")}, and ${passedNames.length - 3} more`;
 
   const openNew = () => {
     setEditingId(null);
@@ -261,19 +272,73 @@ export function InspectionsWorkspace({
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Inspection control
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="rounded-md border border-hairline px-2 py-[3px] font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-clay">
+          Inspection control
+        </span>
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          <div
+            className="flex gap-0.5 rounded-[9px] bg-muted p-[3px]"
+            role="group"
+            aria-label="Inspections view"
+          >
+            <button
+              type="button"
+              onClick={() => setView("list")}
+              aria-pressed={view === "list"}
+              className={cn(
+                "whitespace-nowrap rounded-[7px] px-3.5 py-1.5 text-xs transition-colors",
+                view === "list"
+                  ? "bg-primary font-semibold text-primary-foreground"
+                  : "font-medium text-muted-foreground hover:text-foreground",
+              )}
+            >
+              List
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("board")}
+              aria-pressed={view === "board"}
+              className={cn(
+                "whitespace-nowrap rounded-[7px] px-3.5 py-1.5 text-xs transition-colors",
+                view === "board"
+                  ? "bg-primary font-semibold text-primary-foreground"
+                  : "font-medium text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Board
+            </button>
           </div>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Load required inspections, track each attempt, and convert failures or schedule impact
-            into the IOR risk tally before they become margin drift.
-          </p>
+          <Button onClick={openNew} className="gap-1.5">
+            <Plus className="h-4 w-4" /> Log inspection
+          </Button>
         </div>
-        <Button onClick={openNew} className="gap-1.5">
-          <Plus className="h-4 w-4" /> Log inspection
-        </Button>
+      </div>
+
+      <div>
+        <h2 className="max-w-[34ch] font-serif text-3xl font-normal leading-[1.16] text-foreground">
+          {hasUnlinkedExposure ? (
+            <>
+              {metrics.failed} inspection{metrics.failed === 1 ? "" : "s"} failed — and{" "}
+              <span className="text-danger">
+                {fmtUSD(unlinkedCost)} of exposure isn&apos;t in the risk tally yet.
+              </span>
+            </>
+          ) : metrics.failed > 0 ? (
+            <>
+              {metrics.failed} inspection{metrics.failed === 1 ? "" : "s"} failed — exposure is
+              priced into the risk tally.
+            </>
+          ) : (
+            <>
+              Inspections are holding — {metrics.passed} passed, {metrics.open} open.
+            </>
+          )}
+        </h2>
+        <p className="mt-2 max-w-[70ch] text-sm leading-6 text-muted-foreground">
+          A failed or partial inspection is a margin event, not a checkbox. Clear the ones carrying
+          cost or schedule impact into Risk Tally before they drift.
+        </p>
       </div>
 
       <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -284,38 +349,124 @@ export function InspectionsWorkspace({
         <InspectionMetric label="Cost impact" value={fmtUSD(metrics.costImpact)} />
         <InspectionMetric
           label="Schedule impact"
-          value={`${formatNumber(metrics.scheduleImpact)} wk`}
+          value={`${formatImpactWeeks(metrics.scheduleImpact)} wk`}
         />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-3">
-          {orderedInspections.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-hairline bg-card px-5 py-8 text-sm text-muted-foreground">
-              No inspections are loaded yet. Add required rough, final, specialty, or AHJ
-              inspections so failed attempts can feed schedule and change-order risk.
-            </div>
-          ) : (
-            orderedInspections.map((inspection) => (
-              <InspectionLogRow
-                key={inspection.id}
-                inspection={inspection}
-                onEdit={() => openEdit(inspection)}
-                onReinspect={() => createReinspection(inspection)}
-                onDelete={() => onDelete(inspection.id)}
-                onCreateRisk={() => onCreateRisk(inspection)}
-                creatingRisk={creatingRiskId === inspection.id}
-              />
-            ))
-          )}
-        </div>
-
-        <aside className="rounded-lg border border-hairline bg-card p-4 shadow-card xl:sticky xl:top-6">
-          <div className="flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 text-accent" />
-            <div className="text-sm font-semibold text-foreground">Inspection risk posture</div>
+        {orderedInspections.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-hairline bg-card px-5 py-8 text-sm text-muted-foreground">
+            No inspections are loaded yet. Add required rough, final, specialty, or AHJ inspections
+            so failed attempts can feed schedule and change-order risk.
           </div>
-          <div className="mt-4 space-y-3 text-sm">
+        ) : view === "board" ? (
+          <InspectionsBoard
+            groups={groups}
+            onEdit={openEdit}
+            onCreateRisk={onCreateRisk}
+            creatingRiskId={creatingRiskId}
+          />
+        ) : (
+          <div className="space-y-3">
+            {hasUnlinkedExposure && (
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl border border-danger/35 bg-danger/5 px-3.5 py-2.5">
+                <span className="h-2 w-2 flex-none rounded-full bg-danger" aria-hidden />
+                <span className="text-[12.5px] font-semibold text-foreground">
+                  {unlinked.length} outcome{unlinked.length === 1 ? " needs" : "s need"} to reach
+                  Risk Tally
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {fmtUSD(unlinkedCost)} + {formatImpactWeeks(unlinkedWeeks)} wk not yet linked
+                </span>
+                <button
+                  type="button"
+                  className="ml-auto whitespace-nowrap text-xs font-semibold text-danger hover:underline disabled:opacity-50"
+                  onClick={() => onCreateRisk(unlinked[0])}
+                  disabled={creatingRiskId != null}
+                >
+                  Send the first →
+                </button>
+              </div>
+            )}
+
+            {groups.attention.length > 0 && (
+              <>
+                <div className="eyebrow text-danger">
+                  Needs attention · {groups.attention.length}
+                </div>
+                {groups.attention.map((inspection) => (
+                  <InspectionLogRow
+                    key={inspection.id}
+                    inspection={inspection}
+                    onEdit={() => openEdit(inspection)}
+                    onReinspect={() => createReinspection(inspection)}
+                    onDelete={() => onDelete(inspection.id)}
+                    onCreateRisk={() => onCreateRisk(inspection)}
+                    creatingRisk={creatingRiskId === inspection.id}
+                  />
+                ))}
+              </>
+            )}
+
+            {groups.scheduled.length > 0 && (
+              <>
+                <div className="eyebrow pt-1">Upcoming · {groups.scheduled.length}</div>
+                {groups.scheduled.map((inspection) => (
+                  <InspectionLogRow
+                    key={inspection.id}
+                    inspection={inspection}
+                    onEdit={() => openEdit(inspection)}
+                    onReinspect={() => createReinspection(inspection)}
+                    onDelete={() => onDelete(inspection.id)}
+                    onCreateRisk={() => onCreateRisk(inspection)}
+                    creatingRisk={creatingRiskId === inspection.id}
+                  />
+                ))}
+              </>
+            )}
+
+            {groups.passed.length > 0 && (
+              <>
+                <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-hairline bg-card px-4 py-3">
+                  <Check className="h-4 w-4 flex-none text-success" />
+                  <span className="text-[13px] font-semibold text-foreground">
+                    {groups.passed.length} passed
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    {passedSummary}
+                  </span>
+                  <button
+                    type="button"
+                    className="whitespace-nowrap text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                    onClick={() => setShowPassed((value) => !value)}
+                    aria-expanded={showPassed}
+                  >
+                    {showPassed ? "Hide ▴" : "Show all ▾"}
+                  </button>
+                </div>
+                {showPassed &&
+                  groups.passed.map((inspection) => (
+                    <InspectionLogRow
+                      key={inspection.id}
+                      inspection={inspection}
+                      onEdit={() => openEdit(inspection)}
+                      onReinspect={() => createReinspection(inspection)}
+                      onDelete={() => onDelete(inspection.id)}
+                      onCreateRisk={() => onCreateRisk(inspection)}
+                      creatingRisk={creatingRiskId === inspection.id}
+                    />
+                  ))}
+              </>
+            )}
+          </div>
+        )}
+
+        <aside className="rounded-xl border border-hairline bg-card p-4 shadow-card xl:sticky xl:top-6">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 text-clay" />
+            <div className="text-[13px] font-semibold text-foreground">Inspection risk posture</div>
+          </div>
+          <div className="mt-4 space-y-2.5">
             <RiskReadout
               label="Reinspections"
               value={String(metrics.reinspectionCount)}
@@ -324,17 +475,17 @@ export function InspectionsWorkspace({
             <RiskReadout
               label="Potential CO pressure"
               value={fmtUSD(metrics.costImpact)}
-              detail="Cost impact currently carried by inspection outcomes."
+              detail="Cost impact carried by inspection outcomes."
             />
             <RiskReadout
               label="Schedule pressure"
-              value={`${formatNumber(metrics.scheduleImpact)} wk`}
-              detail="Inspection-related float or completion movement to protect."
+              value={`${formatImpactWeeks(metrics.scheduleImpact)} wk`}
+              detail="Inspection-related completion movement to protect."
             />
           </div>
-          <p className="mt-4 border-t border-hairline pt-3 text-xs leading-5 text-muted-foreground">
+          <p className="mt-4 border-t border-hairline pt-3 text-[11.5px] leading-5 text-muted-foreground">
             Failed or partial inspections should be pushed to Risk Tally when they can create cost,
-            owner-delay, trade recovery, or schedule-compression exposure.
+            owner-delay, trade-recovery, or schedule-compression exposure.
           </p>
         </aside>
       </div>
@@ -355,119 +506,6 @@ export function InspectionsWorkspace({
         onSave={saveDraft}
       />
     </div>
-  );
-}
-
-function InspectionLogRow({
-  inspection,
-  onEdit,
-  onReinspect,
-  onDelete,
-  onCreateRisk,
-  creatingRisk,
-}: {
-  inspection: InspectionRow;
-  onEdit: () => void;
-  onReinspect: () => void;
-  onDelete: () => void;
-  onCreateRisk: () => void;
-  creatingRisk: boolean;
-}) {
-  const canCreateRisk =
-    !inspection.risk_exposure_id &&
-    (inspection.status === "failed" ||
-      inspection.status === "partial" ||
-      inspection.result === "fail" ||
-      inspection.result === "partial" ||
-      inspection.cost_impact > 0 ||
-      Number(inspection.schedule_impact_weeks ?? 0) > 0);
-
-  return (
-    <article className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-semibold text-foreground">
-              {inspection.inspection_type}
-            </h3>
-            <InspectionBadge status={inspection.status} result={inspection.result} />
-            {inspection.required_reinspection && (
-              <Badge variant="outline" className="border-warning/40 text-warning">
-                Reinspection required
-              </Badge>
-            )}
-            {inspection.risk_exposure_id && (
-              <Badge variant="outline" className="border-accent/40 text-accent">
-                Risk linked
-              </Badge>
-            )}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Attempt {inspection.attempt_number} / {inspection.authority || "Authority not set"}
-            {inspection.location ? ` / ${inspection.location}` : ""}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={onEdit}>
-            <Pencil className="h-3.5 w-3.5" /> Edit
-          </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={onReinspect}>
-            <RotateCcw className="h-3.5 w-3.5" /> Reinspection
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={onCreateRisk}
-            disabled={!canCreateRisk || creatingRisk}
-          >
-            <ShieldAlert className="h-3.5 w-3.5" />
-            {inspection.risk_exposure_id
-              ? "Risk linked"
-              : creatingRisk
-                ? "Sending"
-                : "Send to risk"}
-          </Button>
-          <Button variant="ghost" size="sm" className="gap-1.5 text-danger" onClick={onDelete}>
-            <Trash2 className="h-3.5 w-3.5" /> Delete
-          </Button>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-        <InspectionDetail label="Scheduled" value={formatDate(inspection.scheduled_date)} />
-        <InspectionDetail label="Completed" value={formatDate(inspection.completed_date)} />
-        <InspectionDetail label="Responsible" value={inspection.responsible_party || "-"} />
-        <InspectionDetail label="Cost impact" value={fmtUSD(inspection.cost_impact)} />
-        <InspectionDetail
-          label="Schedule impact"
-          value={`${formatNumber(Number(inspection.schedule_impact_weeks ?? 0))} wk`}
-        />
-      </div>
-
-      {(inspection.notes || inspection.corrective_action) && (
-        <div className="mt-4 grid gap-3 lg:grid-cols-2">
-          {inspection.notes && (
-            <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Notes
-              </div>
-              <p className="mt-1 text-sm leading-5 text-foreground">{inspection.notes}</p>
-            </div>
-          )}
-          {inspection.corrective_action && (
-            <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Corrective action
-              </div>
-              <p className="mt-1 text-sm leading-5 text-foreground">
-                {inspection.corrective_action}
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-    </article>
   );
 }
 
@@ -494,7 +532,10 @@ function InspectionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{editing ? "Edit inspection" : "Log inspection"}</DialogTitle>
+          <div className="eyebrow">Inspection control</div>
+          <DialogTitle className="font-serif text-2xl font-normal">
+            {editing ? "Edit inspection" : "Log inspection"}
+          </DialogTitle>
           <DialogDescription>
             Record the inspection attempt, outcome, corrective action, and cost or schedule impact.
           </DialogDescription>
@@ -574,7 +615,7 @@ function InspectionDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {STATUS_OPTIONS.map((option) => (
+                {INSPECTION_STATUS_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>
@@ -591,7 +632,7 @@ function InspectionDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {RESULT_OPTIONS.map((option) => (
+                {INSPECTION_RESULT_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>
@@ -670,7 +711,9 @@ function InspectionDialog({
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <Label>{label}</Label>
+      <Label className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+        {label}
+      </Label>
       {children}
     </div>
   );
@@ -688,81 +731,42 @@ function InspectionMetric({
   return (
     <div
       className={cn(
-        "flex min-h-[72px] flex-col justify-between rounded-md border border-hairline bg-card px-3 py-2 shadow-card",
+        "rounded-lg border border-hairline bg-card px-3.5 py-3",
         tone === "danger" && "border-danger/30 bg-danger/5",
         tone === "warning" && "border-warning/30 bg-warning/5",
         tone === "success" && "border-success/30 bg-success/5",
       )}
     >
-      <div className="text-[10px] font-semibold uppercase leading-snug tracking-[0.14em] text-muted-foreground">
+      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
-      <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">{value}</div>
-    </div>
-  );
-}
-
-function InspectionDetail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-        {label}
+      <div
+        className={cn(
+          "mt-2 font-serif text-2xl leading-none tabular",
+          tone === "danger" && "text-danger",
+          tone === "warning" && "text-warning",
+          tone === "success" && "text-success",
+          tone === "default" && "text-foreground",
+        )}
+      >
+        {value}
       </div>
-      <div className="mt-1 min-h-[20px] text-sm font-medium tabular text-foreground">{value}</div>
     </div>
   );
 }
 
 function RiskReadout({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+    <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
+      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
-      <div className="mt-1 text-lg font-medium tabular text-foreground">{value}</div>
-      <p className="mt-1 text-xs leading-4 text-muted-foreground">{detail}</p>
+      <div className="mt-1 font-serif text-xl tabular text-foreground">{value}</div>
+      <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{detail}</p>
     </div>
-  );
-}
-
-function InspectionBadge({
-  status,
-  result,
-}: {
-  status: InspectionStatus;
-  result: InspectionResult;
-}) {
-  const label =
-    result !== "pending"
-      ? RESULT_OPTIONS.find((option) => option.value === result)?.label
-      : STATUS_OPTIONS.find((option) => option.value === status)?.label;
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "capitalize",
-        (status === "failed" || result === "fail") && "border-danger/40 text-danger",
-        (status === "partial" || result === "partial") && "border-warning/40 text-warning",
-        (status === "passed" || result === "pass") && "border-success/40 text-success",
-        status === "scheduled" && result === "pending" && "border-accent/40 text-accent",
-      )}
-    >
-      <ClipboardList className="mr-1.5 h-3 w-3" />
-      {label ?? status}
-    </Badge>
   );
 }
 
 function cleanDate(value?: string | null) {
   return value && value.trim() ? value : null;
-}
-
-function formatDate(value: string | null) {
-  return value ? value.slice(0, 10) : "-";
-}
-
-function formatNumber(value: number) {
-  return Number.isInteger(value)
-    ? String(value)
-    : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }

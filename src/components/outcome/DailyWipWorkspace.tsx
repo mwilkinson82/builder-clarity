@@ -12,7 +12,6 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   CalendarClock,
-  CalendarDays,
   ChevronLeft,
   ChevronRight,
   HardHat,
@@ -32,8 +31,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
-import { WorkspaceHeader } from "@/components/project/billing/billing-workspace-atoms";
 import { fmtUSDCents as fmtUSD, formatBillingDate } from "@/lib/billing-format";
+import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
 import {
   deleteDailyWipEntry,
   listDailyWipEntries,
@@ -58,6 +57,7 @@ import {
   lineProfitToday,
   priorCodePercent,
   rowWorkInPlace,
+  type DayProfitSummary,
   type LineProfitToday,
   subCommitmentKey,
   subEarnedValue,
@@ -181,6 +181,33 @@ function shiftDate(iso: string, delta: number): string {
   ).padStart(2, "0")}`;
 }
 
+// "Jul 9" — the verdict headline's short date (formatBillingDate keeps the year
+// for the reference cards; the headline reads better without it).
+function shortDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// ONE test for "this row still needs a price" — the row's warn pill, the alert
+// banner, and the headline clause all read this so they can never drift. A
+// bought-out sub line is priced by its % complete (earned against its
+// commitment); a self-perform line by rate / materials / equipment.
+function entryNeedsPrice(
+  entry: Pick<
+    DailyWipEntryRow,
+    "subcontractor_id" | "percent_complete" | "labor_rate" | "material_cost" | "equipment_cost"
+  >,
+  subCommitment: number | null,
+): boolean {
+  const isSubLine = Boolean(entry.subcontractor_id && subCommitment != null && subCommitment > 0);
+  return isSubLine
+    ? !(entry.percent_complete > 0)
+    : !(entry.labor_rate > 0 || entry.material_cost > 0 || entry.equipment_cost > 0);
+}
+
+type StatScope = "day" | "week" | "month";
+
 export function DailyWipWorkspace({
   projectId,
   buckets,
@@ -213,6 +240,8 @@ export function DailyWipWorkspace({
   // never leak into the next open (the Radix-onOpenChange-skips-programmatic-
   // close trap from the cost dialog review).
   const [formOpen, setFormOpen] = useState(false);
+  // The dark stat panel's Day / Week / Month lens — presentation-only.
+  const [statScope, setStatScope] = useState<StatScope>("day");
   const closeForm = () => {
     setFormOpen(false);
     setEditingId(null);
@@ -383,6 +412,66 @@ export function DailyWipWorkspace({
   }, [entries, entriesQuery.data, contractValueFor, commitmentFor, priorPercentFor]);
   const dayProfit = useMemo(() => dayProfitSummary([...profitByEntry.values()]), [profitByEntry]);
 
+  // Rows still waiting on a price (the warn-pill rows). Their logged cost is
+  // summed from the SAME per-line P&L map the table reads, floored per row at 0
+  // so a sub line's downward correction never reads as negative "unpriced cost".
+  const unpricedRows = useMemo(
+    () => entries.filter((entry) => entryNeedsPrice(entry, commitmentFor(entry))),
+    [entries, commitmentFor],
+  );
+  const unpricedCost = useMemo(
+    () =>
+      centsToDollars(
+        unpricedRows.reduce(
+          (cents, entry) =>
+            cents + Math.max(0, dollarsToCents(profitByEntry.get(entry.id)?.costToday ?? 0)),
+          0,
+        ),
+      ),
+    [unpricedRows, profitByEntry],
+  );
+
+  // Week / Month rollups for the dark stat panel, derived from the SAME entries
+  // query (listDailyWipEntries already returns every entry on the project) and
+  // the SAME per-line math as the day view — no second fetch, no new math. The
+  // ranges anchor on the date being viewed (week = Monday of its week → it;
+  // month = the 1st → it) so Day/Week/Month stay one coherent story when
+  // browsing history.
+  const weekStart = useMemo(() => {
+    const d = new Date(`${selectedDate}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return selectedDate;
+    return shiftDate(selectedDate, -((d.getDay() + 6) % 7));
+  }, [selectedDate]);
+  const monthStart = `${selectedDate.slice(0, 7)}-01`;
+  const summarizeRange = useCallback(
+    (from: string, to: string): DayProfitSummary => {
+      const all = entriesQuery.data ?? [];
+      return dayProfitSummary(
+        all
+          .filter((entry) => entry.entry_date >= from && entry.entry_date <= to)
+          .map((entry) =>
+            lineProfitToday(
+              contractValueFor(entry.cost_bucket_id),
+              priorCodePercent(entry, all),
+              entry.percent_complete,
+              rowWorkInPlace(entry, commitmentFor(entry), priorPercentFor(entry)),
+            ),
+          ),
+      );
+    },
+    [entriesQuery.data, contractValueFor, commitmentFor, priorPercentFor],
+  );
+  const weekProfit = useMemo(
+    () => summarizeRange(weekStart, selectedDate),
+    [summarizeRange, weekStart, selectedDate],
+  );
+  const monthProfit = useMemo(
+    () => summarizeRange(monthStart, selectedDate),
+    [summarizeRange, monthStart, selectedDate],
+  );
+  const scopeProfit =
+    statScope === "week" ? weekProfit : statScope === "month" ? monthProfit : dayProfit;
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["daily-wip-entries", projectId] });
     // The server folds this WIP into the project payload (ledger actuals, the
@@ -416,6 +505,9 @@ export function DailyWipWorkspace({
     : null;
   const fieldPercent = editingEntry?.field_percent_complete ?? 0;
   const pmAdjusting = editingEntry != null && draft.percent_complete !== fieldPercent;
+  // The modal's warn dot: only when the row being priced still needs a price.
+  const editingNeedsPrice =
+    editingEntry != null && entryNeedsPrice(editingEntry, commitmentFor(editingEntry));
 
   const draftLabor = laborCost(draft);
   const draftMaterial = sumLineItems(draft.material_items);
@@ -532,59 +624,126 @@ export function DailyWipWorkspace({
   const setDraftField = <K extends keyof EntryDraft>(key: K, value: EntryDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
 
-  return (
-    <div className="space-y-6">
-      <WorkspaceHeader
-        title="Daily WIP"
-        subtitle="The costing view. The superintendent logs each day's work in the Daily Reports tab; here you price it — blended crew rate, materials, and equipment. It feeds your billing; billing never waits on it."
-      />
+  const unpricedCount = unpricedRows.length;
+  // Sign-aware headline coloring: earned reads success; the cost figure turns
+  // danger only when the measured day actually lost money.
+  const dayLost = dayProfit.measuredCount > 0 && dayProfit.profit < 0;
+  const marginPct = (s: DayProfitSummary): string | null =>
+    s.earned > 0 ? ((s.profit / s.earned) * 100).toFixed(1) : null;
+  const netLabel = (s: DayProfitSummary, withMargin = false): string => {
+    if (s.measuredCount === 0) return "—";
+    const base = `${s.profit < 0 ? "−" : "+"}${fmtUSD(Math.abs(s.profit))}`;
+    const margin = withMargin ? marginPct(s) : null;
+    return margin ? `${base} · ${margin}%` : base;
+  };
+  const barMax = Math.max(scopeProfit.earned, scopeProfit.measuredCost);
+  const barWidth = (value: number) => (barMax > 0 ? `${(value / barMax) * 100}%` : "0%");
 
-      {/* Date navigator */}
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-hairline bg-surface p-3">
-        <CalendarDays className="h-4 w-4 text-muted-foreground" />
-        <Button
-          size="icon"
-          variant="outline"
-          className="h-8 w-8"
-          aria-label="Previous day"
-          onClick={() => setSelectedDate((d) => shiftDate(d, -1))}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
-        <Input
-          type="date"
-          value={selectedDate}
-          onChange={(event) => setSelectedDate(event.target.value || localToday())}
-          className="w-[170px]"
-        />
-        <Button
-          size="icon"
-          variant="outline"
-          className="h-8 w-8"
-          aria-label="Next day"
-          onClick={() => setSelectedDate((d) => shiftDate(d, 1))}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => setSelectedDate(localToday())}>
-          Today
-        </Button>
-        <div className="ml-auto text-sm font-medium text-foreground">
-          {formatBillingDate(selectedDate)}
-          {datesWithEntries.has(selectedDate) ? (
-            <span className="ml-2 rounded-sm bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">
-              {entries.length} logged
-            </span>
-          ) : null}
+  return (
+    <div className="space-y-5">
+      {/* Verdict header — the pill, the answer, then the date stepper. */}
+      <div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <span className="rounded-md border border-hairline px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-clay">
+            Work in place
+          </span>
+          <span className="text-xs text-muted-foreground">Internal · never client-visible</span>
+        </div>
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+          <div className="min-w-0">
+            <h1 className="max-w-[34ch] font-serif text-[30px] font-normal leading-[1.15] text-foreground">
+              {shortDate(selectedDate)} earned{" "}
+              <span className="text-success">{fmtUSD(dayProfit.earned)}</span> and cost{" "}
+              <span className={dayLost ? "text-danger" : "text-foreground"}>
+                {fmtUSD(workInPlaceTotal)}
+              </span>
+              {unpricedCount > 0 ? (
+                <>
+                  {" "}
+                  — but {unpricedCount} line{unpricedCount === 1 ? "" : "s"} still need
+                  {unpricedCount === 1 ? "s" : ""} a price.
+                </>
+              ) : (
+                "."
+              )}
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              The pencil on any line opens the pricing form.
+            </p>
+          </div>
+          {/* Date navigator, restyled as the right-aligned stepper pill. */}
+          <div className="flex shrink-0 items-center gap-0.5 rounded-full border border-hairline bg-surface px-1.5 py-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 rounded-full"
+              aria-label="Previous day"
+              onClick={() => setSelectedDate((d) => shiftDate(d, -1))}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Input
+              type="date"
+              value={selectedDate}
+              onChange={(event) => setSelectedDate(event.target.value || localToday())}
+              className="h-7 w-[150px] border-0 bg-transparent px-1 text-sm font-medium shadow-none focus-visible:ring-0"
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 rounded-full"
+              aria-label="Next day"
+              onClick={() => setSelectedDate((d) => shiftDate(d, 1))}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 rounded-full px-2.5 text-xs"
+              onClick={() => setSelectedDate(localToday())}
+            >
+              Today
+            </Button>
+          </div>
         </div>
       </div>
 
+      {/* Needs-price alert — only when lines are waiting on a price. */}
+      {unpricedCount > 0 ? (
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-warning/30 bg-warning/10 px-4 py-2.5">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+          <span className="text-[13px] font-semibold text-foreground">
+            {unpricedCount} line{unpricedCount === 1 ? " needs" : "s need"} a price
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {fmtUSD(unpricedCost)} of logged cost isn't earning yet.
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="ml-auto h-7 px-2 text-xs font-semibold"
+            onClick={() => startEdit(unpricedRows[0])}
+          >
+            Price the first →
+          </Button>
+        </div>
+      ) : null}
+
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-        {/* Left: the day's WIP entries + add form */}
+        {/* Left: the day's WIP ledger + the pricing modal */}
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              Logged work
+            <div className="flex items-center gap-2">
+              <div className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                Logged work
+              </div>
+              {datesWithEntries.has(selectedDate) ? (
+                <span className="rounded-sm bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">
+                  {entries.length} logged
+                </span>
+              ) : null}
             </div>
             <Button
               type="button"
@@ -596,32 +755,28 @@ export function DailyWipWorkspace({
               <Plus className="h-3.5 w-3.5" /> Add work line
             </Button>
           </div>
-          <div className="overflow-x-auto rounded-lg border border-hairline bg-surface">
-            <table className="w-full min-w-[940px] border-collapse text-sm">
-              <thead className="border-b border-hairline bg-surface-elevated">
-                <tr className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  <th className="px-3 py-2 text-left">Activity / cost code</th>
-                  <th className="px-3 py-2 text-right">Crew</th>
-                  <th className="px-3 py-2 text-right">Hours</th>
-                  <th className="px-3 py-2 text-right">Rate</th>
-                  <th className="px-3 py-2 text-right">Labor</th>
-                  <th className="px-3 py-2 text-right">Materials</th>
-                  <th className="px-3 py-2 text-right">Equipment</th>
-                  <th className="px-3 py-2 text-right">Work in place</th>
-                  <th className="px-3 py-2 text-right">Made / lost today</th>
-                  <th className="px-3 py-2" />
+          <div className="overflow-x-auto rounded-xl border border-hairline bg-surface">
+            <table className="w-full min-w-[720px] border-collapse text-sm">
+              <thead className="border-b border-hairline">
+                <tr className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+                  <th className="px-3 py-2.5 text-left">Activity / cost code</th>
+                  <th className="px-3 py-2.5 text-right">Progress</th>
+                  <th className="px-3 py-2.5 text-right text-success">Earned</th>
+                  <th className="px-3 py-2.5 text-right">Cost</th>
+                  <th className="px-3 py-2.5 text-right">Made</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
                 {entriesQuery.isLoading ? (
                   <tr>
-                    <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                    <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
                       Loading…
                     </td>
                   </tr>
                 ) : entries.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                    <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
                       No work logged for this day yet. The superintendent adds work lines in the
                       Daily Reports tab — they show here to cost. You can also use "Add work line"
                       above.
@@ -636,6 +791,7 @@ export function DailyWipWorkspace({
                       activityLabel={activityLabel(entry.schedule_activity_id)}
                       performedBy={subName(entry.subcontractor_id)}
                       subCommitment={commitmentFor(entry)}
+                      progressBasis={commitmentFor(entry) ?? contractValueFor(entry.cost_bucket_id)}
                       priorPercent={priorPercentFor(entry)}
                       profit={profitByEntry.get(entry.id) ?? null}
                       editing={editingId === entry.id}
@@ -648,25 +804,25 @@ export function DailyWipWorkspace({
               </tbody>
               {entries.length > 0 ? (
                 <tfoot>
-                  <tr className="border-t-2 border-hairline bg-surface-elevated font-semibold">
-                    <td className="px-3 py-2.5 text-left text-foreground">
+                  <tr className="border-t-2 border-foreground">
+                    <td className="px-3 py-3 text-left font-semibold text-foreground">
                       Day total
                       <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
                         {totals.laborHours} labor-hours
                       </span>
                     </td>
-                    <td colSpan={3} />
-                    <td className="px-3 py-2.5 text-right tabular-nums">{fmtUSD(totals.labor)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">
-                      {fmtUSD(totals.material)}
+                    <td />
+                    <td className="px-3 py-3 text-right font-serif text-[17px] text-success">
+                      {fmtUSD(dayProfit.earned)}
                     </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">
-                      {fmtUSD(totals.equipment)}
-                    </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">
+                    <td className="px-3 py-3 text-right font-serif text-[17px] text-foreground">
                       {fmtUSD(workInPlaceTotal)}
+                      <div className="font-sans text-[10px] text-muted-foreground">
+                        L {fmtUSD(totals.labor)} · M {fmtUSD(totals.material)} · E{" "}
+                        {fmtUSD(totals.equipment)}
+                      </div>
                     </td>
-                    <td className="px-3 py-2.5 text-right">
+                    <td className="px-3 py-3 text-right font-serif text-[19px]">
                       <ProfitAmount value={dayProfit.measuredCount > 0 ? dayProfit.profit : null} />
                     </td>
                     <td />
@@ -686,18 +842,39 @@ export function DailyWipWorkspace({
               if (!next && !saveMutation.isPending) closeForm();
             }}
           >
-            <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+            <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>{editingId ? "Price this work line" : "Add a work line"}</DialogTitle>
+                <div className="flex items-center gap-2">
+                  {editingNeedsPrice ? (
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+                  ) : null}
+                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-clay">
+                    {editingId ? "Price this work line" : "Add a work line"}
+                  </span>
+                </div>
+                <DialogTitle className="font-serif text-[22px] font-normal leading-snug">
+                  {editingId
+                    ? draft.activity.trim() || bucketLabel(draft.cost_bucket_id || null)
+                    : "New work line"}
+                </DialogTitle>
+                <div className="font-mono text-[10px] text-muted-foreground">
+                  {[
+                    bucketLabel(draft.cost_bucket_id || null),
+                    subName(draft.subcontractor_id || null) ?? "Self-perform",
+                    formatBillingDate(selectedDate),
+                  ].join(" · ")}
+                </div>
                 <DialogDescription>
                   {editingId
                     ? "Add the blended crew rate, materials, and equipment to price the superintendent's logged work."
                     : `Adds a priced line directly to ${formatBillingDate(selectedDate)}. The superintendent usually logs the day's work in the Daily Reports tab.`}
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="flex flex-col gap-1 sm:col-span-2">
-                  <span className="text-xs text-muted-foreground">Cost code (SOV line)</span>
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Cost code (SOV line)
+                  </span>
                   <select
                     value={draft.cost_bucket_id}
                     onChange={(event) => setDraftField("cost_bucket_id", event.target.value)}
@@ -711,8 +888,10 @@ export function DailyWipWorkspace({
                     ))}
                   </select>
                 </label>
-                <label className="flex flex-col gap-1 sm:col-span-2">
-                  <span className="text-xs text-muted-foreground">Schedule activity (CPM)</span>
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Schedule activity (CPM)
+                  </span>
                   <select
                     value={draft.schedule_activity_id}
                     onChange={(event) => setDraftField("schedule_activity_id", event.target.value)}
@@ -735,8 +914,10 @@ export function DailyWipWorkspace({
                     ))}
                   </select>
                 </label>
-                <label className="flex flex-col gap-1 sm:col-span-2">
-                  <span className="text-xs text-muted-foreground">Performed by</span>
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Performed by
+                  </span>
                   <select
                     value={draft.subcontractor_id}
                     onChange={(event) => setDraftField("subcontractor_id", event.target.value)}
@@ -755,16 +936,22 @@ export function DailyWipWorkspace({
                     ))}
                   </select>
                 </label>
-                <label className="flex flex-col gap-1 sm:col-span-2">
-                  <span className="text-xs text-muted-foreground">Activity / note</span>
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Activity / note
+                  </span>
                   <Input
                     value={draft.activity}
                     onChange={(event) => setDraftField("activity", event.target.value)}
                     placeholder="e.g. Formwork north wall"
                   />
                 </label>
+              </div>
+              <div className="mt-1 grid gap-3.5 sm:grid-cols-4">
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">Crew</span>
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Crew
+                  </span>
                   <Input
                     type="number"
                     min={0}
@@ -775,7 +962,9 @@ export function DailyWipWorkspace({
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">Hours</span>
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Hours
+                  </span>
                   <Input
                     type="number"
                     min={0}
@@ -785,20 +974,28 @@ export function DailyWipWorkspace({
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">Blended rate ($/hr)</span>
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Blended rate ($/hr)
+                  </span>
                   <MoneyInput
                     value={draft.labor_rate}
                     onValueChange={(n) => setDraftField("labor_rate", n)}
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">Labor (derived)</span>
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Labor (derived)
+                  </span>
                   <div className="flex h-9 items-center rounded-md border border-hairline bg-muted/40 px-3 text-sm tabular-nums text-foreground">
                     {fmtUSD(draftLabor)}
                   </div>
                 </label>
+              </div>
+              <div className="mt-1 grid gap-3.5 sm:grid-cols-3">
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">Quantity placed</span>
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Quantity placed
+                  </span>
                   <Input
                     type="number"
                     min={0}
@@ -807,7 +1004,9 @@ export function DailyWipWorkspace({
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">Unit</span>
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Unit
+                  </span>
                   <Input
                     value={draft.unit}
                     onChange={(event) => setDraftField("unit", event.target.value)}
@@ -815,7 +1014,9 @@ export function DailyWipWorkspace({
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">% complete</span>
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    % complete
+                  </span>
                   <Input
                     type="number"
                     min={0}
@@ -829,8 +1030,12 @@ export function DailyWipWorkspace({
                       )
                     }
                   />
+                </label>
+              </div>
+              {draftIsSub || editingEntry ? (
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
                   {draftIsSub ? (
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-muted-foreground">
                       {draftPrior > 0 ? (
                         <>
                           Sub line — earns {fmtUSD(draftWorkInPlace)} this update ({draftPrior}% →{" "}
@@ -848,19 +1053,17 @@ export function DailyWipWorkspace({
                     </span>
                   ) : null}
                   {editingEntry ? (
-                    <span
-                      className={`text-[10px] ${pmAdjusting ? "text-warning" : "text-muted-foreground"}`}
-                    >
+                    <span className={pmAdjusting ? "text-warning" : "text-muted-foreground"}>
                       {pmAdjusting
                         ? `Field logged ${fieldPercent}% — you're showing ${draft.percent_complete}%. The change is recorded.`
                         : `Field logged ${fieldPercent}%.`}
                     </span>
                   ) : null}
-                </label>
-              </div>
+                </div>
+              ) : null}
 
               {/* Itemized materials + equipment: what it was, and how much it cost. */}
-              <div className="mt-2 grid gap-4">
+              <div className="mt-2 grid gap-4 sm:grid-cols-2">
                 <ItemizedCostEditor
                   label="Materials"
                   help="What you installed and its cost — e.g. rebar #5, $1,200"
@@ -918,57 +1121,116 @@ export function DailyWipWorkspace({
           </Dialog>
         </div>
 
-        {/* Right: the day's daily report, read-only reference */}
+        {/* Right: the dark stat panel, then the day's daily report reference */}
         <aside className="space-y-3">
-          {entries.length > 0 ? (
-            <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Made or lost today
-              </div>
-              {dayProfit.measuredCount > 0 ? (
-                <>
-                  <div
-                    className={`mt-1.5 text-2xl font-semibold tabular-nums ${
-                      dayProfit.profit < 0 ? "text-danger" : "text-success"
-                    }`}
-                  >
-                    {dayProfit.profit < 0 ? "−" : "+"}
-                    {fmtUSD(Math.abs(dayProfit.profit))}
-                  </div>
-                  <dl className="mt-2 space-y-1 text-sm">
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-muted-foreground">Earned today</dt>
-                      <dd className="tabular-nums text-foreground">{fmtUSD(dayProfit.earned)}</dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-muted-foreground">Cost of that work</dt>
-                      <dd className="tabular-nums text-foreground">
-                        {fmtUSD(dayProfit.measuredCost)}
-                      </dd>
-                    </div>
-                  </dl>
-                  <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-                    Earned = each line's % progress today × its cost code's contract value (what the
-                    owner pays). The gap against today's cost is your margin on the day.
-                  </p>
-                </>
-              ) : (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Log % progress on today's lines to see what the day earned against what it cost.
-                </p>
-              )}
-              {dayProfit.unmeasuredCount > 0 && dayProfit.measuredCount > 0 ? (
-                <p className="mt-2 text-[11px] leading-snug text-warning">
-                  {dayProfit.unmeasuredCount} line{dayProfit.unmeasuredCount === 1 ? "" : "s"} with{" "}
-                  {fmtUSD(dayProfit.unmeasuredCost)} of cost{" "}
-                  {dayProfit.unmeasuredCount === 1 ? "isn't" : "aren't"} counted — no % progress or
-                  contract value on {dayProfit.unmeasuredCount === 1 ? "it" : "them"} yet.
-                </p>
-              ) : null}
+          <div className="rounded-xl bg-dark-panel p-5 text-dark-panel-foreground">
+            <div className="flex gap-0.5 rounded-lg bg-white/10 p-0.5">
+              {(
+                [
+                  ["day", "Day"],
+                  ["week", "Week"],
+                  ["month", "Month"],
+                ] as const
+              ).map(([scope, label]) => (
+                <button
+                  key={scope}
+                  type="button"
+                  aria-pressed={statScope === scope}
+                  onClick={() => setStatScope(scope)}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors motion-reduce:transition-none ${
+                    statScope === scope
+                      ? "bg-dark-panel-foreground text-dark-panel"
+                      : "text-dark-panel-foreground/60 hover:text-dark-panel-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-          ) : null}
-          <div className="rounded-lg border border-hairline bg-surface p-4">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <div className="mt-4 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-dark-panel-foreground/60">
+              {statScope === "day"
+                ? `Made ${shortDate(selectedDate)}`
+                : statScope === "week"
+                  ? "Made this week"
+                  : "Made this month"}
+            </div>
+            {scopeProfit.measuredCount > 0 ? (
+              <>
+                <div
+                  className={`mt-2 font-serif text-[40px] leading-none ${
+                    scopeProfit.profit < 0 ? "text-[#E08A76]" : "text-[#7FB08A]"
+                  }`}
+                >
+                  {scopeProfit.profit < 0 ? "−" : "+"}
+                  {fmtUSD(Math.abs(scopeProfit.profit))}
+                </div>
+                {marginPct(scopeProfit) ? (
+                  <div className="mt-1.5 text-xs text-dark-panel-foreground/60">
+                    {marginPct(scopeProfit)}% margin
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <div className="mt-2 font-serif text-[40px] leading-none text-dark-panel-foreground/40">
+                  —
+                </div>
+                <div className="mt-1.5 text-xs text-dark-panel-foreground/60">
+                  Log % progress on lines to measure what was earned.
+                </div>
+              </>
+            )}
+            <div className="mt-5 space-y-3">
+              <div>
+                <div className="flex justify-between text-xs text-dark-panel-foreground/60">
+                  <span>Earned (owner pays)</span>
+                  <span className="font-semibold text-dark-panel-foreground">
+                    {fmtUSD(scopeProfit.earned)}
+                  </span>
+                </div>
+                <div className="mt-1.5 h-2 rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-[#7FB08A]/80"
+                    style={{ width: barWidth(scopeProfit.earned) }}
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs text-dark-panel-foreground/60">
+                  <span>Cost to produce</span>
+                  <span className="font-semibold text-dark-panel-foreground">
+                    {fmtUSD(scopeProfit.measuredCost)}
+                  </span>
+                </div>
+                <div className="mt-1.5 h-2 rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-signal/80"
+                    style={{ width: barWidth(scopeProfit.measuredCost) }}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-col gap-2 border-t border-white/15 pt-3.5 text-xs">
+              <div className="flex justify-between gap-2 text-dark-panel-foreground/60">
+                <span>Week to date</span>
+                <span className="font-serif text-sm text-dark-panel-foreground">
+                  {netLabel(weekProfit, true)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-2 text-dark-panel-foreground/60">
+                <span>Month to date</span>
+                <span className="font-serif text-sm text-dark-panel-foreground">
+                  {netLabel(monthProfit)}
+                </span>
+              </div>
+            </div>
+            <div className="mt-3.5 font-mono text-[9.5px] leading-relaxed text-dark-panel-foreground/40">
+              Day / Week / Month swaps the headline figure.
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-hairline bg-surface p-4">
+            <div className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
               Daily report · {formatBillingDate(selectedDate)}
             </div>
             {report ? (
@@ -1003,8 +1265,8 @@ export function DailyWipWorkspace({
           </div>
 
           {entries.length > 0 ? (
-            <div className="rounded-lg border border-hairline bg-surface p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <div className="rounded-xl border border-hairline bg-surface p-4">
+              <div className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
                 Production
               </div>
               <ul className="mt-2 space-y-1 text-sm">
@@ -1037,7 +1299,7 @@ export function DailyWipWorkspace({
 
 // A single Materials or Equipment line list: each row says what it was and how
 // much it cost. The dollar box carries a visible $ so it reads as money, and the
-// list rolls up to a cents-safe total shown beneath.
+// list rolls up to a cents-safe subtotal shown along the card's bottom hairline.
 function ItemizedCostEditor({
   label,
   help,
@@ -1058,13 +1320,8 @@ function ItemizedCostEditor({
   const removeLine = (index: number) => onChange(items.filter((_, idx) => idx !== index));
 
   return (
-    <div className="rounded-md border border-hairline bg-surface p-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-medium text-foreground">{label}</span>
-        {total > 0 ? (
-          <span className="text-xs font-medium tabular-nums text-foreground">{fmtUSD(total)}</span>
-        ) : null}
-      </div>
+    <div className="rounded-xl border border-hairline bg-background p-3.5">
+      <div className="text-[13px] font-semibold text-foreground">{label}</div>
       <p className="mt-0.5 text-[11px] text-muted-foreground">{help}</p>
 
       <div className="mt-2 space-y-2">
@@ -1076,7 +1333,7 @@ function ItemizedCostEditor({
               className="flex-1"
               onChange={(event) => update(index, { description: event.target.value })}
             />
-            <div className="relative w-[130px] shrink-0">
+            <div className="relative w-[118px] shrink-0">
               <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
                 $
               </span>
@@ -1111,11 +1368,18 @@ function ItemizedCostEditor({
         <Plus className="h-3.5 w-3.5" />
         Add {label.toLowerCase()} line
       </Button>
+
+      {total > 0 ? (
+        <div className="mt-2 flex items-baseline justify-between border-t border-hairline pt-2 text-xs">
+          <span className="text-muted-foreground">{label} subtotal</span>
+          <span className="font-semibold tabular-nums text-foreground">{fmtUSD(total)}</span>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-// Human-readable breakdown for the table cell's hover title.
+// Human-readable breakdown for the Cost cell's hover title.
 function itemsTooltip(items: CostLineItem[]): string | undefined {
   const lines = items
     .filter((item) => item.description.trim() || item.amount > 0)
@@ -1150,6 +1414,7 @@ function EntryRow({
   activityLabel,
   performedBy,
   subCommitment,
+  progressBasis,
   priorPercent,
   profit,
   editing,
@@ -1162,6 +1427,9 @@ function EntryRow({
   activityLabel: string | null;
   performedBy: string | null;
   subCommitment: number | null;
+  // What the % is a percent OF: a sub line's buyout commitment, else the cost
+  // code's contract value; null when neither is known.
+  progressBasis: number | null;
   // Cumulative % logged for this sub line before this entry, so its work in place
   // is the increment since the prior log (not the whole to-date amount).
   priorPercent: number;
@@ -1177,14 +1445,33 @@ function EntryRow({
   // A bought-out sub line is "costed" once it has a percent complete to earn
   // against its commitment; a self-perform line once it has rate/materials/equipment.
   const isSubLine = Boolean(entry.subcontractor_id && subCommitment != null && subCommitment > 0);
-  const costed = isSubLine
-    ? entry.percent_complete > 0
-    : entry.labor_rate > 0 || entry.material_cost > 0 || entry.equipment_cost > 0;
+  const needsPrice = entryNeedsPrice(entry, subCommitment);
+  const costed = !needsPrice;
+  const hasBreakdown = labor > 0 || entry.material_cost > 0 || entry.equipment_cost > 0;
+  const costTooltip =
+    [itemsTooltip(entry.material_items), itemsTooltip(entry.equipment_items)]
+      .filter(Boolean)
+      .join("\n") || undefined;
   return (
-    <tr className={`border-b border-hairline/70 last:border-0 ${editing ? "bg-accent/10" : ""}`}>
+    <tr
+      className={`border-b border-hairline/70 last:border-0 ${
+        needsPrice ? "bg-warning/5" : editing ? "bg-accent/10" : ""
+      }`}
+    >
       <td className="px-3 py-2.5 text-left">
-        <div className="font-medium text-foreground">{entry.activity || label}</div>
-        {entry.activity ? <div className="text-[11px] text-muted-foreground">{label}</div> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-semibold text-foreground">
+            {entry.activity || label}
+          </span>
+          {needsPrice ? (
+            <span className="whitespace-nowrap rounded-full border border-warning/40 px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.06em] text-warning">
+              Needs price
+            </span>
+          ) : null}
+        </div>
+        {entry.activity ? (
+          <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">{label}</div>
+        ) : null}
         {activityLabel ? (
           <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
             <CalendarClock className="h-3 w-3 shrink-0 text-accent" />
@@ -1197,73 +1484,61 @@ function EntryRow({
             <span className="truncate">{performedBy}</span>
           </div>
         ) : null}
-        {entry.percent_complete || entry.field_percent_complete ? (
-          <div className="mt-0.5 text-[11px] font-medium text-foreground">
-            {entry.percent_complete}% complete
-            {isPercentOverridden(entry) ? (
-              <span className="ml-1 font-normal text-warning">
-                (field logged {entry.field_percent_complete}%)
-              </span>
+      </td>
+      <td className="px-3 py-2.5 text-right">
+        {entry.percent_complete > 0 ? (
+          <>
+            <div className="text-[13px] font-semibold tabular-nums text-foreground">
+              {entry.percent_complete}%
+            </div>
+            {progressBasis != null && progressBasis > 0 ? (
+              <div className="text-[10px] text-muted-foreground">of {fmtUSD(progressBasis)}</div>
             ) : null}
-          </div>
-        ) : null}
+            {isPercentOverridden(entry) ? (
+              <div className="text-[10px] text-warning">
+                field logged {entry.field_percent_complete}%
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-xs text-warning">— set —</span>
+        )}
       </td>
-      <td className="px-3 py-2.5 text-right tabular-nums">{entry.crew_count || "—"}</td>
-      <td className="px-3 py-2.5 text-right tabular-nums">{entry.hours || "—"}</td>
-      <td className="px-3 py-2.5 text-right tabular-nums">
-        {entry.labor_rate ? fmtUSD(entry.labor_rate) : "—"}
-      </td>
-      <td className="px-3 py-2.5 text-right tabular-nums">{labor ? fmtUSD(labor) : "—"}</td>
-      <td
-        className="px-3 py-2.5 text-right tabular-nums"
-        title={itemsTooltip(entry.material_items)}
-      >
-        {entry.material_cost ? fmtUSD(entry.material_cost) : "—"}
-        {entry.material_items.length > 1 ? (
-          <div className="text-[10px] font-normal text-muted-foreground">
-            {entry.material_items.length} items
-          </div>
-        ) : null}
+      <td className="px-3 py-2.5 text-right font-serif text-[15px]">
+        {profit && profit.earnedToday !== null ? (
+          <span className="text-success">{fmtUSD(profit.earnedToday)}</span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
       </td>
       <td
-        className="px-3 py-2.5 text-right tabular-nums"
-        title={itemsTooltip(entry.equipment_items)}
+        className="px-3 py-2.5 text-right font-serif text-[15px] text-foreground"
+        title={costTooltip}
       >
-        {entry.equipment_cost ? fmtUSD(entry.equipment_cost) : "—"}
-        {entry.equipment_items.length > 1 ? (
-          <div className="text-[10px] font-normal text-muted-foreground">
-            {entry.equipment_items.length} items
-          </div>
-        ) : null}
-      </td>
-      <td className="px-3 py-2.5 text-right font-medium tabular-nums">
         {fmtUSD(workInPlace)}
+        {hasBreakdown ? (
+          <div className="font-sans text-[10px] text-muted-foreground">
+            L {fmtUSD(labor)} · M {fmtUSD(entry.material_cost)} · E {fmtUSD(entry.equipment_cost)}
+          </div>
+        ) : null}
         {isSubLine && costed ? (
-          <div className="text-[10px] font-normal text-muted-foreground">
+          <div className="font-sans text-[10px] text-muted-foreground">
             {priorPercent > 0
               ? `+${entry.percent_complete - priorPercent}% (${priorPercent}→${entry.percent_complete}%)`
               : `${entry.percent_complete}% of ${fmtUSD(subCommitment ?? 0)}`}
           </div>
         ) : null}
-        {!costed ? (
-          <div className="text-[10px] font-normal uppercase tracking-wide text-warning">
-            {isSubLine ? "Needs % complete" : "Needs costs"}
-          </div>
-        ) : null}
       </td>
-      <td className="px-3 py-2.5 text-right">
-        {profit && profit.profitToday !== null ? (
-          <>
-            <ProfitAmount value={profit.profitToday} />
-            <div className="text-[10px] font-normal text-muted-foreground">
-              earned {fmtUSD(profit.earnedToday ?? 0)}
-            </div>
-          </>
+      <td className="px-3 py-2.5 text-right font-serif text-[15px]">
+        {needsPrice ? (
+          <span className="text-warning">?</span>
+        ) : profit && profit.profitToday !== null ? (
+          <ProfitAmount value={profit.profitToday} />
         ) : (
           <>
             <span className="text-muted-foreground">—</span>
             {profit?.reason ? (
-              <div className="max-w-[110px] text-[10px] font-normal leading-snug text-muted-foreground">
+              <div className="max-w-[110px] font-sans text-[10px] leading-snug text-muted-foreground">
                 {PROFIT_REASON_LABEL[profit.reason]}
               </div>
             ) : null}

@@ -5,10 +5,8 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   AlertTriangle,
   ArrowLeft,
-  CalendarDays,
   ClipboardList,
   Diamond,
-  GitBranch,
   History,
   PackageSearch,
   Printer,
@@ -18,6 +16,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/schedule";
+import { CpmStatusChip } from "@/components/schedule/CpmGridToolbar";
 import { selectCanonicalLogicTieCount, selectLatestScheduleUpdate } from "@/lib/schedule-selectors";
 import { buildWbsSectionPathMap, replaceWbsPathInDivision } from "@/lib/constructline-wbs";
 import { getProject, type ProjectRow } from "@/lib/projects.functions";
@@ -616,10 +615,29 @@ function ScheduleWorkspacePage() {
     );
   }
 
+  // Header-stat values live on as mono status chips inside the CPM command bar.
+  const workspaceSummaryChips = (
+    <span className="constructline-workspace-status contents">
+      <CpmStatusChip label="Activities" value={String(shellSummary.activityCount)} />
+      <CpmStatusChip label="Logic ties" value={String(shellSummary.logicTieCount)} />
+      <CpmStatusChip
+        label="Last update"
+        value={shellSummary.latestDataDate ? formatDate(shellSummary.latestDataDate) : "Not set"}
+      />
+      <CpmStatusChip label="Milestones" value={String(shellSummary.activeMilestoneCount)} />
+      <CpmStatusChip
+        label="Open risks"
+        value={String(shellSummary.openRiskCount)}
+        tone={shellSummary.openRiskCount > 0 ? "warning" : "default"}
+      />
+    </span>
+  );
+
   return (
-    <ScheduleWorkspaceShell project={project} summary={shellSummary}>
+    <ScheduleWorkspaceShell project={project}>
       <CpmActivityPlanner
         workspaceMode="full"
+        workspaceSummaryChips={workspaceSummaryChips}
         activities={activities}
         wbsSections={wbsSections}
         delayFragments={delayFragments}
@@ -679,115 +697,84 @@ function ScheduleWorkspacePage() {
 
 function ScheduleWorkspaceShell({
   project,
-  summary,
   children,
 }: {
   project?: ProjectRow;
-  summary?: ScheduleWorkspaceShellSummary;
   children: ReactNode;
 }) {
+  const organizationName = project?.organization_name || "Company";
+  const organizationInitial = organizationName.trim().charAt(0).toUpperCase() || "C";
+  const projectMeta = [
+    project?.job_number ? `Job ${project.job_number}` : null,
+    project?.client || null,
+    project?.project_manager ? `PM ${project.project_manager}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <div className="constructline-schedule-page min-h-screen overflow-x-clip bg-background text-foreground print:bg-white">
       <header className="sticky top-0 z-50 border-b border-hairline bg-background shadow-sm print:static">
-        <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-3 px-4 py-4 lg:px-8">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-              <Button asChild variant="ghost" className="w-fit gap-2 print:hidden">
-                <a href={project ? `/projects/${project.id}` : "/"}>
-                  <ArrowLeft className="h-4 w-4" />
-                  Back to IOR
-                </a>
-              </Button>
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  {project?.organization_name || "Company"}
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                  {project?.job_number && <span>Job # {project.job_number}</span>}
-                  {project?.client && <span>{project.client}</span>}
-                  {project?.project_manager && <span>PM {project.project_manager}</span>}
-                </div>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2 print:hidden">
-              <WorkspaceNavLink href="#cpm-grid" tone="primary">
-                CPM table + Gantt
-              </WorkspaceNavLink>
-              <WorkspaceNavLink href="#schedule-update-history">Updates</WorkspaceNavLink>
-              <WorkspaceNavLink href="#interim-milestones">Milestones</WorkspaceNavLink>
-              <WorkspaceNavLink href="#critical-delayed-decisions">Decisions</WorkspaceNavLink>
-              <WorkspaceNavLink href="#procurement-risks">Procurement</WorkspaceNavLink>
-              <WorkspaceNavLink href="#trade-performance-risks">Trades</WorkspaceNavLink>
-              <Button
-                type="button"
-                variant="outline"
-                className="gap-2"
-                title="Print optimized for Tabloid / 11 x 17 landscape"
-                onClick={() => typeof window !== "undefined" && window.print()}
-              >
-                <Printer className="h-4 w-4" />
-                Print 11x17
-              </Button>
-            </div>
+        <div className="mx-auto flex w-full max-w-[1840px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 lg:px-8">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="-ml-2 w-fit gap-1.5 px-2 text-muted-foreground print:hidden"
+          >
+            <a href={project ? `/projects/${project.id}` : "/"}>
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back to IOR
+            </a>
+          </Button>
+          <span className="hidden h-4 w-px shrink-0 bg-hairline sm:block" aria-hidden="true" />
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary font-serif text-[11px] text-primary-foreground"
+              title={organizationName}
+              aria-label={organizationName}
+            >
+              {organizationInitial}
+            </span>
+            <span className="truncate text-[13px] font-semibold text-foreground">
+              {project?.name || organizationName}
+            </span>
+            {projectMeta && (
+              <span className="hidden min-w-0 truncate font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-muted-foreground md:inline">
+                {projectMeta}
+              </span>
+            )}
           </div>
-          {summary && <ScheduleWorkspaceHeaderStats summary={summary} />}
+          <nav
+            aria-label="Schedule workspace sections"
+            className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-[10px] bg-secondary p-[3px] print:hidden"
+          >
+            <WorkspaceNavLink href="#cpm-grid" tone="primary">
+              CPM table + Gantt
+            </WorkspaceNavLink>
+            <WorkspaceNavLink href="#schedule-update-history">Updates</WorkspaceNavLink>
+            <WorkspaceNavLink href="#interim-milestones">Milestones</WorkspaceNavLink>
+            <WorkspaceNavLink href="#critical-delayed-decisions">Decisions</WorkspaceNavLink>
+            <WorkspaceNavLink href="#procurement-risks">Procurement</WorkspaceNavLink>
+            <WorkspaceNavLink href="#trade-performance-risks">Trades</WorkspaceNavLink>
+          </nav>
+          <Button
+            type="button"
+            variant="outline"
+            className="ml-auto gap-2 print:hidden"
+            title="Print optimized for Tabloid / 11 x 17 landscape"
+            onClick={() => typeof window !== "undefined" && window.print()}
+          >
+            <Printer className="h-4 w-4" />
+            Print 11x17
+          </Button>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-[1840px] px-4 py-5 lg:px-8">{children}</main>
-    </div>
-  );
-}
-
-function ScheduleWorkspaceHeaderStats({ summary }: { summary: ScheduleWorkspaceShellSummary }) {
-  return (
-    <div className="constructline-workspace-status grid gap-2 print:hidden sm:grid-cols-2 lg:grid-cols-5">
-      <ScheduleWorkspaceHeaderStat
-        icon={ClipboardList}
-        label="Activities"
-        value={String(summary.activityCount)}
-      />
-      <ScheduleWorkspaceHeaderStat
-        icon={GitBranch}
-        label="Logic ties"
-        value={String(summary.logicTieCount)}
-      />
-      <ScheduleWorkspaceHeaderStat
-        icon={CalendarDays}
-        label="Last update"
-        value={summary.latestDataDate ? formatDate(summary.latestDataDate) : "Not set"}
-      />
-      <ScheduleWorkspaceHeaderStat
-        icon={Diamond}
-        label="Milestones"
-        value={String(summary.activeMilestoneCount)}
-      />
-      <ScheduleWorkspaceHeaderStat
-        icon={AlertTriangle}
-        label="Open risks"
-        value={String(summary.openRiskCount)}
-      />
-    </div>
-  );
-}
-
-function ScheduleWorkspaceHeaderStat({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex min-w-0 items-center gap-2 rounded-md border border-hairline bg-card/80 px-3 py-2 shadow-sm">
-      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <div className="min-w-0">
-        <div className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          {label}
-        </div>
-        <div className="truncate text-sm font-semibold tabular text-foreground">{value}</div>
-      </div>
+      <main className="mx-auto w-full max-w-[1840px] px-4 py-5 lg:px-8">
+        <h1 className="mb-3.5 font-serif text-2xl font-normal text-foreground print:hidden">
+          Construction schedule workspace
+        </h1>
+        {children}
+      </main>
     </div>
   );
 }
@@ -804,10 +791,10 @@ function WorkspaceNavLink({
   return (
     <a
       href={href}
-      className={`inline-flex h-10 items-center rounded-md border px-3 text-sm font-semibold shadow-sm transition ${
+      className={`inline-flex h-8 items-center whitespace-nowrap rounded-lg px-3 text-[12.5px] transition-colors ${
         tone === "primary"
-          ? "border-foreground bg-foreground text-background hover:bg-foreground/90"
-          : "border-hairline bg-card text-foreground hover:bg-muted"
+          ? "bg-foreground font-semibold text-background"
+          : "font-medium text-muted-foreground hover:text-foreground"
       }`}
     >
       {children}

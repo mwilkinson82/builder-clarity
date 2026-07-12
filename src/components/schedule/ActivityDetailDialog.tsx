@@ -108,6 +108,7 @@ export function ActivityDetailDialog({
   activity,
   activities,
   dataDate,
+  isCriticalPath = false,
   updateQueueContext,
   divisionOptions,
   delayFragments,
@@ -126,6 +127,7 @@ export function ActivityDetailDialog({
   activity: ScheduleActivityRow;
   activities: ScheduleActivityRow[];
   dataDate: string | null;
+  isCriticalPath?: boolean;
   updateQueueContext: ScheduleUpdateQueueDialogContext | null;
   divisionOptions: string[];
   delayFragments: ScheduleDelayFragmentRow[];
@@ -264,6 +266,19 @@ export function ActivityDetailDialog({
       ),
     [activity.activity_id, draft.activity_id],
   );
+  const logicTieTotal =
+    activity.predecessor_activity_ids.length + activity.successor_activity_ids.length;
+  const progressStatusLabel =
+    activity.percent_complete >= 100
+      ? "complete"
+      : activity.percent_complete > 0
+        ? `${activity.percent_complete}% done`
+        : "not started";
+  const plannedDurationLabel = isMilestone
+    ? "Milestone point"
+    : plannedDuration == null
+      ? "Planned dates needed"
+      : `Planned ${plannedDuration}d`;
 
   useEffect(() => {
     setDraft(activityDraftFromRow(activity));
@@ -330,12 +345,35 @@ export function ActivityDetailDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && !saving && onClose()}>
-      <DialogContent className="flex max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),80rem)] sm:max-w-[80rem]">
-        <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
-          <DialogTitle className="font-serif text-2xl">CPM activity detail</DialogTitle>
-          <DialogDescription>
-            Review the activity, logic, fixed baseline, current update status, remaining duration,
-            expected finish, and field notes.
+      <DialogContent className="flex max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),80rem)] sm:max-w-[80rem] sm:rounded-2xl">
+        <DialogHeader className="border-b border-hairline bg-surface px-4 py-4 pr-12 text-left sm:px-6">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+            <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+              {activity.activity_id || "No ID"}
+            </span>
+            <DialogTitle className="min-w-0 break-words font-serif text-2xl font-normal leading-tight">
+              {activity.name}
+            </DialogTitle>
+            {isCriticalPath && (
+              <span className="shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.08em] text-danger">
+                Critical
+              </span>
+            )}
+            {updateImpact.slipTone === "danger" && (
+              <span className="shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.08em] text-warning">
+                {updateImpact.slipValue} slip
+              </span>
+            )}
+          </div>
+          <DialogDescription className="text-xs">
+            {activity.division || "General"} · {progressStatusLabel} ·{" "}
+            <span
+              className={cn(updateBasisTone === "warning" && "text-warning")}
+              title={`Update basis — ${updateBasisSub}`}
+            >
+              {updateBasisValue.toLowerCase()} basis
+            </span>{" "}
+            · data date {dataDate ? shortDate(dataDate) : "not set"}
           </DialogDescription>
         </DialogHeader>
 
@@ -344,7 +382,7 @@ export function ActivityDetailDialog({
             <div className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-sm text-warning">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em]">
+                  <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em]">
                     Data-date update queue
                   </div>
                   <div className="mt-1 text-foreground">
@@ -361,390 +399,385 @@ export function ActivityDetailDialog({
             </div>
           )}
 
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-6">
-            <ScheduleWorkbenchStat
-              label="Activity ID"
-              value={activity.activity_id || "No ID"}
-              sub={activity.division || "General"}
-            />
-            <ScheduleWorkbenchStat
-              label="Planned duration"
-              value={
-                isMilestone
-                  ? "Milestone"
-                  : plannedDuration == null
-                    ? "No dates"
-                    : String(plannedDuration)
-              }
-              sub={
-                isMilestone
-                  ? "schedule point"
-                  : plannedDuration == null
-                    ? "start / finish needed"
-                    : "baseline start to finish"
-              }
-            />
-            <ScheduleWorkbenchStat
-              label="Remaining"
-              value={remainingStat.value}
-              sub={remainingStat.sub}
-              tone={remainingStat.tone}
-            />
-            <ScheduleWorkbenchStat
-              label="Update basis"
-              value={updateBasisValue}
-              sub={updateBasisSub}
-              tone={updateBasisTone}
-            />
-            <ScheduleWorkbenchStat
-              label="Progress"
-              value={`${activity.percent_complete}%`}
-              sub={activity.percent_complete >= 100 ? "complete" : "percent complete"}
-              tone={activity.percent_complete >= 100 ? "success" : "default"}
-            />
-            <ScheduleWorkbenchStat
-              label="Logic"
-              value={String(
-                activity.predecessor_activity_ids.length + activity.successor_activity_ids.length,
-              )}
-              sub="pred / succ ties"
-              tone={
-                activity.predecessor_activity_ids.length + activity.successor_activity_ids.length >
-                0
-                  ? "success"
-                  : "warning"
-              }
-            />
-          </div>
-
-          <div className="rounded-md border border-hairline bg-surface p-4">
-            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  Activity setup
-                </div>
-                <div className="mt-1 text-sm text-muted-foreground">
-                  Edit the row identity and parent / child WBS path. The baseline plan and current
-                  update each have their own section below.
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant={draft.is_milestone ? "default" : "outline"}
-                className="gap-2"
-                aria-pressed={draft.is_milestone}
-                disabled={saving}
-                onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
-              >
-                <Diamond className="h-4 w-4" />
-                Milestone
-              </Button>
-            </div>
-            <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[150px_minmax(0,1.6fr)_minmax(0,1fr)]">
-              <LabeledField label="Activity ID">
-                <Input
-                  value={draft.activity_id}
-                  onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
-                  className="h-10 min-w-0 font-semibold tabular"
-                />
-              </LabeledField>
-              <LabeledField label="Activity">
-                <Input
-                  value={draft.name}
-                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                  className="h-10 min-w-0"
-                />
-              </LabeledField>
-              <LabeledField label="WBS / area">
-                <ActivityDivisionInput
-                  value={draft.division}
-                  onChange={(division) => setDraft({ ...draft, division })}
-                  options={divisionOptions}
-                  listId={`activity-${activity.id}-wbs-divisions`}
-                />
-              </LabeledField>
-            </div>
-
-            <div className="mt-4 rounded-md border border-hairline bg-card p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Baseline plan
-              </div>
-              <div className="mt-1 text-sm text-muted-foreground">
-                The committed plan. Baseline dates stay fixed — schedule variance is measured
-                against them.
-              </div>
-              <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[145px_145px]">
-                <LabeledField label="Baseline start">
-                  <Input
-                    type="date"
-                    value={draft.baseline_start_date}
-                    onChange={(e) => setDraft(updateDraftBaselineStartDate(draft, e.target.value))}
-                    className="h-10 min-w-0"
-                  />
-                </LabeledField>
-                <LabeledField label="Baseline finish">
-                  <Input
-                    type="date"
-                    value={draft.baseline_finish_date}
-                    onChange={(e) => setDraft(updateDraftBaselineFinishDate(draft, e.target.value))}
-                    className="h-10 min-w-0"
-                  />
-                </LabeledField>
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-md border border-hairline bg-card p-3">
-              <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Current update
-                  </div>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    {isMilestone
-                      ? "For this data date, mark whether this milestone was met and set the current forecast date. Milestones are zero-duration schedule points."
-                      : draftHasActualStartBasis
-                        ? "For this data date, enter actual progress and either remaining duration or current expected finish. The other field recalculates so the CPM finish, float, and delay impact reflect the update."
-                        : draftPercentComplete > 0
-                          ? "Progress is entered but actual start is missing. Set actual start first; remaining duration unlocks after actual start."
-                          : "This activity has not started. Leave remaining duration blank; adjust current start and current expected finish until actual start is entered."}
-                  </div>
-                </div>
-                <div className="text-xs font-semibold text-muted-foreground">
-                  Data date {dataDate ? shortDate(dataDate) : "not set"}
-                </div>
-              </div>
-              <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[145px_145px_150px_145px_145px_105px]">
-                <LabeledField label="Actual start">
-                  <Input
-                    type="date"
-                    value={draft.actual_start_date}
-                    onChange={(e) =>
-                      setDraft(updateDraftActualStartDate(draft, e.target.value, dataDate))
-                    }
-                    className="h-10 min-w-0"
-                  />
-                </LabeledField>
-                <LabeledField label="Actual finish">
-                  <Input
-                    type="date"
-                    value={draft.actual_finish_date}
-                    onChange={(e) =>
-                      setDraft(updateDraftActualFinishDate(draft, e.target.value, dataDate))
-                    }
-                    className="h-10 min-w-0"
-                  />
-                </LabeledField>
-                <LabeledField label={isMilestone ? "Milestone duration" : "Remaining duration"}>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={
-                      isMilestone
-                        ? "0"
-                        : draftHasActualStartBasis
-                          ? draft.remaining_duration_days
-                          : ""
-                    }
-                    onChange={(e) =>
-                      setDraft(updateDraftRemainingDuration(draft, e.target.value, dataDate))
-                    }
-                    placeholder={
-                      isMilestone ? "0" : draftHasActualStartBasis ? "days" : "not started"
-                    }
-                    disabled={isMilestone || !draftHasActualStartBasis}
-                    className="h-10 min-w-0 tabular"
-                  />
-                  {!isMilestone && !draftHasActualStartBasis && (
-                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-                      Record an actual start first — remaining duration applies to in-progress work.
-                    </p>
-                  )}
-                </LabeledField>
-                <LabeledField label="Current start">
-                  <Input
-                    type="date"
-                    value={draft.forecast_start_date}
-                    onChange={(e) =>
-                      setDraft(updateDraftForecastStartDate(draft, e.target.value, dataDate))
-                    }
-                    className="h-10 min-w-0"
-                  />
-                </LabeledField>
-                <LabeledField label="Current expected finish">
-                  <Input
-                    type="date"
-                    value={draft.forecast_finish_date}
-                    onChange={(e) =>
-                      setDraft(updateDraftForecastFinishDate(draft, e.target.value, dataDate))
-                    }
-                    className="h-10 min-w-0"
-                  />
-                </LabeledField>
-                <LabeledField label="% done">
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={draft.percent_complete}
-                    onChange={(e) =>
-                      setDraft(updateDraftPercentComplete(draft, e.target.value, dataDate))
-                    }
-                    className="h-10 min-w-0 tabular"
-                  />
-                </LabeledField>
-              </div>
-              <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                <ActivityUpdateImpactTile
-                  label="Baseline finish"
-                  value={updateImpact.baselineFinish}
-                  sub="original planned finish"
-                />
-                <ActivityUpdateImpactTile
-                  label="Current expected finish"
-                  value={updateImpact.expectedFinish}
-                  sub="current forecast finish"
-                  tone={updateImpact.finishTone}
-                />
-                <ActivityUpdateImpactTile
-                  label={isMilestone ? "Milestone basis" : "Remaining basis"}
-                  value={updateImpact.remainingValue}
-                  sub={updateImpact.remainingBasis}
-                />
-                <ActivityUpdateImpactTile
-                  label="Schedule slip"
-                  value={updateImpact.slipValue}
-                  sub={updateImpact.slipBasis}
-                  tone={updateImpact.slipTone}
-                />
-              </div>
-              <div className="mt-3 rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">Update rule:</span>{" "}
-                {isMilestone
-                  ? "Milestones stay at zero duration. Move the current expected finish to forecast the milestone date, or mark it 100% when it is met. The CPM recalculates float against the completion path."
-                  : draftHasActualStartBasis
-                    ? "Baseline dates stay fixed. Remaining duration is counted from the data date for started work. Changing remaining duration moves current expected finish, and changing current expected finish recalculates remaining duration. After save, the CPM recalculates float against the baseline completion path, including negative total float."
-                    : "Baseline dates stay fixed. Unstarted work is forecast with current start and current expected finish; remaining duration is not required until actual start is entered."}
-              </div>
-              {!dataDate && (
-                <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>
-                    {isMilestone
-                      ? "Set the CPM data date before updating this milestone forecast so it is anchored to the right schedule snapshot."
-                      : "Set the CPM data date before updating remaining duration so expected finish dates are anchored to the right schedule snapshot."}
-                  </span>
-                </div>
-              )}
-              {linkedDelaySummary.openDays > 0 && (
-                <div className="mt-3 flex flex-col gap-3 rounded-md border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger md:flex-row md:items-center md:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 font-semibold">
-                      <AlertTriangle className="h-4 w-4" />
-                      {linkedDelaySummary.openDays} open delay day
-                      {linkedDelaySummary.openDays === 1 ? "" : "s"} on this activity
+          <div className="grid min-w-0 items-start gap-x-6 gap-y-4 lg:grid-cols-2">
+            {/* LEFT — activity setup, then baseline (fixed) → current update. */}
+            <div className="min-w-0 space-y-4">
+              <div className="rounded-[10px] border border-hairline bg-surface p-3.5">
+                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                      Activity setup
                     </div>
-                    <div className="mt-1 text-xs text-danger/85">
-                      {openDelayForecastAligned
-                        ? "The current expected finish already carries at least this delay against the baseline."
-                        : delayAdjustedDraft?.forecast_finish_date
-                          ? isMilestone
-                            ? `Apply this to move the milestone forecast to ${shortDate(delayAdjustedDraft.forecast_finish_date)}.`
-                            : `Apply this to move expected finish to ${shortDate(delayAdjustedDraft.forecast_finish_date)} and recalculate remaining duration.`
-                          : "Set a baseline or expected finish, then apply the delay to the forecast."}
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Edit the row identity and parent / child WBS path. The baseline plan and
+                      current update follow below.
                     </div>
                   </div>
                   <Button
                     type="button"
-                    variant="outline"
-                    className="h-8 shrink-0 border-danger/30 bg-card text-danger hover:bg-danger/10 hover:text-danger"
-                    disabled={
-                      saving ||
-                      openDelayForecastAligned ||
-                      !delayAdjustedDraft?.forecast_finish_date
-                    }
-                    onClick={() => delayAdjustedDraft && setDraft(delayAdjustedDraft)}
+                    variant={draft.is_milestone ? "default" : "outline"}
+                    className="gap-2"
+                    aria-pressed={draft.is_milestone}
+                    disabled={saving}
+                    onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
                   >
-                    Apply delay to forecast
+                    <Diamond className="h-4 w-4" />
+                    Milestone
                   </Button>
                 </div>
-              )}
-            </div>
-
-            <div className="mt-5 grid min-w-0 gap-3">
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  Logic ties
-                </div>
-                <div className="mt-1 text-sm text-muted-foreground">
-                  Predecessors drive this activity. Successors are the activities this row drives.
+                <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[150px_minmax(0,1.6fr)_minmax(0,1fr)]">
+                  <LabeledField label="Activity ID">
+                    <Input
+                      value={draft.activity_id}
+                      onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
+                      className="h-10 min-w-0 font-semibold tabular"
+                    />
+                  </LabeledField>
+                  <LabeledField label="Activity">
+                    <Input
+                      value={draft.name}
+                      onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                      className="h-10 min-w-0"
+                    />
+                  </LabeledField>
+                  <LabeledField label="WBS / area">
+                    <ActivityDivisionInput
+                      value={draft.division}
+                      onChange={(division) => setDraft({ ...draft, division })}
+                      options={divisionOptions}
+                      listId={`activity-${activity.id}-wbs-divisions`}
+                    />
+                  </LabeledField>
                 </div>
               </div>
-              <ActivityDependencyPicker
-                label="Predecessors - work before this activity"
-                emptyLabel="Choose activities that must finish first"
-                selectedIds={draft.predecessor_activity_ids}
-                activities={activities}
-                blockedIds={[
-                  ...currentActivityBlockedIds,
-                  ...parseActivityIds(draft.successor_activity_ids),
-                ]}
-                onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
-              />
-              <ActivityDependencyPicker
-                label="Successors - work after this activity"
-                emptyLabel="Choose activities that follow this one"
-                selectedIds={draft.successor_activity_ids}
-                activities={activities}
-                blockedIds={[
-                  ...currentActivityBlockedIds,
-                  ...parseActivityIds(draft.predecessor_activity_ids),
-                ]}
-                onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
-              />
-              <div className="min-w-0 rounded-md border border-hairline bg-card p-3">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                  Dependency readout
+
+              <div className="rounded-[10px] border border-hairline bg-surface p-3.5">
+                <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <div className="eyebrow">Baseline (fixed) → current update</div>
+                  <div className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+                    {plannedDurationLabel} · Data date {dataDate ? shortDate(dataDate) : "not set"}
+                  </div>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {isMilestone
+                    ? "For this data date, mark whether this milestone was met and set the current forecast date. Milestones are zero-duration schedule points."
+                    : draftHasActualStartBasis
+                      ? "For this data date, enter actual progress and either remaining duration or current expected finish. The other field recalculates so the CPM finish, float, and delay impact reflect the update."
+                      : draftPercentComplete > 0
+                        ? "Progress is entered but actual start is missing. Set actual start first; remaining duration unlocks after actual start."
+                        : "This activity has not started. Leave remaining duration blank; adjust current start and current expected finish until actual start is entered."}
+                </div>
+
+                {/* Layout note: the previous full-width update grid pinned
+                    xl:grid-cols-[145px_145px_150px_145px_145px_105px] to keep the modal free
+                    of horizontal scroll; the two-column reorg replaces it with half-width
+                    2-up grids (w-full inputs, min-w-0 columns) which hold the same
+                    no-horizontal-scroll guarantee. */}
+                <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
+                  <LabeledField label="Baseline start">
+                    <Input
+                      type="date"
+                      value={draft.baseline_start_date}
+                      onChange={(e) =>
+                        setDraft(updateDraftBaselineStartDate(draft, e.target.value))
+                      }
+                      className="h-10 min-w-0"
+                      title="Baseline plan — the committed start. Baseline dates stay fixed; variance is measured against them."
+                    />
+                  </LabeledField>
+                  <LabeledField label="Baseline finish">
+                    <Input
+                      type="date"
+                      value={draft.baseline_finish_date}
+                      onChange={(e) =>
+                        setDraft(updateDraftBaselineFinishDate(draft, e.target.value))
+                      }
+                      className="h-10 min-w-0"
+                      title="Baseline plan — the committed finish. Baseline dates stay fixed; variance is measured against them."
+                    />
+                  </LabeledField>
+                  <LabeledField label="Current start">
+                    <Input
+                      type="date"
+                      value={draft.forecast_start_date}
+                      onChange={(e) =>
+                        setDraft(updateDraftForecastStartDate(draft, e.target.value, dataDate))
+                      }
+                      className="h-10 min-w-0"
+                    />
+                  </LabeledField>
+                  <LabeledField label="Current expected finish">
+                    <Input
+                      type="date"
+                      value={draft.forecast_finish_date}
+                      onChange={(e) =>
+                        setDraft(updateDraftForecastFinishDate(draft, e.target.value, dataDate))
+                      }
+                      className={cn(
+                        "h-10 min-w-0",
+                        updateImpact.finishTone === "danger" && "text-danger",
+                      )}
+                    />
+                  </LabeledField>
+                </div>
+
+                <div className="mt-4 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  Current update
                 </div>
                 <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2">
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-muted-foreground">Predecessors</div>
-                    <ActivityRelationshipRows
-                      tokens={parseActivityTokens(draft.predecessor_activity_ids)}
-                      activities={activities}
-                      emptyLabel="No predecessor logic"
+                  <LabeledField label="Actual start">
+                    <Input
+                      type="date"
+                      value={draft.actual_start_date}
+                      onChange={(e) =>
+                        setDraft(updateDraftActualStartDate(draft, e.target.value, dataDate))
+                      }
+                      className="h-10 min-w-0"
                     />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-muted-foreground">Successors</div>
-                    <ActivityRelationshipRows
-                      tokens={parseActivityTokens(draft.successor_activity_ids)}
-                      activities={activities}
-                      emptyLabel="No successor logic"
+                  </LabeledField>
+                  <LabeledField label="Actual finish">
+                    <Input
+                      type="date"
+                      value={draft.actual_finish_date}
+                      onChange={(e) =>
+                        setDraft(updateDraftActualFinishDate(draft, e.target.value, dataDate))
+                      }
+                      className="h-10 min-w-0"
                     />
-                  </div>
+                  </LabeledField>
+                  <LabeledField label="% done">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={draft.percent_complete}
+                      onChange={(e) =>
+                        setDraft(updateDraftPercentComplete(draft, e.target.value, dataDate))
+                      }
+                      className="h-10 min-w-0 tabular"
+                    />
+                  </LabeledField>
+                  <LabeledField label={isMilestone ? "Milestone duration" : "Remaining duration"}>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={
+                        isMilestone
+                          ? "0"
+                          : draftHasActualStartBasis
+                            ? draft.remaining_duration_days
+                            : ""
+                      }
+                      onChange={(e) =>
+                        setDraft(updateDraftRemainingDuration(draft, e.target.value, dataDate))
+                      }
+                      placeholder={
+                        isMilestone ? "0" : draftHasActualStartBasis ? "days" : "not started"
+                      }
+                      disabled={isMilestone || !draftHasActualStartBasis}
+                      className="h-10 min-w-0 tabular"
+                    />
+                    {!isMilestone && !draftHasActualStartBasis && (
+                      <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                        Record an actual start first — remaining duration applies to in-progress
+                        work.
+                      </p>
+                    )}
+                  </LabeledField>
                 </div>
+
+                <div className="mt-4 grid min-w-0 gap-2.5 sm:grid-cols-3">
+                  <ScheduleWorkbenchStat
+                    label="% done"
+                    value={`${activity.percent_complete}%`}
+                    sub={activity.percent_complete >= 100 ? "complete" : "percent complete"}
+                    tone={activity.percent_complete >= 100 ? "success" : "default"}
+                  />
+                  <ScheduleWorkbenchStat
+                    label="Remaining"
+                    value={remainingStat.value}
+                    sub={remainingStat.sub}
+                    tone={remainingStat.tone}
+                  />
+                  <ScheduleWorkbenchStat
+                    label="Schedule slip"
+                    value={updateImpact.slipValue}
+                    sub={updateImpact.slipBasis}
+                    tone={updateImpact.slipTone}
+                  />
+                </div>
+                <div className="mt-2.5 grid min-w-0 gap-2.5 sm:grid-cols-2">
+                  <ActivityUpdateImpactTile
+                    label="Baseline finish"
+                    value={updateImpact.baselineFinish}
+                    sub="original planned finish"
+                  />
+                  <ActivityUpdateImpactTile
+                    label="Current expected finish"
+                    value={updateImpact.expectedFinish}
+                    sub="current forecast finish"
+                    tone={updateImpact.finishTone}
+                  />
+                  <ActivityUpdateImpactTile
+                    label={isMilestone ? "Milestone basis" : "Remaining basis"}
+                    value={updateImpact.remainingValue}
+                    sub={updateImpact.remainingBasis}
+                  />
+                  <ActivityUpdateImpactTile
+                    label="Schedule slip"
+                    value={updateImpact.slipValue}
+                    sub={updateImpact.slipBasis}
+                    tone={updateImpact.slipTone}
+                  />
+                </div>
+
+                <div className="mt-3 rounded-md bg-secondary px-3 py-2 text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">Update rule:</span>{" "}
+                  {isMilestone
+                    ? "Milestones stay at zero duration. Move the current expected finish to forecast the milestone date, or mark it 100% when it is met. The CPM recalculates float against the completion path."
+                    : draftHasActualStartBasis
+                      ? "Baseline dates stay fixed. Remaining duration is counted from the data date for started work. Changing remaining duration moves current expected finish, and changing current expected finish recalculates remaining duration. After save, the CPM recalculates float against the baseline completion path, including negative total float."
+                      : "Baseline dates stay fixed. Unstarted work is forecast with current start and current expected finish; remaining duration is not required until actual start is entered."}
+                </div>
+                {!dataDate && (
+                  <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      {isMilestone
+                        ? "Set the CPM data date before updating this milestone forecast so it is anchored to the right schedule snapshot."
+                        : "Set the CPM data date before updating remaining duration so expected finish dates are anchored to the right schedule snapshot."}
+                    </span>
+                  </div>
+                )}
+                {linkedDelaySummary.openDays > 0 && (
+                  <div className="mt-3 flex flex-col gap-3 rounded-md border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <AlertTriangle className="h-4 w-4" />
+                        {linkedDelaySummary.openDays} open delay day
+                        {linkedDelaySummary.openDays === 1 ? "" : "s"} on this activity
+                      </div>
+                      <div className="mt-1 text-xs text-danger/85">
+                        {openDelayForecastAligned
+                          ? "The current expected finish already carries at least this delay against the baseline."
+                          : delayAdjustedDraft?.forecast_finish_date
+                            ? isMilestone
+                              ? `Apply this to move the milestone forecast to ${shortDate(delayAdjustedDraft.forecast_finish_date)}.`
+                              : `Apply this to move expected finish to ${shortDate(delayAdjustedDraft.forecast_finish_date)} and recalculate remaining duration.`
+                            : "Set a baseline or expected finish, then apply the delay to the forecast."}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-8 shrink-0 border-danger/30 bg-card text-danger hover:bg-danger/10 hover:text-danger"
+                      disabled={
+                        saving ||
+                        openDelayForecastAligned ||
+                        !delayAdjustedDraft?.forecast_finish_date
+                      }
+                      onClick={() => delayAdjustedDraft && setDraft(delayAdjustedDraft)}
+                    >
+                      Apply delay to forecast
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="mt-3">
-              <LabeledField label="Notes / constraint">
+            {/* RIGHT — logic ties, delay impacts, notes. */}
+            <div className="min-w-0 space-y-4">
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <div className="eyebrow">Logic ties</div>
+                  <span className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+                    · {logicTieTotal} pred / succ {logicTieTotal === 1 ? "tie" : "ties"}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Predecessors drive this activity. Successors are the activities this row drives.
+                </div>
+                <div className="mt-3 grid min-w-0 gap-3">
+                  <ActivityDependencyPicker
+                    label="Predecessors - work before this activity"
+                    emptyLabel="Choose activities that must finish first"
+                    selectedIds={draft.predecessor_activity_ids}
+                    activities={activities}
+                    blockedIds={[
+                      ...currentActivityBlockedIds,
+                      ...parseActivityIds(draft.successor_activity_ids),
+                    ]}
+                    onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
+                  />
+                  <ActivityDependencyPicker
+                    label="Successors - work after this activity"
+                    emptyLabel="Choose activities that follow this one"
+                    selectedIds={draft.successor_activity_ids}
+                    activities={activities}
+                    blockedIds={[
+                      ...currentActivityBlockedIds,
+                      ...parseActivityIds(draft.predecessor_activity_ids),
+                    ]}
+                    onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
+                  />
+                  <div className="min-w-0 rounded-[10px] border border-hairline bg-surface p-3">
+                    <div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                      Dependency readout
+                    </div>
+                    <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-muted-foreground">
+                          Predecessors
+                        </div>
+                        <ActivityRelationshipRows
+                          tokens={parseActivityTokens(draft.predecessor_activity_ids)}
+                          activities={activities}
+                          emptyLabel="No predecessor logic"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-muted-foreground">
+                          Successors
+                        </div>
+                        <ActivityRelationshipRows
+                          tokens={parseActivityTokens(draft.successor_activity_ids)}
+                          activities={activities}
+                          emptyLabel="No successor logic"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <div className="eyebrow">Delay impacts</div>
+                  <span className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+                    · {linkedDelaySummary.openCount} open · {linkedDelaySummary.openDays} days
+                  </span>
+                </div>
+                <ActivityDelayFragmentPanel
+                  activity={activity}
+                  delayFragments={delayFragments}
+                  isSaving={isSavingDelayFragment}
+                  onAddDelayFragment={onAddDelayFragment}
+                  onPatchDelayFragment={onPatchDelayFragment}
+                  onDeleteDelayFragment={onDeleteDelayFragment}
+                />
+              </div>
+
+              <div className="min-w-0">
+                <div className="eyebrow">Notes / constraint</div>
                 <Textarea
                   value={draft.notes}
                   onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
                   placeholder="Sequencing constraint, procurement issue, field note, or CPM update narrative."
-                  className="min-h-28 min-w-0 resize-y bg-card"
+                  className="mt-2 min-h-28 min-w-0 resize-y bg-card"
+                  aria-label="Notes / constraint"
                 />
-              </LabeledField>
+              </div>
             </div>
-
-            <ActivityDelayFragmentPanel
-              activity={activity}
-              delayFragments={delayFragments}
-              isSaving={isSavingDelayFragment}
-              onAddDelayFragment={onAddDelayFragment}
-              onPatchDelayFragment={onPatchDelayFragment}
-              onDeleteDelayFragment={onDeleteDelayFragment}
-            />
           </div>
         </div>
 
@@ -754,7 +787,7 @@ export function ActivityDetailDialog({
           </div>
         )}
 
-        <DialogFooter className="gap-2 border-t border-hairline px-4 py-4 sm:justify-between sm:space-x-0 sm:px-6">
+        <DialogFooter className="gap-2 border-t border-hairline bg-surface px-4 py-4 sm:justify-between sm:space-x-0 sm:px-6">
           <Button
             type="button"
             variant="outline"
@@ -765,8 +798,8 @@ export function ActivityDetailDialog({
             <Trash2 className="h-4 w-4" />
             Delete activity
           </Button>
-          {/* Fixed order, fixed emphasis: Send to Risk Tally, Close, Save & next
-              (present but disabled outside the queue), Save activity (always primary). */}
+          {/* Fixed order, fixed emphasis: Send to Risk Tally, Save & next (present
+              but disabled outside the queue), Save activity (always primary), Close. */}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button
               type="button"
@@ -777,9 +810,6 @@ export function ActivityDetailDialog({
             >
               <AlertTriangle className="h-4 w-4" />
               {isSendingToRiskTally ? "Sending..." : "Send to Risk Tally"}
-            </Button>
-            <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
-              Close
             </Button>
             <Button
               type="button"
@@ -798,6 +828,9 @@ export function ActivityDetailDialog({
               disabled={!draft.name.trim() || saving}
             >
               {saving ? "Saving..." : "Save activity"}
+            </Button>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
+              Close
             </Button>
           </div>
         </DialogFooter>
@@ -826,8 +859,8 @@ export function ActivityUpdateImpactTile({
           ? "text-warning"
           : "text-foreground";
   return (
-    <div className="min-w-0 rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+    <div className="min-w-0 rounded-[10px] border border-hairline bg-background px-3 py-2">
+      <div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
         {label}
       </div>
       <div className={cn("mt-1 truncate text-base font-semibold tabular", toneClass)}>{value}</div>

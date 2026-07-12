@@ -749,13 +749,19 @@ await expectContains(
     /export function InspectionsWorkspace/,
     /InspectionDraft/,
     /Reinspection/,
-    /Send to risk/,
     /Inspection risk posture/,
     /required_reinspection/,
     /cost_impact/,
     /schedule_impact_weeks/,
   ],
   "inspections workspace tracks pass/fail attempts, reinspections, impacts, and risk handoff",
+);
+await expectContains(
+  "src/components/outcome/InspectionsBoard.tsx",
+  // v2 split: the inspection card row (incl. the send-to-risk action) lives in
+  // the board module shared by list + kanban views.
+  [/InspectionLogRow/, /Send to risk/],
+  "inspection cards keep the send-to-risk handoff after the v2 list/board split",
 );
 
 await expectContains(
@@ -1679,11 +1685,11 @@ await expectContains(
     /createScheduleUpdate/,
     /createScheduleRisk/,
     /createExposure/,
-    /Baseline vs schedule updates/,
+    /Annotate or save a schedule update/, // v2: authoring demoted to a collapsed panel
     /Data date/,
     /Money exposure in update/,
     /schedule_money_exposure/,
-    /Construction schedule/,
+    /Project completion path/, // v2 relabel
     /CPM schedule workbench/,
     /Activity table \+ Gantt/,
     /Build from milestones/,
@@ -1696,7 +1702,7 @@ await expectContains(
     /Baseline vs current milestone plan/,
     /MilestoneViewSelect/,
     /SchedulePlanRow/,
-    /toast\.success\("Risk allocation created/,
+    /toast\.success\("Sent to the Risk Tally/, // v2 relabel
     /toast\.success\("Schedule update saved/,
   ],
   "schedule workspace creates data-date updates with money movement and pushes schedule risk into risk tally",

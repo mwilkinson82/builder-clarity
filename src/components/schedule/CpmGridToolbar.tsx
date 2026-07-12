@@ -2,6 +2,14 @@ import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -12,8 +20,8 @@ import {
   Plus,
   ClipboardList,
   CheckCircle2,
+  ChevronDown,
   FileSpreadsheet,
-  Printer,
   GitBranch,
   Layers,
   Maximize2,
@@ -35,6 +43,41 @@ import {
   shortDate,
 } from "./scheduleShared";
 
+// Mono status chip for the CPM command bar (house v2: mono label + tabular value
+// in a hairline pill; semantic tones only).
+export function CpmStatusChip({
+  label,
+  value,
+  tone = "default",
+  title,
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "success" | "warning" | "danger";
+  title?: string;
+}) {
+  const toneClass =
+    tone === "success"
+      ? "text-success"
+      : tone === "warning"
+        ? "text-warning"
+        : tone === "danger"
+          ? "text-danger"
+          : "text-muted-foreground";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline bg-card px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.08em]",
+        toneClass,
+      )}
+      title={title}
+    >
+      {label}
+      <b className="tabular">{value}</b>
+    </span>
+  );
+}
+
 export function CpmGridToolbar({
   compact = false,
   scheduleView,
@@ -54,7 +97,6 @@ export function CpmGridToolbar({
   isSeedingActivities,
   onImportSchedule,
   onBuildFromSov,
-  onPrint,
   onToggleActivityDraft,
   isActivityDraftOpen,
   activityDraftMode,
@@ -67,6 +109,7 @@ export function CpmGridToolbar({
   onSaveDataDate,
   readinessWarningCount,
   isReadinessWarningArmed,
+  statusChips,
   templateName,
   onTemplateNameChange,
   templates,
@@ -96,7 +139,6 @@ export function CpmGridToolbar({
   isSeedingActivities: boolean;
   onImportSchedule: () => void;
   onBuildFromSov: () => void;
-  onPrint: () => void;
   onToggleActivityDraft: () => void;
   isActivityDraftOpen: boolean;
   activityDraftMode: "activity" | "milestone" | null;
@@ -109,6 +151,7 @@ export function CpmGridToolbar({
   onSaveDataDate: () => void;
   readinessWarningCount: number;
   isReadinessWarningArmed: boolean;
+  statusChips?: ReactNode;
   templateName: string;
   onTemplateNameChange: (value: string) => void;
   templates: Array<ScheduleCpmTemplateRow | BrowserCpmTemplate>;
@@ -123,138 +166,81 @@ export function CpmGridToolbar({
   const [showTemplateTools, setShowTemplateTools] = useState(false);
 
   return (
-    <div className={cn("flex w-full min-w-0 flex-col", compact ? "gap-2" : "gap-3")}>
+    <div className="w-full min-w-0 rounded-xl border border-hairline bg-card print:hidden">
+      {/* Row 1 — data-date snapshot, view filters, and CPM status chips. */}
       <div
         className={cn(
-          "grid min-w-0 gap-2 xl:grid-cols-[minmax(280px,0.82fr)_minmax(0,1.8fr)_minmax(260px,0.78fr)]",
-          compact && "gap-1.5",
+          "flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-3 lg:px-4",
+          compact ? "py-2" : "py-2.5",
         )}
       >
-        <CpmToolbarGroup label="Schedule snapshot" compact={compact}>
+        <div aria-label="Schedule snapshot" className="flex min-w-0 flex-wrap items-center">
           <CpmDataDateControl
             value={dataDateDraft}
             savedValue={latestDataDate}
             isSaving={isSavingDataDate}
             onChange={onDataDateChange}
             onSave={onSaveDataDate}
-            className="w-full"
             readinessWarningCount={readinessWarningCount}
             isReadinessWarningArmed={isReadinessWarningArmed}
             embedded
           />
-        </CpmToolbarGroup>
-        <CpmToolbarGroup label="View filters" compact={compact}>
-          <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
-        </CpmToolbarGroup>
-        <CpmToolbarGroup label="Sort and WBS" compact={compact}>
-          <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 gap-2 whitespace-nowrap"
-            onClick={onManageWbs}
-          >
-            <ListTree className="h-4 w-4" />
-            WBS / areas
-          </Button>
-        </CpmToolbarGroup>
+        </div>
+        <span className="hidden h-5 w-px shrink-0 bg-hairline xl:block" aria-hidden="true" />
+        <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
+        {statusChips && (
+          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            {statusChips}
+          </div>
+        )}
       </div>
 
+      {/* Row 2 — scale + logic toggles + sort/WBS, with row actions on the right. */}
       <div
         className={cn(
-          "grid min-w-0 gap-2 xl:grid-cols-[minmax(0,0.72fr)_minmax(520px,1.28fr)]",
-          compact && "gap-1.5",
+          "flex min-w-0 flex-wrap items-center gap-2 border-t border-hairline px-3 lg:px-4",
+          compact ? "py-2" : "py-2.5",
         )}
       >
-        <CpmToolbarGroup label="Scale and logic" compact={compact}>
-          <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
+        <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
+        <Button
+          type="button"
+          variant={showLogicLines ? "default" : "outline"}
+          className="h-9 gap-2 whitespace-nowrap"
+          aria-pressed={showLogicLines}
+          onClick={onToggleLogicLines}
+        >
+          <GitBranch className="h-4 w-4" />
+          Logic lines
+        </Button>
+        <Button
+          type="button"
+          variant={showBaselineBars ? "default" : "outline"}
+          className="h-9 gap-2 whitespace-nowrap"
+          aria-pressed={showBaselineBars}
+          onClick={onToggleBaselineBars}
+        >
+          <Layers className="h-4 w-4" />
+          Baseline
+        </Button>
+        <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 gap-2 whitespace-nowrap"
+          onClick={onManageWbs}
+        >
+          <ListTree className="h-4 w-4" />
+          WBS / areas
+        </Button>
+        <div
+          aria-label="Schedule actions"
+          className="ml-auto flex min-w-0 flex-wrap items-center gap-2"
+        >
           <Button
             type="button"
-            variant={showLogicLines ? "default" : "outline"}
             className="h-9 gap-2 whitespace-nowrap"
-            aria-pressed={showLogicLines}
-            onClick={onToggleLogicLines}
-          >
-            <GitBranch className="h-4 w-4" />
-            Logic lines
-          </Button>
-          <Button
-            type="button"
-            variant={showBaselineBars ? "default" : "outline"}
-            className="h-9 gap-2 whitespace-nowrap"
-            aria-pressed={showBaselineBars}
-            onClick={onToggleBaselineBars}
-          >
-            <Layers className="h-4 w-4" />
-            Baseline
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 gap-2 whitespace-nowrap"
-            onClick={onExpand}
-          >
-            <Maximize2 className="h-4 w-4" />
-            Expand
-          </Button>
-        </CpmToolbarGroup>
-        <CpmToolbarGroup label="Schedule actions" compact={compact}>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 gap-2 whitespace-nowrap"
-            disabled={!canSeedActivities || isSeedingActivities}
-            onClick={onSeedActivities}
-          >
-            <ClipboardList className="h-4 w-4" />
-            {isSeedingActivities ? "Building..." : "Build from milestones"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 gap-2 whitespace-nowrap"
-            title="Bring in a schedule you already have in Excel or CSV"
-            disabled={isSeedingActivities}
-            onClick={onImportSchedule}
-          >
-            <Upload className="h-4 w-4" />
-            Import schedule
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 gap-2 whitespace-nowrap"
-            title="Propose one activity per schedule-of-values line"
-            disabled={isSeedingActivities}
-            onClick={onBuildFromSov}
-          >
-            <FileSpreadsheet className="h-4 w-4" />
-            Build from SOV
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 gap-2 whitespace-nowrap"
-            title="Print optimized for Tabloid / 11 x 17 landscape"
-            onClick={onPrint}
-          >
-            <Printer className="h-4 w-4" />
-            Print 11x17
-          </Button>
-          <Button
-            type="button"
-            variant={showTemplateTools ? "default" : "outline"}
-            className="h-9 gap-2 whitespace-nowrap"
-            aria-pressed={showTemplateTools}
-            onClick={() => setShowTemplateTools((visible) => !visible)}
-          >
-            <ClipboardList className="h-4 w-4" />
-            Templates
-          </Button>
-          <Button
-            type="button"
-            variant={activityDraftMode === "activity" ? "default" : "outline"}
-            className="h-9 gap-2 whitespace-nowrap"
+            aria-pressed={activityDraftMode === "activity"}
             onClick={onToggleActivityDraft}
           >
             <Plus className="h-4 w-4" />
@@ -273,11 +259,67 @@ export function CpmGridToolbar({
             <Diamond className="h-4 w-4" />
             {activityDraftMode === "milestone" ? "Milestone form open" : "Add milestone"}
           </Button>
-        </CpmToolbarGroup>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 gap-1.5 whitespace-nowrap"
+                disabled={isSeedingActivities}
+              >
+                <Upload className="h-4 w-4" />
+                {isSeedingActivities ? "Building..." : "Import / Build"}
+                <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem
+                disabled={!canSeedActivities || isSeedingActivities}
+                onSelect={() => onSeedActivities()}
+              >
+                <ClipboardList className="mr-2 h-4 w-4" />
+                Build from milestones
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={isSeedingActivities}
+                title="Bring in a schedule you already have in Excel or CSV"
+                onSelect={() => onImportSchedule()}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                Import schedule
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={isSeedingActivities}
+                title="Propose one activity per schedule-of-values line"
+                onSelect={() => onBuildFromSov()}
+              >
+                <FileSpreadsheet className="mr-2 h-4 w-4" />
+                Build from SOV
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem
+                checked={showTemplateTools}
+                aria-pressed={showTemplateTools}
+                onCheckedChange={(checked) => setShowTemplateTools(checked === true)}
+              >
+                Templates
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap border-foreground/50 font-semibold"
+            onClick={onExpand}
+          >
+            <Maximize2 className="h-4 w-4" />
+            Expand
+          </Button>
+        </div>
       </div>
 
       {activityDraftMode && (
-        <div className="flex flex-col gap-2 rounded-md border border-accent/20 bg-accent/10 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 border-t border-hairline bg-accent/10 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between lg:px-4">
           <div className="min-w-0 text-muted-foreground">
             <span className="font-semibold text-foreground">
               {activityDraftMode === "milestone"
@@ -298,11 +340,12 @@ export function CpmGridToolbar({
       )}
 
       {showTemplateTools && (
-        <CpmToolbarGroup label="Templates" compact={compact}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-hairline px-3 py-2.5 lg:px-4">
+          <span className="eyebrow">Templates</span>
           <Input
             value={templateName}
             onChange={(event) => onTemplateNameChange(event.target.value)}
-            className="h-9 w-[min(100%,280px)] min-w-[220px] bg-card"
+            className="h-9 w-[min(100%,280px)] min-w-[220px] bg-surface"
             placeholder="Template name"
             disabled={isSavingTemplate}
           />
@@ -321,7 +364,7 @@ export function CpmGridToolbar({
             onValueChange={onSelectedTemplateChange}
             disabled={isTemplateLoading || templates.length === 0 || isApplyingTemplate}
           >
-            <SelectTrigger className="h-9 w-[min(100%,260px)] min-w-[220px] bg-card">
+            <SelectTrigger className="h-9 w-[min(100%,260px)] min-w-[220px] bg-surface">
               <SelectValue
                 placeholder={isTemplateLoading ? "Loading templates" : "Choose template"}
               />
@@ -345,40 +388,8 @@ export function CpmGridToolbar({
             <Plus className="h-4 w-4" />
             {isApplyingTemplate ? "Applying..." : "Use template"}
           </Button>
-        </CpmToolbarGroup>
+        </div>
       )}
-    </div>
-  );
-}
-
-function CpmToolbarGroup({
-  label,
-  children,
-  className,
-  compact = false,
-}: {
-  label: string;
-  children: ReactNode;
-  className?: string;
-  compact?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "min-w-0 rounded-md border border-hairline bg-surface",
-        compact ? "px-2 py-1.5" : "px-2.5 py-2",
-        className,
-      )}
-    >
-      <div
-        className={cn(
-          "text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground",
-          compact ? "mb-1" : "mb-1.5",
-        )}
-      >
-        {label}
-      </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
     </div>
   );
 }
@@ -413,33 +424,31 @@ export function CpmDataDateControl({
   return (
     <div
       className={cn(
-        "flex min-h-9 flex-wrap items-center gap-2",
-        !embedded && "rounded-md border border-hairline bg-card px-2 py-1",
+        "flex min-h-9 min-w-0 flex-wrap items-center gap-2",
+        !embedded && "rounded-lg border border-hairline bg-card px-2.5 py-1.5",
         className,
       )}
     >
-      <div className="flex min-w-[120px] flex-col gap-0.5">
-        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          <CalendarDays className="h-3.5 w-3.5" />
-          Set data date
-        </div>
-        <div className="text-[11px] leading-tight text-muted-foreground">Runs the update view</div>
-      </div>
+      <span className="shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        <CalendarDays className="mr-1 inline h-3.5 w-3.5 align-[-3px]" aria-hidden="true" />
+        Data date
+      </span>
       <Input
         type="date"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="h-8 w-[148px] bg-surface px-2 text-xs tabular"
         aria-label="Schedule data date"
+        title="Runs the update view"
       />
       <Button
         type="button"
         size="sm"
-        variant={isDirty ? "default" : "outline"}
+        variant="signal"
         className={cn(
-          "h-8 gap-1.5 whitespace-nowrap px-2.5",
+          "h-8 gap-1.5 whitespace-nowrap px-3 font-semibold",
           isUnacknowledgedWarning &&
-            "border-warning/50 bg-warning/15 text-warning hover:bg-warning/25 hover:text-warning",
+            "border border-warning/50 bg-warning/15 text-warning hover:bg-warning/25 hover:text-warning",
         )}
         disabled={!value || isSaving}
         onClick={onSave}
@@ -447,7 +456,7 @@ export function CpmDataDateControl({
         <CheckCircle2 className="h-3.5 w-3.5" />
         {saveButtonLabel}
       </Button>
-      <div className="basis-full text-[11px] text-muted-foreground sm:basis-auto">
+      <div className="basis-full text-[11px] leading-tight text-muted-foreground xl:max-w-[300px] sm:basis-auto">
         {isReadinessWarningArmed
           ? "Status gaps acknowledged. Click Save snapshot to save anyway."
           : hasReadinessWarning
@@ -473,15 +482,15 @@ export function ScheduleZoomControls({
 }) {
   const isPresetScale = CONSTRUCTLINE_ZOOM_LEVELS.some((level) => level.dayPx === dayPx);
   return (
-    <div className="flex min-w-0 items-center overflow-hidden rounded-md border border-hairline bg-card">
+    <div className="flex min-w-0 items-center gap-0.5 rounded-[9px] bg-secondary p-[3px]">
       {CONSTRUCTLINE_ZOOM_LEVELS.map((level) => (
         <button
           key={level.label}
           type="button"
           aria-pressed={dayPx === level.dayPx}
           className={cn(
-            "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground hover:bg-muted/60",
-            dayPx === level.dayPx && "bg-foreground text-background hover:bg-foreground",
+            "h-8 whitespace-nowrap rounded-[7px] px-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground",
+            dayPx === level.dayPx && "bg-foreground text-background hover:text-background",
           )}
           onClick={() => onChange(level.dayPx)}
         >
@@ -509,15 +518,18 @@ export function ScheduleViewControls({
   onChange: (value: ScheduleGridView) => void;
 }) {
   return (
-    <div className="flex max-w-full overflow-x-auto rounded-md border border-hairline bg-card">
+    <div
+      aria-label="View filters"
+      className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-[9px] bg-secondary p-[3px]"
+    >
       {SCHEDULE_GRID_VIEW_OPTIONS.map((option) => (
         <button
           key={option.value}
           type="button"
           aria-pressed={value === option.value}
           className={cn(
-            "h-9 whitespace-nowrap border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
-            value === option.value && "bg-foreground text-background hover:bg-foreground",
+            "h-8 whitespace-nowrap rounded-[7px] px-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground",
+            value === option.value && "bg-foreground text-background hover:text-background",
           )}
           onClick={() => onChange(option.value)}
         >
@@ -545,7 +557,7 @@ export function ScheduleOrderControls({
   ];
 
   return (
-    <div className="flex overflow-hidden rounded-md border border-hairline bg-card">
+    <div className="flex min-w-0 items-center gap-0.5 rounded-[9px] bg-secondary p-[3px]">
       {options.map((option) => {
         const Icon = option.icon;
         return (
@@ -554,8 +566,8 @@ export function ScheduleOrderControls({
             type="button"
             aria-pressed={value === option.value}
             className={cn(
-              "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
-              value === option.value && "bg-foreground text-background hover:bg-foreground",
+              "h-8 whitespace-nowrap rounded-[7px] px-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground",
+              value === option.value && "bg-foreground text-background hover:text-background",
             )}
             onClick={() => onChange(option.value)}
           >

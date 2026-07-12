@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,8 +38,15 @@ import {
 } from "@/lib/daily-report-uploads";
 import { DailyLogWorkLines } from "@/components/outcome/DailyLogWorkLines";
 import {
-  CalendarDays,
+  DailyReportsCalendar,
+  formatShortDate,
+  monthName,
+  shiftMonth,
+} from "@/components/outcome/DailyReportsCalendar";
+import {
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Download,
   ExternalLink,
   Eye,
@@ -86,6 +94,15 @@ const localDate = () => {
   return local.toISOString().slice(0, 10);
 };
 
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+// Noon-anchored so stepping a day never drifts across a DST boundary.
+const shiftDay = (date: string, delta: number) => {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(d.getDate() + delta);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+
 const emptyDraft = (): DailyReportDraft => ({
   report_date: localDate(),
   author: "",
@@ -112,6 +129,15 @@ const emptyFilters = (): ReportFilters => ({
 function formatDate(value: string) {
   if (!value) return "-";
   return new Date(`${value}T12:00:00`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatDayTitle(value: string) {
+  return new Date(`${value}T12:00:00`).toLocaleDateString("en-US", {
+    weekday: "long",
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -158,10 +184,13 @@ export function DailyReportsWorkspace({
   projectId,
   project,
   buckets = [],
+  onOpenWipDay,
 }: {
   projectId: string;
   project?: DailyReportPacketProject;
   buckets?: { id: string; cost_code: string; bucket: string }[];
+  /** Deep link into Daily WIP for a specific day — wired by the route. */
+  onOpenWipDay?: (date: string) => void;
 }) {
   const listFn = useServerFn(listDailyReports);
   const upsertFn = useServerFn(upsertDailyReport);
@@ -177,6 +206,9 @@ export function DailyReportsWorkspace({
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(
     null,
   );
+  // Days are buckets: null = the calendar landing, a date = that day's bucket.
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [calendarMonth, setCalendarMonth] = useState(() => localDate().slice(0, 7));
 
   const {
     data: reports = [],
@@ -236,8 +268,59 @@ export function DailyReportsWorkspace({
     };
   }, [reports]);
 
+  const todayDate = localDate();
+
+  const loggedDates = useMemo(
+    () => new Set(reports.map((report) => report.report_date)),
+    [reports],
+  );
+
+  const firstReportDate = useMemo(
+    () =>
+      reports.reduce<string | null>(
+        (min, report) => (min === null || report.report_date < min ? report.report_date : min),
+        null,
+      ),
+    [reports],
+  );
+
+  // Landing "This week" list: the last 5 logged days, most recent first.
+  const weekRows = useMemo(
+    () => [...reports].sort((a, b) => b.report_date.localeCompare(a.report_date)).slice(0, 5),
+    [reports],
+  );
+
+  const sinceLabel = firstReportDate
+    ? new Date(`${firstReportDate}T12:00:00`).toLocaleDateString(
+        "en-US",
+        firstReportDate.slice(0, 4) === todayDate.slice(0, 4)
+          ? { month: "short" }
+          : { month: "short", year: "numeric" },
+      )
+    : null;
+
+  const daysSinceLatest = metrics.latest
+    ? Math.max(
+        0,
+        Math.round(
+          (Date.parse(`${todayDate}T12:00:00`) - Date.parse(`${metrics.latest}T12:00:00`)) /
+            86_400_000,
+        ),
+      )
+    : null;
+
+  // "On pace" = at least 4 of the last 7 days logged.
+  const onPace = metrics.lastWeekCount >= 4;
+
+  const dayReport = selectedDay
+    ? reports.find((report) => report.report_date === selectedDay)
+    : undefined;
+  // A day with a report reads; an empty day (or an explicit edit) shows the form.
+  const showDayForm = selectedDay !== null && (!dayReport || editingId !== null);
+
   const resetForm = () => {
-    setDraft(emptyDraft());
+    // Back to a blank bucket for the day being viewed (today on the landing).
+    setDraft({ ...emptyDraft(), report_date: selectedDay ?? localDate() });
     setFiles([]);
     setRemovedAttachmentPaths([]);
     setFileInputKey((key) => key + 1);
@@ -473,6 +556,43 @@ export function DailyReportsWorkspace({
     setEditingId(report.id);
   };
 
+  // Day-bucket navigation. Blocked mid-save so the two-phase photo pipeline's
+  // success handler always lands back on the form it started from.
+  const openDay = (date: string) => {
+    if (saveMutation.isPending) return;
+    setSelectedDay(date);
+    setEditingId(null);
+    setDraft({ ...emptyDraft(), report_date: date });
+    setFiles([]);
+    setRemovedAttachmentPaths([]);
+    setFileInputKey((key) => key + 1);
+  };
+
+  const backToLanding = () => {
+    if (saveMutation.isPending) return;
+    setSelectedDay(null);
+    setEditingId(null);
+  };
+
+  const stepDay = (delta: number) => {
+    if (selectedDay) openDay(shiftDay(selectedDay, delta));
+  };
+
+  const openReportForEdit = (report: DailyReportRow) => {
+    if (saveMutation.isPending) return;
+    setSelectedDay(report.report_date);
+    editReport(report);
+  };
+
+  const confirmDelete = (report: DailyReportRow, { toLanding = false } = {}) => {
+    if (confirm(`Delete the daily report for ${formatDate(report.report_date)}?`)) {
+      deleteMutation.mutate(
+        report,
+        toLanding ? { onSuccess: () => setSelectedDay(null) } : undefined,
+      );
+    }
+  };
+
   const removeExistingAttachment = (path: string) => {
     setDraft((current) => ({
       ...current,
@@ -525,294 +645,504 @@ export function DailyReportsWorkspace({
     error instanceof Error &&
     (error.message.includes("daily_reports") || error.message.includes("schema cache"));
 
-  return (
-    <div className="space-y-6">
-      <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              <CalendarDays className="h-3.5 w-3.5" />
-              Daily Reports
-            </div>
-            <h2 className="mt-2 font-serif text-4xl text-foreground">Job log by day.</h2>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Capture field activity, manpower, delays, visitors, safety and quality notes, and
-              signed PDF or photo documentation.
-            </p>
-          </div>
-          <div className="grid min-w-[320px] grid-cols-2 gap-2 xl:grid-cols-3">
-            <DailyMetric label="Reports logged" value={String(metrics.count)} />
-            <DailyMetric label="Last 7 days" value={String(metrics.lastWeekCount)} />
-            <DailyMetric
-              label="Latest report"
-              value={metrics.latest ? formatDate(metrics.latest) : "-"}
-            />
-            <DailyMetric label="Client visible" value={String(metrics.clientVisibleCount)} />
-            <DailyMetric label="Attachments" value={String(metrics.attachmentCount)} />
-            <DailyMetric label="Storage used" value={formatBytes(metrics.storageBytes)} />
-          </div>
-        </div>
-      </section>
+  const errorBox = error ? (
+    <div className="rounded-md border border-danger/20 bg-danger/5 p-4 text-sm text-danger">
+      {missingTable
+        ? "Daily Reports are ready in the app, but the project database setup still needs to finish before reports can save."
+        : error.message}
+    </div>
+  ) : null;
 
-      <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="font-serif text-2xl text-foreground">
-              {editingId ? "Edit daily report" : "Add daily report"}
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              One saved record per calendar day. Saving the same date updates that day.
-            </p>
-          </div>
-          {editingId && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={resetForm}
-              disabled={saveMutation.isPending}
-            >
-              Cancel edit
-            </Button>
-          )}
+  // ————— Landing: calendar of day buckets —————
+  if (selectedDay === null) {
+    const previousMonth = shiftMonth(calendarMonth, -1);
+    return (
+      <div className="space-y-4">
+        <div>
+          <span className="inline-block rounded-md border border-hairline px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-clay">
+            Job log
+          </span>
+          <h2 className="mt-3 font-serif text-3xl font-normal leading-[1.18] text-foreground lg:text-4xl">
+            Job log by day
+          </h2>
+          <p className="mt-2 max-w-[72ch] text-sm leading-relaxed text-muted-foreground">
+            {metrics.count} report{metrics.count === 1 ? "" : "s"} on file. Days are{" "}
+            <b className="font-semibold text-foreground">buckets</b> — click one to read or fill
+            that day. Only this week shows below; older days live in the calendar.
+          </p>
         </div>
 
-        {/* Everything in this fieldset is captured when Save is pressed —
-            lock it while the save runs so nothing typed or picked mid-flight
-            can be silently thrown away when the save settles. */}
-        <fieldset disabled={saveMutation.isPending} className="contents">
-          <div className="grid gap-4 lg:grid-cols-[1fr_1fr_120px]">
-            <Field label="Report date">
-              <Input
-                type="date"
-                value={draft.report_date}
-                onChange={(e) =>
-                  setDraft((current) => ({ ...current, report_date: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Author / PM">
-              <Input
-                value={draft.author}
-                placeholder="PM, superintendent, or field lead"
-                onChange={(e) => setDraft((current) => ({ ...current, author: e.target.value }))}
-              />
-            </Field>
-            <Field label="Crew count">
-              <Input
-                type="number"
-                min={0}
-                value={draft.crew_count}
-                onChange={(e) =>
-                  setDraft((current) => ({ ...current, crew_count: e.target.value }))
-                }
-              />
-            </Field>
-          </div>
-
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <Field label="Weather / site conditions">
-              <Input
-                value={draft.weather}
-                placeholder="Clear, rain delay, high heat, site access, etc."
-                onChange={(e) => setDraft((current) => ({ ...current, weather: e.target.value }))}
-              />
-            </Field>
-            <Field label="Manpower by trade">
-              <Input
-                value={draft.manpower}
-                placeholder="3 carpenters, 2 electricians, 1 painter"
-                onChange={(e) => setDraft((current) => ({ ...current, manpower: e.target.value }))}
-              />
-            </Field>
-          </div>
-
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <Field label="Work performed">
-              <Textarea
-                rows={4}
-                value={draft.work_performed}
-                placeholder="What happened on site today?"
-                onChange={(e) =>
-                  setDraft((current) => ({ ...current, work_performed: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Delays / blockers">
-              <Textarea
-                rows={4}
-                value={draft.delays}
-                placeholder="Schedule slippage, missing information, trade issues, owner decisions, inspections."
-                onChange={(e) => setDraft((current) => ({ ...current, delays: e.target.value }))}
-              />
-            </Field>
-            <Field label="Visitors / inspections">
-              <Textarea
-                rows={3}
-                value={draft.visitors}
-                placeholder="Client visits, inspectors, consultants, vendors, deliveries."
-                onChange={(e) => setDraft((current) => ({ ...current, visitors: e.target.value }))}
-              />
-            </Field>
-            <Field label="Safety notes">
-              <Textarea
-                rows={3}
-                value={draft.safety_notes}
-                placeholder="Incidents, inspections, toolbox talks, safety holds."
-                onChange={(e) =>
-                  setDraft((current) => ({ ...current, safety_notes: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Quality notes">
-              <Textarea
-                rows={3}
-                value={draft.quality_notes}
-                placeholder="Defects, punch items, rework, inspection quality notes."
-                onChange={(e) =>
-                  setDraft((current) => ({ ...current, quality_notes: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="Internal notes">
-              <Textarea
-                rows={3}
-                value={draft.notes}
-                placeholder="Private PM notes that should stay in the project record."
-                onChange={(e) => setDraft((current) => ({ ...current, notes: e.target.value }))}
-              />
-            </Field>
-          </div>
-
-          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-            <Field label="Attachments">
-              <div className="space-y-3">
-                <label
-                  htmlFor="daily-report-file-input"
-                  className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-hairline bg-surface px-4 py-6 text-center transition-colors hover:border-accent/60 hover:bg-accent/5"
-                >
-                  <Upload className="h-6 w-6 text-accent" />
-                  <span className="text-sm font-medium text-foreground">
-                    Click to attach photos or documents
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    PDF, PNG, JPG, WebP, or HEIC · up to 25&nbsp;MB each · big photos are shrunk
-                    automatically for faster upload
-                  </span>
-                  <input
-                    id="daily-report-file-input"
-                    key={fileInputKey}
-                    type="file"
-                    multiple
-                    accept="application/pdf,image/png,image/jpeg,image/webp,image/heic"
-                    className="sr-only"
-                    onChange={(e) => {
-                      // Picking again ADDS to the list (supers attach photos in
-                      // batches); dedupe so the same pick twice can't double up.
-                      const picked = Array.from(e.target.files ?? []);
-                      if (picked.length === 0) return;
-                      const fileKey = (file: File) =>
-                        `${file.name}|${file.size}|${file.lastModified}`;
-                      setFiles((current) => {
-                        const seen = new Set(current.map(fileKey));
-                        return [...current, ...picked.filter((file) => !seen.has(fileKey(file)))];
-                      });
-                      setFileInputKey((key) => key + 1);
-                    }}
-                  />
-                </label>
-                {files.length > 0 && (
-                  <AttachmentList
-                    title="Ready to upload"
-                    attachments={files.map((file) => ({
-                      name: file.name,
-                      path: file.name,
-                      type: file.type,
-                      size: file.size,
-                      uploaded_at: "",
-                      client_visible: draft.client_visible,
-                    }))}
-                    onRemove={(_, index) => removePendingFile(index)}
-                  />
-                )}
-                {draft.attachment_manifest.length > 0 && (
-                  <AttachmentList
-                    title="Stored on this report"
-                    attachments={draft.attachment_manifest}
-                    onRemove={(attachment) => removeExistingAttachment(attachment.path)}
-                  />
-                )}
-              </div>
-            </Field>
-
-            <div className="rounded-md border border-hairline bg-surface p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <Label htmlFor="client-visible-daily-log" className="text-sm font-medium">
-                    Client visible
-                  </Label>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Shares this day's log with the client portal and packet exports. The Work put in
-                    place section stays internal — the client never sees it.
-                  </p>
-                </div>
-                <Switch
-                  id="client-visible-daily-log"
-                  checked={draft.client_visible}
-                  onCheckedChange={(checked) =>
-                    setDraft((current) => ({ ...current, client_visible: checked }))
-                  }
-                />
-              </div>
-            </div>
-          </div>
-        </fieldset>
-
-        <div className="mt-4">
-          <DailyLogWorkLines
-            projectId={projectId}
-            reportDate={draft.report_date}
-            buckets={buckets}
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
+          <DailyMetric
+            label="Reports logged"
+            value={String(metrics.count)}
+            caption={sinceLabel ? `since ${sinceLabel}` : "—"}
+          />
+          <DailyMetric
+            label="Last 7 days"
+            value={String(metrics.lastWeekCount)}
+            caption={onPace ? "on pace" : "behind"}
+            tone={onPace ? "good" : "warn"}
+          />
+          <DailyMetric
+            label="Latest report"
+            value={metrics.latest ? formatDate(metrics.latest) : "-"}
+            caption={
+              daysSinceLatest === null
+                ? "—"
+                : daysSinceLatest === 0
+                  ? "today"
+                  : daysSinceLatest === 1
+                    ? "1 day ago"
+                    : `${daysSinceLatest} days ago`
+            }
+          />
+          <DailyMetric
+            label="Client visible"
+            value={String(metrics.clientVisibleCount)}
+            caption={
+              metrics.clientVisibleCount === 0
+                ? "none shared"
+                : `${metrics.clientVisibleCount} shared`
+            }
+          />
+          <DailyMetric
+            label="Attachments"
+            value={String(metrics.attachmentCount)}
+            caption="photos + docs"
+          />
+          <DailyMetric
+            label="Storage used"
+            value={formatBytes(metrics.storageBytes)}
+            caption="used"
           />
         </div>
 
-        <div className="mt-5 flex flex-col items-end gap-1.5">
-          <Button
-            onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending}
-            className="gap-1.5"
-          >
-            {files.length > 0 ? (
-              <Upload className="h-3.5 w-3.5" />
-            ) : (
-              <Save className="h-3.5 w-3.5" />
-            )}
-            {saveMutation.isPending
-              ? uploadProgress && uploadProgress.total > 0
-                ? `Uploading photo ${Math.min(uploadProgress.done + 1, uploadProgress.total)} of ${
-                    uploadProgress.total
-                  }...`
-                : "Saving..."
-              : editingId
-                ? "Save changes"
-                : "Save daily report"}
-          </Button>
-          {saveMutation.isPending && uploadProgress ? (
-            <p className="text-[11px] text-muted-foreground">
-              Your log is saved — photos are still uploading. Keep this page open until they finish.
-            </p>
-          ) : null}
-        </div>
-      </section>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading daily reports...</p>
+        ) : error ? (
+          errorBox
+        ) : (
+          <>
+            <DailyReportsCalendar
+              month={calendarMonth}
+              onMonthChange={setCalendarMonth}
+              loggedDates={loggedDates}
+              firstReportDate={firstReportDate}
+              totalReports={metrics.count}
+              sinceLabel={sinceLabel}
+              today={todayDate}
+              onSelectDay={openDay}
+            />
 
-      <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-        <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+            <section className="rounded-xl border border-hairline bg-card px-5 pb-4 pt-1.5 shadow-card">
+              <div className="flex items-center gap-2.5 py-3">
+                <div className="text-[13px] font-semibold text-foreground">This week</div>
+                <span className="ml-auto text-xs text-muted-foreground">last 5 days</span>
+              </div>
+              {weekRows.length === 0 ? (
+                <div className="border-t border-hairline py-8 text-center text-sm text-muted-foreground">
+                  No daily reports logged yet. Click a day on the calendar to fill its report.
+                </div>
+              ) : (
+                weekRows.map((report) => (
+                  <button
+                    key={report.id}
+                    type="button"
+                    onClick={() => openDay(report.report_date)}
+                    className="flex w-full items-center gap-3.5 border-t border-hairline py-3 text-left transition-colors hover:bg-secondary/50"
+                  >
+                    <span className="w-[92px] flex-none font-serif text-[15px] text-foreground">
+                      {formatShortDate(report.report_date)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
+                      {report.work_performed || "—"}
+                    </span>
+                    {report.delays.trim() ? (
+                      <span className="flex-none rounded-full border border-current px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-danger">
+                        Delay logged
+                      </span>
+                    ) : (
+                      <span className="flex-none text-[11.5px] text-muted-foreground">
+                        {report.crew_count > 0 ? `${report.crew_count} crew` : "—"}
+                      </span>
+                    )}
+                    <span className="flex-none text-muted-foreground">›</span>
+                  </button>
+                ))
+              )}
+              {weekRows.length > 0 ? (
+                <div className="mt-3 rounded-[10px] bg-secondary px-3.5 py-2.5 text-center text-xs text-muted-foreground">
+                  That's the cutoff — older days live in the calendar above.{" "}
+                  <button
+                    type="button"
+                    onClick={() => setCalendarMonth(previousMonth)}
+                    className="font-semibold text-foreground underline underline-offset-2 transition-colors hover:text-clay"
+                  >
+                    Open the {monthName(previousMonth)} log →
+                  </button>
+                </div>
+              ) : null}
+            </section>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ————— Day view: read the day's report, or fill the empty bucket —————
+  return (
+    <div className="space-y-4">
+      <div>
+        <button
+          type="button"
+          onClick={backToLanding}
+          disabled={saveMutation.isPending}
+          className="text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+        >
+          ← All days
+        </button>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h2 className="font-serif text-3xl font-normal leading-[1.18] text-foreground">
+            {formatDayTitle(selectedDay)}
+          </h2>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              aria-label="Previous day"
+              onClick={() => stepDay(-1)}
+              disabled={saveMutation.isPending}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              aria-label="Next day"
+              onClick={() => stepDay(1)}
+              disabled={saveMutation.isPending || selectedDay >= todayDate}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {!showDayForm && dayReport ? (
+        <div className="space-y-3">
+          <DailyReportItem
+            report={dayReport}
+            onOpenAttachment={openAttachment}
+            onEdit={() => openReportForEdit(dayReport)}
+            onDelete={() => confirmDelete(dayReport, { toLanding: true })}
+            deleting={deleteMutation.isPending}
+            hideActions
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              className="gap-1.5 text-muted-foreground"
+              onClick={() => confirmDelete(dayReport, { toLanding: true })}
+              disabled={deleteMutation.isPending}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </Button>
+            <Button className="gap-1.5" onClick={() => openReportForEdit(dayReport)}>
+              <Pencil className="h-3.5 w-3.5" />
+              Edit this report
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+          <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="font-serif text-2xl text-foreground">
+                {editingId ? "Edit daily report" : "Add daily report"}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                One saved record per calendar day. Saving the same date updates that day.
+              </p>
+            </div>
+            {editingId && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={resetForm}
+                disabled={saveMutation.isPending}
+              >
+                Cancel edit
+              </Button>
+            )}
+          </div>
+
+          {/* Everything in this fieldset is captured when Save is pressed —
+              lock it while the save runs so nothing typed or picked mid-flight
+              can be silently thrown away when the save settles. */}
+          <fieldset disabled={saveMutation.isPending} className="contents">
+            <div className="grid gap-4 lg:grid-cols-[1fr_1fr_120px]">
+              <Field label="Report date">
+                <Input
+                  type="date"
+                  value={draft.report_date}
+                  onChange={(e) =>
+                    setDraft((current) => ({ ...current, report_date: e.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Author / PM">
+                <Input
+                  value={draft.author}
+                  placeholder="PM, superintendent, or field lead"
+                  onChange={(e) => setDraft((current) => ({ ...current, author: e.target.value }))}
+                />
+              </Field>
+              <Field label="Crew count">
+                <Input
+                  type="number"
+                  min={0}
+                  value={draft.crew_count}
+                  onChange={(e) =>
+                    setDraft((current) => ({ ...current, crew_count: e.target.value }))
+                  }
+                />
+              </Field>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <Field label="Weather / site conditions">
+                <Input
+                  value={draft.weather}
+                  placeholder="Clear, rain delay, high heat, site access, etc."
+                  onChange={(e) => setDraft((current) => ({ ...current, weather: e.target.value }))}
+                />
+              </Field>
+              <Field label="Manpower by trade">
+                <Input
+                  value={draft.manpower}
+                  placeholder="3 carpenters, 2 electricians, 1 painter"
+                  onChange={(e) =>
+                    setDraft((current) => ({ ...current, manpower: e.target.value }))
+                  }
+                />
+              </Field>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <Field label="Work performed">
+                <Textarea
+                  rows={4}
+                  value={draft.work_performed}
+                  placeholder="What happened on site today?"
+                  onChange={(e) =>
+                    setDraft((current) => ({ ...current, work_performed: e.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Delays / blockers">
+                <Textarea
+                  rows={4}
+                  value={draft.delays}
+                  placeholder="Schedule slippage, missing information, trade issues, owner decisions, inspections."
+                  onChange={(e) => setDraft((current) => ({ ...current, delays: e.target.value }))}
+                />
+              </Field>
+              <Field label="Visitors / inspections">
+                <Textarea
+                  rows={3}
+                  value={draft.visitors}
+                  placeholder="Client visits, inspectors, consultants, vendors, deliveries."
+                  onChange={(e) =>
+                    setDraft((current) => ({ ...current, visitors: e.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Safety notes">
+                <Textarea
+                  rows={3}
+                  value={draft.safety_notes}
+                  placeholder="Incidents, inspections, toolbox talks, safety holds."
+                  onChange={(e) =>
+                    setDraft((current) => ({ ...current, safety_notes: e.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Quality notes">
+                <Textarea
+                  rows={3}
+                  value={draft.quality_notes}
+                  placeholder="Defects, punch items, rework, inspection quality notes."
+                  onChange={(e) =>
+                    setDraft((current) => ({ ...current, quality_notes: e.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Internal notes">
+                <Textarea
+                  rows={3}
+                  value={draft.notes}
+                  placeholder="Private PM notes that should stay in the project record."
+                  onChange={(e) => setDraft((current) => ({ ...current, notes: e.target.value }))}
+                />
+              </Field>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <Field label="Attachments">
+                <div className="space-y-3">
+                  <label
+                    htmlFor="daily-report-file-input"
+                    className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-hairline bg-surface px-4 py-6 text-center transition-colors hover:border-accent/60 hover:bg-accent/5"
+                  >
+                    <Upload className="h-6 w-6 text-accent" />
+                    <span className="text-sm font-medium text-foreground">
+                      Click to attach photos or documents
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      PDF, PNG, JPG, WebP, or HEIC · up to 25&nbsp;MB each · big photos are shrunk
+                      automatically for faster upload
+                    </span>
+                    <input
+                      id="daily-report-file-input"
+                      key={fileInputKey}
+                      type="file"
+                      multiple
+                      accept="application/pdf,image/png,image/jpeg,image/webp,image/heic"
+                      className="sr-only"
+                      onChange={(e) => {
+                        // Picking again ADDS to the list (supers attach photos in
+                        // batches); dedupe so the same pick twice can't double up.
+                        const picked = Array.from(e.target.files ?? []);
+                        if (picked.length === 0) return;
+                        const fileKey = (file: File) =>
+                          `${file.name}|${file.size}|${file.lastModified}`;
+                        setFiles((current) => {
+                          const seen = new Set(current.map(fileKey));
+                          return [...current, ...picked.filter((file) => !seen.has(fileKey(file)))];
+                        });
+                        setFileInputKey((key) => key + 1);
+                      }}
+                    />
+                  </label>
+                  {files.length > 0 && (
+                    <AttachmentList
+                      title="Ready to upload"
+                      attachments={files.map((file) => ({
+                        name: file.name,
+                        path: file.name,
+                        type: file.type,
+                        size: file.size,
+                        uploaded_at: "",
+                        client_visible: draft.client_visible,
+                      }))}
+                      onRemove={(_, index) => removePendingFile(index)}
+                    />
+                  )}
+                  {draft.attachment_manifest.length > 0 && (
+                    <AttachmentList
+                      title="Stored on this report"
+                      attachments={draft.attachment_manifest}
+                      onRemove={(attachment) => removeExistingAttachment(attachment.path)}
+                    />
+                  )}
+                </div>
+              </Field>
+
+              <div className="rounded-md border border-hairline bg-surface p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Label htmlFor="client-visible-daily-log" className="text-sm font-medium">
+                      Client visible
+                    </Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Shares this day's log with the client portal and packet exports. The Work put
+                      in place section stays internal — the client never sees it.
+                    </p>
+                  </div>
+                  <Switch
+                    id="client-visible-daily-log"
+                    checked={draft.client_visible}
+                    onCheckedChange={(checked) =>
+                      setDraft((current) => ({ ...current, client_visible: checked }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          <div className="mt-4">
+            {onOpenWipDay ? (
+              <div className="mb-1.5 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => onOpenWipDay(draft.report_date)}
+                  className="text-xs font-medium text-clay transition-colors hover:underline"
+                >
+                  Open this day in Daily WIP →
+                </button>
+              </div>
+            ) : null}
+            <DailyLogWorkLines
+              projectId={projectId}
+              reportDate={draft.report_date}
+              buckets={buckets}
+            />
+          </div>
+
+          <div className="mt-5 flex flex-col items-end gap-1.5">
+            <Button
+              variant="signal"
+              onClick={() => saveMutation.mutate()}
+              disabled={saveMutation.isPending}
+              className="gap-1.5"
+            >
+              {files.length > 0 ? (
+                <Upload className="h-3.5 w-3.5" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+              {saveMutation.isPending
+                ? uploadProgress && uploadProgress.total > 0
+                  ? `Uploading photo ${Math.min(uploadProgress.done + 1, uploadProgress.total)} of ${
+                      uploadProgress.total
+                    }...`
+                  : "Saving..."
+                : editingId
+                  ? "Save changes"
+                  : "Save daily report"}
+            </Button>
+            {saveMutation.isPending && uploadProgress ? (
+              <p className="text-[11px] text-muted-foreground">
+                Your log is saved — photos are still uploading. Keep this page open until they
+                finish.
+              </p>
+            ) : null}
+          </div>
+        </section>
+      )}
+
+      <details className="group rounded-lg border border-hairline bg-card shadow-card">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-6 [&::-webkit-details-marker]:hidden">
           <div>
-            <h3 className="font-serif text-2xl text-foreground">Daily report history</h3>
+            <h3 className="font-serif text-2xl text-foreground">All reports · search & export</h3>
             <p className="text-sm text-muted-foreground">
               Date-sorted project record for meeting review, dispute support, and job documentation.
             </p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-[minmax(190px,1fr)_140px_140px_150px_auto]">
+          <span
+            aria-hidden
+            className="text-muted-foreground transition-transform group-open:rotate-180"
+          >
+            ▾
+          </span>
+        </summary>
+        <div className="border-t border-hairline px-6 pb-6 pt-4">
+          <div className="mb-4 grid gap-2 sm:grid-cols-[minmax(190px,1fr)_140px_140px_150px_auto]">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -857,43 +1187,35 @@ export function DailyReportsWorkspace({
               {exportingPacket ? "Preparing..." : "Export PDF"}
             </Button>
           </div>
-        </div>
 
-        {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading daily reports...</p>
-        ) : error ? (
-          <div className="rounded-md border border-danger/20 bg-danger/5 p-4 text-sm text-danger">
-            {missingTable
-              ? "Daily Reports are ready in the app, but the project database setup still needs to finish before reports can save."
-              : error.message}
-          </div>
-        ) : reports.length === 0 ? (
-          <div className="rounded-md border border-dashed border-hairline bg-surface p-8 text-center text-sm text-muted-foreground">
-            No daily reports logged yet.
-          </div>
-        ) : filteredReports.length === 0 ? (
-          <div className="rounded-md border border-dashed border-hairline bg-surface p-8 text-center text-sm text-muted-foreground">
-            No daily reports match the current filters.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredReports.map((report) => (
-              <DailyReportItem
-                key={report.id}
-                report={report}
-                onOpenAttachment={openAttachment}
-                onEdit={() => editReport(report)}
-                onDelete={() => {
-                  if (confirm(`Delete the daily report for ${formatDate(report.report_date)}?`)) {
-                    deleteMutation.mutate(report);
-                  }
-                }}
-                deleting={deleteMutation.isPending}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading daily reports...</p>
+          ) : error ? (
+            errorBox
+          ) : reports.length === 0 ? (
+            <div className="rounded-md border border-dashed border-hairline bg-surface p-8 text-center text-sm text-muted-foreground">
+              No daily reports logged yet.
+            </div>
+          ) : filteredReports.length === 0 ? (
+            <div className="rounded-md border border-dashed border-hairline bg-surface p-8 text-center text-sm text-muted-foreground">
+              No daily reports match the current filters.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredReports.map((report) => (
+                <DailyReportItem
+                  key={report.id}
+                  report={report}
+                  onOpenAttachment={openAttachment}
+                  onEdit={() => openReportForEdit(report)}
+                  onDelete={() => confirmDelete(report)}
+                  deleting={deleteMutation.isPending}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </details>
     </div>
   );
 }
@@ -909,13 +1231,31 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function DailyMetric({ label, value }: { label: string; value: string }) {
+function DailyMetric({
+  label,
+  value,
+  caption,
+  tone,
+}: {
+  label: string;
+  value: string;
+  caption?: string;
+  tone?: "good" | "warn";
+}) {
   return (
-    <div className="flex min-h-[72px] flex-col justify-between rounded-md border border-hairline bg-surface p-3">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+    <div className="rounded-lg border border-hairline bg-card px-3.5 py-3">
+      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
         {label}
       </div>
-      <div className="text-lg font-medium tabular text-foreground">{value}</div>
+      <div
+        className={cn(
+          "mt-1 font-serif text-[22px] leading-tight",
+          tone === "good" ? "text-success" : tone === "warn" ? "text-warning" : "text-foreground",
+        )}
+      >
+        {value}
+      </div>
+      {caption ? <div className="mt-0.5 text-[10.5px] text-muted-foreground">{caption}</div> : null}
     </div>
   );
 }
@@ -967,15 +1307,25 @@ function DailyReportItem({
   onEdit,
   onDelete,
   deleting,
+  hideActions,
 }: {
   report: DailyReportRow;
   onOpenAttachment: (attachment: DailyReportAttachment) => void;
   onEdit: () => void;
   onDelete: () => void;
   deleting: boolean;
+  /** The day view shows its own explicit Edit/Delete buttons instead. */
+  hideActions?: boolean;
 }) {
   return (
-    <article className="grid gap-4 rounded-md border border-hairline bg-surface p-4 lg:grid-cols-[180px_minmax(0,1fr)_auto]">
+    <article
+      className={cn(
+        "grid gap-4 rounded-md border border-hairline bg-surface p-4",
+        hideActions
+          ? "lg:grid-cols-[180px_minmax(0,1fr)]"
+          : "lg:grid-cols-[180px_minmax(0,1fr)_auto]",
+      )}
+    >
       <div>
         <div className="font-serif text-2xl leading-none text-foreground">
           {formatDate(report.report_date)}
@@ -1024,20 +1374,22 @@ function DailyReportItem({
         })}
       </div>
 
-      <div className="flex items-start justify-end gap-1">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit}>
-          <Pencil className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={onDelete}
-          disabled={deleting}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+      {hideActions ? null : (
+        <div className="flex items-start justify-end gap-1">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit}>
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onDelete}
+            disabled={deleting}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
     </article>
   );
 }

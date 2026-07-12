@@ -30,11 +30,11 @@ export function ScheduleWorkbenchStat({
           ? "text-danger"
           : "text-foreground";
   return (
-    <div className="min-w-0 rounded-md border border-hairline bg-card p-3">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+    <div className="min-w-0 rounded-[10px] border border-hairline bg-background p-3">
+      <div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
         {label}
       </div>
-      <div className={`mt-1 truncate text-xl font-semibold tabular ${toneClass}`}>{value}</div>
+      <div className={`mt-1 truncate font-serif text-xl tabular ${toneClass}`}>{value}</div>
       <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
     </div>
   );
@@ -62,7 +62,7 @@ export function ScheduleUpdateReadinessPanel({
   return (
     <div
       className={cn(
-        "mt-4 rounded-md border bg-card p-4",
+        "mt-3.5 rounded-[10px] border bg-background p-4",
         tone === "success"
           ? "border-success/25"
           : tone === "danger"
@@ -72,7 +72,7 @@ export function ScheduleUpdateReadinessPanel({
     >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          <div className="flex items-center gap-2 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
             {summary.needsStatusCount === 0 ? (
               <CheckCircle2 className="h-3.5 w-3.5 text-success" />
             ) : (
@@ -246,10 +246,10 @@ export function ScheduleQualityQueue({
   const hiddenCount = Math.max(0, items.length - visibleItems.length);
 
   return (
-    <div className="mt-4 rounded-md border border-hairline bg-card p-4">
+    <div className="mt-3.5 rounded-[10px] border border-hairline bg-background p-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          <div className="flex items-center gap-2 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
             <AlertTriangle className="h-3.5 w-3.5" />
             Schedule quality queue
           </div>
