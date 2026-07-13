@@ -9,7 +9,14 @@
 //
 // So this surface writes only the physical fields and, when editing a line the
 // office has already costed, preserves the existing money fields untouched.
-import { useMemo, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  type ForwardedRef,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -81,6 +88,11 @@ function activityOptionLabel(a: ScheduleActivityOption): string {
   return [a.activity_id, a.name].filter(Boolean).join(" · ") || "Untitled activity";
 }
 
+// A quantity row is worth keeping when it carries a real measure, unit, or note.
+function qtyRowHasContent(row: QuantityItem): boolean {
+  return row.quantity > 0 || row.unit.trim() !== "" || row.description.trim() !== "";
+}
+
 // "500 LF conduit · 24 junction boxes" — the itemized quantities for a saved row,
 // falling back to the scalar quantity/unit for rows predating the list.
 function quantitiesSummary(entry: DailyWipEntryRow): string | null {
@@ -117,7 +129,22 @@ function isCosted(entry: DailyWipEntryRow): boolean {
   return entry.labor_rate > 0 || entry.material_cost > 0 || entry.equipment_cost > 0;
 }
 
-export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWorkLinesProps) {
+export interface DailyLogWorkLinesHandle {
+  /** True when the compose form holds an un-added work line (a dirty draft). */
+  hasPendingLine: () => boolean;
+  /**
+   * Persist any work line the super typed into the compose form but did not
+   * press "Add line" on, so the parent Daily Report Save can never silently
+   * drop it. No-op when the form is empty. AWAITS the save and rejects on
+   * failure, so the caller only reports success once the line is durable.
+   */
+  flushPendingLine: () => Promise<void>;
+}
+
+function DailyLogWorkLinesImpl(
+  { projectId, reportDate, buckets }: DailyLogWorkLinesProps,
+  ref: ForwardedRef<DailyLogWorkLinesHandle>,
+) {
   const queryClient = useQueryClient();
   const listEntries = useServerFn(listDailyWipEntries);
   const listActivities = useServerFn(listScheduleActivitiesForWip);
@@ -179,9 +206,6 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
       "quantity_items",
       qtyRows.filter((_, idx) => idx !== index),
     );
-  const qtyRowHasContent = (row: QuantityItem) =>
-    row.quantity > 0 || row.unit.trim() !== "" || row.description.trim() !== "";
-
   const resetForm = () => {
     setDraft(emptyLine);
     setEditing(null);
@@ -248,11 +272,9 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
     draft.quantity > 0 ||
     draft.quantity_items.some(qtyRowHasContent);
 
-  const handleSave = () => {
-    if (!draftHasContent) {
-      toast.error("Add an activity, cost code, schedule activity, or crew/hours first");
-      return;
-    }
+  // Build the save payload from the current compose draft. Shared by the "Add
+  // line" button and the parent-triggered flush so both persist identical rows.
+  const buildSavePayload = useCallback(() => {
     // Preserve any money the office already added to this line; new lines start uncosted.
     const money = editing;
     // Keep only rows that carry a real measure/count.
@@ -261,7 +283,7 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
       unit: row.unit.trim(),
       description: row.description.trim(),
     }));
-    saveMutation.mutate({
+    return {
       projectId,
       id: draft.id,
       entry_date: reportDate,
@@ -282,8 +304,33 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
       material_items: money?.material_items ?? [],
       equipment_items: money?.equipment_items ?? [],
       notes: money?.notes ?? "",
-    });
+    };
+  }, [projectId, reportDate, draft, editing]);
+
+  const handleSave = () => {
+    if (!draftHasContent) {
+      toast.error("Add an activity, cost code, schedule activity, or crew/hours first");
+      return;
+    }
+    saveMutation.mutate(buildSavePayload());
   };
+
+  // The parent Daily Report "Save" commits any un-added work line through here,
+  // so a draft the super typed but never pressed "Add line" on is not lost when
+  // the report saves and the editor closes. The flush AWAITS the same mutation
+  // "Add line" uses (which resets the form, refreshes the WIP list, and rejects
+  // on failure), so the report only reports success once the line is durable.
+  useImperativeHandle(
+    ref,
+    () => ({
+      hasPendingLine: () => draftHasContent,
+      flushPendingLine: async () => {
+        if (!draftHasContent) return;
+        await saveMutation.mutateAsync(buildSavePayload());
+      },
+    }),
+    [draftHasContent, saveMutation, buildSavePayload],
+  );
 
   const selectClass =
     "rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60";
@@ -584,3 +631,5 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
     </div>
   );
 }
+
+export const DailyLogWorkLines = forwardRef(DailyLogWorkLinesImpl);

@@ -20,6 +20,7 @@
     "test:compliance": "node --experimental-strip-types scripts/compliance-smoke.ts",
     "test:submittals": "node --experimental-strip-types scripts/submittal-log-smoke.ts",
     "test:wip": "node --experimental-strip-types scripts/daily-wip-smoke.ts",
+    "test:worklines": "vitest run scripts/daily-report-worklines-flush.test.tsx",
     "test:billing:aia": "node --experimental-strip-types scripts/aia-pdf-fixture-smoke.ts",
     "test:billing:portal": "vitest run scripts/portal-view-signal.test.tsx",
     "test:webhook": "vitest run scripts/stripe-webhook-idempotency.test.tsx",
