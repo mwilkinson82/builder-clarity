@@ -13,6 +13,8 @@ const {
   deleteReportSpy,
   deleteWipSpy,
   listActivitiesSpy,
+  listDirectorySpy,
+  listProjectSubsSpy,
   listReportsSpy,
   listWipSpy,
   saveReportSpy,
@@ -21,6 +23,8 @@ const {
   deleteReportSpy: vi.fn(),
   deleteWipSpy: vi.fn(),
   listActivitiesSpy: vi.fn(),
+  listDirectorySpy: vi.fn(),
+  listProjectSubsSpy: vi.fn(),
   listReportsSpy: vi.fn(),
   listWipSpy: vi.fn(),
   saveReportSpy: vi.fn(),
@@ -38,6 +42,12 @@ vi.mock("@/lib/daily-wip.functions", () => ({
   listDailyWipEntries: listWipSpy,
   listScheduleActivitiesForWip: listActivitiesSpy,
   saveDailyWipEntry: saveWipSpy,
+}));
+vi.mock("@/lib/subcontractors.functions", () => ({
+  listSubcontractors: listDirectorySpy,
+}));
+vi.mock("@/lib/subcontracts.functions", () => ({
+  listProjectSubcontracts: listProjectSubsSpy,
 }));
 vi.mock("@/components/outcome/DailyReportsCalendar", () => ({
   DailyReportsCalendar: ({
@@ -107,6 +117,15 @@ beforeEach(() => {
   deleteReportSpy.mockReset().mockResolvedValue({ id: "report-1" });
   deleteWipSpy.mockReset().mockResolvedValue({ id: "wip-1" });
   listActivitiesSpy.mockReset().mockResolvedValue([]);
+  listDirectorySpy.mockReset().mockResolvedValue([]);
+  listProjectSubsSpy.mockReset().mockResolvedValue({
+    subcontracts: [],
+    allocations: [],
+    payments: [],
+    documents: [],
+    change_orders: [],
+    payment_allocations: [],
+  });
   listReportsSpy.mockReset().mockResolvedValue([]);
   listWipSpy.mockReset().mockResolvedValue([]);
   saveReportSpy.mockReset();

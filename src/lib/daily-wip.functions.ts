@@ -77,7 +77,9 @@ function isMissingDailyWipTable(error: DynamicSupabaseError | null) {
 // them errors on the unknown column. Strip both and retry so the line still
 // saves (without the new fields). Mirrors billing.functions' isMissingWipOffsetColumn.
 const isMissingDailyWipLineColumn = (message: string) =>
-  /percent_basis|quantity_items/i.test(message);
+  /percent_basis|quantity_items|unmatched_vendor_name/i.test(message);
+
+const isMissingUnmatchedVendorColumn = (message: string) => /unmatched_vendor_name/i.test(message);
 
 export interface DailyWipEntryRow {
   id: string;
@@ -86,6 +88,10 @@ export interface DailyWipEntryRow {
   schedule_activity_id: string | null;
   // SUBCONTRACTORS Slice 2: tag a daily-WIP line to a sub (self-perform ↔ sub).
   subcontractor_id: string | null;
+  // Field fallback when the company has not been bought out / added to the
+  // project subcontractor directory yet. The PM can later replace it with the
+  // canonical subcontractor_id.
+  unmatched_vendor_name: string;
   entry_date: string;
   activity: string;
   crew_count: number;
@@ -119,6 +125,7 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
   schedule_activity_id: (row.schedule_activity_id as string | null) ?? null,
   subcontractor_id: (row.subcontractor_id as string | null) ?? null,
+  unmatched_vendor_name: str(row.unmatched_vendor_name),
   entry_date: str(row.entry_date),
   activity: str(row.activity),
   crew_count: num(row.crew_count),
@@ -153,6 +160,7 @@ const entryFieldsInput = z.object({
   cost_bucket_id: z.string().uuid().nullable().default(null),
   schedule_activity_id: z.string().uuid().nullable().default(null),
   subcontractor_id: z.string().uuid().nullable().default(null),
+  unmatched_vendor_name: z.string().max(200).default(""),
   entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "entry_date must be YYYY-MM-DD"),
   activity: z.string().max(500).default(""),
   crew_count: z.number().min(0).default(0),
@@ -214,6 +222,9 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<DailyWipEntryRow> => {
+    if (data.subcontractor_id && data.unmatched_vendor_name.trim()) {
+      throw new Error("Choose a project subcontractor or enter an unlisted vendor name, not both.");
+    }
     // percent_source is a write-time discriminator, not a column — keep it out of
     // the DB payload.
     const { projectId, id, percent_source, ...fields } = data;
@@ -277,10 +288,25 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
         ? table.update(body).eq("id", id).select("*").single()
         : table.insert(body).select("*").single();
     let saveRes = await runSave(payload);
-    // Pre-migration: percent_basis / quantity_items don't exist yet — drop both
-    // and retry so the line still saves (without the new fields).
+    // Pre-migration: optional line-detail columns may not exist yet. Existing
+    // self-perform / canonical-sub rows still save through the compatibility
+    // retry. Never discard a typed unmatched vendor name: fail clearly so the
+    // superintendent cannot believe that attribution was saved when it was not.
     if (saveRes.error && isMissingDailyWipLineColumn(saveRes.error.message)) {
-      const { percent_basis: _pb, quantity_items: _qi, ...withoutLineCols } = payload;
+      if (
+        isMissingUnmatchedVendorColumn(saveRes.error.message) &&
+        fields.unmatched_vendor_name.trim()
+      ) {
+        throw new Error(
+          "Unlisted vendor names aren't enabled yet — apply the latest Daily WIP database migration before saving this vendor.",
+        );
+      }
+      const {
+        percent_basis: _pb,
+        quantity_items: _qi,
+        unmatched_vendor_name: _uv,
+        ...withoutLineCols
+      } = payload;
       saveRes = await runSave(withoutLineCols);
     }
     const { data: row, error } = saveRes;
