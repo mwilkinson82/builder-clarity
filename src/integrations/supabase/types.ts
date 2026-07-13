@@ -1352,6 +1352,7 @@ export type Database = {
           schedule_activity_id: string | null
           subcontractor_id: string | null
           unit: string
+          unmatched_vendor_name: string
           updated_at: string
         }
         Insert: {
@@ -1379,6 +1380,7 @@ export type Database = {
           schedule_activity_id?: string | null
           subcontractor_id?: string | null
           unit?: string
+          unmatched_vendor_name?: string
           updated_at?: string
         }
         Update: {
@@ -1406,6 +1408,7 @@ export type Database = {
           schedule_activity_id?: string | null
           subcontractor_id?: string | null
           unit?: string
+          unmatched_vendor_name?: string
           updated_at?: string
         }
         Relationships: [
