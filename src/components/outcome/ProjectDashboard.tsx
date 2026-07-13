@@ -107,6 +107,9 @@ export function ProjectDashboard({
     scheduleMovementSinceLastUpdate ??
     weeksBetween(lastReviewForecast, project.forecast_completion_date);
   const totalHolds = rollup.exposureHolds + rollup.contingencyHold;
+  const approvedCOMargin = rollup.approvedCOContract - rollup.approvedCOCost;
+  const baseCostVariance = rollup.baseProjectedCost - project.original_cost_budget;
+  const weightedPendingCOMargin = rollup.weightedPendingCOContract - rollup.weightedPendingCOCost;
   // The dashboard compares like with like: the current signed deal includes
   // approved CO revenue and cost. Pending COs remain a separate weighted forecast.
   const gpDelta = rollup.currentSignedGP - rollup.indicatedGP;
@@ -225,7 +228,7 @@ export function ProjectDashboard({
 
       {/* 2 · Forecast bridge */}
       <div className="eyebrow mt-9">How the forecast is built</div>
-      <div className="mt-3.5 grid items-stretch gap-4 md:grid-cols-[1fr_1fr_1.1fr]">
+      <div className="mt-3.5 grid items-stretch gap-4 md:grid-cols-2">
         <div className="rounded-xl border border-hairline bg-card p-4 lg:px-5">
           <div className={bridgeLabelClass}>01 · Revenue forecast</div>
           <div className="mt-2">
@@ -251,6 +254,11 @@ export function ProjectDashboard({
         <div className="rounded-xl border border-hairline bg-card p-4 lg:px-5">
           <div className={bridgeLabelClass}>02 · Cost forecast</div>
           <div className="mt-2">
+            <BridgeRow label="Original build cost" value={fmtUSD(project.original_cost_budget)} />
+            <BridgeRow
+              label={baseCostVariance >= 0 ? "+ Forecast cost growth" : "− Forecast cost savings"}
+              value={fmtUSD(Math.abs(baseCostVariance))}
+            />
             <BridgeRow label="Base projected cost" value={fmtUSD(rollup.baseProjectedCost)} />
             <BridgeRow label="+ Approved CO costs" value={fmtUSD(rollup.approvedCOCost)} />
             <BridgeRow
@@ -265,41 +273,113 @@ export function ProjectDashboard({
           </div>
         </div>
 
-        {/* On-dark tints inside the dark result card use the documented
-            dark-panel exception (THEMING.md): fixed on-dark green/red hex. */}
-        <div className="flex flex-col rounded-xl bg-dark-panel p-4 text-dark-panel-foreground lg:px-5">
+        <div className="rounded-xl bg-dark-panel p-4 text-dark-panel-foreground md:col-span-2 lg:px-5 lg:py-[18px]">
           <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-dark-panel-foreground/60">
-            03 · GP result
+            03 · GP recovery bridge
           </div>
-          <div className="mt-2">
-            <BridgeRow
-              label="GP before holds"
-              value={fmtUSD(rollup.forecastedGPBeforeHolds)}
-              dark
-            />
-            <BridgeRow label="− E-Hold · specific" value={fmtUSD(rollup.exposureHolds)} dark />
-            <BridgeRow label="− C-Hold · uncertainty" value={fmtUSD(rollup.contingencyHold)} dark />
-          </div>
-          <div className="mt-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="font-serif text-[32px] leading-none tabular">
-              {fmtUSD(rollup.indicatedGP)}
-            </span>
-            <span className="text-[12.5px] text-dark-panel-foreground/60">
-              Indicated GP · {fmtPct(rollup.indicatedGPpct)}
-            </span>
-          </div>
-          <div className="mt-auto flex flex-col gap-1 border-t border-dark-panel-foreground/20 pt-2.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
-            <span className="text-[12.5px] text-dark-panel-foreground/60">
-              Current signed GP {fmtUSD(rollup.currentSignedGP)} ·{" "}
-              {fmtPct(rollup.currentSignedGPpct)}
-            </span>
-            <span
-              className={`whitespace-nowrap font-serif text-[19px] tabular ${
-                gpUpside ? "text-[#7FB08A]" : gpDelta > 0 ? "text-[#E08A76]" : ""
-              }`}
-            >
-              {gpUpside ? `+${gpDeltaValue}` : gpDelta > 0 ? `−${gpDeltaValue}` : gpDeltaValue}
-            </span>
+          <p className="mt-1.5 max-w-[78ch] text-[12.5px] leading-relaxed text-dark-panel-foreground/60">
+            Start with the gross profit committed in the IOR, then track forecast movement and holds
+            to the profit currently indicated.
+          </p>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-3 md:gap-0">
+            <div className="min-w-0 md:pr-5">
+              <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-dark-panel-foreground/60">
+                Signed GP target
+              </div>
+              <div className="mt-1.5">
+                <BridgeRow label="Original planned GP" value={fmtUSD(rollup.originalGP)} dark />
+                <BridgeRow
+                  label={
+                    approvedCOMargin >= 0 ? "+ Approved CO margin" : "− Approved CO margin erosion"
+                  }
+                  value={fmtUSD(approvedCOMargin, { sign: true })}
+                  dark
+                />
+                <BridgeRow
+                  label="Current signed GP target"
+                  value={fmtUSD(rollup.currentSignedGP)}
+                  dark
+                  strong
+                />
+              </div>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-dark-panel-foreground/50">
+                <span className="block">
+                  {fmtUSD(rollup.originalContract)} original contract −{" "}
+                  {fmtUSD(project.original_cost_budget)} original build cost
+                </span>
+                <span className="block">
+                  {fmtUSD(rollup.currentSignedContract)} current signed contract ·{" "}
+                  {fmtPct(rollup.currentSignedGPpct)} planned margin
+                </span>
+              </p>
+            </div>
+
+            <div className="min-w-0 border-t border-dark-panel-foreground/20 pt-4 md:border-l md:border-t-0 md:px-5 md:pt-0">
+              <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-dark-panel-foreground/60">
+                Forecast movement
+              </div>
+              <div className="mt-1.5">
+                <BridgeRow
+                  label={
+                    baseCostVariance >= 0
+                      ? "− Base cost forecast growth"
+                      : "+ Base cost forecast savings"
+                  }
+                  value={fmtUSD(-baseCostVariance, { sign: true })}
+                  dark
+                />
+                <BridgeRow
+                  label={
+                    weightedPendingCOMargin >= 0
+                      ? "+ Pending CO margin · weighted"
+                      : "− Pending CO margin · weighted"
+                  }
+                  value={fmtUSD(weightedPendingCOMargin, { sign: true })}
+                  dark
+                />
+                <BridgeRow
+                  label="GP before holds"
+                  value={fmtUSD(rollup.forecastedGPBeforeHolds)}
+                  dark
+                  strong
+                />
+              </div>
+            </div>
+
+            <div className="flex min-w-0 flex-col border-t border-dark-panel-foreground/20 pt-4 md:border-l md:border-t-0 md:pl-5 md:pt-0">
+              <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-dark-panel-foreground/60">
+                Holds and result
+              </div>
+              <div className="mt-1.5">
+                <BridgeRow label="− E-Hold · specific" value={fmtUSD(-rollup.exposureHolds)} dark />
+                <BridgeRow
+                  label="− C-Hold · uncertainty"
+                  value={fmtUSD(-rollup.contingencyHold)}
+                  dark
+                />
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="font-serif text-[32px] leading-none tabular">
+                  {fmtUSD(rollup.indicatedGP)}
+                </span>
+                <span className="text-[12.5px] text-dark-panel-foreground/60">
+                  Indicated GP · {fmtPct(rollup.indicatedGPpct)}
+                </span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-dark-panel-foreground/20 pt-2.5">
+                <span className="text-[12.5px] text-dark-panel-foreground/60">
+                  Gap to signed GP target
+                </span>
+                <span className="whitespace-nowrap font-serif text-[19px] tabular text-dark-panel-foreground">
+                  {gpUpside
+                    ? fmtUSD(Math.abs(gpDelta), { sign: true })
+                    : gpDelta > 0
+                      ? fmtUSD(-gpDelta)
+                      : fmtUSD(gpDelta)}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
