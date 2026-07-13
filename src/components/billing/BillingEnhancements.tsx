@@ -71,6 +71,15 @@ type CostActualDraft = {
   notes: string;
 };
 
+// A per-cost-code line for the multi-line "Add cost actual" path — only the
+// fields that vary line to line. The shared invoice fields come from the draft.
+type ExtraCostLine = {
+  cost_bucket_id: string | null;
+  cost_code: string;
+  description: string;
+  amount: number;
+};
+
 // How a cost was paid, captured when marking it paid (field request 2026-07-10).
 export type CostPaymentDetails = {
   payment_method: string; // wire | check | card | ach | other
@@ -1161,6 +1170,39 @@ export function ProjectCostTrackingPanel({
     status: "draft",
     notes: "",
   }));
+  // Multi-line cost entry (field feedback 2026-07-13): extra cost-code lines on
+  // the SAME invoice. Each shares the invoice-level fields on `draft` (vendor,
+  // reference #, date, category, stage, notes); only the cost code, description,
+  // and amount vary. Create-path only — editing an existing cost stays single.
+  const [extraLines, setExtraLines] = useState<ExtraCostLine[]>([]);
+  const addExtraLine = () =>
+    setExtraLines((lines) => [
+      ...lines,
+      {
+        cost_bucket_id: buckets[0]?.id ?? null,
+        cost_code: buckets[0]?.cost_code ?? "",
+        description: "",
+        amount: 0,
+      },
+    ]);
+  const updateExtraLine = (index: number, patch: Partial<ExtraCostLine>) =>
+    setExtraLines((lines) => lines.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+  const removeExtraLine = (index: number) =>
+    setExtraLines((lines) => lines.filter((_, i) => i !== index));
+  const chooseExtraLineBucket = (index: number, bucketId: string) => {
+    const bucket = bucketId === "unmatched" ? undefined : buckets.find((b) => b.id === bucketId);
+    updateExtraLine(index, {
+      cost_bucket_id: bucket?.id ?? null,
+      cost_code: bucket?.cost_code ?? "",
+    });
+  };
+  // An added line "counts" once it carries an amount or a description; a blank
+  // one is ignored on save. Every counted line still needs a description (the
+  // server requires one), which gates the Save button.
+  const activeExtraLines = extraLines.filter(
+    (line) => line.amount !== 0 || line.description.trim() !== "",
+  );
+  const extraLinesValid = activeExtraLines.every((line) => line.description.trim() !== "");
   // The details window's save: build the vendor out in the directory, then
   // select it into the cost being entered.
   const editingCost = editingCostId
@@ -1250,6 +1292,7 @@ export function ProjectCostTrackingPanel({
   };
 
   const startEditCost = (actual: CostActualRow) => {
+    setExtraLines([]);
     setDraft({
       cost_bucket_id: actual.cost_bucket_id,
       cost_code: actual.cost_code,
@@ -1269,6 +1312,7 @@ export function ProjectCostTrackingPanel({
   const resetCostForm = () => {
     setOpen(false);
     setEditingCostId(null);
+    setExtraLines([]);
     setDraft({
       cost_bucket_id: buckets[0]?.id ?? null,
       cost_code: buckets[0]?.cost_code ?? "",
@@ -1308,6 +1352,17 @@ export function ProjectCostTrackingPanel({
       }
     } else {
       onCreateCostActual(draft);
+      // Extra cost-code lines on the same invoice inherit every shared field
+      // from the draft; only the code, description, and amount differ.
+      for (const line of activeExtraLines) {
+        onCreateCostActual({
+          ...draft,
+          cost_bucket_id: line.cost_bucket_id,
+          cost_code: line.cost_code,
+          description: line.description,
+          amount: line.amount,
+        });
+      }
     }
     enrollTypedVendor();
     resetCostForm();
@@ -1507,6 +1562,10 @@ export function ProjectCostTrackingPanel({
                       value={draft.amount}
                       onValueChange={(amount) => setDraft({ ...draft, amount })}
                       align="right"
+                      // Credits & refunds (field feedback 2026-07-13): a negative
+                      // amount records a supplier credit and reduces this code's
+                      // actuals.
+                      allowNegative
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -1518,6 +1577,100 @@ export function ProjectCostTrackingPanel({
                     />
                   </div>
                 </div>
+                <p className="-mt-1 text-[11px] text-muted-foreground">
+                  Got money back? Enter a{" "}
+                  <span className="font-medium text-foreground">negative amount</span> to record a
+                  supplier credit or refund against this cost code.
+                </p>
+                {/* Multi-line entry (field feedback 2026-07-13): one supplier
+                    invoice can span several cost codes. Add extra lines here —
+                    each shares the vendor, reference #, date, category, and stage
+                    below — instead of re-keying the whole form per code. Create
+                    only; editing an existing cost stays single-line. */}
+                {!editingCostId ? (
+                  <div className="space-y-2.5 rounded-md border border-hairline bg-surface/60 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          More cost codes on this invoice
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Split one invoice across codes — each line shares the vendor, reference #,
+                          date, and stage.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={addExtraLine}
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Add line
+                      </Button>
+                    </div>
+                    {extraLines.map((line, index) => (
+                      <div
+                        key={index}
+                        className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px_auto] md:items-end"
+                      >
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Cost code</Label>
+                          <Select
+                            value={line.cost_bucket_id ?? "unmatched"}
+                            onValueChange={(value) => chooseExtraLineBucket(index, value)}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="unmatched">Unmatched</SelectItem>
+                              {buckets.map((bucket) => (
+                                <SelectItem key={bucket.id} value={bucket.id}>
+                                  {bucket.cost_code ? `${bucket.cost_code} - ` : ""}
+                                  {bucket.bucket}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Description</Label>
+                          <Input
+                            value={line.description}
+                            onChange={(event) =>
+                              updateExtraLine(index, { description: event.target.value })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Amount</Label>
+                          <MoneyInput
+                            value={line.amount}
+                            onValueChange={(amount) => updateExtraLine(index, { amount })}
+                            align="right"
+                            allowNegative
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="text-muted-foreground hover:text-danger"
+                          onClick={() => removeExtraLine(index)}
+                          aria-label="Remove line"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                    {extraLines.length > 0 && !extraLinesValid ? (
+                      <p className="text-[11px] text-danger">
+                        Every added line needs a description before you can save.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>Vendor</Label>
@@ -1600,8 +1753,15 @@ export function ProjectCostTrackingPanel({
                   <Button variant="ghost" onClick={resetCostForm}>
                     Cancel
                   </Button>
-                  <Button onClick={save} disabled={savingCost || !draft.description.trim()}>
-                    {editingCostId ? "Save changes" : "Save cost"}
+                  <Button
+                    onClick={save}
+                    disabled={savingCost || !draft.description.trim() || !extraLinesValid}
+                  >
+                    {editingCostId
+                      ? "Save changes"
+                      : activeExtraLines.length > 0
+                        ? `Save ${activeExtraLines.length + 1} costs`
+                        : "Save cost"}
                   </Button>
                 </div>
               </DialogFooter>

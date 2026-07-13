@@ -1094,7 +1094,10 @@ const costActualInput = z.object({
   category: z
     .enum(["direct", "labor", "material", "equipment", "subcontract", "overhead"])
     .default("direct"),
-  amount: z.number().min(0),
+  // Signed: a negative amount is a supplier credit / refund (field feedback
+  // 2026-07-13). The bucket rollup trigger applies the signed delta, so a credit
+  // reduces the code's actuals.
+  amount: z.number(),
   vendor: z.string().max(200).default(""),
   reference_number: z.string().max(200).default(""),
   cost_date: z.string().min(1),
@@ -1102,13 +1105,19 @@ const costActualInput = z.object({
   notes: z.string().max(2000).default(""),
 });
 
-// The draft/approved stages need the payables-approval migration. If it isn't
-// applied yet the DB CHECK rejects them — translate that into plain English
+// The draft/approved stages need the payables-approval migration, and credits
+// (negative amounts) need the cost_actual_credits migration. If either isn't
+// applied yet the DB CHECK rejects the write — translate that into plain English
 // instead of surfacing a constraint name.
-const mapCostStatusError = (message: string) =>
-  message.includes("cost_actuals_status_check")
-    ? 'The invoice approval stages are not enabled yet (database update pending). Save the cost as "Committed" or "Paid" for now.'
-    : message;
+const mapCostStatusError = (message: string) => {
+  if (message.includes("cost_actuals_status_check")) {
+    return 'The invoice approval stages are not enabled yet (database update pending). Save the cost as "Committed" or "Paid" for now.';
+  }
+  if (message.includes("cost_actuals_amount_check")) {
+    return "Credits and refunds (negative amounts) are not enabled yet (database update pending). Enter a positive amount for now.";
+  }
+  return message;
+};
 
 export const createCostActual = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -1167,7 +1176,8 @@ const updateCostActualInput = z.object({
   category: z
     .enum(["direct", "labor", "material", "equipment", "subcontract", "overhead"])
     .default("direct"),
-  amount: z.number().min(0),
+  // Signed: negative = supplier credit / refund (see costActualInput).
+  amount: z.number(),
   vendor: z.string().max(200).default(""),
   reference_number: z.string().max(200).default(""),
   cost_date: z.string().min(1),

@@ -3213,6 +3213,9 @@ function ProjectPage() {
                   rollup={rollup}
                   changeOrders={changeOrders}
                   buckets={buckets}
+                  ledgerBuckets={ledgerBuckets}
+                  subCostByBucket={subCostByBucket}
+                  selfPerformByBucket={selfPerformByBucket}
                   exposures={exposures}
                   exposureAllocations={exposureAllocationsQuery.data ?? []}
                   billingApplications={visibleBillingApplications}

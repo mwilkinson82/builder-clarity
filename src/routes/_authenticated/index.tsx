@@ -205,6 +205,18 @@ function PortfolioPage() {
     if (typeof window === "undefined") return null;
     return new URLSearchParams(window.location.search).get("opportunity");
   });
+  // Keep the visible tab in lock-step with the URL. This classic view is reached
+  // both by ?tab= deep links and by the shared PortfolioTopBar's CRM/Portfolio
+  // links — client navigations that change the search param WITHOUT going through
+  // the internal tab toggle. Without this, those links moved the URL but left the
+  // old panel on screen, so switching between the new home and the CRM/Projects
+  // view read as landing back in the wrong ("old") view (field feedback
+  // 2026-07-13). Deriving from the router search makes the panel always match.
+  const urlTab = useLocation({ select: (l) => (l.search as { tab?: unknown }).tab });
+  useEffect(() => {
+    const isPipeline = typeof urlTab === "string" && (urlTab === "pipeline" || urlTab === "crm");
+    setPortfolioTab(isPipeline ? "pipeline" : "projects");
+  }, [urlTab]);
   const companyNames = useMemo(
     () =>
       Array.from(new Set(projects.map((p) => p.organization_name.trim()).filter(Boolean))).sort(
