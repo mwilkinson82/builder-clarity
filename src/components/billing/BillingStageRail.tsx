@@ -110,16 +110,20 @@ export function BillingStageRail({
                   {stage.title}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 pl-[27px]">
+              <div className="flex items-start gap-1.5 pl-[27px]">
                 <span
                   className={cn(
-                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    "mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full",
                     blocked ? "bg-warning" : TONE_DOT[stage.tone],
                   )}
                 />
                 <span
                   className={cn(
-                    "truncate text-[11px]",
+                    // Wrap the state line instead of truncating it — the rail is
+                    // only ~186px wide, so chips like "Application 2 ready to
+                    // certify" or "Underbilled $128,312" were getting cut mid-word
+                    // and left unreadable (field feedback 2026-07-13).
+                    "min-w-0 text-[11px] leading-snug",
                     blocked
                       ? "text-warning"
                       : active

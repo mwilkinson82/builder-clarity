@@ -88,6 +88,9 @@ export function BillingWorkspace({
   rollup,
   changeOrders,
   buckets,
+  ledgerBuckets,
+  subCostByBucket,
+  selfPerformByBucket,
   exposures,
   exposureAllocations,
   billingApplications,
@@ -131,6 +134,19 @@ export function BillingWorkspace({
   rollup: Rollup;
   changeOrders: ChangeOrderRow[];
   buckets: BucketRow[];
+  // Same buckets with self-perform daily WIP folded into actuals — mirrors the
+  // top-level Budget tab so the billing-side ledger reads identically. Falls back
+  // to raw `buckets` when the route doesn't supply it.
+  ledgerBuckets?: BucketRow[];
+  // Subcontractor cost + self-perform layers, threaded through so the Budget
+  // stage's ledger tracks actuals/open on subcontracted lines (e.g. a bought-out
+  // "Saw Cutting" scope) exactly the way the Budget tab does. Without these, a
+  // pure sub line collapses to $0 actuals/open on the billing side.
+  subCostByBucket?: ReadonlyMap<
+    string,
+    { paid: number; open: number; committed?: number; earned?: number }
+  >;
+  selfPerformByBucket?: ReadonlyMap<string, number>;
   exposures: ExposureRow[];
   exposureAllocations: ExposureAllocationRow[];
   billingApplications: BillingApplicationRow[];
@@ -1260,11 +1276,13 @@ export function BillingWorkspace({
             <TabsContent value="budget" className="mt-0">
               <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
                 <BudgetLedgerTable
-                  buckets={buckets}
+                  buckets={ledgerBuckets ?? buckets}
                   exposures={exposures}
                   allocations={exposureAllocations}
                   changeOrders={changeOrders}
                   changeOrderAllocations={billingWorkspace?.changeOrderAllocations ?? []}
+                  subCostByBucket={subCostByBucket}
+                  selfPerformByBucket={selfPerformByBucket}
                 />
               </div>
             </TabsContent>
