@@ -365,6 +365,38 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
   );
 }
 
+// ── The Money dashboard separates the signed deal from weighted pending COs.
+//    Approved CO margin belongs in current signed GP; pending COs do not. ──
+{
+  const rollup = computeRollup(
+    {
+      original_contract: 3_200_000,
+      original_cost_budget: 2_720_000,
+      phase: "Middle",
+      percent_complete: 60,
+      schedule_variance_weeks: 0,
+    },
+    [],
+    [
+      { contract_amount: 65_000, cost_amount: 58_000, status: "Approved", probability: 100 },
+      { contract_amount: 145_000, cost_amount: 122_000, status: "Pending", probability: 50 },
+      { contract_amount: 85_000, cost_amount: 72_000, status: "Pending", probability: 75 },
+      { contract_amount: 120_000, cost_amount: 98_000, status: "Pending", probability: 50 },
+    ],
+    [],
+  );
+
+  assert.equal(rollup.currentSignedContract, 3_265_000, "approved CO revenue is signed");
+  assert.equal(rollup.currentSignedGP, 487_000, "approved CO margin belongs in signed GP");
+  assert.equal(rollup.weightedPendingCOContract, 196_250, "pending revenue stays weighted");
+  assert.equal(rollup.weightedPendingCOCost, 164_000, "pending cost stays weighted");
+  assert.equal(
+    rollup.forecastedFinalContract,
+    rollup.currentSignedContract + rollup.weightedPendingCOContract,
+    "risk-adjusted contract bridges from current signed plus weighted pending",
+  );
+}
+
 // ── Earned value drives recognized cost (Slice C part 2): a sub's cost-to-date
 //    = max(earned, paid), earned = commitment × the field %-complete on that code.
 //    Payments become a floor, not the driver — "% drives cost". ──
