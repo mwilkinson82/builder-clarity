@@ -102,6 +102,10 @@ interface SaveWipInput {
   equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
+  // Preserved through the PM's costing save so they're never wiped (the super owns
+  // them on the daily-log side). Label + display only; they drive no cost math.
+  quantity_items: { quantity: number; unit: string; description: string }[];
+  percent_basis: "sov" | "cpm";
   percent_complete: number;
   // The WIP is the PM's costing surface — a % saved here is a reviewed value, and
   // a change from the super's field number is tracked as an override.
@@ -121,6 +125,9 @@ interface EntryDraft {
   equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
+  // Round-tripped so a PM edit preserves the super's itemized quantities + basis.
+  quantity_items: { quantity: number; unit: string; description: string }[];
+  percent_basis: "sov" | "cpm";
   percent_complete: number;
   notes: string;
 }
@@ -137,6 +144,8 @@ const emptyDraft: EntryDraft = {
   equipment_items: [],
   quantity: 0,
   unit: "",
+  quantity_items: [],
+  percent_basis: "sov",
   percent_complete: 0,
   notes: "",
 };
@@ -588,6 +597,9 @@ export function DailyWipWorkspace({
       equipment_items,
       quantity: draft.quantity,
       unit: draft.unit.trim(),
+      // Preserve the super's itemized quantities + % basis through the costing save.
+      quantity_items: draft.quantity_items,
+      percent_basis: draft.percent_basis,
       percent_complete: draft.percent_complete,
       // Saving here is the PM reviewing/pricing — record it as a costing edit so a
       // change from the super's field number is tracked (the field % is preserved).
@@ -615,6 +627,12 @@ export function DailyWipWorkspace({
       equipment_items: costItemsForEdit(entry.equipment_items, entry.equipment_cost),
       quantity: entry.quantity,
       unit: entry.unit,
+      quantity_items: entry.quantity_items.map((q) => ({
+        quantity: q.quantity,
+        unit: q.unit,
+        description: q.description ?? "",
+      })),
+      percent_basis: entry.percent_basis,
       percent_complete: entry.percent_complete,
       notes: entry.notes,
     });
@@ -1379,6 +1397,18 @@ function ItemizedCostEditor({
   );
 }
 
+// "500 LF conduit · 24 junction boxes" — the itemized installed quantities for a
+// row, falling back to the scalar quantity/unit for rows predating the list.
+function quantitiesSummary(entry: DailyWipEntryRow): string | null {
+  if (entry.quantity_items.length) {
+    return entry.quantity_items
+      .map((q) => [`${q.quantity} ${q.unit || "qty"}`, q.description].filter(Boolean).join(" "))
+      .join(" · ");
+  }
+  if (entry.quantity) return `${entry.quantity} ${entry.unit || "qty"}`;
+  return null;
+}
+
 // Human-readable breakdown for the Cost cell's hover title.
 function itemsTooltip(items: CostLineItem[]): string | undefined {
   const lines = items
@@ -1484,6 +1514,9 @@ function EntryRow({
             <span className="truncate">{performedBy}</span>
           </div>
         ) : null}
+        {quantitiesSummary(entry) ? (
+          <div className="mt-0.5 text-[11px] text-muted-foreground">{quantitiesSummary(entry)}</div>
+        ) : null}
       </td>
       <td className="px-3 py-2.5 text-right">
         {entry.percent_complete > 0 ? (
@@ -1494,6 +1527,9 @@ function EntryRow({
             {progressBasis != null && progressBasis > 0 ? (
               <div className="text-[10px] text-muted-foreground">of {fmtUSD(progressBasis)}</div>
             ) : null}
+            <div className="text-[10px] text-muted-foreground">
+              {entry.percent_basis === "cpm" ? "% of CPM" : "% of SOV"}
+            </div>
             {isPercentOverridden(entry) ? (
               <div className="text-[10px] text-warning">
                 field logged {entry.field_percent_complete}%

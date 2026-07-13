@@ -39,6 +39,13 @@ interface DailyLogWorkLinesProps {
   buckets: BucketOption[];
 }
 
+// One installed quantity/count on a work line (500 LF conduit, 24 junction boxes).
+interface QuantityItem {
+  quantity: number;
+  unit: string;
+  description: string;
+}
+
 // Only the fields the super owns — no money.
 interface LineDraft {
   id?: string;
@@ -49,7 +56,12 @@ interface LineDraft {
   hours: number;
   quantity: number;
   unit: string;
+  // Repeatable installed quantities/counts (the scalar quantity/unit above stays
+  // the primary roll-up the server derives from the first item).
+  quantity_items: QuantityItem[];
   percent_complete: number;
+  // Label only: is % complete measured against the SOV line or the CPM activity?
+  percent_basis: "sov" | "cpm";
 }
 
 const emptyLine: LineDraft = {
@@ -60,11 +72,25 @@ const emptyLine: LineDraft = {
   hours: 0,
   quantity: 0,
   unit: "",
+  quantity_items: [],
   percent_complete: 0,
+  percent_basis: "sov",
 };
 
 function activityOptionLabel(a: ScheduleActivityOption): string {
   return [a.activity_id, a.name].filter(Boolean).join(" · ") || "Untitled activity";
+}
+
+// "500 LF conduit · 24 junction boxes" — the itemized quantities for a saved row,
+// falling back to the scalar quantity/unit for rows predating the list.
+function quantitiesSummary(entry: DailyWipEntryRow): string | null {
+  if (entry.quantity_items.length) {
+    return entry.quantity_items
+      .map((q) => [`${q.quantity} ${q.unit || "qty"}`, q.description].filter(Boolean).join(" "))
+      .join(" · ");
+  }
+  if (entry.quantity) return `${entry.quantity} ${entry.unit || "qty"}`;
+  return null;
 }
 
 function groupActivitiesByDivision(
@@ -136,6 +162,26 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
   const setField = <K extends keyof LineDraft>(key: K, value: LineDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
 
+  // The installed-quantities editor always shows at least one row; the first edit
+  // materializes the list into the draft.
+  const qtyRows: QuantityItem[] = draft.quantity_items.length
+    ? draft.quantity_items
+    : [{ quantity: 0, unit: "", description: "" }];
+  const updateQtyRow = (index: number, patch: Partial<QuantityItem>) =>
+    setField(
+      "quantity_items",
+      qtyRows.map((row, idx) => (idx === index ? { ...row, ...patch } : row)),
+    );
+  const addQtyRow = () =>
+    setField("quantity_items", [...qtyRows, { quantity: 0, unit: "", description: "" }]);
+  const removeQtyRow = (index: number) =>
+    setField(
+      "quantity_items",
+      qtyRows.filter((_, idx) => idx !== index),
+    );
+  const qtyRowHasContent = (row: QuantityItem) =>
+    row.quantity > 0 || row.unit.trim() !== "" || row.description.trim() !== "";
+
   const resetForm = () => {
     setDraft(emptyLine);
     setEditing(null);
@@ -175,9 +221,21 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
       hours: entry.hours,
       quantity: entry.quantity,
       unit: entry.unit,
+      // Load the itemized quantities; for older rows with only a scalar, seed one
+      // row from it so editing never silently drops the recorded quantity.
+      quantity_items: entry.quantity_items.length
+        ? entry.quantity_items.map((q) => ({
+            quantity: q.quantity,
+            unit: q.unit,
+            description: q.description ?? "",
+          }))
+        : entry.quantity
+          ? [{ quantity: entry.quantity, unit: entry.unit, description: "" }]
+          : [],
       // The daily log is the super's surface — it edits the FIELD number, not the
       // PM's reviewed value (which the PM may have adjusted for billing in the WIP).
       percent_complete: entry.field_percent_complete,
+      percent_basis: entry.percent_basis,
     });
   };
 
@@ -187,7 +245,8 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
     draft.schedule_activity_id !== "" ||
     draft.crew_count > 0 ||
     draft.hours > 0 ||
-    draft.quantity > 0;
+    draft.quantity > 0 ||
+    draft.quantity_items.some(qtyRowHasContent);
 
   const handleSave = () => {
     if (!draftHasContent) {
@@ -196,6 +255,12 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
     }
     // Preserve any money the office already added to this line; new lines start uncosted.
     const money = editing;
+    // Keep only rows that carry a real measure/count.
+    const quantity_items = draft.quantity_items.filter(qtyRowHasContent).map((row) => ({
+      quantity: row.quantity,
+      unit: row.unit.trim(),
+      description: row.description.trim(),
+    }));
     saveMutation.mutate({
       projectId,
       id: draft.id,
@@ -207,6 +272,9 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
       hours: draft.hours,
       quantity: draft.quantity,
       unit: draft.unit.trim(),
+      quantity_items,
+      // A CPM basis only holds when a schedule activity is actually linked.
+      percent_basis: draft.schedule_activity_id ? draft.percent_basis : "sov",
       percent_complete: draft.percent_complete,
       labor_rate: money?.labor_rate ?? 0,
       material_cost: money?.material_cost ?? 0,
@@ -274,14 +342,13 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
                     ) : null}
                     {entry.crew_count ? <span>{entry.crew_count} crew</span> : null}
                     {entry.hours ? <span>{entry.hours} hrs</span> : null}
-                    {entry.quantity ? (
-                      <span>
-                        {entry.quantity} {entry.unit || "qty"}
-                      </span>
-                    ) : null}
+                    {quantitiesSummary(entry) ? <span>{quantitiesSummary(entry)}</span> : null}
                     {entry.field_percent_complete ? (
-                      <span className="font-medium text-foreground">
+                      <span className="inline-flex items-center gap-1 font-medium text-foreground">
                         {entry.field_percent_complete}% complete
+                        <span className="rounded-sm border border-hairline px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                          {entry.percent_basis === "cpm" ? "% of CPM" : "% of SOV"}
+                        </span>
                       </span>
                     ) : null}
                   </div>
@@ -362,7 +429,15 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
             <span className="text-xs text-muted-foreground">Schedule activity (CPM)</span>
             <select
               value={draft.schedule_activity_id}
-              onChange={(event) => setField("schedule_activity_id", event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value;
+                // Unlinking the CPM activity forces the % basis back to the SOV line.
+                setDraft((prev) => ({
+                  ...prev,
+                  schedule_activity_id: value,
+                  percent_basis: value ? prev.percent_basis : "sov",
+                }));
+              }}
               disabled={activities.length === 0}
               className={selectClass}
             >
@@ -401,23 +476,64 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
               onChange={(event) => setField("hours", Number(event.target.value) || 0)}
             />
           </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Quantity placed</span>
-            <Input
-              type="number"
-              min={0}
-              value={draft.quantity || ""}
-              onChange={(event) => setField("quantity", Number(event.target.value) || 0)}
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Unit</span>
-            <Input
-              value={draft.unit}
-              placeholder="SF, CY, LF…"
-              onChange={(event) => setField("unit", event.target.value)}
-            />
-          </label>
+          <div className="flex flex-col gap-1 sm:col-span-2">
+            <span className="text-xs text-muted-foreground">Installed quantities</span>
+            <p className="text-[11px] text-muted-foreground">
+              Add each measure or count — e.g. 500 LF conduit, 500 LF wire, 24 junction boxes.
+            </p>
+            <div className="mt-1 space-y-2">
+              {qtyRows.map((row, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={row.quantity || ""}
+                    placeholder="Qty"
+                    className="w-20 shrink-0"
+                    aria-label="Quantity"
+                    onChange={(event) =>
+                      updateQtyRow(index, { quantity: Number(event.target.value) || 0 })
+                    }
+                  />
+                  <Input
+                    value={row.unit}
+                    placeholder="Unit — LF, EA, junction boxes…"
+                    className="w-40 shrink-0"
+                    aria-label="Unit"
+                    onChange={(event) => updateQtyRow(index, { unit: event.target.value })}
+                  />
+                  <Input
+                    value={row.description}
+                    placeholder="Description (optional)"
+                    className="flex-1"
+                    aria-label="Description"
+                    onChange={(event) => updateQtyRow(index, { description: event.target.value })}
+                  />
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-danger"
+                    aria-label="Remove quantity"
+                    disabled={qtyRows.length === 1}
+                    onClick={() => removeQtyRow(index)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="mt-1 gap-1.5 self-start text-muted-foreground"
+              onClick={addQtyRow}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add quantity
+            </Button>
+          </div>
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground">% complete</span>
             <Input
@@ -433,6 +549,23 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
                 )
               }
             />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">% is against</span>
+            <select
+              value={draft.percent_basis}
+              onChange={(event) => setField("percent_basis", event.target.value as "sov" | "cpm")}
+              className={selectClass}
+            >
+              <option value="sov">SOV line</option>
+              <option value="cpm" disabled={!draft.schedule_activity_id}>
+                CPM activity
+              </option>
+            </select>
+            <span className="text-[11px] text-muted-foreground">
+              Which item this % measures against (label only for now).
+              {draft.schedule_activity_id ? null : " Link a schedule activity to use CPM."}
+            </span>
           </label>
         </div>
         <div className="mt-3 flex justify-end">

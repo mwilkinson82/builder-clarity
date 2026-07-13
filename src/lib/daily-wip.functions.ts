@@ -41,6 +41,22 @@ const normalizeItems = (value: unknown): CostLineItem[] => {
   });
 };
 
+// A repeatable installed-quantity list ({ quantity, unit, description }). Read
+// DEFENSIVELY: any non-array (old rows / pre-migration) → empty list.
+const normalizeQuantityItems = (
+  value: unknown,
+): { quantity: number; unit: string; description?: string }[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => {
+    const item = (entry ?? {}) as Record<string, unknown>;
+    return {
+      quantity: num(item.quantity),
+      unit: str(item.unit),
+      description: str(item.description),
+    };
+  });
+};
+
 // The migration hasn't been applied yet — treat as "no entries" for reads.
 function isMissingDailyWipTable(error: DynamicSupabaseError | null) {
   const message = error?.message ?? "";
@@ -49,6 +65,13 @@ function isMissingDailyWipTable(error: DynamicSupabaseError | null) {
     /daily_wip_entries|schema cache|does not exist|relation/i.test(message)
   );
 }
+
+// The percent_basis / quantity_items columns ship in the
+// 20260713140000 migration; before the desk applies it, a write that includes
+// them errors on the unknown column. Strip both and retry so the line still
+// saves (without the new fields). Mirrors billing.functions' isMissingWipOffsetColumn.
+const isMissingDailyWipLineColumn = (message: string) =>
+  /percent_basis|quantity_items/i.test(message);
 
 export interface DailyWipEntryRow {
   id: string;
@@ -68,6 +91,12 @@ export interface DailyWipEntryRow {
   equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
+  // Repeatable installed quantities/counts on this line (500 LF conduit, 24 boxes).
+  // The scalar quantity/unit above is the primary/roll-up (the productionRate read).
+  quantity_items: { quantity: number; unit: string; description?: string }[];
+  // Does this line's % complete measure against the SOV line or the linked CPM
+  // schedule activity? A stored + displayed LABEL only — it changes no math.
+  percent_basis: "sov" | "cpm";
   // The PM's reviewed value (drives WIP earned value); field_percent_complete is
   // the super's field number; a difference / a stamp = the PM adjusted it.
   percent_complete: number;
@@ -95,6 +124,10 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   equipment_items: normalizeItems(row.equipment_items),
   quantity: num(row.quantity),
   unit: str(row.unit),
+  quantity_items: Array.isArray(row.quantity_items)
+    ? normalizeQuantityItems(row.quantity_items)
+    : [],
+  percent_basis: (row.percent_basis as "sov" | "cpm") ?? "sov",
   percent_complete: num(row.percent_complete),
   field_percent_complete: num(row.field_percent_complete),
   percent_overridden_at: (row.percent_overridden_at as string | null) ?? null,
@@ -123,6 +156,21 @@ const entryFieldsInput = z.object({
   equipment_items: z.array(lineItemInput).max(100).default([]),
   quantity: z.number().min(0).default(0),
   unit: z.string().max(40).default(""),
+  // A repeatable list of installed quantities/counts (units are free text so
+  // counts like "junction boxes" work). Drives nothing in the math — the scalar
+  // quantity/unit remains the productionRate roll-up (led by the primary item).
+  quantity_items: z
+    .array(
+      z.object({
+        quantity: z.number(),
+        unit: z.string().max(60).default(""),
+        description: z.string().max(200).default(""),
+      }),
+    )
+    .max(100)
+    .default([]),
+  // Label only: is % complete measured against the SOV line or the CPM activity?
+  percent_basis: z.enum(["sov", "cpm"]).default("sov"),
   percent_complete: z.number().min(0).max(100).default(0),
   // Who is writing the percent complete: the super in the daily log ("field")
   // sets the field number; the PM in the WIP ("costing") sets the reviewed value
@@ -171,6 +219,13 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
     const equipment_cost = fields.equipment_items.length
       ? sumLineItems(fields.equipment_items)
       : fields.equipment_cost;
+    // Back-compat scalar roll-up beside the itemized list: units aren't summable,
+    // so the PRIMARY (first) installed quantity leads. This keeps productionRate
+    // (which reads the scalar quantity) working. Empty list → keep the passed
+    // scalar (older callers and rows predating quantity_items).
+    const primaryQuantity = fields.quantity_items.length ? fields.quantity_items[0] : null;
+    const quantity = primaryQuantity ? primaryQuantity.quantity : fields.quantity;
+    const unit = primaryQuantity ? primaryQuantity.unit : fields.unit;
     const table = dynamicTable(context.supabase, "daily_wip_entries");
     // Split the super's field % from the PM's reviewed %. On an update, the
     // resolution depends on the row's current review state, so read it first
@@ -201,16 +256,26 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
       ...fields,
       material_cost,
       equipment_cost,
+      quantity,
+      unit,
       percent_complete: review.percent_complete,
       field_percent_complete: review.field_percent_complete,
       percent_overridden_at: review.percent_overridden_at,
     };
     // Existing row → update; new row → insert. Not an upsert-on-conflict: a day
     // holds many activity rows, so (project, date) is not unique.
-    const query = id
-      ? table.update(payload).eq("id", id).select("*").single()
-      : table.insert(payload).select("*").single();
-    const { data: row, error } = await query;
+    const runSave = (body: Record<string, unknown>) =>
+      id
+        ? table.update(body).eq("id", id).select("*").single()
+        : table.insert(body).select("*").single();
+    let saveRes = await runSave(payload);
+    // Pre-migration: percent_basis / quantity_items don't exist yet — drop both
+    // and retry so the line still saves (without the new fields).
+    if (saveRes.error && isMissingDailyWipLineColumn(saveRes.error.message)) {
+      const { percent_basis: _pb, quantity_items: _qi, ...withoutLineCols } = payload;
+      saveRes = await runSave(withoutLineCols);
+    }
+    const { data: row, error } = saveRes;
     if (error) {
       if (isMissingDailyWipTable(error)) {
         throw new Error(
