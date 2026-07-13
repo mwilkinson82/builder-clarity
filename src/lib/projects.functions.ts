@@ -38,6 +38,7 @@ import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
 import {
   applySelfPerformToBuckets,
   commitmentBySubBucket,
+  netSelfPerformByReconciled,
   selfPerformCostByBucket,
   subCommitmentKey,
   type DailyWipRowLike,
@@ -1285,10 +1286,24 @@ const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
 // commitment (to exclude bought-out lines) from the raw subcontract rows. Shared
 // by getProject and listProjects so the dashboard and the portfolio fold the same
 // way. Tolerates the raw REST row shapes (num/str coerce).
+//
+// SINGLE CHOKEPOINT for the daily-WIP ↔ recorded-cost double-count fix: a
+// self-perform lump is folded into a bucket's actual here, and the vendor invoice
+// that covers it later posts as a cost_actual that a DB trigger also folds into
+// the SAME bucket actual → counted twice. Each cost_actual line now carries a
+// `daily_wip_offset` (the daily-WIP it settles); we sum those per bucket
+// (RECOGNIZED rows only — mirror the void/draft filter used for the rollup amount)
+// and NET them out of the gross self-perform map. Because all three fold sites
+// (Budget tab, dashboard rollup, portfolio GP) consume THIS returned map, netting
+// once here keeps them in lockstep. `costActualRows` defaults to [] so pre-column
+// callers are unchanged; `daily_wip_offset` is read defensively (?? 0) so a
+// pre-migration project (column absent) yields reconciled 0 → the map is identical
+// to the old additive behavior.
 function buildSelfPerformByBucket(
   wipRows: Record<string, unknown>[],
   subcontractRows: Record<string, unknown>[],
   subAllocationRows: Record<string, unknown>[],
+  costActualRows: Record<string, unknown>[] = [],
 ): Map<string, number> {
   const commitmentLookup = commitmentBySubBucket(
     subcontractRows.map((r) => ({
@@ -1317,7 +1332,27 @@ function buildSelfPerformByBucket(
     const key = subCommitmentKey(row.subcontractor_id, row.cost_bucket_id);
     return key ? (commitmentLookup.get(key) ?? null) : null;
   };
-  return selfPerformCostByBucket(rows, commitmentFor);
+  const grossSelfPerform = selfPerformCostByBucket(rows, commitmentFor);
+  // Reconciled daily-WIP per bucket = sum of daily_wip_offset over RECOGNIZED
+  // cost_actuals only. A void/draft invoice's offset must NOT displace WIP — it
+  // isn't in the bucket actual (its amount is excluded from cost_actual_rollup_
+  // amount by the SAME void/draft filter), so netting it would silently erase real
+  // self-perform cost from the rollup. daily_wip_offset read defensively (?? 0).
+  // Accumulate in integer cents (sum in cents, convert once per bucket) so a
+  // bucket covered by several invoices can never drift a fractional cent.
+  const reconciledCents = new Map<string, number>();
+  for (const r of costActualRows) {
+    const bucketId = r.cost_bucket_id as string | null;
+    if (!bucketId) continue;
+    const status = str(r.status);
+    if (status === "void" || status === "draft") continue;
+    const offset = num((r as { daily_wip_offset?: unknown }).daily_wip_offset ?? 0);
+    if (offset <= 0) continue;
+    reconciledCents.set(bucketId, (reconciledCents.get(bucketId) ?? 0) + dollarsToCents(offset));
+  }
+  const reconciledByBucket = new Map<string, number>();
+  for (const [id, cents] of reconciledCents) reconciledByBucket.set(id, centsToDollars(cents));
+  return netSelfPerformByReconciled(grossSelfPerform, reconciledByBucket);
 }
 
 // An invoice/cost entry as the Budget drawer's drill-through needs it.
@@ -1406,6 +1441,7 @@ export const listProjects = createServerFn({ method: "GET" })
       subCoRes,
       subSplitRes,
       wipRes,
+      caRes,
     ] = await Promise.all([
       context.supabase.from("exposures").select("*").in("project_id", ids),
       context.supabase
@@ -1438,6 +1474,14 @@ export const listProjects = createServerFn({ method: "GET" })
       // Self-perform daily WIP so the portfolio GP folds self-perform cost the
       // same way each project's dashboard does. Degrades to empty if absent.
       dynamicTable(context.supabase, "daily_wip_entries").select("*").in("project_id", ids),
+      // Recorded costs carry a per-line daily_wip_offset that settles the daily
+      // WIP they cover → the portfolio nets out the double-count the same way the
+      // project dashboard does. Only cost_bucket_id/status/daily_wip_offset are
+      // needed. Degrades to empty pre-billing-tables; daily_wip_offset read
+      // defensively so a pre-migration project nets 0.
+      dynamicTable(context.supabase, "cost_actuals")
+        .select("project_id,cost_bucket_id,status,daily_wip_offset")
+        .in("project_id", ids),
     ]);
     if (expRes.error) throw new Error(expRes.error.message);
     if (cosRes.error) throw new Error(cosRes.error.message);
@@ -1513,6 +1557,12 @@ export const listProjects = createServerFn({ method: "GET" })
     );
     const wipByP = groupBy<{ project_id: string } & Record<string, unknown>>(
       subDegrade(wipRes, "daily_wip_entries"),
+    );
+    // Recorded costs (for the daily_wip_offset netting). subDegrade swallows a
+    // missing-table OR missing-column error to [] → pre-migration the portfolio
+    // simply nets 0, matching the additive pre-fix behavior.
+    const caByP = groupBy<{ project_id: string } & Record<string, unknown>>(
+      subDegrade(caRes, "cost_actuals"),
     );
     const organizationsById = new Map(
       organizationRows.map((organization) => {
@@ -1599,6 +1649,7 @@ export const listProjects = createServerFn({ method: "GET" })
         wipByP[p.id] ?? [],
         scByP[p.id] ?? [],
         saByP[p.id] ?? [],
+        caByP[p.id] ?? [],
       );
       const rollupBuckets = applySelfPerformToBuckets(buckets, selfPerformByBucket);
       const r = computeRollup(p, rollupBuckets, cos, exposures, subCostByBucket);
@@ -2156,6 +2207,7 @@ export const getProject = createServerFn({ method: "GET" })
       subChangeOrderRows,
       subPaymentSplitRows,
       wipEntryRows,
+      costActualRows,
     ] = await Promise.all([
       subRows("subcontracts"),
       subRows("subcontract_allocations"),
@@ -2168,6 +2220,11 @@ export const getProject = createServerFn({ method: "GET" })
       // Self-perform daily WIP → the rollup, so work put in place by the GC's own
       // crew reflects on the dashboard GP (not just subcontractor progress).
       subRows("daily_wip_entries"),
+      // Recorded costs carry a per-line daily_wip_offset that SETTLES the daily
+      // WIP they cover, so buildSelfPerformByBucket can net out the double-count
+      // (subRows degrades to [] pre-billing-tables, and daily_wip_offset is read
+      // defensively so a pre-migration project nets 0).
+      subRows("cost_actuals"),
     ]);
     type SummarizeArgs = Parameters<typeof summarizeSubCostByBucket>;
     const subCostByBucket = summarizeSubCostByBucket(
@@ -2186,6 +2243,7 @@ export const getProject = createServerFn({ method: "GET" })
       wipEntryRows,
       subcontractRows,
       subAllocationRows,
+      costActualRows,
     );
     const rollupBuckets = applySelfPerformToBuckets(buckets, selfPerformByBucket);
 

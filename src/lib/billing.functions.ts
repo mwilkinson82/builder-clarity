@@ -156,6 +156,10 @@ export interface CostActualRow {
   payment_method: string;
   payment_reference: string;
   paid_date: string | null;
+  // Dollars of daily WIP this cost SETTLES (field feedback 2026-07-13) — netted
+  // out of the self-perform rollup so the invoice doesn't double-count the lump.
+  // 0 pre-migration (column absent → read defensively).
+  daily_wip_offset: number;
   voided_at: string | null;
   created_at: string;
   updated_at: string;
@@ -404,6 +408,8 @@ const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => ({
   payment_method: str(row.payment_method),
   payment_reference: str(row.payment_reference),
   paid_date: (row.paid_date as string | null) ?? null,
+  // Read defensively: pre-migration the column is absent → 0 (no settlement).
+  daily_wip_offset: num(row.daily_wip_offset ?? 0),
   voided_at: (row.voided_at as string | null) ?? null,
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
@@ -1103,6 +1109,11 @@ const costActualInput = z.object({
   cost_date: z.string().min(1),
   status: z.enum(["draft", "committed", "approved", "paid"]).default("committed"),
   notes: z.string().max(2000).default(""),
+  // Dollars of daily WIP this cost SETTLES (field feedback 2026-07-13): the
+  // self-perform lump already folded into the bucket actual, which this vendor
+  // invoice now covers. Netted out at the rollup chokepoint so the same dollars
+  // aren't counted twice. Non-negative; a credit (amount < 0) forces 0 upstream.
+  daily_wip_offset: z.number().min(0).default(0).optional(),
 });
 
 // The draft/approved stages need the payables-approval migration, and credits
@@ -1118,6 +1129,12 @@ const mapCostStatusError = (message: string) => {
   }
   return message;
 };
+
+// The daily_wip_offset column ships in the cost_actual_daily_wip_offset
+// migration. Pre-migration, PostgREST rejects a write naming it — detect that so
+// the cost still records (just without the WIP-settlement) until the desk applies
+// it. Mirrors isMissingPaymentColumn's strip-and-retry pattern.
+const isMissingWipOffsetColumn = (message: string) => /daily_wip_offset/i.test(message);
 
 export const createCostActual = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -1137,7 +1154,8 @@ export const createCostActual = createServerFn({ method: "POST" })
       bucketId = (match?.id as string | undefined) ?? null;
     }
 
-    const insertRes = await dynamicTable(ctx.supabase, "cost_actuals").insert({
+    // A credit (amount < 0) can never settle daily WIP — clamp its offset to 0.
+    const insertPayload = {
       project_id: data.projectId,
       cost_bucket_id: bucketId,
       cost_code: data.cost_code.trim(),
@@ -1149,11 +1167,19 @@ export const createCostActual = createServerFn({ method: "POST" })
       cost_date: data.cost_date,
       status: data.status,
       notes: data.notes,
+      daily_wip_offset: data.amount < 0 ? 0 : (data.daily_wip_offset ?? 0),
       ...(data.status === "approved"
         ? { approved_at: new Date().toISOString(), approved_by: ctx.userId }
         : {}),
       ...(data.status === "paid" ? { paid_at: new Date().toISOString() } : {}),
-    });
+    };
+    let insertRes = await dynamicTable(ctx.supabase, "cost_actuals").insert(insertPayload);
+    // Pre-migration: the offset column doesn't exist yet — record the cost
+    // anyway (drop the offset), never blocking the invoice.
+    if (insertRes.error && isMissingWipOffsetColumn(insertRes.error.message)) {
+      const { daily_wip_offset: _drop, ...withoutOffset } = insertPayload;
+      insertRes = await dynamicTable(ctx.supabase, "cost_actuals").insert(withoutOffset);
+    }
     if (insertRes.error) throw new Error(mapCostStatusError(insertRes.error.message));
     return { ok: true };
   });
@@ -1182,6 +1208,11 @@ const updateCostActualInput = z.object({
   reference_number: z.string().max(200).default(""),
   cost_date: z.string().min(1),
   notes: z.string().max(2000).default(""),
+  // Daily-WIP this cost settles (see costActualInput). Optional with NO forced
+  // default here: an edit that doesn't carry the field leaves the stored offset
+  // untouched (undefined → omitted from the PostgREST body), so we never wipe an
+  // offset set at creation; a supplied value updates it.
+  daily_wip_offset: z.number().min(0).optional(),
 });
 
 export const updateCostActual = createServerFn({ method: "POST" })
@@ -1223,17 +1254,35 @@ export const updateCostActual = createServerFn({ method: "POST" })
     }
 
     const { id, ...fields } = data;
+    // A credit (amount < 0) can never settle daily WIP — clamp its offset to 0
+    // when the edit carries one; leave it untouched otherwise (undefined omits it).
+    const updatePayload: Record<string, unknown> = {
+      ...fields,
+      cost_bucket_id: bucketId,
+      cost_code: fields.cost_code.trim(),
+    };
+    if (fields.daily_wip_offset !== undefined && data.amount < 0) {
+      updatePayload.daily_wip_offset = 0;
+    }
     // Re-assert the stage IN the update itself: between the check above and
     // this write, someone else may have marked the row paid (or voided it) —
     // the predicate makes that race land as "0 rows", never as an edit to
     // money that already went out the door.
-    const updateRes = await dynamicTable(ctx.supabase, "cost_actuals")
-      .update({ ...fields, cost_bucket_id: bucketId, cost_code: fields.cost_code.trim() })
-      .eq("id", id)
-      .neq("status", "paid")
-      .neq("status", "void")
-      .select("id")
-      .maybeSingle();
+    const runUpdate = (payload: Record<string, unknown>) =>
+      dynamicTable(ctx.supabase, "cost_actuals")
+        .update(payload)
+        .eq("id", id)
+        .neq("status", "paid")
+        .neq("status", "void")
+        .select("id")
+        .maybeSingle();
+    let updateRes = await runUpdate(updatePayload);
+    // Pre-migration: the offset column doesn't exist yet — retry without it so
+    // the edit still lands.
+    if (updateRes.error && isMissingWipOffsetColumn(updateRes.error.message)) {
+      const { daily_wip_offset: _drop, ...withoutOffset } = updatePayload;
+      updateRes = await runUpdate(withoutOffset);
+    }
     if (updateRes.error) throw new Error(updateRes.error.message);
     if (!updateRes.data) {
       throw new Error(
