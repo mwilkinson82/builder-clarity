@@ -94,25 +94,20 @@ export function EditFinancialsDialog({
           <Pencil className="h-3.5 w-3.5" /> Edit
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeaderV2 eyebrow="Project" title="Edit project" />
-        <div className="grid gap-4 py-2">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Project name</Label>
-              <Input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Job number</Label>
-              <Input
-                value={form.job_number}
-                onChange={(e) => setForm({ ...form, job_number: e.target.value })}
-                placeholder="e.g. 26-014"
-              />
-            </div>
+        <div className="grid gap-4 py-2 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label>Project name</Label>
+            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Job number</Label>
+            <Input
+              value={form.job_number}
+              onChange={(e) => setForm({ ...form, job_number: e.target.value })}
+              placeholder="e.g. 26-014"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Client</Label>
@@ -129,51 +124,47 @@ export function EditFinancialsDialog({
               placeholder="e.g. Marshall Wilkinson"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Original contract</Label>
-              <MoneyInput
-                value={form.original_contract}
-                onValueChange={(v) => setForm({ ...form, original_contract: v })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Original cost budget</Label>
-              <MoneyInput
-                value={form.original_cost_budget}
-                onValueChange={(v) => setForm({ ...form, original_cost_budget: v })}
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Phase</Label>
-              <Select
-                value={form.phase}
-                onValueChange={(v) => setForm({ ...form, phase: v as Phase })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Early">Early</SelectItem>
-                  <SelectItem value="Middle">Middle</SelectItem>
-                  <SelectItem value="Late">Late</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>% complete</Label>
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={form.percent_complete}
-                onChange={(e) => setForm({ ...form, percent_complete: Number(e.target.value) })}
-              />
-            </div>
+          <div className="space-y-1.5">
+            <Label>Original contract</Label>
+            <MoneyInput
+              value={form.original_contract}
+              onValueChange={(v) => setForm({ ...form, original_contract: v })}
+            />
           </div>
           <div className="space-y-1.5">
+            <Label>Original cost budget</Label>
+            <MoneyInput
+              value={form.original_cost_budget}
+              onValueChange={(v) => setForm({ ...form, original_cost_budget: v })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Phase</Label>
+            <Select
+              value={form.phase}
+              onValueChange={(v) => setForm({ ...form, phase: v as Phase })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Early">Early</SelectItem>
+                <SelectItem value="Middle">Middle</SelectItem>
+                <SelectItem value="Late">Late</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>% complete</Label>
+            <Input
+              type="number"
+              min={0}
+              max={100}
+              value={form.percent_complete}
+              onChange={(e) => setForm({ ...form, percent_complete: Number(e.target.value) })}
+            />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Default billing document</Label>
             <Select
               value={form.default_output_format}
@@ -194,7 +185,7 @@ export function EditFinancialsDialog({
               owner's-rep-driven jobs so the biller never has to flip it each time.
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-3 sm:col-span-2">
             <div className="space-y-1.5">
               <Label>Baseline completion</Label>
               <Input
@@ -236,7 +227,7 @@ export function EditFinancialsDialog({
               </div>
             </div>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>
               Hold guidance note{" "}
               <span className="text-muted-foreground">
