@@ -69,6 +69,10 @@ type CostActualDraft = {
   // as job cost; a draft never does.
   status: "draft" | "committed" | "approved" | "paid";
   notes: string;
+  // Dollars of daily WIP this line SETTLES — the self-perform lump already in the
+  // bucket actual that this vendor invoice covers. Netted out of the WIP rollup so
+  // it isn't double-counted. Credits (amount < 0) force 0.
+  daily_wip_offset: number;
 };
 
 // A per-cost-code line for the multi-line "Add cost actual" path — only the
@@ -78,6 +82,10 @@ type ExtraCostLine = {
   cost_code: string;
   description: string;
   amount: number;
+  // Per-line daily-WIP settlement (see CostActualDraft.daily_wip_offset).
+  daily_wip_offset: number;
+  // Once the user hand-edits the offset, stop auto-suggesting it for this line.
+  offsetTouched?: boolean;
 };
 
 // How a cost was paid, captured when marking it paid (field request 2026-07-10).
@@ -1078,6 +1086,7 @@ export function ProjectCostTrackingPanel({
   onSetCostActualStatus,
   onUpdateCostActual,
   savingCost,
+  selfPerformByBucket,
 }: {
   projectId: string;
   buckets: BucketRow[];
@@ -1092,6 +1101,10 @@ export function ProjectCostTrackingPanel({
   ) => void;
   onUpdateCostActual: (id: string, input: CostActualDraft) => void | Promise<unknown>;
   savingCost?: boolean;
+  // Self-perform daily WIP folded into each bucket's actual (id → dollars, NET of
+  // already-settled offsets). Drives the per-line "Settles daily WIP" suggestion
+  // so a vendor invoice can displace the lump it covers instead of double-counting.
+  selfPerformByBucket?: ReadonlyMap<string, number>;
 }) {
   const [open, setOpen] = useState(false);
   // When set, the dialog is editing this existing row instead of adding.
@@ -1169,7 +1182,10 @@ export function ProjectCostTrackingPanel({
     cost_date: today(),
     status: "draft",
     notes: "",
+    daily_wip_offset: 0,
   }));
+  // Once the user hand-edits the PRIMARY line's offset, stop auto-suggesting it.
+  const [primaryOffsetTouched, setPrimaryOffsetTouched] = useState(false);
   // Multi-line cost entry (field feedback 2026-07-13): extra cost-code lines on
   // the SAME invoice. Each shares the invoice-level fields on `draft` (vendor,
   // reference #, date, category, stage, notes); only the cost code, description,
@@ -1183,6 +1199,8 @@ export function ProjectCostTrackingPanel({
         cost_code: buckets[0]?.cost_code ?? "",
         description: "",
         amount: 0,
+        daily_wip_offset: 0,
+        offsetTouched: false,
       },
     ]);
   const updateExtraLine = (index: number, patch: Partial<ExtraCostLine>) =>
@@ -1208,6 +1226,60 @@ export function ProjectCostTrackingPanel({
   const editingCost = editingCostId
     ? (costActuals.find((actual) => actual.id === editingCostId) ?? null)
     : null;
+
+  // ── Daily-WIP settlement (field feedback 2026-07-13) ──────────────────────
+  // A self-perform daily-WIP lump is folded into a bucket's actual at read time;
+  // when the vendor invoice for it is later recorded as a cost it would hit the
+  // SAME bucket actual again (a DB trigger) → double-counted. Each cost LINE can
+  // "settle" the daily WIP it covers; the settled dollars are netted out of the
+  // WIP rollup at the server chokepoint (buildSelfPerformByBucket), floored at 0.
+  //
+  // `selfPerformByBucket` here is ALREADY NET of every RECOGNIZED recorded
+  // offset, so that value IS the daily WIP still unsettled for a bucket — we do
+  // NOT re-subtract recorded offsets (that would double-count the netting). When
+  // editing a row, add back its own stored offset so an edit never clamps below
+  // the value the PM already saved. Cents-safe, floored at 0.
+  const unsettledWip = (bucketId: string | null, addBackOwn = 0): number => {
+    if (!bucketId) return 0;
+    const netCents = dollarsToCents(selfPerformByBucket?.get(bucketId) ?? 0);
+    return centsToDollars(Math.max(0, netCents + dollarsToCents(Math.max(0, addBackOwn))));
+  };
+  // Clamp an offset to 0..min(amount, unsettled). A credit (amount < 0) can never
+  // settle daily WIP, so it forces 0. Cents-safe.
+  const clampOffset = (offset: number, amount: number, unsettled: number): number => {
+    if (amount < 0) return 0;
+    return centsToDollars(
+      Math.max(
+        0,
+        Math.min(dollarsToCents(offset), dollarsToCents(amount), dollarsToCents(unsettled)),
+      ),
+    );
+  };
+  // The offset a line actually submits: auto-suggested to min(amount, unsettled)
+  // until the user hand-edits it (`touched`), then the clamped hand-set value.
+  const effectiveOffset = (
+    bucketId: string | null,
+    amount: number,
+    storedOffset: number,
+    touched: boolean,
+    addBackOwn = 0,
+  ): number => {
+    const unsettled = unsettledWip(bucketId, addBackOwn);
+    return touched
+      ? clampOffset(storedOffset, amount, unsettled)
+      : clampOffset(unsettled, amount, unsettled);
+  };
+  // The editing row's own stored offset (added back to its headroom on edit).
+  const primaryOffsetAddBack = editingCostId ? (editingCost?.daily_wip_offset ?? 0) : 0;
+  const primaryUnsettled = unsettledWip(draft.cost_bucket_id, primaryOffsetAddBack);
+  const primaryOffsetValue = effectiveOffset(
+    draft.cost_bucket_id,
+    draft.amount,
+    draft.daily_wip_offset,
+    primaryOffsetTouched,
+    primaryOffsetAddBack,
+  );
+  const showPrimaryOffset = draft.amount >= 0 && primaryUnsettled > 0;
   // The backup list after the stage filter + search — used by the grid AND the
   // "nothing matches" empty state so they can never disagree.
   const visibleCostActuals = costActuals
@@ -1293,6 +1365,9 @@ export function ProjectCostTrackingPanel({
 
   const startEditCost = (actual: CostActualRow) => {
     setExtraLines([]);
+    // Editing carries the stored offset through; treat it as user-set so we never
+    // auto-suggest over what the PM already chose on this row.
+    setPrimaryOffsetTouched(true);
     setDraft({
       cost_bucket_id: actual.cost_bucket_id,
       cost_code: actual.cost_code,
@@ -1304,6 +1379,7 @@ export function ProjectCostTrackingPanel({
       cost_date: actual.cost_date,
       status: "draft",
       notes: actual.notes,
+      daily_wip_offset: actual.daily_wip_offset ?? 0,
     });
     setEditingCostId(actual.id);
     setOpen(true);
@@ -1313,6 +1389,7 @@ export function ProjectCostTrackingPanel({
     setOpen(false);
     setEditingCostId(null);
     setExtraLines([]);
+    setPrimaryOffsetTouched(false);
     setDraft({
       cost_bucket_id: buckets[0]?.id ?? null,
       cost_code: buckets[0]?.cost_code ?? "",
@@ -1324,6 +1401,7 @@ export function ProjectCostTrackingPanel({
       cost_date: today(),
       status: "draft",
       notes: "",
+      daily_wip_offset: 0,
     });
   };
 
@@ -1346,14 +1424,16 @@ export function ProjectCostTrackingPanel({
       // network dropped), the mutation's own toast explains why and the dialog
       // stays open with the typed changes intact.
       try {
-        await onUpdateCostActual(editingCostId, draft);
+        await onUpdateCostActual(editingCostId, { ...draft, daily_wip_offset: primaryOffsetValue });
       } catch {
         return;
       }
     } else {
-      onCreateCostActual(draft);
+      onCreateCostActual({ ...draft, daily_wip_offset: primaryOffsetValue });
       // Extra cost-code lines on the same invoice inherit every shared field
-      // from the draft; only the code, description, and amount differ.
+      // from the draft; only the code, description, amount, and WIP-settlement
+      // differ. Each line's offset is the clamped effective value (auto-suggested
+      // unless the user touched it) — a credit line forces 0 inside clampOffset.
       for (const line of activeExtraLines) {
         onCreateCostActual({
           ...draft,
@@ -1361,6 +1441,12 @@ export function ProjectCostTrackingPanel({
           cost_code: line.cost_code,
           description: line.description,
           amount: line.amount,
+          daily_wip_offset: effectiveOffset(
+            line.cost_bucket_id,
+            line.amount,
+            line.daily_wip_offset,
+            !!line.offsetTouched,
+          ),
         });
       }
     }
@@ -1376,7 +1462,7 @@ export function ProjectCostTrackingPanel({
     if (!editingCostId) return;
     const row = editingCost;
     try {
-      await onUpdateCostActual(editingCostId, draft);
+      await onUpdateCostActual(editingCostId, { ...draft, daily_wip_offset: primaryOffsetValue });
     } catch {
       return; // the update's own error toast already fired — don't advance
     }
@@ -1582,6 +1668,36 @@ export function ProjectCostTrackingPanel({
                   <span className="font-medium text-foreground">negative amount</span> to record a
                   supplier credit or refund against this cost code.
                 </p>
+                {/* Settles daily WIP (field feedback 2026-07-13): if this cost
+                    code already carries self-perform daily WIP folded into its
+                    actual, settle the portion this invoice covers so the same
+                    dollars aren't counted twice. Auto-suggested to the amount (up
+                    to what's unsettled); editable down to 0. Hidden for credits. */}
+                {showPrimaryOffset ? (
+                  <div className="grid gap-3 rounded-md border border-hairline bg-surface/60 p-3 md:grid-cols-[1fr_150px] md:items-end">
+                    <p className="text-[11px] text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {fmtUSD(primaryUnsettled)}
+                      </span>{" "}
+                      in daily WIP is logged on this cost code — settle what this invoice covers so
+                      it isn&apos;t double-counted.
+                    </p>
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px]">Settles daily WIP</Label>
+                      <MoneyInput
+                        value={primaryOffsetValue}
+                        onValueChange={(value) => {
+                          setPrimaryOffsetTouched(true);
+                          setDraft({
+                            ...draft,
+                            daily_wip_offset: clampOffset(value, draft.amount, primaryUnsettled),
+                          });
+                        }}
+                        align="right"
+                      />
+                    </div>
+                  </div>
+                ) : null}
                 {/* Multi-line entry (field feedback 2026-07-13): one supplier
                     invoice can span several cost codes. Add extra lines here —
                     each shares the vendor, reference #, date, category, and stage
@@ -1609,61 +1725,97 @@ export function ProjectCostTrackingPanel({
                         <Plus className="h-3.5 w-3.5" /> Add line
                       </Button>
                     </div>
-                    {extraLines.map((line, index) => (
-                      <div
-                        key={index}
-                        className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px_auto] md:items-end"
-                      >
-                        <div className="space-y-1">
-                          <Label className="text-[11px]">Cost code</Label>
-                          <Select
-                            value={line.cost_bucket_id ?? "unmatched"}
-                            onValueChange={(value) => chooseExtraLineBucket(index, value)}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="unmatched">Unmatched</SelectItem>
-                              {buckets.map((bucket) => (
-                                <SelectItem key={bucket.id} value={bucket.id}>
-                                  {bucket.cost_code ? `${bucket.cost_code} - ` : ""}
-                                  {bucket.bucket}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                    {extraLines.map((line, index) => {
+                      const lineUnsettled = unsettledWip(line.cost_bucket_id);
+                      const lineOffsetValue = effectiveOffset(
+                        line.cost_bucket_id,
+                        line.amount,
+                        line.daily_wip_offset,
+                        !!line.offsetTouched,
+                      );
+                      const showLineOffset = line.amount >= 0 && lineUnsettled > 0;
+                      return (
+                        <div key={index} className="space-y-1.5">
+                          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px_auto] md:items-end">
+                            <div className="space-y-1">
+                              <Label className="text-[11px]">Cost code</Label>
+                              <Select
+                                value={line.cost_bucket_id ?? "unmatched"}
+                                onValueChange={(value) => chooseExtraLineBucket(index, value)}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="unmatched">Unmatched</SelectItem>
+                                  {buckets.map((bucket) => (
+                                    <SelectItem key={bucket.id} value={bucket.id}>
+                                      {bucket.cost_code ? `${bucket.cost_code} - ` : ""}
+                                      {bucket.bucket}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[11px]">Description</Label>
+                              <Input
+                                value={line.description}
+                                onChange={(event) =>
+                                  updateExtraLine(index, { description: event.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[11px]">Amount</Label>
+                              <MoneyInput
+                                value={line.amount}
+                                onValueChange={(amount) => updateExtraLine(index, { amount })}
+                                align="right"
+                                allowNegative
+                              />
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-danger"
+                              onClick={() => removeExtraLine(index)}
+                              aria-label="Remove line"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          {showLineOffset ? (
+                            <div className="grid gap-2 md:grid-cols-[1fr_150px] md:items-end">
+                              <p className="text-[11px] text-muted-foreground">
+                                <span className="font-medium text-foreground">
+                                  {fmtUSD(lineUnsettled)}
+                                </span>{" "}
+                                in daily WIP on this code — settle to avoid double-counting.
+                              </p>
+                              <div className="space-y-1">
+                                <Label className="text-[11px]">Settles daily WIP</Label>
+                                <MoneyInput
+                                  value={lineOffsetValue}
+                                  onValueChange={(value) =>
+                                    updateExtraLine(index, {
+                                      daily_wip_offset: clampOffset(
+                                        value,
+                                        line.amount,
+                                        lineUnsettled,
+                                      ),
+                                      offsetTouched: true,
+                                    })
+                                  }
+                                  align="right"
+                                />
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px]">Description</Label>
-                          <Input
-                            value={line.description}
-                            onChange={(event) =>
-                              updateExtraLine(index, { description: event.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px]">Amount</Label>
-                          <MoneyInput
-                            value={line.amount}
-                            onValueChange={(amount) => updateExtraLine(index, { amount })}
-                            align="right"
-                            allowNegative
-                          />
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="text-muted-foreground hover:text-danger"
-                          onClick={() => removeExtraLine(index)}
-                          aria-label="Remove line"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {extraLines.length > 0 && !extraLinesValid ? (
                       <p className="text-[11px] text-danger">
                         Every added line needs a description before you can save.

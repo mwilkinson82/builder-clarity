@@ -3,7 +3,7 @@
 // payments / pending COs / A/R). Extracted from the project route during the
 // PROJECTDECOMP1 split and lazy-loaded so entering a project doesn't pay for
 // the billing tab up front. Verbatim; no behavior change.
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Plus, ReceiptText } from "lucide-react";
@@ -129,6 +129,7 @@ export function BillingWorkspace({
   onAllocateChangeOrder,
   onRemoveChangeOrderAllocation,
   savingAllocation,
+  focusStage,
 }: {
   project: ProjectRow;
   rollup: Rollup;
@@ -199,6 +200,8 @@ export function BillingWorkspace({
     cost_date: string;
     status: "draft" | "committed" | "approved" | "paid";
     notes: string;
+    // Dollars of daily WIP this cost settles (netted out of the WIP rollup).
+    daily_wip_offset?: number;
   }) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
@@ -230,6 +233,10 @@ export function BillingWorkspace({
   onAllocateChangeOrder: (input: ChangeOrderAllocationInput) => void;
   onRemoveChangeOrderAllocation: (id: string) => void;
   savingAllocation?: boolean;
+  // Deep-link the workspace to a specific billing stage (e.g. "project-costs" so
+  // the Budget drawer's "Invoices & recorded costs" row lands on the Costs ledger
+  // instead of the default pay-app view). Applied on change via an effect below.
+  focusStage?: string;
 }) {
   const loadPaymentMethodContext = useServerFn(getPaymentMethodContext);
   const { data: paymentMethodContext } = useQuery({
@@ -478,6 +485,12 @@ export function BillingWorkspace({
   const [billingStage, setBillingStage] = useState(() =>
     buckets.length === 0 ? "budget" : "pay-app-detail",
   );
+  // Deep-link: when the route asks to focus a stage (the Budget drawer's
+  // "Invoices & recorded costs" row → "project-costs"), jump there. The route
+  // re-sets the token on every click so re-clicks re-fire even to the same stage.
+  useEffect(() => {
+    if (focusStage) setBillingStage(focusStage);
+  }, [focusStage]);
   const [payAppOpen, setPayAppOpen] = useState(false);
   const [draft, setDraft] = useState<BillingDraft>(() => buildDraft());
   const [draftRetainagePct, setDraftRetainagePct] = useState(() =>
@@ -1258,6 +1271,7 @@ export function BillingWorkspace({
                   onSetCostActualStatus={onSetCostActualStatus}
                   onUpdateCostActual={onUpdateCostActual}
                   savingCost={savingCostActual}
+                  selfPerformByBucket={selfPerformByBucket}
                 />
               ))}
             </TabsContent>

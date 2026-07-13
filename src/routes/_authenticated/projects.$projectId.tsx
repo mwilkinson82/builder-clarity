@@ -383,6 +383,10 @@ function ProjectPage() {
   // Budget-drawer drill-through: land the Daily WIP tab on a specific day.
   const [focusedWipDate, setFocusedWipDate] = useState<string | null>(null);
   const handleWipFocusHandled = useCallback(() => setFocusedWipDate(null), []);
+  // Budget-drawer drill-through: land the Billing tab on a specific stage (the
+  // "Invoices & recorded costs" row → the Costs ledger). Cleared when navigating
+  // away from billing so a repeat click re-fires the deep-link effect.
+  const [billingFocusStage, setBillingFocusStage] = useState<string | undefined>(undefined);
   // Budget drawer state. Declared BEFORE the drill-through memos below that
   // read it — a dependency array evaluates at render, so referencing a const
   // declared later is a temporal-dead-zone crash of the whole page (this
@@ -397,6 +401,9 @@ function ProjectPage() {
   const setProjectTab = (value: string) => {
     if (PROJECT_TAB_VALUES.includes(value as ProjectTabValue)) {
       setActiveProjectTab(value as ProjectTabValue);
+      // Leaving billing clears the deep-link stage so the next drawer click sets
+      // it fresh (undefined → "project-costs" is a change the effect re-fires on).
+      if (value !== "billing") setBillingFocusStage(undefined);
     }
   };
 
@@ -3117,6 +3124,14 @@ function ProjectPage() {
                   editedBucketIds={overriddenBucketIds}
                   showStatBar
                   lockedAt={project.budget_locked_at}
+                  // The TRUE open-holds figures (sum of remaining exposure for
+                  // E-Hold/Both, and the contingency hold) — the same numbers the
+                  // dashboard E-Hold line and the portfolio open-holds tile show.
+                  // The ledger's own atRisk only sums holds ALLOCATED to a code,
+                  // dropping the un-allocated remainder; the bar shows the full
+                  // figure so all three surfaces agree.
+                  openHoldsAtRisk={rollup.exposureHolds}
+                  openHoldsContingency={rollup.contingencyHold}
                 />
               </div>
               {/* v2 meta strip: the quiet ledger facts — sub commitments, the
@@ -3175,6 +3190,11 @@ function ProjectPage() {
                 onOpenBilling={() => {
                   setEditingBucketId(null);
                   setAddingLine(false);
+                  // Deep-link straight to the Costs ledger (not the default pay-app
+                  // stage), where the invoices/recorded costs that make up this
+                  // line's actual live. Set before the tab switch so the freshly
+                  // mounted workspace reads it.
+                  setBillingFocusStage("project-costs");
                   setProjectTab("billing");
                 }}
                 onOpenWipDay={(date) => {
@@ -3211,6 +3231,7 @@ function ProjectPage() {
                 <BillingWorkspace
                   project={project}
                   rollup={rollup}
+                  focusStage={billingFocusStage}
                   changeOrders={changeOrders}
                   buckets={buckets}
                   ledgerBuckets={ledgerBuckets}

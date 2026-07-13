@@ -112,11 +112,23 @@ function StatFigure({ label, children }: { label: string; children: ReactNode })
 export function BudgetStatBar({
   totals,
   lockedAt,
+  openHoldsAtRisk,
+  openHoldsContingency,
 }: {
   totals: BudgetLedgerRow;
   lockedAt?: string | null;
+  // The TRUE open-holds figures from the IOR rollup (rollup.exposureHolds /
+  // contingencyHold). `totals.atRisk`/`totals.contingency` only sum holds
+  // ALLOCATED to a cost code, dropping the un-allocated remainder — so when these
+  // are provided the bar shows the full open-holds number, matching the dashboard
+  // "E-Hold" line and the portfolio open-holds tile. Falls back to the allocated
+  // ledger totals when omitted (the bare ledger usage).
+  openHoldsAtRisk?: number;
+  openHoldsContingency?: number;
 }) {
   const position = totals.overUnder;
+  const atRisk = openHoldsAtRisk ?? totals.atRisk;
+  const contingency = openHoldsContingency ?? totals.contingency;
   return (
     <div className="flex flex-wrap items-end gap-x-8 gap-y-3 rounded-xl bg-dark-panel px-5 py-4 text-dark-panel-foreground">
       <StatFigure label="Working budget">{fmtUSD(totals.budget)}</StatFigure>
@@ -146,12 +158,9 @@ export function BudgetStatBar({
       </StatFigure>
       <div className="ml-auto text-right text-xs leading-relaxed text-dark-panel-foreground/60">
         <div>
-          At risk{" "}
-          <span className="font-medium text-dark-panel-foreground">{fmtUSD(totals.atRisk)}</span> ·
+          At risk <span className="font-medium text-dark-panel-foreground">{fmtUSD(atRisk)}</span> ·
           Contingency{" "}
-          <span className="font-medium text-dark-panel-foreground">
-            {fmtUSD(totals.contingency)}
-          </span>
+          <span className="font-medium text-dark-panel-foreground">{fmtUSD(contingency)}</span>
         </div>
         <div>
           {lockedAt ? (
@@ -206,6 +215,8 @@ export function BudgetLedgerTable({
   editedBucketIds,
   showStatBar,
   lockedAt,
+  openHoldsAtRisk,
+  openHoldsContingency,
 }: {
   buckets: BucketRow[];
   exposures: ExposureRow[];
@@ -238,6 +249,12 @@ export function BudgetLedgerTable({
   showStatBar?: boolean;
   // projects.budget_locked_at — shown in the stat bar's lock-state line.
   lockedAt?: string | null;
+  // TRUE open-holds figures from the IOR rollup (rollup.exposureHolds /
+  // contingencyHold). When provided, the stat bar's "At risk"/"Contingency" show
+  // these (the full open holds) instead of the ledger's allocated-only sums, so
+  // the Budget bar agrees with the dashboard E-Hold line and the portfolio.
+  openHoldsAtRisk?: number;
+  openHoldsContingency?: number;
 }) {
   const ledger = computeBudgetLedger(
     buckets,
@@ -276,7 +293,14 @@ export function BudgetLedgerTable({
 
   return (
     <div className="space-y-3">
-      {showStatBar ? <BudgetStatBar totals={ledger.totals} lockedAt={lockedAt} /> : null}
+      {showStatBar ? (
+        <BudgetStatBar
+          totals={ledger.totals}
+          lockedAt={lockedAt}
+          openHoldsAtRisk={openHoldsAtRisk}
+          openHoldsContingency={openHoldsContingency}
+        />
+      ) : null}
       <BudgetMovers rows={ledger.rows} />
       <div className="flex items-start justify-between gap-3">
         <div>

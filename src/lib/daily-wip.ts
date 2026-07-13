@@ -364,6 +364,25 @@ export function applySelfPerformToBuckets<T extends SelfPerformFoldable>(
   });
 }
 
+// Net "settled" daily-WIP out of the self-perform-by-bucket map: per bucket,
+// subtract the daily-WIP a recorded cost has offset (its vendor invoice covers
+// that self-perform lump), floored at 0. This prevents double-counting — the
+// self-perform lump is folded into the bucket actual at read time, and the same
+// dollars would land again when the vendor invoice posts as a cost_actual. Netting
+// here (before the map feeds every fold site) keeps the three rollups in lockstep.
+// Cents-safe: subtract in cents, floor at 0, convert once. max(0, wip - reconciled).
+export function netSelfPerformByReconciled(
+  selfPerformByBucket: ReadonlyMap<string, number>,
+  reconciledByBucket: ReadonlyMap<string, number>,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [id, wip] of selfPerformByBucket) {
+    const reconciled = reconciledByBucket.get(id) ?? 0;
+    out.set(id, centsToDollars(Math.max(0, dollarsToCents(wip) - dollarsToCents(reconciled))));
+  }
+  return out;
+}
+
 // ── Daily P&L (field request 2026-07-09) ────────────────────────────────────
 // "How do I know how much money I made or lost today?" Every WIP line ties to
 // an SOV cost code that carries a CONTRACT value (what the owner pays). The
