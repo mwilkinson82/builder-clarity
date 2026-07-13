@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -36,7 +36,10 @@ import {
   prepareAttachmentForUpload,
   uploadFilesWithRetry,
 } from "@/lib/daily-report-uploads";
-import { DailyLogWorkLines } from "@/components/outcome/DailyLogWorkLines";
+import {
+  DailyLogWorkLines,
+  type DailyLogWorkLinesHandle,
+} from "@/components/outcome/DailyLogWorkLines";
 import {
   DailyReportsCalendar,
   formatShortDate,
@@ -318,6 +321,10 @@ export function DailyReportsWorkspace({
   // A day with a report reads; an empty day (or an explicit edit) shows the form.
   const showDayForm = selectedDay !== null && (!dayReport || editingId !== null);
 
+  // Bridge to the "Work put in place" compose form so the report Save can
+  // commit an un-added work line before it completes (see saveMutation).
+  const workLinesRef = useRef<DailyLogWorkLinesHandle>(null);
+
   const resetForm = () => {
     // Back to a blank bucket for the day being viewed (today on the landing).
     setDraft({ ...emptyDraft(), report_date: selectedDay ?? localDate() });
@@ -392,6 +399,14 @@ export function DailyReportsWorkspace({
           throw new Error(`${file.name} is over 25 MB. Remove it and save again.`);
         }
       }
+
+      // Commit any work line the super typed into "Work put in place" but did
+      // not press "Add line" on. The report Save owns this now, so a dirty
+      // draft can never be silently dropped when the editor closes on save.
+      // Awaited and before the report writes: if the line fails to save we
+      // abort here (the typed report is still in the locked form) rather than
+      // report a success that lost the line. A no-op for an empty compose form.
+      await workLinesRef.current?.flushPendingLine();
 
       // Saving onto a date that already has a report UPDATES that day, so the
       // carry decision (keep that day's stored photos) must come from the
@@ -1088,9 +1103,11 @@ export function DailyReportsWorkspace({
               </div>
             ) : null}
             <DailyLogWorkLines
+              ref={workLinesRef}
               projectId={projectId}
               reportDate={draft.report_date}
               buckets={buckets}
+              disabled={saveMutation.isPending}
             />
           </div>
 
