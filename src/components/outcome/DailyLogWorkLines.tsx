@@ -30,6 +30,7 @@ import {
   FieldResourceEditor,
   type FieldResourceDraft,
 } from "@/components/outcome/FieldResourceEditor";
+import { PerformedByField } from "@/components/outcome/PerformedByField";
 import {
   deleteDailyWipEntry,
   listDailyWipEntries,
@@ -39,6 +40,8 @@ import {
   type ScheduleActivityOption,
 } from "@/lib/daily-wip.functions";
 import { costItemsForEdit, crewPeople, type CostLineItem } from "@/lib/daily-wip";
+import { listSubcontractors } from "@/lib/subcontractors.functions";
+import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 
 interface BucketOption {
   id: string;
@@ -92,6 +95,8 @@ interface LineDraft {
   id?: string;
   cost_bucket_id: string;
   schedule_activity_id: string;
+  subcontractor_id: string;
+  unmatched_vendor_name: string;
   activity: string;
   crew_count: number;
   hours: number;
@@ -112,6 +117,8 @@ interface LineDraft {
 const createEmptyLine = (): LineDraft => ({
   cost_bucket_id: "",
   schedule_activity_id: "",
+  subcontractor_id: "",
+  unmatched_vendor_name: "",
   activity: "",
   crew_count: 0,
   hours: 0,
@@ -207,6 +214,8 @@ function DailyLogWorkLinesImpl(
   const queryClient = useQueryClient();
   const listEntries = useServerFn(listDailyWipEntries);
   const listActivities = useServerFn(listScheduleActivitiesForWip);
+  const listDirectory = useServerFn(listSubcontractors);
+  const listProjectSubs = useServerFn(listProjectSubcontracts);
   const saveEntry = useServerFn(saveDailyWipEntry);
   const removeEntry = useServerFn(deleteDailyWipEntry);
 
@@ -225,6 +234,15 @@ function DailyLogWorkLinesImpl(
     queryKey: ["daily-wip-activities", projectId],
     queryFn: () => listActivities({ data: { projectId } }),
   });
+  const directoryQuery = useQuery({
+    queryKey: ["subcontractors-directory"],
+    queryFn: () => listDirectory(),
+    staleTime: 30_000,
+  });
+  const projectSubsQuery = useQuery({
+    queryKey: ["subcontracts", projectId],
+    queryFn: () => listProjectSubs({ data: { projectId } }),
+  });
 
   const lines = useMemo(
     () => (entriesQuery.data ?? []).filter((entry) => entry.entry_date === reportDate),
@@ -232,6 +250,31 @@ function DailyLogWorkLinesImpl(
   );
   const activities = useMemo(() => activitiesQuery.data ?? [], [activitiesQuery.data]);
   const activityGroups = useMemo(() => groupActivitiesByDivision(activities), [activities]);
+  const subNameById = useMemo(
+    () => new Map((directoryQuery.data ?? []).map((sub) => [sub.id, sub.name] as const)),
+    [directoryQuery.data],
+  );
+  // Only offer companies already attached to this project through a buyout.
+  // The project can contain more than one scope for the same company, but the
+  // WIP row links to the company directory ID, so dedupe the picker by company.
+  const subOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const options: { id: string; label: string }[] = [];
+    for (const sub of projectSubsQuery.data?.subcontracts ?? []) {
+      if (seen.has(sub.subcontractor_id)) continue;
+      seen.add(sub.subcontractor_id);
+      const name = subNameById.get(sub.subcontractor_id) ?? "Subcontractor";
+      options.push({
+        id: sub.subcontractor_id,
+        label: sub.title ? `${name} — ${sub.title}` : name,
+      });
+    }
+    return options;
+  }, [projectSubsQuery.data, subNameById]);
+  const performedByLabel = (entry: DailyWipEntryRow) =>
+    entry.subcontractor_id
+      ? (subNameById.get(entry.subcontractor_id) ?? "Subcontractor")
+      : entry.unmatched_vendor_name || null;
 
   const bucketLabel = (id: string | null) => {
     if (!id) return null;
@@ -297,6 +340,8 @@ function DailyLogWorkLinesImpl(
       id: entry.id,
       cost_bucket_id: entry.cost_bucket_id ?? "",
       schedule_activity_id: entry.schedule_activity_id ?? "",
+      subcontractor_id: entry.subcontractor_id ?? "",
+      unmatched_vendor_name: entry.unmatched_vendor_name,
       activity: entry.activity,
       crew_count: entry.crew_count,
       hours: entry.hours,
@@ -332,6 +377,8 @@ function DailyLogWorkLinesImpl(
     draft.activity.trim() !== "" ||
     draft.cost_bucket_id !== "" ||
     draft.schedule_activity_id !== "" ||
+    draft.subcontractor_id !== "" ||
+    draft.unmatched_vendor_name.trim() !== "" ||
     draft.crew_count > 0 ||
     draft.hours > 0 ||
     draft.quantity > 0 ||
@@ -363,6 +410,8 @@ function DailyLogWorkLinesImpl(
       entry_date: reportDate,
       cost_bucket_id: draft.cost_bucket_id || null,
       schedule_activity_id: draft.schedule_activity_id || null,
+      subcontractor_id: draft.subcontractor_id || null,
+      unmatched_vendor_name: draft.unmatched_vendor_name.trim(),
       activity: draft.activity.trim(),
       crew_count: draft.crew_count,
       hours: draft.hours,
@@ -454,6 +503,7 @@ function DailyLogWorkLinesImpl(
           {lines.map((entry) => {
             const bucket = bucketLabel(entry.cost_bucket_id);
             const activity = activityLabel(entry.schedule_activity_id);
+            const performedBy = performedByLabel(entry);
             return (
               <li
                 key={entry.id}
@@ -474,6 +524,12 @@ function DailyLogWorkLinesImpl(
                       <span className="inline-flex items-center gap-1">
                         <CalendarClock className="h-3 w-3 text-accent" />
                         {activity}
+                      </span>
+                    ) : null}
+                    {performedBy ? (
+                      <span>
+                        Performed by: {performedBy}
+                        {entry.unmatched_vendor_name ? " (not in project buyout yet)" : ""}
                       </span>
                     ) : null}
                     {entry.crew_count ? (
@@ -604,6 +660,21 @@ function DailyLogWorkLinesImpl(
               ))}
             </select>
           </label>
+          <div className="sm:col-span-2">
+            <PerformedByField
+              subcontractorId={draft.subcontractor_id}
+              unmatchedVendorName={draft.unmatched_vendor_name}
+              options={subOptions}
+              onChange={({ subcontractorId, unmatchedVendorName }) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  subcontractor_id: subcontractorId,
+                  unmatched_vendor_name: unmatchedVendorName,
+                }))
+              }
+              helpText="Bought-out subcontractors appear above. A typed vendor stays flagged for the PM to match or buy out later."
+            />
+          </div>
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground">Crews</span>
             <Input

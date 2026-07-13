@@ -18,12 +18,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 // Spies must exist before vi.mock's hoisted factory runs.
-const { saveSpy, listSpy, listActivitiesSpy, deleteSpy } = vi.hoisted(() => ({
-  saveSpy: vi.fn(),
-  listSpy: vi.fn(),
-  listActivitiesSpy: vi.fn(),
-  deleteSpy: vi.fn(),
-}));
+const { saveSpy, listSpy, listActivitiesSpy, listDirectorySpy, listProjectSubsSpy, deleteSpy } =
+  vi.hoisted(() => ({
+    saveSpy: vi.fn(),
+    listSpy: vi.fn(),
+    listActivitiesSpy: vi.fn(),
+    listDirectorySpy: vi.fn(),
+    listProjectSubsSpy: vi.fn(),
+    deleteSpy: vi.fn(),
+  }));
 
 // useServerFn(fn) normally returns a client caller; in the test it IS the fn,
 // so the component's saveEntry({ data }) call lands directly on our spy.
@@ -35,6 +38,12 @@ vi.mock("@/lib/daily-wip.functions", () => ({
   listDailyWipEntries: listSpy,
   listScheduleActivitiesForWip: listActivitiesSpy,
   deleteDailyWipEntry: deleteSpy,
+}));
+vi.mock("@/lib/subcontractors.functions", () => ({
+  listSubcontractors: listDirectorySpy,
+}));
+vi.mock("@/lib/subcontracts.functions", () => ({
+  listProjectSubcontracts: listProjectSubsSpy,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -82,10 +91,28 @@ function typeInto(el: HTMLInputElement, value: string) {
   });
 }
 
+function selectValue(el: HTMLSelectElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+  act(() => {
+    if (setter) setter.call(el, value);
+    else el.value = value;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
 beforeEach(() => {
   saveSpy.mockReset().mockResolvedValue({ id: "row-1" });
   listSpy.mockReset().mockResolvedValue([]);
   listActivitiesSpy.mockReset().mockResolvedValue([]);
+  listDirectorySpy.mockReset().mockResolvedValue([]);
+  listProjectSubsSpy.mockReset().mockResolvedValue({
+    subcontracts: [],
+    allocations: [],
+    payments: [],
+    documents: [],
+    change_orders: [],
+    payment_allocations: [],
+  });
   deleteSpy.mockReset().mockResolvedValue({ id: "x" });
 });
 
@@ -119,6 +146,75 @@ test("report Save flushes a typed work line that was never 'Add line'-d", async 
   expect(payload.activity).toBe("Electrical rough-in — 24 junction boxes");
   expect(payload.entry_date).toBe(REPORT_DATE);
   expect(payload.projectId).toBe(PROJECT_ID);
+});
+
+test("field can tag a subcontractor already bought out on the project", async () => {
+  const subcontractorId = "22222222-2222-2222-2222-222222222222";
+  listDirectorySpy.mockResolvedValueOnce([{ id: subcontractorId, name: "Northeast Electric" }]);
+  listProjectSubsSpy.mockResolvedValueOnce({
+    subcontracts: [
+      {
+        id: "33333333-3333-3333-3333-333333333333",
+        subcontractor_id: subcontractorId,
+        title: "Electrical rough-in",
+      },
+    ],
+    allocations: [],
+    payments: [],
+    documents: [],
+    change_orders: [],
+    payment_allocations: [],
+  });
+
+  const ref = createRef<DailyLogWorkLinesHandle>();
+  mount(ref);
+  await act(async () => {
+    await vi.waitFor(() => {
+      const picker = container!.querySelector<HTMLSelectElement>(
+        'select[aria-label="Performed by subcontractor"]',
+      );
+      expect(picker?.textContent).toContain("Northeast Electric — Electrical rough-in");
+    });
+  });
+
+  const picker = container!.querySelector<HTMLSelectElement>(
+    'select[aria-label="Performed by subcontractor"]',
+  );
+  selectValue(picker!, subcontractorId);
+  typeInto(
+    container!.querySelector<HTMLInputElement>(
+      'input[placeholder="e.g. Formed and poured north footings"]',
+    )!,
+    "Main lobby electrical rough-in",
+  );
+
+  await act(async () => ref.current!.flushPendingLine());
+
+  const payload = (saveSpy.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+  expect(payload.subcontractor_id).toBe(subcontractorId);
+  expect(payload.unmatched_vendor_name).toBe("");
+});
+
+test("field can preserve an unlisted vendor name for PM reconciliation", async () => {
+  const ref = createRef<DailyLogWorkLinesHandle>();
+  mount(ref);
+
+  typeInto(
+    container!.querySelector<HTMLInputElement>(
+      'input[placeholder="e.g. Formed and poured north footings"]',
+    )!,
+    "Temporary fencing",
+  );
+  typeInto(
+    container!.querySelector<HTMLInputElement>('input[aria-label="Unlisted vendor name"]')!,
+    "Acme Site Services",
+  );
+
+  await act(async () => ref.current!.flushPendingLine());
+
+  const payload = (saveSpy.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+  expect(payload.subcontractor_id).toBeNull();
+  expect(payload.unmatched_vendor_name).toBe("Acme Site Services");
 });
 
 test("field quantities, materials, and equipment all reach the PM pricing payload", async () => {

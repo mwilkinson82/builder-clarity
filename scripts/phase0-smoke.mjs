@@ -3012,8 +3012,32 @@ await expectContains(
 );
 await expectContains(
   "src/components/outcome/DailyWipWorkspace.tsx",
-  [/Performed by/, /draft\.subcontractor_id/, /Self-perform \(in-house\)/, /subOptions/],
+  [/PerformedByField/, /draft\.subcontractor_id/, /subOptions/],
   "daily-WIP workspace has the performed-by picker (self-perform ↔ sub)",
+);
+await expectContains(
+  "supabase/migrations/20260713205235_daily_wip_unmatched_vendor_name.sql",
+  [
+    /ADD COLUMN IF NOT EXISTS unmatched_vendor_name text/,
+    /daily_wip_entries_performed_by_check/,
+    /subcontractor_id IS NOT NULL/,
+  ],
+  "daily-WIP migration preserves unlisted field vendors without conflicting with canonical subcontractor links",
+);
+await expectContains(
+  "src/components/outcome/DailyLogWorkLines.tsx",
+  [/PerformedByField/, /listProjectSubcontracts/, /unmatched_vendor_name/],
+  "daily log offers bought-out project subcontractors plus a durable unlisted-vendor fallback",
+);
+await expectContains(
+  "src/components/outcome/DailyWipWorkspace.tsx",
+  [/PerformedByField/, /unmatched_vendor_name/, /Match vendor/],
+  "daily-WIP flags unlisted vendors and lets the PM replace them with a project subcontractor",
+);
+await expectContains(
+  "src/components/outcome/PerformedByField.tsx",
+  [/Performed by subcontractor/, /Vendor not listed\? Enter the company name/, /flagUnmatched/],
+  "shared performed-by field keeps canonical project subs and unlisted vendor entry mutually exclusive",
 );
 
 // SUB CO → BUDGET FOLD (field feedback 2026-07-09: "change orders didnt roll up

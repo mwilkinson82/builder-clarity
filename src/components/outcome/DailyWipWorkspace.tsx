@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { InstalledQuantities } from "@/components/outcome/InstalledQuantities";
 import { ItemizedCostEditor } from "@/components/outcome/ItemizedCostEditor";
+import { PerformedByField } from "@/components/outcome/PerformedByField";
 import { createDraftCostItem, type DraftCostItem } from "@/components/outcome/daily-wip-drafts";
 import {
   Dialog,
@@ -95,6 +96,7 @@ interface SaveWipInput {
   cost_bucket_id: string | null;
   schedule_activity_id: string | null;
   subcontractor_id: string | null;
+  unmatched_vendor_name: string;
   entry_date: string;
   activity: string;
   crew_count: number;
@@ -121,6 +123,7 @@ interface EntryDraft {
   cost_bucket_id: string;
   schedule_activity_id: string;
   subcontractor_id: string;
+  unmatched_vendor_name: string;
   activity: string;
   crew_count: number;
   hours: number;
@@ -140,6 +143,7 @@ const emptyDraft: EntryDraft = {
   cost_bucket_id: "",
   schedule_activity_id: "",
   subcontractor_id: "",
+  unmatched_vendor_name: "",
   activity: "",
   crew_count: 0,
   hours: 0,
@@ -345,6 +349,9 @@ export function DailyWipWorkspace({
     return options;
   }, [projectSubsQuery.data, subNameById]);
   const subName = (id: string | null) => (id ? (subNameById.get(id) ?? "Subcontractor") : null);
+  const performedByName = (
+    row: Pick<DailyWipEntryRow, "subcontractor_id" | "unmatched_vendor_name">,
+  ) => (subName(row.subcontractor_id) ?? row.unmatched_vendor_name) || null;
 
   // Committed dollars per (sub company, cost code) from executed buyouts, so a
   // sub-tagged work line can be valued by earned value: commitment × % complete.
@@ -568,6 +575,7 @@ export function DailyWipWorkspace({
     draftMaterial > 0 ||
     draftEquipment > 0 ||
     (draftIsSub && draft.percent_complete > 0) ||
+    draft.unmatched_vendor_name.trim() !== "" ||
     draft.activity.trim();
 
   // Drop lines that are entirely blank (no description and no amount) before
@@ -601,6 +609,7 @@ export function DailyWipWorkspace({
       cost_bucket_id: draft.cost_bucket_id || null,
       schedule_activity_id: draft.schedule_activity_id || null,
       subcontractor_id: draft.subcontractor_id || null,
+      unmatched_vendor_name: draft.unmatched_vendor_name.trim(),
       entry_date: selectedDate,
       activity: draft.activity.trim(),
       crew_count: draft.crew_count,
@@ -631,6 +640,7 @@ export function DailyWipWorkspace({
       cost_bucket_id: entry.cost_bucket_id ?? "",
       schedule_activity_id: entry.schedule_activity_id ?? "",
       subcontractor_id: entry.subcontractor_id ?? "",
+      unmatched_vendor_name: entry.unmatched_vendor_name,
       activity: entry.activity,
       crew_count: entry.crew_count,
       hours: entry.hours,
@@ -826,7 +836,7 @@ export function DailyWipWorkspace({
                       entry={entry}
                       label={bucketLabel(entry.cost_bucket_id)}
                       activityLabel={activityLabel(entry.schedule_activity_id)}
-                      performedBy={subName(entry.subcontractor_id)}
+                      performedBy={performedByName(entry)}
                       subCommitment={commitmentFor(entry)}
                       progressBasis={commitmentFor(entry) ?? contractValueFor(entry.cost_bucket_id)}
                       priorPercent={priorPercentFor(entry)}
@@ -897,7 +907,8 @@ export function DailyWipWorkspace({
                 <div className="font-mono text-[10px] text-muted-foreground">
                   {[
                     bucketLabel(draft.cost_bucket_id || null),
-                    subName(draft.subcontractor_id || null) ?? "Self-perform",
+                    (subName(draft.subcontractor_id || null) ?? draft.unmatched_vendor_name) ||
+                      "Self-perform",
                     formatBillingDate(selectedDate),
                   ].join(" · ")}
                 </div>
@@ -951,28 +962,22 @@ export function DailyWipWorkspace({
                     ))}
                   </select>
                 </label>
-                <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                    Performed by
-                  </span>
-                  <select
-                    value={draft.subcontractor_id}
-                    onChange={(event) => setDraftField("subcontractor_id", event.target.value)}
-                    disabled={subOptions.length === 0}
-                    className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
-                  >
-                    <option value="">
-                      {subOptions.length === 0
-                        ? "Self-perform (no subs bought out yet)"
-                        : "Self-perform (in-house)"}
-                    </option>
-                    {subOptions.map((sub) => (
-                      <option key={sub.id} value={sub.id}>
-                        {sub.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="flex flex-col gap-1">
+                  <PerformedByField
+                    subcontractorId={draft.subcontractor_id}
+                    unmatchedVendorName={draft.unmatched_vendor_name}
+                    options={subOptions}
+                    onChange={({ subcontractorId, unmatchedVendorName }) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        subcontractor_id: subcontractorId,
+                        unmatched_vendor_name: unmatchedVendorName,
+                      }))
+                    }
+                    labelClassName="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground"
+                    flagUnmatched
+                  />
+                </div>
                 <label className="flex flex-col gap-1">
                   <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     Activity / note
@@ -1466,6 +1471,11 @@ function EntryRow({
           <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
             <HardHat className="h-3 w-3 shrink-0 text-accent" />
             <span className="truncate">{performedBy}</span>
+            {entry.unmatched_vendor_name ? (
+              <span className="shrink-0 rounded-sm border border-warning/40 px-1 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-warning">
+                Match vendor
+              </span>
+            ) : null}
           </div>
         ) : null}
         {quantitiesSummary(entry) ? (
