@@ -115,7 +115,42 @@ test("report Save flushes a typed work line that was never 'Add line'-d", async 
   const payload = (saveSpy.mock.calls[0][0] as { data: Record<string, unknown> }).data;
   expect(payload.activity).toBe("Electrical rough-in — 24 junction boxes");
   expect(payload.entry_date).toBe(REPORT_DATE);
-  expect(payload.project_id ?? PROJECT_ID).toBeTruthy();
+  expect(payload.projectId).toBe(PROJECT_ID);
+});
+
+test("Add line and report Save share one in-flight insert", async () => {
+  let resolveSave!: (value: { id: string }) => void;
+  saveSpy.mockImplementationOnce(
+    () =>
+      new Promise<{ id: string }>((resolve) => {
+        resolveSave = resolve;
+      }),
+  );
+  const ref = createRef<DailyLogWorkLinesHandle>();
+  mount(ref);
+
+  const activity = container!.querySelector<HTMLInputElement>(
+    'input[placeholder="e.g. Formed and poured north footings"]',
+  );
+  typeInto(activity!, "North lobby electrical rough-in");
+
+  const addLine = Array.from(container!.querySelectorAll("button")).find((button) =>
+    button.textContent?.includes("Add line"),
+  );
+  act(() => addLine!.click());
+
+  let reportFlush!: Promise<void>;
+  act(() => {
+    reportFlush = ref.current!.flushPendingLine();
+  });
+  await Promise.resolve();
+  expect(saveSpy).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    resolveSave({ id: "row-1" });
+    await reportFlush;
+  });
+  expect(saveSpy).toHaveBeenCalledTimes(1);
 });
 
 test("flush is a no-op when the compose form is empty (no phantom line)", async () => {

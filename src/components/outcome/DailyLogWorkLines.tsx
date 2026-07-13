@@ -14,6 +14,7 @@ import {
   useCallback,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
   type ForwardedRef,
 } from "react";
@@ -44,6 +45,7 @@ interface DailyLogWorkLinesProps {
   projectId: string;
   reportDate: string;
   buckets: BucketOption[];
+  disabled?: boolean;
 }
 
 // One installed quantity/count on a work line (500 LF conduit, 24 junction boxes).
@@ -142,7 +144,7 @@ export interface DailyLogWorkLinesHandle {
 }
 
 function DailyLogWorkLinesImpl(
-  { projectId, reportDate, buckets }: DailyLogWorkLinesProps,
+  { projectId, reportDate, buckets, disabled = false }: DailyLogWorkLinesProps,
   ref: ForwardedRef<DailyLogWorkLinesHandle>,
 ) {
   const queryClient = useQueryClient();
@@ -154,6 +156,9 @@ function DailyLogWorkLinesImpl(
   const [draft, setDraft] = useState<LineDraft>(emptyLine);
   // The row being edited — held so we can preserve its money fields on save.
   const [editing, setEditing] = useState<DailyWipEntryRow | null>(null);
+  // "Add line" and the parent report Save can fire within the same render.
+  // Both paths must await this one promise or the same draft can insert twice.
+  const inFlightSaveRef = useRef<Promise<void> | null>(null);
 
   const entriesQuery = useQuery({
     queryKey: ["daily-wip-entries", projectId],
@@ -307,12 +312,25 @@ function DailyLogWorkLinesImpl(
     };
   }, [projectId, reportDate, draft, editing]);
 
+  const commitPendingLine = useCallback((): Promise<void> => {
+    if (inFlightSaveRef.current) return inFlightSaveRef.current;
+    if (!draftHasContent) return Promise.resolve();
+
+    const inFlight = saveMutation.mutateAsync(buildSavePayload()).then(() => undefined);
+    inFlightSaveRef.current = inFlight;
+    return inFlight.finally(() => {
+      if (inFlightSaveRef.current === inFlight) inFlightSaveRef.current = null;
+    });
+  }, [draftHasContent, saveMutation, buildSavePayload]);
+
   const handleSave = () => {
     if (!draftHasContent) {
       toast.error("Add an activity, cost code, schedule activity, or crew/hours first");
       return;
     }
-    saveMutation.mutate(buildSavePayload());
+    // The mutation owns user-facing error reporting. Catch here only to avoid
+    // an unhandled rejected promise when this button is the caller.
+    void commitPendingLine().catch(() => undefined);
   };
 
   // The parent Daily Report "Save" commits any un-added work line through here,
@@ -323,20 +341,22 @@ function DailyLogWorkLinesImpl(
   useImperativeHandle(
     ref,
     () => ({
-      hasPendingLine: () => draftHasContent,
-      flushPendingLine: async () => {
-        if (!draftHasContent) return;
-        await saveMutation.mutateAsync(buildSavePayload());
-      },
+      hasPendingLine: () => draftHasContent || inFlightSaveRef.current !== null,
+      flushPendingLine: commitPendingLine,
     }),
-    [draftHasContent, saveMutation, buildSavePayload],
+    [draftHasContent, commitPendingLine],
   );
 
   const selectClass =
     "rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60";
 
   return (
-    <div className="rounded-md border border-hairline bg-surface p-4">
+    <div
+      className="rounded-md border border-hairline bg-surface p-4"
+      aria-busy={disabled || saveMutation.isPending}
+      aria-disabled={disabled || saveMutation.isPending}
+      inert={disabled || saveMutation.isPending}
+    >
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-center gap-2">
           <Label className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
