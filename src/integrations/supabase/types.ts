@@ -506,6 +506,57 @@ export type Database = {
           },
         ]
       }
+      budget_line_overrides: {
+        Row: {
+          changed_by: string | null
+          cost_bucket_id: string | null
+          created_at: string
+          field: string
+          id: string
+          new_value: number
+          note: string | null
+          old_value: number
+          project_id: string
+        }
+        Insert: {
+          changed_by?: string | null
+          cost_bucket_id?: string | null
+          created_at?: string
+          field: string
+          id?: string
+          new_value?: number
+          note?: string | null
+          old_value?: number
+          project_id: string
+        }
+        Update: {
+          changed_by?: string | null
+          cost_bucket_id?: string | null
+          created_at?: string
+          field?: string
+          id?: string
+          new_value?: number
+          note?: string | null
+          old_value?: number
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budget_line_overrides_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "budget_line_overrides_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       change_order_allocations: {
         Row: {
           change_order_id: string
@@ -631,6 +682,60 @@ export type Database = {
           },
         ]
       }
+      change_order_documents: {
+        Row: {
+          change_order_id: string
+          created_at: string
+          created_by: string | null
+          doc_type: string
+          file_name: string
+          id: string
+          note: string
+          project_id: string
+          storage_path: string
+          uploaded_at: string
+        }
+        Insert: {
+          change_order_id: string
+          created_at?: string
+          created_by?: string | null
+          doc_type?: string
+          file_name?: string
+          id?: string
+          note?: string
+          project_id: string
+          storage_path: string
+          uploaded_at?: string
+        }
+        Update: {
+          change_order_id?: string
+          created_at?: string
+          created_by?: string | null
+          doc_type?: string
+          file_name?: string
+          id?: string
+          note?: string
+          project_id?: string
+          storage_path?: string
+          uploaded_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "change_order_documents_change_order_id_fkey"
+            columns: ["change_order_id"]
+            isOneToOne: false
+            referencedRelation: "change_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "change_order_documents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       change_orders: {
         Row: {
           client_decided_at: string | null
@@ -642,13 +747,19 @@ export type Database = {
           contract_amount: number
           cost_amount: number
           created_at: string
+          date_initiated: string | null
           description: string
           id: string
+          linked_claim_id: string | null
+          linked_exposure_id: string | null
           notes: string
           number: string
           owner: string
+          pricing_method: string
           probability: number
           project_id: string
+          requested_by: string
+          schedule_impact_days: number
           status: string
           updated_at: string
         }
@@ -662,13 +773,19 @@ export type Database = {
           contract_amount?: number
           cost_amount?: number
           created_at?: string
+          date_initiated?: string | null
           description?: string
           id?: string
+          linked_claim_id?: string | null
+          linked_exposure_id?: string | null
           notes?: string
           number?: string
           owner?: string
+          pricing_method?: string
           probability?: number
           project_id: string
+          requested_by?: string
+          schedule_impact_days?: number
           status?: string
           updated_at?: string
         }
@@ -682,17 +799,37 @@ export type Database = {
           contract_amount?: number
           cost_amount?: number
           created_at?: string
+          date_initiated?: string | null
           description?: string
           id?: string
+          linked_claim_id?: string | null
+          linked_exposure_id?: string | null
           notes?: string
           number?: string
           owner?: string
+          pricing_method?: string
           probability?: number
           project_id?: string
+          requested_by?: string
+          schedule_impact_days?: number
           status?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "change_orders_linked_claim_id_fkey"
+            columns: ["linked_claim_id"]
+            isOneToOne: false
+            referencedRelation: "project_claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "change_orders_linked_exposure_id_fkey"
+            columns: ["linked_exposure_id"]
+            isOneToOne: false
+            referencedRelation: "exposures"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "change_orders_project_id_fkey"
             columns: ["project_id"]
@@ -808,16 +945,23 @@ export type Database = {
       cost_actuals: {
         Row: {
           amount: number
+          approved_at: string | null
+          approved_by: string | null
           category: string
           cost_bucket_id: string | null
           cost_code: string
           cost_date: string
           created_at: string
           created_by: string | null
+          daily_wip_offset: number
           description: string
           id: string
           import_batch_id: string | null
           notes: string
+          paid_at: string | null
+          paid_date: string | null
+          payment_method: string
+          payment_reference: string
           project_id: string
           reference_number: string
           source_external_id: string
@@ -830,16 +974,23 @@ export type Database = {
         }
         Insert: {
           amount?: number
+          approved_at?: string | null
+          approved_by?: string | null
           category?: string
           cost_bucket_id?: string | null
           cost_code?: string
           cost_date: string
           created_at?: string
           created_by?: string | null
+          daily_wip_offset?: number
           description: string
           id?: string
           import_batch_id?: string | null
           notes?: string
+          paid_at?: string | null
+          paid_date?: string | null
+          payment_method?: string
+          payment_reference?: string
           project_id: string
           reference_number?: string
           source_external_id?: string
@@ -852,16 +1003,23 @@ export type Database = {
         }
         Update: {
           amount?: number
+          approved_at?: string | null
+          approved_by?: string | null
           category?: string
           cost_bucket_id?: string | null
           cost_code?: string
           cost_date?: string
           created_at?: string
           created_by?: string | null
+          daily_wip_offset?: number
           description?: string
           id?: string
           import_batch_id?: string | null
           notes?: string
+          paid_at?: string | null
+          paid_date?: string | null
+          payment_method?: string
+          payment_reference?: string
           project_id?: string
           reference_number?: string
           source_external_id?: string
@@ -1177,13 +1335,22 @@ export type Database = {
           crew_count: number
           entry_date: string
           equipment_cost: number
+          equipment_items: Json
+          field_percent_complete: number
           hours: number
           id: string
           labor_rate: number
           material_cost: number
+          material_items: Json
           notes: string
+          percent_basis: string
+          percent_complete: number
+          percent_overridden_at: string | null
           project_id: string
           quantity: number
+          quantity_items: Json
+          schedule_activity_id: string | null
+          subcontractor_id: string | null
           unit: string
           updated_at: string
         }
@@ -1195,13 +1362,22 @@ export type Database = {
           crew_count?: number
           entry_date: string
           equipment_cost?: number
+          equipment_items?: Json
+          field_percent_complete?: number
           hours?: number
           id?: string
           labor_rate?: number
           material_cost?: number
+          material_items?: Json
           notes?: string
+          percent_basis?: string
+          percent_complete?: number
+          percent_overridden_at?: string | null
           project_id: string
           quantity?: number
+          quantity_items?: Json
+          schedule_activity_id?: string | null
+          subcontractor_id?: string | null
           unit?: string
           updated_at?: string
         }
@@ -1213,13 +1389,22 @@ export type Database = {
           crew_count?: number
           entry_date?: string
           equipment_cost?: number
+          equipment_items?: Json
+          field_percent_complete?: number
           hours?: number
           id?: string
           labor_rate?: number
           material_cost?: number
+          material_items?: Json
           notes?: string
+          percent_basis?: string
+          percent_complete?: number
+          percent_overridden_at?: string | null
           project_id?: string
           quantity?: number
+          quantity_items?: Json
+          schedule_activity_id?: string | null
+          subcontractor_id?: string | null
           unit?: string
           updated_at?: string
         }
@@ -1236,6 +1421,20 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_wip_entries_schedule_activity_id_fkey"
+            columns: ["schedule_activity_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_wip_entries_subcontractor_id_fkey"
+            columns: ["subcontractor_id"]
+            isOneToOne: false
+            referencedRelation: "subcontractors"
             referencedColumns: ["id"]
           },
         ]
@@ -1965,6 +2164,8 @@ export type Database = {
           due_date: string | null
           hold_class: Database["public"]["Enums"]["hold_class"]
           id: string
+          linked_change_order_id: string | null
+          linked_claim_id: string | null
           next_review_at: string | null
           notes: string
           opened_at: string
@@ -1990,6 +2191,8 @@ export type Database = {
           due_date?: string | null
           hold_class?: Database["public"]["Enums"]["hold_class"]
           id?: string
+          linked_change_order_id?: string | null
+          linked_claim_id?: string | null
           next_review_at?: string | null
           notes?: string
           opened_at?: string
@@ -2015,6 +2218,8 @@ export type Database = {
           due_date?: string | null
           hold_class?: Database["public"]["Enums"]["hold_class"]
           id?: string
+          linked_change_order_id?: string | null
+          linked_claim_id?: string | null
           next_review_at?: string | null
           notes?: string
           opened_at?: string
@@ -2034,7 +2239,235 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "exposures_linked_change_order_id_fkey"
+            columns: ["linked_change_order_id"]
+            isOneToOne: false
+            referencedRelation: "change_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "exposures_linked_claim_id_fkey"
+            columns: ["linked_claim_id"]
+            isOneToOne: false
+            referencedRelation: "project_claims"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "exposures_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      insurance_certificates: {
+        Row: {
+          auto_limit: number
+          carrier: string
+          created_at: string
+          effective_date: string | null
+          expiry_date: string | null
+          file_name: string
+          gl_limit: number
+          id: string
+          notes: string
+          other_coverage: string
+          project_id: string
+          storage_path: string
+          subcontract_id: string
+          umbrella_limit: number
+          updated_at: string
+          uploaded_by: string | null
+          verified: boolean
+          wc_limit: number
+        }
+        Insert: {
+          auto_limit?: number
+          carrier?: string
+          created_at?: string
+          effective_date?: string | null
+          expiry_date?: string | null
+          file_name?: string
+          gl_limit?: number
+          id?: string
+          notes?: string
+          other_coverage?: string
+          project_id: string
+          storage_path?: string
+          subcontract_id: string
+          umbrella_limit?: number
+          updated_at?: string
+          uploaded_by?: string | null
+          verified?: boolean
+          wc_limit?: number
+        }
+        Update: {
+          auto_limit?: number
+          carrier?: string
+          created_at?: string
+          effective_date?: string | null
+          expiry_date?: string | null
+          file_name?: string
+          gl_limit?: number
+          id?: string
+          notes?: string
+          other_coverage?: string
+          project_id?: string
+          storage_path?: string
+          subcontract_id?: string
+          umbrella_limit?: number
+          updated_at?: string
+          uploaded_by?: string | null
+          verified?: boolean
+          wc_limit?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "insurance_certificates_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "insurance_certificates_subcontract_id_fkey"
+            columns: ["subcontract_id"]
+            isOneToOne: false
+            referencedRelation: "subcontracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lien_waivers: {
+        Row: {
+          amount: number
+          created_at: string
+          file_name: string
+          id: string
+          notes: string
+          payment_id: string | null
+          project_id: string
+          signed_date: string | null
+          storage_path: string
+          subcontract_id: string
+          through_date: string | null
+          uploaded_by: string | null
+          waiver_type: string
+        }
+        Insert: {
+          amount?: number
+          created_at?: string
+          file_name?: string
+          id?: string
+          notes?: string
+          payment_id?: string | null
+          project_id: string
+          signed_date?: string | null
+          storage_path?: string
+          subcontract_id: string
+          through_date?: string | null
+          uploaded_by?: string | null
+          waiver_type?: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          file_name?: string
+          id?: string
+          notes?: string
+          payment_id?: string | null
+          project_id?: string
+          signed_date?: string | null
+          storage_path?: string
+          subcontract_id?: string
+          through_date?: string | null
+          uploaded_by?: string | null
+          waiver_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lien_waivers_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "subcontract_payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lien_waivers_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lien_waivers_subcontract_id_fkey"
+            columns: ["subcontract_id"]
+            isOneToOne: false
+            referencedRelation: "subcontracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notifications: {
+        Row: {
+          actor_id: string | null
+          body: string
+          created_at: string
+          data: Json
+          entity_id: string | null
+          entity_type: string
+          id: string
+          organization_id: string | null
+          project_id: string | null
+          read_at: string | null
+          recipient_id: string
+          title: string
+          type: string
+          url: string
+        }
+        Insert: {
+          actor_id?: string | null
+          body?: string
+          created_at?: string
+          data?: Json
+          entity_id?: string | null
+          entity_type?: string
+          id?: string
+          organization_id?: string | null
+          project_id?: string | null
+          read_at?: string | null
+          recipient_id: string
+          title?: string
+          type: string
+          url?: string
+        }
+        Update: {
+          actor_id?: string | null
+          body?: string
+          created_at?: string
+          data?: Json
+          entity_id?: string | null
+          entity_type?: string
+          id?: string
+          organization_id?: string | null
+          project_id?: string | null
+          read_at?: string | null
+          recipient_id?: string
+          title?: string
+          type?: string
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -2874,6 +3307,7 @@ export type Database = {
           email: string
           full_name: string
           id: string
+          notification_prefs: Json
           phone: string
           updated_at: string
         }
@@ -2885,6 +3319,7 @@ export type Database = {
           email?: string
           full_name?: string
           id: string
+          notification_prefs?: Json
           phone?: string
           updated_at?: string
         }
@@ -2896,6 +3331,7 @@ export type Database = {
           email?: string
           full_name?: string
           id?: string
+          notification_prefs?: Json
           phone?: string
           updated_at?: string
         }
@@ -2905,6 +3341,211 @@ export type Database = {
             columns: ["default_organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_claim_documents: {
+        Row: {
+          claim_id: string
+          created_at: string
+          created_by: string | null
+          doc_type: string
+          file_name: string
+          id: string
+          note: string
+          project_id: string
+          storage_path: string
+          uploaded_at: string
+        }
+        Insert: {
+          claim_id: string
+          created_at?: string
+          created_by?: string | null
+          doc_type?: string
+          file_name?: string
+          id?: string
+          note?: string
+          project_id: string
+          storage_path: string
+          uploaded_at?: string
+        }
+        Update: {
+          claim_id?: string
+          created_at?: string
+          created_by?: string | null
+          doc_type?: string
+          file_name?: string
+          id?: string
+          note?: string
+          project_id?: string
+          storage_path?: string
+          uploaded_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_claim_documents_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "project_claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_claim_documents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_claim_events: {
+        Row: {
+          claim_id: string
+          created_at: string
+          created_by: string | null
+          event_date: string | null
+          event_type: string
+          id: string
+          note: string
+          project_id: string
+          revision_number: number
+          seed_key: string
+          updated_at: string
+        }
+        Insert: {
+          claim_id: string
+          created_at?: string
+          created_by?: string | null
+          event_date?: string | null
+          event_type?: string
+          id?: string
+          note?: string
+          project_id: string
+          revision_number?: number
+          seed_key?: string
+          updated_at?: string
+        }
+        Update: {
+          claim_id?: string
+          created_at?: string
+          created_by?: string | null
+          event_date?: string | null
+          event_type?: string
+          id?: string
+          note?: string
+          project_id?: string
+          revision_number?: number
+          seed_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_claim_events_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "project_claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_claim_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_claims: {
+        Row: {
+          change_order_id: string | null
+          claim_number: string
+          claim_type: string
+          created_at: string
+          created_by: string | null
+          description: string
+          id: string
+          money_awarded: number
+          money_claimed: number
+          outcome: string
+          owner: string
+          project_id: string
+          resolved_at: string | null
+          risk_exposure_id: string | null
+          seed_key: string
+          status: string
+          submitted_at: string | null
+          time_awarded_days: number
+          time_claimed_days: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          change_order_id?: string | null
+          claim_number?: string
+          claim_type?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          money_awarded?: number
+          money_claimed?: number
+          outcome?: string
+          owner?: string
+          project_id: string
+          resolved_at?: string | null
+          risk_exposure_id?: string | null
+          seed_key?: string
+          status?: string
+          submitted_at?: string | null
+          time_awarded_days?: number
+          time_claimed_days?: number
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          change_order_id?: string | null
+          claim_number?: string
+          claim_type?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          money_awarded?: number
+          money_claimed?: number
+          outcome?: string
+          owner?: string
+          project_id?: string
+          resolved_at?: string | null
+          risk_exposure_id?: string | null
+          seed_key?: string
+          status?: string
+          submitted_at?: string | null
+          time_awarded_days?: number
+          time_claimed_days?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_claims_change_order_id_fkey"
+            columns: ["change_order_id"]
+            isOneToOne: false
+            referencedRelation: "change_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_claims_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_claims_risk_exposure_id_fkey"
+            columns: ["risk_exposure_id"]
+            isOneToOne: false
+            referencedRelation: "exposures"
             referencedColumns: ["id"]
           },
         ]
@@ -2974,6 +3615,62 @@ export type Database = {
           },
           {
             foreignKeyName: "project_client_access_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_documents: {
+        Row: {
+          archived_at: string | null
+          category: string
+          content_type: string
+          created_at: string
+          description: string
+          file_name: string
+          id: string
+          project_id: string
+          size_bytes: number
+          storage_path: string
+          title: string
+          updated_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          archived_at?: string | null
+          category?: string
+          content_type?: string
+          created_at?: string
+          description?: string
+          file_name?: string
+          id?: string
+          project_id: string
+          size_bytes?: number
+          storage_path: string
+          title?: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          archived_at?: string | null
+          category?: string
+          content_type?: string
+          created_at?: string
+          description?: string
+          file_name?: string
+          id?: string
+          project_id?: string
+          size_bytes?: number
+          storage_path?: string
+          title?: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_documents_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -3131,6 +3828,7 @@ export type Database = {
           billing_frequency: string
           budget_locked_at: string | null
           client: string
+          closed_at: string | null
           created_at: string
           default_output_format: string
           default_retainage_pct: number
@@ -3150,6 +3848,7 @@ export type Database = {
           percent_complete: number
           phase: Database["public"]["Enums"]["project_phase"]
           project_manager: string
+          require_compliance_gating: boolean
           schedule_variance_weeks: number
           source_opportunity_id: string | null
           updated_at: string
@@ -3162,6 +3861,7 @@ export type Database = {
           billing_frequency?: string
           budget_locked_at?: string | null
           client?: string
+          closed_at?: string | null
           created_at?: string
           default_output_format?: string
           default_retainage_pct?: number
@@ -3181,6 +3881,7 @@ export type Database = {
           percent_complete?: number
           phase?: Database["public"]["Enums"]["project_phase"]
           project_manager?: string
+          require_compliance_gating?: boolean
           schedule_variance_weeks?: number
           source_opportunity_id?: string | null
           updated_at?: string
@@ -3193,6 +3894,7 @@ export type Database = {
           billing_frequency?: string
           budget_locked_at?: string | null
           client?: string
+          closed_at?: string | null
           created_at?: string
           default_output_format?: string
           default_retainage_pct?: number
@@ -3212,6 +3914,7 @@ export type Database = {
           percent_complete?: number
           phase?: Database["public"]["Enums"]["project_phase"]
           project_manager?: string
+          require_compliance_gating?: boolean
           schedule_variance_weeks?: number
           source_opportunity_id?: string | null
           updated_at?: string
@@ -3242,6 +3945,8 @@ export type Database = {
           forecast_completion_date_before: string | null
           id: string
           kpi_snapshot: Json
+          last_sent_at: string | null
+          pdf_path: string
           pdf_style: string
           project_id: string
           reviewed_at: string
@@ -3258,6 +3963,8 @@ export type Database = {
           forecast_completion_date_before?: string | null
           id?: string
           kpi_snapshot?: Json
+          last_sent_at?: string | null
+          pdf_path?: string
           pdf_style?: string
           project_id: string
           reviewed_at?: string
@@ -3274,6 +3981,8 @@ export type Database = {
           forecast_completion_date_before?: string | null
           id?: string
           kpi_snapshot?: Json
+          last_sent_at?: string | null
+          pdf_path?: string
           pdf_style?: string
           project_id?: string
           reviewed_at?: string
@@ -4117,21 +4826,527 @@ export type Database = {
       }
       stripe_webhook_events: {
         Row: {
+          claimed_at: string
           event_id: string
           event_type: string
           processed_at: string
+          status: string
         }
         Insert: {
+          claimed_at?: string
           event_id: string
           event_type?: string
           processed_at?: string
+          status?: string
         }
         Update: {
+          claimed_at?: string
           event_id?: string
           event_type?: string
           processed_at?: string
+          status?: string
         }
         Relationships: []
+      }
+      subcontract_allocations: {
+        Row: {
+          amount: number
+          cost_bucket_id: string | null
+          cost_code: string
+          created_at: string
+          description: string
+          id: string
+          project_id: string
+          subcontract_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          project_id: string
+          subcontract_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          project_id?: string
+          subcontract_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcontract_allocations_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_allocations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_allocations_subcontract_id_fkey"
+            columns: ["subcontract_id"]
+            isOneToOne: false
+            referencedRelation: "subcontracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subcontract_change_orders: {
+        Row: {
+          amount: number
+          co_date: string
+          cost_bucket_id: string | null
+          cost_code: string
+          created_at: string
+          description: string
+          id: string
+          project_id: string
+          subcontract_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          co_date?: string
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          project_id: string
+          subcontract_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          co_date?: string
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          project_id?: string
+          subcontract_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcontract_change_orders_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_change_orders_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_change_orders_subcontract_id_fkey"
+            columns: ["subcontract_id"]
+            isOneToOne: false
+            referencedRelation: "subcontracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subcontract_documents: {
+        Row: {
+          created_at: string
+          file_name: string
+          id: string
+          is_active: boolean
+          note: string
+          project_id: string
+          storage_path: string
+          subcontract_id: string
+          uploaded_at: string
+        }
+        Insert: {
+          created_at?: string
+          file_name?: string
+          id?: string
+          is_active?: boolean
+          note?: string
+          project_id: string
+          storage_path: string
+          subcontract_id: string
+          uploaded_at?: string
+        }
+        Update: {
+          created_at?: string
+          file_name?: string
+          id?: string
+          is_active?: boolean
+          note?: string
+          project_id?: string
+          storage_path?: string
+          subcontract_id?: string
+          uploaded_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcontract_documents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_documents_subcontract_id_fkey"
+            columns: ["subcontract_id"]
+            isOneToOne: false
+            referencedRelation: "subcontracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subcontract_payment_allocations: {
+        Row: {
+          amount: number
+          cost_bucket_id: string | null
+          cost_code: string
+          created_at: string
+          description: string
+          id: string
+          payment_id: string
+          project_id: string
+          subcontract_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          payment_id: string
+          project_id: string
+          subcontract_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          payment_id?: string
+          project_id?: string
+          subcontract_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcontract_payment_allocations_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_payment_allocations_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "subcontract_payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_payment_allocations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_payment_allocations_subcontract_id_fkey"
+            columns: ["subcontract_id"]
+            isOneToOne: false
+            referencedRelation: "subcontracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subcontract_payments: {
+        Row: {
+          amount: number
+          approved_at: string | null
+          compliance_overridden_at: string | null
+          compliance_overridden_by: string | null
+          compliance_override_reason: string
+          created_at: string
+          id: string
+          notes: string
+          payment_date: string
+          payment_method: string
+          project_id: string
+          reference: string
+          retainage_held: number
+          status: string
+          subcontract_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          approved_at?: string | null
+          compliance_overridden_at?: string | null
+          compliance_overridden_by?: string | null
+          compliance_override_reason?: string
+          created_at?: string
+          id?: string
+          notes?: string
+          payment_date?: string
+          payment_method?: string
+          project_id: string
+          reference?: string
+          retainage_held?: number
+          status?: string
+          subcontract_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          approved_at?: string | null
+          compliance_overridden_at?: string | null
+          compliance_overridden_by?: string | null
+          compliance_override_reason?: string
+          created_at?: string
+          id?: string
+          notes?: string
+          payment_date?: string
+          payment_method?: string
+          project_id?: string
+          reference?: string
+          retainage_held?: number
+          status?: string
+          subcontract_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcontract_payments_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_payments_subcontract_id_fkey"
+            columns: ["subcontract_id"]
+            isOneToOne: false
+            referencedRelation: "subcontracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subcontractors: {
+        Row: {
+          contact_email: string
+          contact_name: string
+          contact_phone: string
+          created_at: string
+          id: string
+          name: string
+          notes: string
+          organization_id: string
+          source: string
+          trade: string
+          updated_at: string
+        }
+        Insert: {
+          contact_email?: string
+          contact_name?: string
+          contact_phone?: string
+          created_at?: string
+          id?: string
+          name: string
+          notes?: string
+          organization_id: string
+          source?: string
+          trade?: string
+          updated_at?: string
+        }
+        Update: {
+          contact_email?: string
+          contact_name?: string
+          contact_phone?: string
+          created_at?: string
+          id?: string
+          name?: string
+          notes?: string
+          organization_id?: string
+          source?: string
+          trade?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcontractors_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subcontracts: {
+        Row: {
+          contract_value: number
+          created_at: string
+          executed_at: string | null
+          executed_contract_name: string
+          executed_contract_path: string
+          executed_contract_uploaded_at: string | null
+          id: string
+          project_id: string
+          retainage_pct: number
+          scope: string
+          status: string
+          subcontractor_id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          contract_value?: number
+          created_at?: string
+          executed_at?: string | null
+          executed_contract_name?: string
+          executed_contract_path?: string
+          executed_contract_uploaded_at?: string | null
+          id?: string
+          project_id: string
+          retainage_pct?: number
+          scope?: string
+          status?: string
+          subcontractor_id: string
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          contract_value?: number
+          created_at?: string
+          executed_at?: string | null
+          executed_contract_name?: string
+          executed_contract_path?: string
+          executed_contract_uploaded_at?: string | null
+          id?: string
+          project_id?: string
+          retainage_pct?: number
+          scope?: string
+          status?: string
+          subcontractor_id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcontracts_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontracts_subcontractor_id_fkey"
+            columns: ["subcontractor_id"]
+            isOneToOne: false
+            referencedRelation: "subcontractors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      submittal_log_entries: {
+        Row: {
+          comments: string
+          created_at: string
+          date_returned: string | null
+          date_submitted: string | null
+          description: string
+          due_date: string | null
+          file_name: string
+          id: string
+          item: string
+          kind: string
+          mfgr_supplier: string
+          number: string
+          project_id: string
+          sort_order: number
+          spec_section: string
+          status: string
+          storage_path: string
+          sub_rev: string
+          updated_at: string
+        }
+        Insert: {
+          comments?: string
+          created_at?: string
+          date_returned?: string | null
+          date_submitted?: string | null
+          description?: string
+          due_date?: string | null
+          file_name?: string
+          id?: string
+          item?: string
+          kind?: string
+          mfgr_supplier?: string
+          number?: string
+          project_id: string
+          sort_order?: number
+          spec_section?: string
+          status?: string
+          storage_path?: string
+          sub_rev?: string
+          updated_at?: string
+        }
+        Update: {
+          comments?: string
+          created_at?: string
+          date_returned?: string | null
+          date_submitted?: string | null
+          description?: string
+          due_date?: string | null
+          file_name?: string
+          id?: string
+          item?: string
+          kind?: string
+          mfgr_supplier?: string
+          number?: string
+          project_id?: string
+          sort_order?: number
+          spec_section?: string
+          status?: string
+          storage_path?: string
+          sub_rev?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "submittal_log_entries_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       subscription_plans: {
         Row: {
@@ -4205,6 +5420,68 @@ export type Database = {
         }
         Relationships: []
       }
+      transmittals: {
+        Row: {
+          attn: string
+          created_at: string
+          entry_ids: string[]
+          file_name: string
+          id: string
+          kind: string
+          notes: string
+          number: string
+          project_id: string
+          re: string
+          sent_at: string | null
+          sent_by: string
+          storage_path: string
+          to_party: string
+          updated_at: string
+        }
+        Insert: {
+          attn?: string
+          created_at?: string
+          entry_ids?: string[]
+          file_name?: string
+          id?: string
+          kind?: string
+          notes?: string
+          number?: string
+          project_id: string
+          re?: string
+          sent_at?: string | null
+          sent_by?: string
+          storage_path?: string
+          to_party?: string
+          updated_at?: string
+        }
+        Update: {
+          attn?: string
+          created_at?: string
+          entry_ids?: string[]
+          file_name?: string
+          id?: string
+          kind?: string
+          notes?: string
+          number?: string
+          project_id?: string
+          re?: string
+          sent_at?: string | null
+          sent_by?: string
+          storage_path?: string
+          to_party?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transmittals_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_activity_presence: {
         Row: {
           client_session_id: string
@@ -4268,6 +5545,59 @@ export type Database = {
           },
         ]
       }
+      vendors: {
+        Row: {
+          address: string
+          contact_email: string
+          contact_name: string
+          contact_phone: string
+          created_at: string
+          id: string
+          name: string
+          notes: string
+          organization_id: string
+          source: string
+          trade: string
+          updated_at: string
+        }
+        Insert: {
+          address?: string
+          contact_email?: string
+          contact_name?: string
+          contact_phone?: string
+          created_at?: string
+          id?: string
+          name: string
+          notes?: string
+          organization_id: string
+          source?: string
+          trade?: string
+          updated_at?: string
+        }
+        Update: {
+          address?: string
+          contact_email?: string
+          contact_name?: string
+          contact_phone?: string
+          created_at?: string
+          id?: string
+          name?: string
+          notes?: string
+          organization_id?: string
+          source?: string
+          trade?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendors_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -4311,6 +5641,21 @@ export type Database = {
         Args: { p_amount: number; p_status: string }
         Returns: number
       }
+      create_notification: {
+        Args: {
+          p_body?: string
+          p_data?: Json
+          p_entity_id?: string
+          p_entity_type?: string
+          p_organization_id: string
+          p_project_id?: string
+          p_recipient_id: string
+          p_title?: string
+          p_type: string
+          p_url?: string
+        }
+        Returns: string
+      }
       delete_email: {
         Args: { message_id: number; queue_name: string }
         Returns: boolean
@@ -4331,6 +5676,10 @@ export type Database = {
       }
       is_org_member: { Args: { p_org_id: string }; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
+      mark_all_notifications_read: {
+        Args: { p_organization_id?: string }
+        Returns: number
+      }
       move_to_dlq: {
         Args: {
           dlq_name: string
