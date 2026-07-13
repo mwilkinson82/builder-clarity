@@ -1,6 +1,6 @@
 // Workspace B — the daily WIP recording surface (BILLINGDESIGN P2). Pick any
 // date, see that day's daily report alongside it, and record the work put in
-// place: self-perform crew (crew × hours × blended rate), materials, and
+// place: self-perform crews (2 people each × hours × blended rate), materials, and
 // equipment, against a cost code. The day's totals fall out cents-safe, and a
 // production rate comes for free when a quantity is logged.
 //
@@ -21,6 +21,9 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { InstalledQuantities } from "@/components/outcome/InstalledQuantities";
+import { ItemizedCostEditor } from "@/components/outcome/ItemizedCostEditor";
+import { createDraftCostItem, type DraftCostItem } from "@/components/outcome/daily-wip-drafts";
 import {
   Dialog,
   DialogContent,
@@ -52,6 +55,7 @@ import {
   dailyWipWorkInPlaceTotal,
   isPercentOverridden,
   laborCost,
+  crewPeople,
   priorSubPercent,
   productionRate,
   lineProfitToday,
@@ -121,8 +125,8 @@ interface EntryDraft {
   crew_count: number;
   hours: number;
   labor_rate: number;
-  material_items: CostLineItem[];
-  equipment_items: CostLineItem[];
+  material_items: DraftCostItem[];
+  equipment_items: DraftCostItem[];
   quantity: number;
   unit: string;
   // Round-tripped so a PM edit preserves the super's itemized quantities + basis.
@@ -568,10 +572,21 @@ export function DailyWipWorkspace({
 
   // Drop lines that are entirely blank (no description and no amount) before
   // saving, so an empty "Add line" click never persists noise.
-  const cleanItems = (items: CostLineItem[]): CostLineItem[] =>
+  const cleanItems = (items: DraftCostItem[]): CostLineItem[] =>
     items
-      .map((item) => ({ description: item.description.trim(), amount: item.amount }))
-      .filter((item) => item.description !== "" || item.amount > 0);
+      .map((item) => ({
+        description: item.description.trim(),
+        amount: item.amount,
+        quantity: item.quantity ?? 0,
+        unit: item.unit?.trim() ?? "",
+      }))
+      .filter(
+        (item) =>
+          item.description !== "" ||
+          item.amount > 0 ||
+          (item.quantity ?? 0) > 0 ||
+          item.unit !== "",
+      );
 
   const handleSave = () => {
     if (!draftHasWork) {
@@ -623,8 +638,12 @@ export function DailyWipWorkspace({
       // Surface any lump cost with no line items as a single editable line, so
       // editing this row never silently zeroes already-recorded material /
       // equipment dollars (save recomputes the cost from these items).
-      material_items: costItemsForEdit(entry.material_items, entry.material_cost),
-      equipment_items: costItemsForEdit(entry.equipment_items, entry.equipment_cost),
+      material_items: costItemsForEdit(entry.material_items, entry.material_cost).map(
+        createDraftCostItem,
+      ),
+      equipment_items: costItemsForEdit(entry.equipment_items, entry.equipment_cost).map(
+        createDraftCostItem,
+      ),
       quantity: entry.quantity,
       unit: entry.unit,
       quantity_items: entry.quantity_items.map((q) => ({
@@ -968,7 +987,7 @@ export function DailyWipWorkspace({
               <div className="mt-1 grid gap-3.5 sm:grid-cols-4">
                 <label className="flex flex-col gap-1">
                   <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                    Crew
+                    Crews
                   </span>
                   <Input
                     type="number"
@@ -978,10 +997,13 @@ export function DailyWipWorkspace({
                       setDraftField("crew_count", Number(event.target.value) || 0)
                     }
                   />
+                  <span className="text-[10px] text-muted-foreground">
+                    1 crew = 2 people · {crewPeople(draft.crew_count)} people
+                  </span>
                 </label>
                 <label className="flex flex-col gap-1">
                   <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                    Hours
+                    Hours per person
                   </span>
                   <Input
                     type="number"
@@ -993,7 +1015,7 @@ export function DailyWipWorkspace({
                 </label>
                 <label className="flex flex-col gap-1">
                   <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                    Blended rate ($/hr)
+                    Blended rate ($/person hr)
                   </span>
                   <MoneyInput
                     value={draft.labor_rate}
@@ -1007,30 +1029,44 @@ export function DailyWipWorkspace({
                   <div className="flex h-9 items-center rounded-md border border-hairline bg-muted/40 px-3 text-sm tabular-nums text-foreground">
                     {fmtUSD(draftLabor)}
                   </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    {draft.crew_count || 0} crews × 2 people × {draft.hours || 0} hrs ×{" "}
+                    {fmtUSD(draft.labor_rate)}
+                  </span>
                 </label>
               </div>
               <div className="mt-1 grid gap-3.5 sm:grid-cols-3">
-                <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                    Quantity placed
-                  </span>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={draft.quantity || ""}
-                    onChange={(event) => setDraftField("quantity", Number(event.target.value) || 0)}
-                  />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                    Unit
-                  </span>
-                  <Input
-                    value={draft.unit}
-                    onChange={(event) => setDraftField("unit", event.target.value)}
-                    placeholder="SF, CY, LF…"
-                  />
-                </label>
+                {draft.quantity_items.length > 0 ? (
+                  <div className="sm:col-span-2">
+                    <InstalledQuantities items={draft.quantity_items} />
+                  </div>
+                ) : (
+                  <>
+                    <label className="flex flex-col gap-1">
+                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                        Quantity placed
+                      </span>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={draft.quantity || ""}
+                        onChange={(event) =>
+                          setDraftField("quantity", Number(event.target.value) || 0)
+                        }
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                        Unit
+                      </span>
+                      <Input
+                        value={draft.unit}
+                        onChange={(event) => setDraftField("unit", event.target.value)}
+                        placeholder="SF, CY, LF…"
+                      />
+                    </label>
+                  </>
+                )}
                 <label className="flex flex-col gap-1">
                   <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     % complete
@@ -1084,14 +1120,14 @@ export function DailyWipWorkspace({
               <div className="mt-2 grid gap-4 sm:grid-cols-2">
                 <ItemizedCostEditor
                   label="Materials"
-                  help="What you installed and its cost — e.g. rebar #5, $1,200"
+                  help="Field quantities are preloaded when available — add the dollar value."
                   placeholder="What material? e.g. rebar #5"
                   items={draft.material_items}
                   onChange={(items) => setDraftField("material_items", items)}
                 />
                 <ItemizedCostEditor
                   label="Equipment"
-                  help="What you ran and its cost — e.g. 20T excavator, $800"
+                  help="Field equipment is preloaded when available — add the dollar value."
                   placeholder="What equipment? e.g. 20T excavator"
                   items={draft.equipment_items}
                   onChange={(items) => setDraftField("equipment_items", items)}
@@ -1311,88 +1347,6 @@ export function DailyWipWorkspace({
           ) : null}
         </aside>
       </div>
-    </div>
-  );
-}
-
-// A single Materials or Equipment line list: each row says what it was and how
-// much it cost. The dollar box carries a visible $ so it reads as money, and the
-// list rolls up to a cents-safe subtotal shown along the card's bottom hairline.
-function ItemizedCostEditor({
-  label,
-  help,
-  placeholder,
-  items,
-  onChange,
-}: {
-  label: string;
-  help: string;
-  placeholder: string;
-  items: CostLineItem[];
-  onChange: (items: CostLineItem[]) => void;
-}) {
-  const total = sumLineItems(items);
-  const update = (index: number, patch: Partial<CostLineItem>) =>
-    onChange(items.map((item, idx) => (idx === index ? { ...item, ...patch } : item)));
-  const addLine = () => onChange([...items, { description: "", amount: 0 }]);
-  const removeLine = (index: number) => onChange(items.filter((_, idx) => idx !== index));
-
-  return (
-    <div className="rounded-xl border border-hairline bg-background p-3.5">
-      <div className="text-[13px] font-semibold text-foreground">{label}</div>
-      <p className="mt-0.5 text-[11px] text-muted-foreground">{help}</p>
-
-      <div className="mt-2 space-y-2">
-        {items.map((item, index) => (
-          <div key={index} className="flex items-center gap-2">
-            <Input
-              value={item.description}
-              placeholder={placeholder}
-              className="flex-1"
-              onChange={(event) => update(index, { description: event.target.value })}
-            />
-            <div className="relative w-[118px] shrink-0">
-              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                $
-              </span>
-              <MoneyInput
-                value={item.amount}
-                onValueChange={(n) => update(index, { amount: n })}
-                align="right"
-                className="pl-6"
-              />
-            </div>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-danger"
-              aria-label={`Remove ${label.toLowerCase()} line`}
-              onClick={() => removeLine(index)}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        ))}
-      </div>
-
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="mt-2 gap-1.5 text-muted-foreground"
-        onClick={addLine}
-      >
-        <Plus className="h-3.5 w-3.5" />
-        Add {label.toLowerCase()} line
-      </Button>
-
-      {total > 0 ? (
-        <div className="mt-2 flex items-baseline justify-between border-t border-hairline pt-2 text-xs">
-          <span className="text-muted-foreground">{label} subtotal</span>
-          <span className="font-semibold tabular-nums text-foreground">{fmtUSD(total)}</span>
-        </div>
-      ) : null}
     </div>
   );
 }

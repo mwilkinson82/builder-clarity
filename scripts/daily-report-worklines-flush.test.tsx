@@ -42,6 +42,9 @@ import {
   DailyLogWorkLines,
   type DailyLogWorkLinesHandle,
 } from "@/components/outcome/DailyLogWorkLines";
+import { InstalledQuantities } from "@/components/outcome/InstalledQuantities";
+import { ItemizedCostEditor } from "@/components/outcome/ItemizedCostEditor";
+import { createDraftCostItem } from "@/components/outcome/daily-wip-drafts";
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -116,6 +119,125 @@ test("report Save flushes a typed work line that was never 'Add line'-d", async 
   expect(payload.activity).toBe("Electrical rough-in — 24 junction boxes");
   expect(payload.entry_date).toBe(REPORT_DATE);
   expect(payload.projectId).toBe(PROJECT_ID);
+});
+
+test("field quantities, materials, and equipment all reach the PM pricing payload", async () => {
+  const ref = createRef<DailyLogWorkLinesHandle>();
+  mount(ref);
+
+  typeInto(
+    container!.querySelector<HTMLInputElement>(
+      'input[placeholder="e.g. Formed and poured north footings"]',
+    )!,
+    "Northeast Electric - Main Lobby Area North - Rough-in",
+  );
+
+  const fillQuantity = (index: number, quantity: string, unit: string) => {
+    const quantities = container!.querySelectorAll<HTMLInputElement>(
+      'input[aria-label="Quantity"]',
+    );
+    const units = container!.querySelectorAll<HTMLInputElement>('input[aria-label="Unit"]');
+    typeInto(quantities[index], quantity);
+    typeInto(units[index], unit);
+  };
+
+  fillQuantity(0, "25", "Junction Boxes");
+  const addQuantity = Array.from(container!.querySelectorAll("button")).find((button) =>
+    button.textContent?.includes("Add quantity"),
+  )!;
+  act(() => addQuantity.click());
+  fillQuantity(1, "500", "LF of Conduit");
+  act(() => addQuantity.click());
+  fillQuantity(2, "500", "LF of Wire");
+
+  const addMaterials = Array.from(container!.querySelectorAll("button")).find((button) =>
+    button.textContent?.includes("Add materials used line"),
+  )!;
+  const addEquipment = Array.from(container!.querySelectorAll("button")).find((button) =>
+    button.textContent?.includes("Add equipment used line"),
+  )!;
+  act(() => addMaterials.click());
+  act(() => addEquipment.click());
+  typeInto(
+    container!.querySelector<HTMLInputElement>('input[aria-label="Materials used description"]')!,
+    "EMT conduit",
+  );
+  typeInto(
+    container!.querySelector<HTMLInputElement>('input[aria-label="Materials used quantity"]')!,
+    "500",
+  );
+  typeInto(
+    container!.querySelector<HTMLInputElement>('input[aria-label="Materials used unit"]')!,
+    "LF",
+  );
+  typeInto(
+    container!.querySelector<HTMLInputElement>('input[aria-label="Equipment used description"]')!,
+    "Man lift",
+  );
+  typeInto(
+    container!.querySelector<HTMLInputElement>('input[aria-label="Equipment used quantity"]')!,
+    "8",
+  );
+  typeInto(
+    container!.querySelector<HTMLInputElement>('input[aria-label="Equipment used unit"]')!,
+    "hours",
+  );
+
+  await act(async () => {
+    await ref.current!.flushPendingLine();
+  });
+
+  const payload = (saveSpy.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+  expect(payload.quantity_items).toEqual([
+    { quantity: 25, unit: "Junction Boxes", description: "" },
+    { quantity: 500, unit: "LF of Conduit", description: "" },
+    { quantity: 500, unit: "LF of Wire", description: "" },
+  ]);
+  expect(payload.material_items).toEqual([
+    { description: "EMT conduit", quantity: 500, unit: "LF", amount: 0 },
+  ]);
+  expect(payload.equipment_items).toEqual([
+    { description: "Man lift", quantity: 8, unit: "hours", amount: 0 },
+  ]);
+});
+
+test("PM pricing fields lay out every installed quantity and preload field resource detail", () => {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() => {
+    root!.render(
+      <>
+        <InstalledQuantities
+          items={[
+            { quantity: 25, unit: "Junction Boxes", description: "" },
+            { quantity: 500, unit: "LF of Conduit", description: "" },
+            { quantity: 500, unit: "LF of Wire", description: "" },
+          ]}
+        />
+        <ItemizedCostEditor
+          label="Materials"
+          help="Add dollar values"
+          placeholder="Material"
+          items={[
+            createDraftCostItem({
+              description: "EMT conduit",
+              quantity: 500,
+              unit: "LF",
+              amount: 0,
+            }),
+          ]}
+          onChange={vi.fn()}
+        />
+      </>,
+    );
+  });
+
+  expect(container.textContent).toContain("25 Junction Boxes");
+  expect(container.textContent).toContain("500 LF of Conduit");
+  expect(container.textContent).toContain("500 LF of Wire");
+  expect(container.textContent).toContain("Field logged: 500 LF");
+  expect(container.querySelector<HTMLInputElement>('input[value="EMT conduit"]')).toBeTruthy();
 });
 
 test("Add line and report Save share one in-flight insert", async () => {
