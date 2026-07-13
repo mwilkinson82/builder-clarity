@@ -1616,34 +1616,32 @@ export function ProjectCostTrackingPanel({
               if (!next) setVendorDraft(null);
             }}
           >
-            <DialogContent className="sm:max-w-lg">
+            <DialogContent className="sm:max-w-2xl">
               <DialogHeaderV2
                 eyebrow="Vendor"
                 title="Add a new vendor"
                 description="Build this vendor out in your directory — next time they're one pick away. Only the name is required."
               />
               {vendorDraft ? (
-                <div className="grid gap-3 py-2">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>Vendor name</Label>
-                      <Input
-                        value={vendorDraft.name}
-                        onChange={(event) =>
-                          setVendorDraft({ ...vendorDraft, name: event.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Trade / what they supply</Label>
-                      <Input
-                        value={vendorDraft.trade}
-                        placeholder="e.g. Equipment rental"
-                        onChange={(event) =>
-                          setVendorDraft({ ...vendorDraft, trade: event.target.value })
-                        }
-                      />
-                    </div>
+                <div className="grid gap-3 py-2 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Vendor name</Label>
+                    <Input
+                      value={vendorDraft.name}
+                      onChange={(event) =>
+                        setVendorDraft({ ...vendorDraft, name: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Trade / what they supply</Label>
+                    <Input
+                      value={vendorDraft.trade}
+                      placeholder="e.g. Equipment rental"
+                      onChange={(event) =>
+                        setVendorDraft({ ...vendorDraft, trade: event.target.value })
+                      }
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Contact name</Label>
@@ -1654,26 +1652,24 @@ export function ProjectCostTrackingPanel({
                       }
                     />
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>Email</Label>
-                      <Input
-                        type="email"
-                        value={vendorDraft.contact_email}
-                        onChange={(event) =>
-                          setVendorDraft({ ...vendorDraft, contact_email: event.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Phone</Label>
-                      <Input
-                        value={vendorDraft.contact_phone}
-                        onChange={(event) =>
-                          setVendorDraft({ ...vendorDraft, contact_phone: event.target.value })
-                        }
-                      />
-                    </div>
+                  <div className="space-y-1.5">
+                    <Label>Email</Label>
+                    <Input
+                      type="email"
+                      value={vendorDraft.contact_email}
+                      onChange={(event) =>
+                        setVendorDraft({ ...vendorDraft, contact_email: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Phone</Label>
+                    <Input
+                      value={vendorDraft.contact_phone}
+                      onChange={(event) =>
+                        setVendorDraft({ ...vendorDraft, contact_phone: event.target.value })
+                      }
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Address</Label>
@@ -2056,7 +2052,7 @@ export function ProjectCostTrackingPanel({
 
       {/* Mark-paid: capture HOW it was paid (field request 2026-07-10) */}
       <Dialog open={payingCost !== null} onOpenChange={(open) => !open && setPayingCost(null)}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeaderV2
             eyebrow="Payment"
             title="Mark cost paid"

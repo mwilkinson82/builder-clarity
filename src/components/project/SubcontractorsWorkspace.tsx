@@ -1051,7 +1051,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
 
       {/* Compliance override prompt (field request 2026-07-10, Marshall-approved) */}
       <Dialog open={overridePrompt !== null} onOpenChange={(open) => !open && closeOverride()}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <div className="flex items-start gap-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-destructive/10 text-danger">
@@ -1114,7 +1114,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
 
       {/* How paid (field request 2026-07-10, mirrors cost #273) */}
       <Dialog open={payDialog !== null} onOpenChange={(open) => !open && setPayDialog(null)}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeaderV2
             eyebrow="Payment"
             title="Mark pay app paid"

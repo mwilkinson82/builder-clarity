@@ -806,13 +806,13 @@ export function ChangeOrdersTable({
         <DialogTrigger asChild>
           <span />
         </DialogTrigger>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeaderV2
             eyebrow="Change order"
             title={editingId ? "Edit change order" : "Add change order"}
           />
-          <div className="grid gap-4 py-2">
-            <div className="grid grid-cols-3 gap-3">
+          <div className="grid gap-4 py-2 sm:grid-cols-2">
+            <div className="grid grid-cols-3 gap-3 sm:col-span-2">
               <div className="space-y-1.5">
                 <Label>CO number</Label>
                 <Input
@@ -847,7 +847,7 @@ export function ChangeOrdersTable({
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 sm:col-span-2">
               <Label>Description</Label>
               <Input
                 value={draft.description}
@@ -876,62 +876,70 @@ export function ChangeOrdersTable({
                 conditions) across the portfolio.
               </p>
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>How it&apos;s priced</Label>
-                <Select
-                  value={draft.pricing_method}
-                  onValueChange={(v) =>
-                    setDraft({ ...draft, pricing_method: v as COPricingMethod })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PRICING_METHOD_ORDER.map((k) => (
-                      <SelectItem key={k} value={k}>
-                        {PRICING_METHOD_LABELS[k]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Days added to schedule</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={draft.schedule_impact_days}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      schedule_impact_days: Math.max(0, Math.trunc(Number(e.target.value) || 0)),
-                    })
-                  }
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Calendar days this change adds. Leave 0 if none.
-                </p>
-              </div>
+            <div className="space-y-1.5">
+              <Label>How it&apos;s priced</Label>
+              <Select
+                value={draft.pricing_method}
+                onValueChange={(v) => setDraft({ ...draft, pricing_method: v as COPricingMethod })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRICING_METHOD_ORDER.map((k) => (
+                    <SelectItem key={k} value={k}>
+                      {PRICING_METHOD_LABELS[k]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Contract amount (USD)</Label>
-                <MoneyInput
-                  value={draft.contract_amount}
-                  onValueChange={(v) => setDraft({ ...draft, contract_amount: v })}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Cost amount (USD)</Label>
-                <MoneyInput
-                  value={draft.cost_amount}
-                  onValueChange={(v) => setDraft({ ...draft, cost_amount: v })}
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label>Contract amount (USD)</Label>
+              <MoneyInput
+                value={draft.contract_amount}
+                onValueChange={(v) => setDraft({ ...draft, contract_amount: v })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Cost amount (USD)</Label>
+              <MoneyInput
+                value={draft.cost_amount}
+                onValueChange={(v) => setDraft({ ...draft, cost_amount: v })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Days added to schedule</Label>
+              <Input
+                type="number"
+                min={0}
+                value={draft.schedule_impact_days}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    schedule_impact_days: Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                  })
+                }
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Calendar days this change adds. Leave 0 if none.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Date initiated</Label>
+              <Input
+                type="date"
+                value={draft.date_initiated ?? ""}
+                onChange={(e) => setDraft({ ...draft, date_initiated: e.target.value || null })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Requested by</Label>
+              <Input
+                value={draft.requested_by}
+                onChange={(e) => setDraft({ ...draft, requested_by: e.target.value })}
+                placeholder="e.g. Owner, architect, PM"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Owner</Label>
@@ -940,25 +948,7 @@ export function ChangeOrdersTable({
                 onChange={(e) => setDraft({ ...draft, owner: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Requested by</Label>
-                <Input
-                  value={draft.requested_by}
-                  onChange={(e) => setDraft({ ...draft, requested_by: e.target.value })}
-                  placeholder="e.g. Owner, architect, PM"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Date initiated</Label>
-                <Input
-                  type="date"
-                  value={draft.date_initiated ?? ""}
-                  onChange={(e) => setDraft({ ...draft, date_initiated: e.target.value || null })}
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 sm:col-span-2">
               <Label>Notes</Label>
               <Textarea
                 rows={2}
