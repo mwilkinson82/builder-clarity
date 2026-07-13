@@ -69,11 +69,13 @@ export function computeScheduleVarianceWeeks(baseline?: string | null, forecast?
 export interface Rollup {
   originalContract: number;
   approvedCOContract: number;
+  currentSignedContract: number;
   weightedPendingCOContract: number;
   pendingCOContract: number;
   forecastedFinalContract: number;
   actualToDate: number;
   ftc: number;
+  baseProjectedCost: number;
   approvedCOCost: number;
   weightedPendingCOCost: number;
   forecastedFinalCost: number;
@@ -82,8 +84,10 @@ export interface Rollup {
   forecastedGPBeforeHolds: number;
   indicatedGP: number;
   originalGP: number;
+  currentSignedGP: number;
   indicatedGPpct: number;
   originalGPpct: number;
+  currentSignedGPpct: number;
   gpAtRisk: number;
   remainingCost: number;
 }
@@ -151,8 +155,8 @@ export function computeRollup(
   const bucketCostBase =
     buckets.length === 0 ? project.original_cost_budget : actualToDate + ftc + subAdd;
 
-  const forecastedFinalContract =
-    project.original_contract + approvedCOContract + weightedPendingCOContract;
+  const currentSignedContract = project.original_contract + approvedCOContract;
+  const forecastedFinalContract = currentSignedContract + weightedPendingCOContract;
   const forecastedFinalCost = bucketCostBase + approvedCOCost + weightedPendingCOCost;
 
   const carrying = exposures.filter(carriesRemainingRisk);
@@ -166,21 +170,26 @@ export function computeRollup(
   const forecastedGPBeforeHolds = forecastedFinalContract - forecastedFinalCost;
   const indicatedGP = forecastedGPBeforeHolds - exposureHolds - contingencyHold;
   const originalGP = project.original_contract - project.original_cost_budget;
+  const currentSignedGP = originalGP + approvedCOContract - approvedCOCost;
   const indicatedGPpct =
     forecastedFinalContract > 0 ? (indicatedGP / forecastedFinalContract) * 100 : 0;
   const originalGPpct =
     project.original_contract > 0 ? (originalGP / project.original_contract) * 100 : 0;
+  const currentSignedGPpct =
+    currentSignedContract > 0 ? (currentSignedGP / currentSignedContract) * 100 : 0;
   const gpAtRisk = originalGP - indicatedGP;
   const remainingCost = Math.max(0, forecastedFinalCost - actualToDate);
 
   return {
     originalContract: project.original_contract,
     approvedCOContract,
+    currentSignedContract,
     weightedPendingCOContract,
     pendingCOContract,
     forecastedFinalContract,
     actualToDate,
     ftc,
+    baseProjectedCost: bucketCostBase,
     approvedCOCost,
     weightedPendingCOCost,
     forecastedFinalCost,
@@ -189,8 +198,10 @@ export function computeRollup(
     forecastedGPBeforeHolds,
     indicatedGP,
     originalGP,
+    currentSignedGP,
     indicatedGPpct,
     originalGPpct,
+    currentSignedGPpct,
     gpAtRisk,
     remainingCost,
   };

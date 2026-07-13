@@ -2,13 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { fmtPct, fmtUSD } from "@/lib/format";
 import type { ExposureRow, ProjectRow } from "@/lib/projects.functions";
-import {
-  releasedExposureValue,
-  remainingExposureValue,
-  weightedExposureValue,
-  type Rollup,
-  type Warning,
-} from "@/lib/ior";
+import { remainingExposureValue, type Rollup, type Warning } from "@/lib/ior";
 
 const CATEGORY_LABELS: Record<ExposureRow["category"], string> = {
   owner_decision: "Owner decision",
@@ -31,14 +25,6 @@ const RESPONSE_LABELS: Record<ExposureRow["response_path"], string> = {
 
 function remaining(e: ExposureRow) {
   return remainingExposureValue(e);
-}
-
-function likely(e: ExposureRow) {
-  return weightedExposureValue(e);
-}
-
-function released(e: ExposureRow) {
-  return releasedExposureValue(e);
 }
 
 function hasRemainingRisk(e: ExposureRow) {
@@ -120,22 +106,12 @@ export function ProjectDashboard({
   const scheduleMovement =
     scheduleMovementSinceLastUpdate ??
     weeksBetween(lastReviewForecast, project.forecast_completion_date);
-  const exposureTotals = topExposures.reduce(
-    (totals, exposure) => ({
-      gross: totals.gross + exposure.dollar_exposure,
-      likely: totals.likely + likely(exposure),
-      released: totals.released + released(exposure),
-      remaining: totals.remaining + remaining(exposure),
-    }),
-    { gross: 0, likely: 0, released: 0, remaining: 0 },
-  );
-  const needsAttention = warnings.length > 0 || rollup.gpAtRisk > 0;
-  // "GP at risk" is signed GP minus the GP now forecast after holds
-  // (originalGP − indicatedGP). Positive → forecasting BELOW the signed deal, so
-  // that profit is genuinely at risk. Negative → forecasting ABOVE it, which is
-  // upside, not risk. Present it sign-aware everywhere.
-  const gpDelta = rollup.gpAtRisk;
+  const totalHolds = rollup.exposureHolds + rollup.contingencyHold;
+  // The dashboard compares like with like: the current signed deal includes
+  // approved CO revenue and cost. Pending COs remain a separate weighted forecast.
+  const gpDelta = rollup.currentSignedGP - rollup.indicatedGP;
   const gpUpside = gpDelta < 0;
+  const needsAttention = warnings.length > 0 || gpDelta > 0;
   const gpDeltaValue = fmtUSD(Math.abs(gpDelta));
   const attentionClause = warnings[0]?.title ?? "reserve coverage needs attention";
 
@@ -154,19 +130,21 @@ export function ProjectDashboard({
           <h1 className="max-w-[24ch] font-serif text-3xl font-normal leading-[1.18] [text-wrap:balance] lg:text-4xl">
             {gpUpside ? (
               <>
-                Gross profit is <span className="text-success">{gpDeltaValue} above signed</span>
+                Gross profit is{" "}
+                <span className="text-success">{gpDeltaValue} above current signed</span>
                 {needsAttention ? <> &mdash; but {attentionClause}</> : null}.
               </>
             ) : gpDelta > 0 ? (
               <>
-                Gross profit is <span className="text-danger">{gpDeltaValue} below signed</span>
+                Gross profit is{" "}
+                <span className="text-danger">{gpDeltaValue} below current signed</span>
                 {/* Below signed, the warning is the reason, not a contrast — and
                     never fabricate a clause when there is no warning. */}
                 {warnings.length > 0 ? <> &mdash; and {warnings[0].title}</> : null}.
               </>
             ) : (
               <>
-                Gross profit is holding at the signed {fmtPct(rollup.originalGPpct)}
+                Gross profit is holding at the current signed {fmtPct(rollup.currentSignedGPpct)}
                 {needsAttention ? <> &mdash; but {attentionClause}</> : null}.
               </>
             )}
@@ -174,7 +152,7 @@ export function ProjectDashboard({
           <p className="mt-3 max-w-[64ch] text-[14.5px] leading-relaxed text-muted-foreground">
             Indicating{" "}
             <b className="font-semibold tabular text-foreground">{fmtPct(rollup.indicatedGPpct)}</b>{" "}
-            against the {fmtPct(rollup.originalGPpct)} signed.
+            against the current signed {fmtPct(rollup.currentSignedGPpct)}.
           </p>
 
           {needsAttention && (
@@ -192,8 +170,8 @@ export function ProjectDashboard({
                   ) : (
                     <>
                       <b className="font-semibold text-foreground">GP at risk:</b> {gpDeltaValue} of
-                      the {fmtUSD(rollup.originalGP)} signed gross profit is now forecast below the
-                      signed deal.
+                      the {fmtUSD(rollup.currentSignedGP)} current signed gross profit is now
+                      forecast below the signed deal.
                     </>
                   )}
                 </p>
@@ -249,31 +227,40 @@ export function ProjectDashboard({
       <div className="eyebrow mt-9">How the forecast is built</div>
       <div className="mt-3.5 grid items-stretch gap-4 md:grid-cols-[1fr_1fr_1.1fr]">
         <div className="rounded-xl border border-hairline bg-card p-4 lg:px-5">
-          <div className={bridgeLabelClass}>01 · Forecast</div>
+          <div className={bridgeLabelClass}>01 · Revenue forecast</div>
           <div className="mt-2">
-            <BridgeRow label="Forecast contract" value={fmtUSD(rollup.forecastedFinalContract)} />
-            <BridgeRow label="− Forecast cost" value={fmtUSD(rollup.forecastedFinalCost)} />
+            <BridgeRow label="Original contract" value={fmtUSD(rollup.originalContract)} />
+            <BridgeRow label="+ Approved COs" value={fmtUSD(rollup.approvedCOContract)} />
             <BridgeRow
-              label="GP before holds"
-              value={fmtUSD(rollup.forecastedGPBeforeHolds)}
+              label="Current signed contract"
+              value={fmtUSD(rollup.currentSignedContract)}
+              strong
+            />
+            <BridgeRow
+              label="+ Pending COs · weighted"
+              value={fmtUSD(rollup.weightedPendingCOContract)}
+            />
+            <BridgeRow
+              label="Risk-adjusted forecast contract"
+              value={fmtUSD(rollup.forecastedFinalContract)}
               strong
             />
           </div>
         </div>
 
         <div className="rounded-xl border border-hairline bg-card p-4 lg:px-5">
-          <div className={bridgeLabelClass}>02 · Holds</div>
+          <div className={bridgeLabelClass}>02 · Cost forecast</div>
           <div className="mt-2">
-            <BridgeRow label="GP before holds" value={fmtUSD(rollup.forecastedGPBeforeHolds)} />
+            <BridgeRow label="Base projected cost" value={fmtUSD(rollup.baseProjectedCost)} />
+            <BridgeRow label="+ Approved CO costs" value={fmtUSD(rollup.approvedCOCost)} />
             <BridgeRow
-              label="− E-Hold · specific"
-              value={fmtUSD(rollup.exposureHolds)}
-              valueClassName={rollup.exposureHolds > 0 ? "text-danger" : "text-muted-foreground"}
+              label="+ Pending CO costs · weighted"
+              value={fmtUSD(rollup.weightedPendingCOCost)}
             />
             <BridgeRow
-              label="− C-Hold · uncertainty"
-              value={fmtUSD(rollup.contingencyHold)}
-              valueClassName="text-muted-foreground"
+              label="Risk-adjusted forecast cost"
+              value={fmtUSD(rollup.forecastedFinalCost)}
+              strong
             />
           </div>
         </div>
@@ -282,7 +269,16 @@ export function ProjectDashboard({
             dark-panel exception (THEMING.md): fixed on-dark green/red hex. */}
         <div className="flex flex-col rounded-xl bg-dark-panel p-4 text-dark-panel-foreground lg:px-5">
           <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-dark-panel-foreground/60">
-            03 · The result
+            03 · GP result
+          </div>
+          <div className="mt-2">
+            <BridgeRow
+              label="GP before holds"
+              value={fmtUSD(rollup.forecastedGPBeforeHolds)}
+              dark
+            />
+            <BridgeRow label="− E-Hold · specific" value={fmtUSD(rollup.exposureHolds)} dark />
+            <BridgeRow label="− C-Hold · uncertainty" value={fmtUSD(rollup.contingencyHold)} dark />
           </div>
           <div className="mt-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="font-serif text-[32px] leading-none tabular">
@@ -292,12 +288,13 @@ export function ProjectDashboard({
               Indicated GP · {fmtPct(rollup.indicatedGPpct)}
             </span>
           </div>
-          <div className="mt-auto flex items-baseline justify-between gap-3 border-t border-dark-panel-foreground/20 pt-2.5">
+          <div className="mt-auto flex flex-col gap-1 border-t border-dark-panel-foreground/20 pt-2.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
             <span className="text-[12.5px] text-dark-panel-foreground/60">
-              − Signed GP {fmtUSD(rollup.originalGP)} · {fmtPct(rollup.originalGPpct)}
+              Current signed GP {fmtUSD(rollup.currentSignedGP)} ·{" "}
+              {fmtPct(rollup.currentSignedGPpct)}
             </span>
             <span
-              className={`font-serif text-[19px] tabular ${
+              className={`whitespace-nowrap font-serif text-[19px] tabular ${
                 gpUpside ? "text-[#7FB08A]" : gpDelta > 0 ? "text-[#E08A76]" : ""
               }`}
             >
@@ -374,7 +371,7 @@ export function ProjectDashboard({
           <div className="flex items-center gap-2.5 border-b border-hairline py-3">
             <span className="text-[13px] font-semibold text-foreground">Top exposures</span>
             <span className="ml-auto text-xs tabular text-muted-foreground">
-              {fmtUSD(exposureTotals.likely)} likely · {fmtUSD(exposureTotals.released)} released
+              {fmtUSD(totalHolds)} total holds · top {topExposures.length} shown
             </span>
           </div>
           {topExposures.length === 0 ? (
@@ -465,31 +462,43 @@ function BridgeRow({
   label,
   value,
   strong,
+  dark,
   valueClassName,
 }: {
   label: string;
   value: string;
   strong?: boolean;
+  dark?: boolean;
   valueClassName?: string;
 }) {
   return (
     <div
-      className={
+      className={`flex items-baseline justify-between gap-3 py-[9px] ${
         strong
-          ? "flex items-baseline justify-between gap-3 border-t-2 border-foreground py-2.5"
-          : "flex items-baseline justify-between gap-3 border-t border-hairline py-[9px]"
-      }
+          ? dark
+            ? "border-t-2 border-dark-panel-foreground"
+            : "border-t-2 border-foreground"
+          : dark
+            ? "border-t border-dark-panel-foreground/20"
+            : "border-t border-hairline"
+      }`}
     >
       <span
-        className={
-          strong ? "text-[12.5px] font-bold text-foreground" : "text-[12.5px] text-muted-foreground"
-        }
+        className={`text-[12.5px] ${strong ? "font-bold" : ""} ${
+          dark
+            ? strong
+              ? "text-dark-panel-foreground"
+              : "text-dark-panel-foreground/60"
+            : strong
+              ? "text-foreground"
+              : "text-muted-foreground"
+        }`}
       >
         {label}
       </span>
       <span
         className={`font-serif tabular ${strong ? "text-[19px]" : "text-[17px]"} ${
-          valueClassName ?? "text-foreground"
+          valueClassName ?? (dark ? "text-dark-panel-foreground" : "text-foreground")
         }`}
       >
         {value}
