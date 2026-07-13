@@ -27,6 +27,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  FieldResourceEditor,
+  type FieldResourceDraft,
+} from "@/components/outcome/FieldResourceEditor";
+import {
   deleteDailyWipEntry,
   listDailyWipEntries,
   listScheduleActivitiesForWip,
@@ -34,6 +38,7 @@ import {
   type DailyWipEntryRow,
   type ScheduleActivityOption,
 } from "@/lib/daily-wip.functions";
+import { costItemsForEdit, crewPeople, type CostLineItem } from "@/lib/daily-wip";
 
 interface BucketOption {
   id: string;
@@ -50,9 +55,36 @@ interface DailyLogWorkLinesProps {
 
 // One installed quantity/count on a work line (500 LF conduit, 24 junction boxes).
 interface QuantityItem {
+  clientId: string;
   quantity: number;
   unit: string;
   description: string;
+}
+
+let quantitySequence = 0;
+let fieldResourceSequence = 0;
+
+function createQuantityItem(item?: Partial<Omit<QuantityItem, "clientId">>): QuantityItem {
+  quantitySequence += 1;
+  return {
+    clientId: `installed-quantity-${quantitySequence}`,
+    quantity: item?.quantity ?? 0,
+    unit: item?.unit ?? "",
+    description: item?.description ?? "",
+  };
+}
+
+function createFieldResourceDraft(item?: Partial<CostLineItem>): FieldResourceDraft {
+  fieldResourceSequence += 1;
+  return {
+    clientId: `field-resource-${fieldResourceSequence}`,
+    description: item?.description ?? "",
+    quantity: item?.quantity ?? 0,
+    unit: item?.unit ?? "",
+    // Existing PM dollars travel through the field editor but are never shown
+    // or changed here.
+    amount: item?.amount ?? 0,
+  };
 }
 
 // Only the fields the super owns — no money.
@@ -68,12 +100,16 @@ interface LineDraft {
   // Repeatable installed quantities/counts (the scalar quantity/unit above stays
   // the primary roll-up the server derives from the first item).
   quantity_items: QuantityItem[];
+  // Physical materials/equipment used. Dollars remain hidden and preserved for
+  // the PM; the field records only description, quantity, and unit.
+  material_items: FieldResourceDraft[];
+  equipment_items: FieldResourceDraft[];
   percent_complete: number;
   // Label only: is % complete measured against the SOV line or the CPM activity?
   percent_basis: "sov" | "cpm";
 }
 
-const emptyLine: LineDraft = {
+const createEmptyLine = (): LineDraft => ({
   cost_bucket_id: "",
   schedule_activity_id: "",
   activity: "",
@@ -81,10 +117,12 @@ const emptyLine: LineDraft = {
   hours: 0,
   quantity: 0,
   unit: "",
-  quantity_items: [],
+  quantity_items: [createQuantityItem()],
+  material_items: [],
+  equipment_items: [],
   percent_complete: 0,
   percent_basis: "sov",
-};
+});
 
 function activityOptionLabel(a: ScheduleActivityOption): string {
   return [a.activity_id, a.name].filter(Boolean).join(" · ") || "Untitled activity";
@@ -93,6 +131,12 @@ function activityOptionLabel(a: ScheduleActivityOption): string {
 // A quantity row is worth keeping when it carries a real measure, unit, or note.
 function qtyRowHasContent(row: QuantityItem): boolean {
   return row.quantity > 0 || row.unit.trim() !== "" || row.description.trim() !== "";
+}
+
+function resourceRowHasContent(row: FieldResourceDraft): boolean {
+  return (
+    row.description.trim() !== "" || row.quantity > 0 || row.unit.trim() !== "" || row.amount > 0
+  );
 }
 
 // "500 LF conduit · 24 junction boxes" — the itemized quantities for a saved row,
@@ -105,6 +149,19 @@ function quantitiesSummary(entry: DailyWipEntryRow): string | null {
   }
   if (entry.quantity) return `${entry.quantity} ${entry.unit || "qty"}`;
   return null;
+}
+
+function resourcesSummary(items: DailyWipEntryRow["material_items"]): string | null {
+  const summary = items
+    .filter((item) => item.description.trim() || (item.quantity ?? 0) > 0 || item.unit?.trim())
+    .map((item) =>
+      [item.quantity ? `${item.quantity} ${item.unit || "qty"}` : item.unit, item.description]
+        .filter(Boolean)
+        .join(" "),
+    )
+    .filter(Boolean)
+    .join(" · ");
+  return summary || null;
 }
 
 function groupActivitiesByDivision(
@@ -153,7 +210,7 @@ function DailyLogWorkLinesImpl(
   const saveEntry = useServerFn(saveDailyWipEntry);
   const removeEntry = useServerFn(deleteDailyWipEntry);
 
-  const [draft, setDraft] = useState<LineDraft>(emptyLine);
+  const [draft, setDraft] = useState<LineDraft>(createEmptyLine);
   // The row being edited — held so we can preserve its money fields on save.
   const [editing, setEditing] = useState<DailyWipEntryRow | null>(null);
   // "Add line" and the parent report Save can fire within the same render.
@@ -194,25 +251,20 @@ function DailyLogWorkLinesImpl(
   const setField = <K extends keyof LineDraft>(key: K, value: LineDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
 
-  // The installed-quantities editor always shows at least one row; the first edit
-  // materializes the list into the draft.
-  const qtyRows: QuantityItem[] = draft.quantity_items.length
-    ? draft.quantity_items
-    : [{ quantity: 0, unit: "", description: "" }];
-  const updateQtyRow = (index: number, patch: Partial<QuantityItem>) =>
+  const qtyRows = draft.quantity_items;
+  const updateQtyRow = (clientId: string, patch: Partial<QuantityItem>) =>
     setField(
       "quantity_items",
-      qtyRows.map((row, idx) => (idx === index ? { ...row, ...patch } : row)),
+      qtyRows.map((row) => (row.clientId === clientId ? { ...row, ...patch } : row)),
     );
-  const addQtyRow = () =>
-    setField("quantity_items", [...qtyRows, { quantity: 0, unit: "", description: "" }]);
-  const removeQtyRow = (index: number) =>
+  const addQtyRow = () => setField("quantity_items", [...qtyRows, createQuantityItem()]);
+  const removeQtyRow = (clientId: string) =>
     setField(
       "quantity_items",
-      qtyRows.filter((_, idx) => idx !== index),
+      qtyRows.filter((row) => row.clientId !== clientId),
     );
   const resetForm = () => {
-    setDraft(emptyLine);
+    setDraft(createEmptyLine());
     setEditing(null);
   };
 
@@ -253,14 +305,22 @@ function DailyLogWorkLinesImpl(
       // Load the itemized quantities; for older rows with only a scalar, seed one
       // row from it so editing never silently drops the recorded quantity.
       quantity_items: entry.quantity_items.length
-        ? entry.quantity_items.map((q) => ({
-            quantity: q.quantity,
-            unit: q.unit,
-            description: q.description ?? "",
-          }))
+        ? entry.quantity_items.map((q) =>
+            createQuantityItem({
+              quantity: q.quantity,
+              unit: q.unit,
+              description: q.description ?? "",
+            }),
+          )
         : entry.quantity
-          ? [{ quantity: entry.quantity, unit: entry.unit, description: "" }]
-          : [],
+          ? [createQuantityItem({ quantity: entry.quantity, unit: entry.unit })]
+          : [createQuantityItem()],
+      material_items: costItemsForEdit(entry.material_items, entry.material_cost).map(
+        createFieldResourceDraft,
+      ),
+      equipment_items: costItemsForEdit(entry.equipment_items, entry.equipment_cost).map(
+        createFieldResourceDraft,
+      ),
       // The daily log is the super's surface — it edits the FIELD number, not the
       // PM's reviewed value (which the PM may have adjusted for billing in the WIP).
       percent_complete: entry.field_percent_complete,
@@ -275,7 +335,9 @@ function DailyLogWorkLinesImpl(
     draft.crew_count > 0 ||
     draft.hours > 0 ||
     draft.quantity > 0 ||
-    draft.quantity_items.some(qtyRowHasContent);
+    draft.quantity_items.some(qtyRowHasContent) ||
+    draft.material_items.some(resourceRowHasContent) ||
+    draft.equipment_items.some(resourceRowHasContent);
 
   // Build the save payload from the current compose draft. Shared by the "Add
   // line" button and the parent-triggered flush so both persist identical rows.
@@ -288,6 +350,13 @@ function DailyLogWorkLinesImpl(
       unit: row.unit.trim(),
       description: row.description.trim(),
     }));
+    const cleanResources = (items: FieldResourceDraft[]) =>
+      items.filter(resourceRowHasContent).map(({ description, amount, quantity, unit }) => ({
+        description: description.trim(),
+        amount,
+        quantity,
+        unit: unit.trim(),
+      }));
     return {
       projectId,
       id: draft.id,
@@ -306,8 +375,8 @@ function DailyLogWorkLinesImpl(
       labor_rate: money?.labor_rate ?? 0,
       material_cost: money?.material_cost ?? 0,
       equipment_cost: money?.equipment_cost ?? 0,
-      material_items: money?.material_items ?? [],
-      equipment_items: money?.equipment_items ?? [],
+      material_items: cleanResources(draft.material_items),
+      equipment_items: cleanResources(draft.equipment_items),
       notes: money?.notes ?? "",
     };
   }, [projectId, reportDate, draft, editing]);
@@ -407,9 +476,20 @@ function DailyLogWorkLinesImpl(
                         {activity}
                       </span>
                     ) : null}
-                    {entry.crew_count ? <span>{entry.crew_count} crew</span> : null}
-                    {entry.hours ? <span>{entry.hours} hrs</span> : null}
+                    {entry.crew_count ? (
+                      <span>
+                        {entry.crew_count} {entry.crew_count === 1 ? "crew" : "crews"} ·{" "}
+                        {crewPeople(entry.crew_count)} people
+                      </span>
+                    ) : null}
+                    {entry.hours ? <span>{entry.hours} hrs/person</span> : null}
                     {quantitiesSummary(entry) ? <span>{quantitiesSummary(entry)}</span> : null}
+                    {resourcesSummary(entry.material_items) ? (
+                      <span>Materials: {resourcesSummary(entry.material_items)}</span>
+                    ) : null}
+                    {resourcesSummary(entry.equipment_items) ? (
+                      <span>Equipment: {resourcesSummary(entry.equipment_items)}</span>
+                    ) : null}
                     {entry.field_percent_complete ? (
                       <span className="inline-flex items-center gap-1 font-medium text-foreground">
                         {entry.field_percent_complete}% complete
@@ -525,16 +605,20 @@ function DailyLogWorkLinesImpl(
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Crew</span>
+            <span className="text-xs text-muted-foreground">Crews</span>
             <Input
               type="number"
               min={0}
               value={draft.crew_count || ""}
               onChange={(event) => setField("crew_count", Number(event.target.value) || 0)}
             />
+            <span className="text-[11px] text-muted-foreground">
+              1 crew = 2 people
+              {draft.crew_count > 0 ? ` · ${crewPeople(draft.crew_count)} people` : ""}
+            </span>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Hours</span>
+            <span className="text-xs text-muted-foreground">Hours per person</span>
             <Input
               type="number"
               min={0}
@@ -549,41 +633,46 @@ function DailyLogWorkLinesImpl(
               Add each measure or count — e.g. 500 LF conduit, 500 LF wire, 24 junction boxes.
             </p>
             <div className="mt-1 space-y-2">
-              {qtyRows.map((row, index) => (
-                <div key={index} className="flex items-center gap-2">
+              {qtyRows.map((row) => (
+                <div
+                  key={row.clientId}
+                  className="grid grid-cols-[80px_minmax(0,1fr)_32px] items-center gap-2 sm:grid-cols-[80px_160px_minmax(0,1fr)_32px]"
+                >
                   <Input
                     type="number"
                     min={0}
                     value={row.quantity || ""}
                     placeholder="Qty"
-                    className="w-20 shrink-0"
+                    className="col-start-1 row-start-1"
                     aria-label="Quantity"
                     onChange={(event) =>
-                      updateQtyRow(index, { quantity: Number(event.target.value) || 0 })
+                      updateQtyRow(row.clientId, { quantity: Number(event.target.value) || 0 })
                     }
                   />
                   <Input
                     value={row.unit}
                     placeholder="Unit — LF, EA, junction boxes…"
-                    className="w-40 shrink-0"
+                    className="col-start-2 row-start-1"
                     aria-label="Unit"
-                    onChange={(event) => updateQtyRow(index, { unit: event.target.value })}
+                    onChange={(event) => updateQtyRow(row.clientId, { unit: event.target.value })}
                   />
                   <Input
                     value={row.description}
                     placeholder="Description (optional)"
-                    className="flex-1"
+                    className="col-span-3 row-start-2 sm:col-span-1 sm:col-start-3 sm:row-start-1"
                     aria-label="Description"
-                    onChange={(event) => updateQtyRow(index, { description: event.target.value })}
+                    onChange={(event) =>
+                      updateQtyRow(row.clientId, { description: event.target.value })
+                    }
                   />
                   <Button
                     type="button"
                     size="icon"
                     variant="ghost"
-                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-danger"
+                    className="col-start-3 row-start-1 h-8 w-8 text-muted-foreground hover:text-danger sm:col-start-4"
                     aria-label="Remove quantity"
                     disabled={qtyRows.length === 1}
-                    onClick={() => removeQtyRow(index)}
+                    onClick={() => removeQtyRow(row.clientId)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
@@ -600,6 +689,22 @@ function DailyLogWorkLinesImpl(
               <Plus className="h-3.5 w-3.5" />
               Add quantity
             </Button>
+          </div>
+          <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
+            <FieldResourceEditor
+              label="Materials used"
+              help="Record what was used. The project manager adds the dollar values in Daily WIP."
+              descriptionPlaceholder="e.g. EMT conduit"
+              items={draft.material_items}
+              onChange={(items) => setField("material_items", items)}
+            />
+            <FieldResourceEditor
+              label="Equipment used"
+              help="Record what ran on site. The project manager adds the dollar values in Daily WIP."
+              descriptionPlaceholder="e.g. Man lift"
+              items={draft.equipment_items}
+              onChange={(items) => setField("equipment_items", items)}
+            />
           </div>
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground">% complete</span>

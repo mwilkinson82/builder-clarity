@@ -1,6 +1,6 @@
 // Daily WIP math smoke (Workspace B, BILLINGDESIGN P2). Node-runnable via
 // `node --experimental-strip-types`. Proves the work-in-place derivation is
-// cents-exact and that labor is always crew × hours × rate.
+// cents-exact and that labor is always crews × 2 people × hours × rate.
 import assert from "node:assert/strict";
 import {
   applySelfPerformToBuckets,
@@ -11,6 +11,7 @@ import {
   isPercentOverridden,
   laborCost,
   laborHours,
+  PEOPLE_PER_CREW,
   priorSubPercent,
   productionRate,
   resolvePercentReview,
@@ -35,18 +36,23 @@ const row = (over: Partial<Parameters<typeof rowWorkInPlace>[0]> = {}) => ({
   ...over,
 });
 
-// Labor is crew × hours × rate.
+// Labor is crews × 2 people × hours × blended person rate.
+assert.equal(PEOPLE_PER_CREW, 2, "one field crew is always two people");
 assert.equal(
   laborCost(row({ crew_count: 4, hours: 8, labor_rate: 42.5 })),
-  1360,
-  "4×8×42.5 = 1360",
+  2720,
+  "4 crews × 2 people × 8h × $42.50 = $2,720",
 );
-assert.equal(laborHours(row({ crew_count: 4, hours: 8 })), 32, "crew×hours labor-hours");
+assert.equal(
+  laborHours(row({ crew_count: 4, hours: 8 })),
+  64,
+  "4 crews × 2 people × 8h = 64 labor-hours",
+);
 
-// Fractional cents round cleanly (crew 3 × 7.5h × $41.33 = $929.925 → $929.93).
+// Fractional inputs remain cents-safe.
 assert.equal(
   laborCost(row({ crew_count: 3, hours: 7.5, labor_rate: 41.33 })),
-  929.93,
+  1859.85,
   "labor rounds to the cent",
 );
 
@@ -55,8 +61,8 @@ assert.equal(
   rowWorkInPlace(
     row({ crew_count: 2, hours: 8, labor_rate: 50, material_cost: 250, equipment_cost: 120 }),
   ),
-  1170,
-  "800 labor + 250 material + 120 equipment = 1170",
+  1970,
+  "1,600 labor + 250 material + 120 equipment = 1,970",
 );
 
 // A day rolls up cents-safe across activities.
@@ -66,11 +72,11 @@ const day = [
   row({ material_cost: 875.5 }),
 ];
 const totals = dailyWipTotals(day);
-assert.equal(totals.labor, 1360 + 663, "labor = 1360 + (2×6×55.25=663)");
+assert.equal(totals.labor, 2720 + 1326, "labor includes two people per crew");
 assert.equal(totals.material, 1200 + 875.5, "materials summed");
 assert.equal(totals.equipment, 300, "equipment summed");
 assert.equal(totals.total, totals.labor + totals.material + totals.equipment, "total = parts");
-assert.equal(totals.laborHours, 32 + 12, "labor-hours summed");
+assert.equal(totals.laborHours, 64 + 24, "two-person crew labor-hours summed");
 assert.equal(totals.rowCount, 3, "row count");
 
 // Empty day is a clean zero, not NaN.
@@ -81,8 +87,8 @@ assert.equal(empty.rowCount, 0, "empty day has no rows");
 // Production rate = quantity ÷ labor-hours, null without both.
 assert.equal(
   productionRate(row({ crew_count: 2, hours: 8, quantity: 320 })),
-  20,
-  "320 / 16h = 20/hr",
+  10,
+  "320 / 32 labor-hours = 10/hr",
 );
 assert.equal(
   productionRate(row({ crew_count: 2, hours: 8, quantity: 0 })),
@@ -166,8 +172,8 @@ assert.deepEqual(
   // A self-perform line is untouched by the new signature.
   assert.equal(
     rowWorkInPlace(row({ crew_count: 2, hours: 8, labor_rate: 50 })),
-    800,
-    "self-perform line still crew × hours × rate",
+    1600,
+    "self-perform line uses crews × 2 people × hours × rate",
   );
 }
 
@@ -310,11 +316,11 @@ assert.deepEqual(
       cost_bucket_id: "dock-pit",
       percent_complete: 20,
     },
-    row({ crew_count: 2, hours: 8, labor_rate: 50, material_cost: 100 }), // 800 + 100
+    row({ crew_count: 2, hours: 8, labor_rate: 50, material_cost: 100 }), // 1,600 + 100
   ];
   assert.equal(
     dailyWipWorkInPlaceTotal(rows, commitmentFor),
-    29_240 + 900,
+    29_240 + 1700,
     "day total blends sub earned value with self-perform work in place",
   );
 }
@@ -380,8 +386,7 @@ assert.deepEqual(
 
 // ── SELF-PERFORM ROLL-UP (Darian, 2026-07-09): self-perform daily WIP is real
 //    actual cost and must reflect on the budget + dashboard. "this didn't reflect
-//    on the budget??" — $1,720 logged on 03-8010 (crew 5 × 8h × $33 = $1,320 labor
-//    + $400 materials) never reached actuals. It ADDS to actual and DISPLACES the
+//    on the budget??" — the logged line never reached actuals. It ADDS to actual and DISPLACES the
 //    forecast, so projected cost holds until it exceeds the remaining forecast. ──
 {
   const selfRow = (over: Record<string, unknown> = {}) => ({
@@ -401,22 +406,22 @@ assert.deepEqual(
     r.subcontractor_id === "herrera" && r.cost_bucket_id === "dock-pit" ? 142_600 : null;
 
   const rows = [
-    // Darian's exact self-perform line: 5 × 8 × 33 = 1,320 labor + 400 materials.
+    // Five crews = ten people: 10 × 8 × 33 = 2,640 labor + 400 materials.
     selfRow({ crew_count: 5, hours: 8, labor_rate: 33, material_cost: 400 }),
     // Another self-perform day on the same code, materials only.
     selfRow({ material_cost: 250 }),
     // A DIFFERENT self-perform code.
-    selfRow({ cost_bucket_id: "slab", crew_count: 2, hours: 8, labor_rate: 50 }), // 800
+    selfRow({ cost_bucket_id: "slab", crew_count: 2, hours: 8, labor_rate: 50 }), // 1,600
     // A bought-out sub line — excluded (the sub layer owns it), never in self-perform.
     selfRow({ subcontractor_id: "herrera", cost_bucket_id: "dock-pit", percent_complete: 30 }),
   ];
   const byBucket = selfPerformCostByBucket(rows, commitmentFor);
   assert.equal(
     byBucket.get("saw-cutting"),
-    1_970,
-    "self-perform sums per code (1,320 + 400 + 250)",
+    3_290,
+    "self-perform sums per code (2,640 + 400 + 250)",
   );
-  assert.equal(byBucket.get("slab"), 800, "second self-perform code totals its own work");
+  assert.equal(byBucket.get("slab"), 1600, "second self-perform code totals its own work");
   assert.equal(
     byBucket.get("dock-pit"),
     undefined,
@@ -426,28 +431,24 @@ assert.deepEqual(
   // Fold displaces forecast: actual += WIP, ftc floored at 0, projected steady.
   const buckets = [
     { id: "saw-cutting", actual_to_date: 4_300, ftc: 11_801 },
-    { id: "slab", actual_to_date: 0, ftc: 500 }, // WIP 800 > ftc 500 → overrun
+    { id: "slab", actual_to_date: 0, ftc: 500 }, // WIP 1,600 > ftc 500 → overrun
     { id: "untouched", actual_to_date: 1_000, ftc: 2_000 },
   ];
   const folded = applySelfPerformToBuckets(buckets, byBucket);
   const saw = folded.find((b) => b.id === "saw-cutting")!;
-  assert.equal(
-    saw.actual_to_date,
-    6_270,
-    "actual = 4,300 + 1,970 WIP (Darian's line now on the budget)",
-  );
-  assert.equal(saw.ftc, 9_831, "forecast displaced: 11,801 − 1,970");
+  assert.equal(saw.actual_to_date, 7_590, "actual = 4,300 + 3,290 WIP");
+  assert.equal(saw.ftc, 8_511, "forecast displaced: 11,801 − 3,290");
   assert.equal(
     saw.actual_to_date + saw.ftc,
     4_300 + 11_801,
     "projected cost unchanged (within forecast)",
   );
   const slab = folded.find((b) => b.id === "slab")!;
-  assert.equal(slab.actual_to_date, 800, "overrun: actual = 0 + 800");
+  assert.equal(slab.actual_to_date, 1600, "overrun: actual = 0 + 1,600");
   assert.equal(slab.ftc, 0, "forecast floored at 0, not negative");
   assert.equal(
     slab.actual_to_date + slab.ftc,
-    800,
+    1600,
     "projected grows past budget on a real overrun",
   );
   const untouched = folded.find((b) => b.id === "untouched")!;

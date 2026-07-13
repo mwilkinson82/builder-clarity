@@ -31,13 +31,19 @@ const num = (value: unknown) => {
 };
 const str = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback);
 
-// Coerce a stored jsonb array into clean { description, amount } line items,
-// dropping anything malformed so a bad row can never crash a read.
+// Coerce a stored jsonb array into clean cost/resource line items. `quantity`
+// and `unit` were added inside the existing JSON shape, so old rows continue to
+// normalize to zero/blank physical details without a schema migration.
 const normalizeItems = (value: unknown): CostLineItem[] => {
   if (!Array.isArray(value)) return [];
   return value.map((entry) => {
     const item = (entry ?? {}) as Record<string, unknown>;
-    return { description: str(item.description), amount: num(item.amount) };
+    return {
+      description: str(item.description),
+      amount: num(item.amount),
+      quantity: num(item.quantity),
+      unit: str(item.unit),
+    };
   });
 };
 
@@ -139,6 +145,8 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
 const lineItemInput = z.object({
   description: z.string().max(200).default(""),
   amount: z.number().min(0).default(0),
+  quantity: z.number().min(0).default(0),
+  unit: z.string().max(60).default(""),
 });
 
 const entryFieldsInput = z.object({

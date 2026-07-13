@@ -1,6 +1,6 @@
 // Daily WIP math (Workspace B, BILLINGDESIGN P2). A day's work-in-place is the
 // sum, over each activity logged that day, of self-perform labor
-// (crew × hours × blended rate), materials, and equipment. Labor cost is always
+// (crews × 2 people × hours × blended person rate), materials, and equipment. Labor cost is always
 // derived from its inputs so it can never drift from crew/hours/rate.
 //
 // Cents-safe: every dollar amount is converted to integer cents before adding,
@@ -26,6 +26,19 @@ export interface DailyWipRowLike {
 export interface CostLineItem {
   description: string;
   amount: number;
+  // Field-entered physical detail. Optional for rows created before field
+  // capture was added; the PM supplies only `amount` during costing.
+  quantity?: number;
+  unit?: string;
+}
+
+// Business rule for the field workflow: a logged crew always represents two
+// people. Keep this in the math domain so every total and production-rate view
+// uses the same multiplier.
+export const PEOPLE_PER_CREW = 2;
+
+export function crewPeople(crewCount: number): number {
+  return numeric(crewCount) * PEOPLE_PER_CREW;
 }
 
 // Cents-safe sum of a list of line-item amounts. This is the source of truth for
@@ -52,19 +65,19 @@ export function costItemsForEdit(
   return numeric(lump) > 0 ? [{ description: "", amount: numeric(lump) }] : [];
 }
 
-// crew × hours × blended $/hr, rounded to cents. Headcount × hours is total
-// labor-hours; times the blended rate is the day's labor cost for the activity.
+// crews × 2 people × hours × blended $/person-hour, rounded to cents. People ×
+// hours is total labor-hours; times the blended rate is the day's labor cost.
 export function laborCost(
   row: Pick<DailyWipRowLike, "crew_count" | "hours" | "labor_rate">,
 ): number {
-  const raw = numeric(row.crew_count) * numeric(row.hours) * numeric(row.labor_rate);
+  const raw = crewPeople(row.crew_count) * numeric(row.hours) * numeric(row.labor_rate);
   return centsToDollars(dollarsToCents(raw));
 }
 
-// Total labor-hours logged for the activity (crew × hours) — the denominator of
-// the production rate.
+// Total labor-hours logged for the activity (crews × 2 people × hours) — the
+// denominator of the production rate.
 export function laborHours(row: Pick<DailyWipRowLike, "crew_count" | "hours">): number {
-  return numeric(row.crew_count) * numeric(row.hours);
+  return crewPeople(row.crew_count) * numeric(row.hours);
 }
 
 // Earned value of a bought-out subcontractor line: its commitment on this cost
