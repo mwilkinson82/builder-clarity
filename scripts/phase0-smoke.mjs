@@ -3186,6 +3186,26 @@ await expectContains(
   [/Performed by subcontractor/, /Vendor not listed\? Enter the company name/, /flagUnmatched/],
   "shared performed-by field keeps canonical project subs and unlisted vendor entry mutually exclusive",
 );
+await expectContains(
+  "supabase/migrations/20260714172833_daily_wip_production_targets.sql",
+  [
+    /people_per_crew smallint not null default 2/,
+    /target_production_rate numeric/,
+    /daily_wip_people_per_crew_check/,
+    /daily_wip_target_production_rate_check/,
+  ],
+  "daily-WIP production target migration stores bounded crew sizing and optional pace targets",
+);
+await expectContains(
+  "src/components/outcome/DailyLogWorkLines.tsx",
+  [/people_per_crew/, /People per crew/, /target_production_rate: money\?\.target_production_rate/],
+  "daily log records actual crew size while preserving the PM production target",
+);
+await expectContains(
+  "src/components/outcome/DailyWipWorkspace.tsx",
+  [/Target rate/, /productionPace\(entry\)/, /No target set/],
+  "daily WIP compares actual production with an explicit PM target",
+);
 
 // SUB CO → BUDGET FOLD (field feedback 2026-07-09: "change orders didnt roll up
 // to the dashboards"): a coded sub CO folds into that code's committed in

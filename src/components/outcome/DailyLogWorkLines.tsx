@@ -99,6 +99,7 @@ interface LineDraft {
   unmatched_vendor_name: string;
   activity: string;
   crew_count: number;
+  people_per_crew: number;
   hours: number;
   quantity: number;
   unit: string;
@@ -121,6 +122,7 @@ const createEmptyLine = (): LineDraft => ({
   unmatched_vendor_name: "",
   activity: "",
   crew_count: 0,
+  people_per_crew: 2,
   hours: 0,
   quantity: 0,
   unit: "",
@@ -344,6 +346,7 @@ function DailyLogWorkLinesImpl(
       unmatched_vendor_name: entry.unmatched_vendor_name,
       activity: entry.activity,
       crew_count: entry.crew_count,
+      people_per_crew: entry.people_per_crew,
       hours: entry.hours,
       quantity: entry.quantity,
       unit: entry.unit,
@@ -414,9 +417,11 @@ function DailyLogWorkLinesImpl(
       unmatched_vendor_name: draft.unmatched_vendor_name.trim(),
       activity: draft.activity.trim(),
       crew_count: draft.crew_count,
+      people_per_crew: draft.people_per_crew,
       hours: draft.hours,
       quantity: draft.quantity,
       unit: draft.unit.trim(),
+      target_production_rate: money?.target_production_rate ?? null,
       quantity_items,
       // A CPM basis only holds when a schedule activity is actually linked.
       percent_basis: draft.schedule_activity_id ? draft.percent_basis : "sov",
@@ -535,7 +540,7 @@ function DailyLogWorkLinesImpl(
                     {entry.crew_count ? (
                       <span>
                         {entry.crew_count} {entry.crew_count === 1 ? "crew" : "crews"} ·{" "}
-                        {crewPeople(entry.crew_count)} people
+                        {crewPeople(entry.crew_count, entry.people_per_crew)} people
                       </span>
                     ) : null}
                     {entry.hours ? <span>{entry.hours} hrs/person</span> : null}
@@ -684,9 +689,21 @@ function DailyLogWorkLinesImpl(
               onChange={(event) => setField("crew_count", Number(event.target.value) || 0)}
             />
             <span className="text-[11px] text-muted-foreground">
-              1 crew = 2 people
-              {draft.crew_count > 0 ? ` · ${crewPeople(draft.crew_count)} people` : ""}
+              {draft.crew_count > 0
+                ? `${crewPeople(draft.crew_count, draft.people_per_crew)} people total`
+                : "How many crews worked"}
             </span>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">People per crew</span>
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={draft.people_per_crew || ""}
+              onChange={(event) => setField("people_per_crew", Number(event.target.value) || 2)}
+            />
+            <span className="text-[11px] text-muted-foreground">Defaults to 2</span>
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground">Hours per person</span>

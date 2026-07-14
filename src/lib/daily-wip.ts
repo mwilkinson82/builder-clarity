@@ -1,19 +1,27 @@
 // Daily WIP math (Workspace B, BILLINGDESIGN P2). A day's work-in-place is the
 // sum, over each activity logged that day, of self-perform labor
-// (crews × 2 people × hours × blended person rate), materials, and equipment. Labor cost is always
-// derived from its inputs so it can never drift from crew/hours/rate.
+// (crews × people per crew × hours × blended person rate), materials, and
+// equipment. Labor cost is always derived from its inputs so it can never drift
+// from crew size, hours, or rate.
 //
 // Cents-safe: every dollar amount is converted to integer cents before adding,
 // then back once. Relative .ts import so node smokes can load this directly.
 import { centsToDollars, dollarsToCents } from "./payments-domain.ts";
 
 export interface DailyWipRowLike {
+  id?: string | null;
+  entry_date?: string;
+  updated_at?: string | null;
   crew_count: number;
+  // Rows created before configurable crew sizing default to two people per
+  // crew, preserving the original field workflow without freezing it forever.
+  people_per_crew?: number;
   hours: number;
   labor_rate: number;
   material_cost: number;
   equipment_cost: number;
   quantity: number;
+  target_production_rate?: number | null;
   // A line performed by a bought-out subcontractor is valued by earned value
   // (commitment × percent complete), not crew × hours. Both optional so
   // self-perform callers/fixtures are unchanged.
@@ -32,13 +40,14 @@ export interface CostLineItem {
   unit?: string;
 }
 
-// Business rule for the field workflow: a logged crew always represents two
-// people. Keep this in the math domain so every total and production-rate view
-// uses the same multiplier.
+// Legacy/default crew size. New rows persist their actual people-per-crew value;
+// older rows keep the original two-person behavior.
 export const PEOPLE_PER_CREW = 2;
 
-export function crewPeople(crewCount: number): number {
-  return numeric(crewCount) * PEOPLE_PER_CREW;
+export function crewPeople(crewCount: number, peoplePerCrew = PEOPLE_PER_CREW): number {
+  const resolvedPeoplePerCrew =
+    numeric(peoplePerCrew) > 0 ? numeric(peoplePerCrew) : PEOPLE_PER_CREW;
+  return numeric(crewCount) * resolvedPeoplePerCrew;
 }
 
 // Cents-safe sum of a list of line-item amounts. This is the source of truth for
@@ -65,19 +74,22 @@ export function costItemsForEdit(
   return numeric(lump) > 0 ? [{ description: "", amount: numeric(lump) }] : [];
 }
 
-// crews × 2 people × hours × blended $/person-hour, rounded to cents. People ×
+// crews × people per crew × hours × blended $/person-hour, rounded to cents. People ×
 // hours is total labor-hours; times the blended rate is the day's labor cost.
 export function laborCost(
-  row: Pick<DailyWipRowLike, "crew_count" | "hours" | "labor_rate">,
+  row: Pick<DailyWipRowLike, "crew_count" | "people_per_crew" | "hours" | "labor_rate">,
 ): number {
-  const raw = crewPeople(row.crew_count) * numeric(row.hours) * numeric(row.labor_rate);
+  const raw =
+    crewPeople(row.crew_count, row.people_per_crew) * numeric(row.hours) * numeric(row.labor_rate);
   return centsToDollars(dollarsToCents(raw));
 }
 
-// Total labor-hours logged for the activity (crews × 2 people × hours) — the
+// Total labor-hours logged for the activity (crews × people per crew × hours) — the
 // denominator of the production rate.
-export function laborHours(row: Pick<DailyWipRowLike, "crew_count" | "hours">): number {
-  return crewPeople(row.crew_count) * numeric(row.hours);
+export function laborHours(
+  row: Pick<DailyWipRowLike, "crew_count" | "people_per_crew" | "hours">,
+): number {
+  return crewPeople(row.crew_count, row.people_per_crew) * numeric(row.hours);
 }
 
 // Earned value of a bought-out subcontractor line: its commitment on this cost
@@ -567,6 +579,31 @@ export function productionRate(row: DailyWipRowLike): number | null {
   const qty = numeric(row.quantity);
   if (hours <= 0 || qty <= 0) return null;
   return qty / hours;
+}
+
+export type ProductionPaceStatus = "ahead" | "on-pace" | "behind";
+
+export interface ProductionPace {
+  actualRate: number;
+  targetRate: number;
+  varianceRate: number;
+  variancePercent: number;
+  status: ProductionPaceStatus;
+}
+
+// Compare actual installed quantity per labor-hour with the PM's target. A 5%
+// band prevents tiny measurement/rounding differences from reading as a miss.
+// Null is deliberate when either side is absent: OverWatch never invents a
+// production verdict without both an actual and a target.
+export function productionPace(row: DailyWipRowLike, tolerance = 0.05): ProductionPace | null {
+  const actualRate = productionRate(row);
+  const targetRate = numeric(row.target_production_rate);
+  if (actualRate == null || targetRate <= 0) return null;
+  const varianceRate = actualRate - targetRate;
+  const variancePercent = varianceRate / targetRate;
+  const status: ProductionPaceStatus =
+    variancePercent > tolerance ? "ahead" : variancePercent < -tolerance ? "behind" : "on-pace";
+  return { actualRate, targetRate, varianceRate, variancePercent, status };
 }
 
 function numeric(value: unknown): number {

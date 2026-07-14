@@ -1,6 +1,6 @@
 // Daily WIP math smoke (Workspace B, BILLINGDESIGN P2). Node-runnable via
 // `node --experimental-strip-types`. Proves the work-in-place derivation is
-// cents-exact and that labor is always crews × 2 people × hours × rate.
+// cents-exact and that labor uses the field-recorded people per crew.
 import assert from "node:assert/strict";
 import {
   applySelfPerformToBuckets,
@@ -13,6 +13,7 @@ import {
   laborHours,
   PEOPLE_PER_CREW,
   priorSubPercent,
+  productionPace,
   productionRate,
   resolvePercentReview,
   rowWorkInPlace,
@@ -36,8 +37,8 @@ const row = (over: Partial<Parameters<typeof rowWorkInPlace>[0]> = {}) => ({
   ...over,
 });
 
-// Labor is crews × 2 people × hours × blended person rate.
-assert.equal(PEOPLE_PER_CREW, 2, "one field crew is always two people");
+// Legacy rows still use the historical two-person default.
+assert.equal(PEOPLE_PER_CREW, 2, "legacy field crews default to two people");
 assert.equal(
   laborCost(row({ crew_count: 4, hours: 8, labor_rate: 42.5 })),
   2720,
@@ -47,6 +48,16 @@ assert.equal(
   laborHours(row({ crew_count: 4, hours: 8 })),
   64,
   "4 crews × 2 people × 8h = 64 labor-hours",
+);
+assert.equal(
+  laborCost(row({ crew_count: 3, people_per_crew: 4, hours: 8, labor_rate: 42.5 })),
+  4080,
+  "3 crews × 4 people × 8h × $42.50 = $4,080",
+);
+assert.equal(
+  laborHours(row({ crew_count: 3, people_per_crew: 4, hours: 8 })),
+  96,
+  "3 crews × 4 people × 8h = 96 labor-hours",
 );
 
 // Fractional inputs remain cents-safe.
@@ -96,6 +107,38 @@ assert.equal(
   "no quantity → null",
 );
 assert.equal(productionRate(row({ quantity: 100 })), null, "no hours → null");
+
+// Target comparisons only form a verdict when actual and target both exist.
+assert.equal(
+  productionPace(
+    row({
+      crew_count: 2,
+      people_per_crew: 2,
+      hours: 8,
+      quantity: 352,
+      target_production_rate: 10,
+    }),
+  )?.status,
+  "ahead",
+  "10% over target is ahead",
+);
+assert.equal(
+  productionPace(row({ crew_count: 2, hours: 8, quantity: 320, target_production_rate: 10 }))
+    ?.status,
+  "on-pace",
+  "actual equal to target is on pace",
+);
+assert.equal(
+  productionPace(row({ crew_count: 2, hours: 8, quantity: 256, target_production_rate: 10 }))
+    ?.status,
+  "behind",
+  "20% under target is behind",
+);
+assert.equal(
+  productionPace(row({ crew_count: 2, hours: 8, quantity: 320 })),
+  null,
+  "no target means no fabricated pace verdict",
+);
 
 // Bad inputs coerce to 0, never NaN.
 assert.equal(
