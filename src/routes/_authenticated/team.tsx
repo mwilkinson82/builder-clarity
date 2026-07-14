@@ -44,6 +44,7 @@ import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
 import type { StripeConnectDetails } from "@/lib/stripe-connect-status";
 import { CapabilityPicker } from "@/components/team/CapabilityPicker";
 import { GettingPaidSection } from "@/components/billing/GettingPaidSection";
+import { StripeConnectingScreen } from "@/components/billing/StripeConnectingScreen";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ROLE_PRESETS, accessLabelForMember, type CapabilitySet } from "@/lib/capabilities";
 import {
@@ -317,6 +318,16 @@ function initialConsoleSection(): ConsoleSection {
   return params.has("stripe") ? "paid" : "people";
 }
 
+function stripeOpeningContext() {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("stripe") !== "opening") return null;
+  return {
+    businessName: (params.get("business") || "your company").slice(0, 120),
+    action: params.get("action") === "dashboard" ? ("dashboard" as const) : ("onboard" as const),
+  };
+}
+
 function TeamPage() {
   const queryClient = useQueryClient();
   const loadTeam = useServerFn(getTeamWorkspace);
@@ -376,6 +387,7 @@ function TeamPage() {
   const [clientInviteForm, setClientInviteForm] = useState(emptyClientInvite);
   // Client-only: which console section the left nav is showing.
   const [section, setSection] = useState<ConsoleSection>(initialConsoleSection);
+  const stripeOpening = stripeOpeningContext();
   const stripeReturnHandled = useRef(false);
 
   useEffect(() => {
@@ -617,8 +629,19 @@ function TeamPage() {
   }, [queryClient, syncedStripeStatus]);
 
   const openStripeInNewTab = (action: "onboard" | "dashboard", mode: "test" | "live") => {
+    const openingUrl = new URL("/team", window.location.origin);
+    openingUrl.searchParams.set("section", "paid");
+    openingUrl.searchParams.set("stripe", "opening");
+    openingUrl.searchParams.set("mode", mode);
+    openingUrl.searchParams.set("action", action);
+    openingUrl.searchParams.set(
+      "business",
+      stripeStatusQuery.data?.connectDetails?.businessName ||
+        team?.organization.name ||
+        "your company",
+    );
     const targetWindow = window.open(
-      `/team?section=paid&stripe=opening&mode=${mode}`,
+      `${openingUrl.pathname}${openingUrl.search}`,
       "overwatch-stripe",
     );
     if (!targetWindow) {
@@ -1021,6 +1044,15 @@ function TeamPage() {
         },
       ]
     : [];
+
+  if (stripeOpening) {
+    return (
+      <StripeConnectingScreen
+        businessName={stripeOpening.businessName}
+        action={stripeOpening.action}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">

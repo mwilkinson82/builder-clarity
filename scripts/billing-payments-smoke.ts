@@ -66,6 +66,23 @@ import {
   receivableAgingBucket,
 } from "../src/lib/receivables.ts";
 import { summarizeCostSettlement } from "../src/lib/cost-settlement.ts";
+import {
+  applicationFeeFromDollars,
+  formatBasisPoints,
+  normalizeApplicationFeeBps,
+} from "../src/lib/stripe-fee-config.ts";
+
+// --- Stripe application-fee disclosure and checkout parity -----------------
+
+assert.equal(normalizeApplicationFeeBps(undefined), 0);
+assert.equal(normalizeApplicationFeeBps("100"), 100);
+assert.equal(normalizeApplicationFeeBps(9_999), 3_000);
+assert.equal(formatBasisPoints(0), "0%");
+assert.equal(formatBasisPoints(25), "0.25%");
+assert.equal(formatBasisPoints(100), "1%");
+assert.equal(applicationFeeFromDollars(25_000, 0), 0);
+assert.equal(applicationFeeFromDollars(25_000, 25), 62.5);
+assert.equal(applicationFeeFromDollars(1, 100), 0.01);
 
 // --- Cost settlement: partial cash + linked supplier credits ---------------
 

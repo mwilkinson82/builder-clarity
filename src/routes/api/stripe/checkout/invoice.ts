@@ -25,6 +25,7 @@ import {
   methodAvailability,
   resolveEnabledMethods,
 } from "@/lib/payments-domain";
+import { applicationFeeFromDollars, normalizeApplicationFeeBps } from "@/lib/stripe-fee-config";
 
 const invoiceCheckoutInput = z.object({
   invoiceId: z.string().uuid(),
@@ -92,10 +93,10 @@ function cents(value: number) {
 }
 
 function applicationFeeCents(openBalance: number) {
-  const rawBps = Number(readServerEnv("OVERWATCH_INVOICE_APPLICATION_FEE_BPS") || 0);
-  if (!Number.isFinite(rawBps) || rawBps <= 0) return 0;
-  const safeBps = Math.min(rawBps, 3000);
-  return cents((openBalance * safeBps) / 10000);
+  const basisPoints = normalizeApplicationFeeBps(
+    readServerEnv("OVERWATCH_INVOICE_APPLICATION_FEE_BPS"),
+  );
+  return cents(applicationFeeFromDollars(openBalance, basisPoints));
 }
 
 export const Route = createFileRoute("/api/stripe/checkout/invoice")({
