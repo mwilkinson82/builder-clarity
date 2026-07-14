@@ -385,10 +385,7 @@ await expectContains(
 
 await expectContains(
   "src/components/layout/PortfolioTopBar.tsx",
-  [
-    /\| "reports"/,
-    /<Link to="\/reports" className=\{navItemClass\("reports"\)\}>/,
-  ],
+  [/\| "reports"/, /<Link to="\/reports" className=\{navItemClass\("reports"\)\}>/],
   "shared portfolio navigation exposes Reports as a first-class destination",
 );
 
@@ -3308,6 +3305,45 @@ await expectContains(
   "src/components/billing/CostActualInvoiceAttachmentLink.tsx",
   [/createSignedUrl\(attachment\.path, 600\)/, /noopener,noreferrer/],
   "cost invoice backup opens through a short-lived private signed URL",
+);
+
+// COSTDOCUMENTRISK1: one supplier invoice can retain multiple cost-code rows
+// while rendering as one document, and recognized cost can be attributed to a
+// same-project risk without changing the cost-code/WIP accounting path.
+await expectContains(
+  "supabase/migrations/20260714122936_cost_documents_and_risk_links.sql",
+  [
+    /ADD COLUMN IF NOT EXISTS cost_document_id uuid/,
+    /attachment_groups[\s\S]*reference_groups/,
+    /ALTER COLUMN cost_document_id SET DEFAULT gen_random_uuid\(\)[\s\S]*ALTER COLUMN cost_document_id SET NOT NULL/,
+    /exposure_id uuid/,
+    /FOREIGN KEY \(exposure_id\)[\s\S]*REFERENCES public\.exposures\(id\)/,
+    /validate_cost_actual_exposure_link/,
+    /linked_project_id <> NEW\.project_id/,
+  ],
+  "cost-document and risk-link migration preserves allocation rows and enforces project scope",
+);
+await expectContains(
+  "src/components/billing/BillingEnhancements.tsx",
+  [
+    /groupCostActualsByDocument/,
+    /Document total/,
+    /\{document\.lines\.length\} allocation/,
+    /document\.lines\.length === 1 \? "line" : "lines"/,
+    /Risk tally attribution \(optional\)/,
+    /Actual incurred →/,
+  ],
+  "cost ledger renders one invoice document with allocation lines and optional risk attribution",
+);
+await expectContains(
+  "src/components/outcome/ExposuresTable.tsx",
+  [/Actual incurred/, /Linked cost actuals/, /actualIncurredByExposure/],
+  "risk tally shows recognized cost actuals already incurred against each risk",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [/cursor-pointer[\s\S]*hover:bg-secondary[\s\S]*hover:text-foreground/, /hover:shadow-sm/],
+  "project navigation restores obvious pointer and hover feedback",
 );
 
 if (live) {

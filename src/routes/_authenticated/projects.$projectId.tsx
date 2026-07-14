@@ -2537,7 +2537,7 @@ function ProjectPage() {
                 </div>
                 <Link
                   to="/"
-                  className="mt-3 flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground"
+                  className="mt-3 flex w-full cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <ArrowLeft className="h-4 w-4" />
                   Portfolio
@@ -2554,7 +2554,7 @@ function ProjectPage() {
                 onClick={() => navigate({ to: "/", search: { tab: "crm" } })}
                 aria-label="CRM: Relationships"
                 title="CRM: Relationships"
-                className="flex w-auto shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground lg:w-full lg:shrink"
+                className="flex w-auto shrink-0 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink"
               >
                 <span className="font-medium">CRM</span>
                 <span className="text-[11.5px] text-muted-foreground">▸</span>
@@ -2564,7 +2564,7 @@ function ProjectPage() {
                 onClick={() => navigate({ to: "/estimates" })}
                 aria-label="Estimating: Estimates and Plan Room"
                 title="Estimating: Estimates and Plan Room"
-                className="flex w-auto shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground lg:w-full lg:shrink"
+                className="flex w-auto shrink-0 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink"
               >
                 <span className="font-medium">Estimating</span>
                 <span className="text-[11.5px] text-muted-foreground">▸</span>
@@ -2586,7 +2586,7 @@ function ProjectPage() {
                         aria-expanded="true"
                         aria-controls={groupContentId}
                         className={cn(
-                          "flex w-full items-center justify-between rounded-lg px-2 pb-1.5 pt-1 text-left text-[13.5px] font-semibold transition hover:bg-secondary/60",
+                          "flex w-full cursor-pointer items-center justify-between rounded-lg px-2 pb-1.5 pt-1 text-left text-[13.5px] font-semibold transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           isActiveGroup ? "text-foreground" : "text-muted-foreground",
                         )}
                       >
@@ -2608,8 +2608,8 @@ function ProjectPage() {
                               aria-label={`${item.label}: ${item.detail}`}
                               title={`${item.label}: ${item.detail}`}
                               className={cn(
-                                "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] transition",
-                                "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                                "flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                "text-muted-foreground hover:bg-secondary hover:text-foreground hover:shadow-sm",
                                 "data-[state=active]:bg-secondary data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:hover:bg-secondary",
                               )}
                             >
@@ -2646,7 +2646,7 @@ function ProjectPage() {
                     aria-label={`${group.label}: ${hint.text}`}
                     title={`${group.label}: ${hint.text}`}
                     className={cn(
-                      "flex w-auto shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-secondary/60 hover:text-foreground lg:w-full lg:shrink",
+                      "flex w-auto shrink-0 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-secondary hover:text-foreground hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink",
                       isActiveGroup ? "font-semibold text-foreground" : "text-muted-foreground",
                     )}
                   >
@@ -2973,6 +2973,7 @@ function ProjectPage() {
             <TabsContent value="risk-tally" className="mt-0 space-y-6">
               <RiskAllocationWorkbench
                 exposures={exposures}
+                costActuals={billingWorkspaceQuery.data?.costActuals ?? []}
                 rollup={rollup}
                 guidance={guidance}
                 focusedExposureId={focusedRiskExposureId}
@@ -3340,6 +3341,7 @@ function ProjectPage() {
                   rollup={rollup}
                   focusStage={billingFocusStage}
                   changeOrders={changeOrders}
+                  exposures={exposures}
                   buckets={buckets}
                   selfPerformByBucket={selfPerformByBucket}
                   billingApplications={visibleBillingApplications}

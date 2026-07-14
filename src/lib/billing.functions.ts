@@ -133,6 +133,10 @@ export interface CostActualRow {
   project_id: string;
   cost_bucket_id: string | null;
   import_batch_id: string | null;
+  // Shared by every cost-code allocation row on one supplier invoice.
+  cost_document_id: string;
+  // Optional attribution to the risk tally. Cost code remains the accounting home.
+  exposure_id: string | null;
   cost_code: string;
   description: string;
   category: "direct" | "labor" | "material" | "equipment" | "subcontract" | "overhead";
@@ -432,6 +436,8 @@ const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => ({
   project_id: row.project_id as string,
   cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
   import_batch_id: (row.import_batch_id as string | null) ?? null,
+  cost_document_id: str(row.cost_document_id),
+  exposure_id: (row.exposure_id as string | null) ?? null,
   cost_code: str(row.cost_code),
   description: str(row.description),
   category: str(row.category, "direct") as CostActualRow["category"],
@@ -1339,6 +1345,8 @@ const costActualInput = z.object({
   invoice_attachment_type: z.string().max(200).default(""),
   invoice_attachment_size: z.number().int().min(0).default(0),
   credit_applies_to_id: z.string().uuid().nullable().default(null),
+  cost_document_id: z.string().uuid().optional(),
+  exposure_id: z.string().uuid().nullable().default(null),
 });
 
 // The draft/approved stages need the payables-approval migration, and credits
@@ -1404,6 +1412,8 @@ export const createCostActual = createServerFn({ method: "POST" })
       invoice_attachment_type: data.invoice_attachment_type,
       invoice_attachment_size: data.invoice_attachment_size,
       credit_applies_to_id: data.amount < 0 ? data.credit_applies_to_id : null,
+      ...(data.cost_document_id ? { cost_document_id: data.cost_document_id } : {}),
+      exposure_id: data.exposure_id,
       ...(data.status === "approved"
         ? { approved_at: new Date().toISOString(), approved_by: ctx.userId }
         : {}),
@@ -1454,6 +1464,7 @@ const updateCostActualInput = z.object({
   invoice_attachment_type: z.string().max(200).optional(),
   invoice_attachment_size: z.number().int().min(0).optional(),
   credit_applies_to_id: z.string().uuid().nullable().optional(),
+  exposure_id: z.string().uuid().nullable().optional(),
 });
 
 export const updateCostActual = createServerFn({ method: "POST" })
