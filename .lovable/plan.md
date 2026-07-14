@@ -1,95 +1,44 @@
 
-# Stripe test + live coexistence with per-org mode toggle
+# Stripe Live Audit — OverWatch (read-only)
 
-## Goal
+No connections were linked, mutated, or disconnected. All calls were read-only through the Lovable connector gateway against the two workspace "Stripe (live)" entries.
 
-Fire sandbox webhook tests today. Add live keys later without swapping secrets or touching code. Each Overwatch company (organization) chooses its own Stripe mode: `test` or `live`.
+## Live Stripe connections in this workspace
 
-## Step 1 — Reset secrets
+Two duplicate live entries, both point at the same account:
 
-Delete the existing `STRIPE_SECRET_KEY` and start clean with explicitly named secrets.
+| Connection ID | Label | Resolved account |
+|---|---|---|
+| `std_01kra2672rerwb66ews5b3fjbx` | Stripe (live) | `acct_1HPL9DJdDAUSVXbN` |
+| `std_01kv51rp2hebfrt9st24n5n20r` | Stripe (live) | `acct_1HPL9DJdDAUSVXbN` |
 
-**Sandbox now (you provide):**
-- `STRIPE_SECRET_KEY_TEST` — sandbox `sk_test_...`
-- `STRIPE_WEBHOOK_SECRET_TEST` — signing secret for the sandbox **account** webhook endpoint
-- `STRIPE_CONNECT_WEBHOOK_SECRET_TEST` — signing secret for the sandbox **Connect** webhook endpoint
+(There are also two "Stripe (sandbox)" entries — not inspected, out of scope.)
 
-**Live later (added when you're ready, sandbox stays in place):**
-- `STRIPE_SECRET_KEY_LIVE`
-- `STRIPE_WEBHOOK_SECRET_LIVE`
-- `STRIPE_CONNECT_WEBHOOK_SECRET_LIVE`
+## Platform account behind the live secrets
 
-Nothing is ever deleted when going live. Both environments stay available so you can fall back instantly.
+`GET /v1/account` on both live connections returned the same platform account:
 
-## Step 2 — Per-organization mode toggle
+- **Account ID:** `acct_1HPL9DJdDAUSVXbN`
+- **Business / dashboard display name:** **ALPio**
+- **Business profile name:** ALPio
+- **Legal / individual:** Marshall Wilkinson (sole prop, US)
+- **Support email:** marshall@marshallwilkinson.com
+- **URL:** www.altitudelogicpressure.com
+- **Statement descriptor:** ALPIO
+- **Type:** `standard` (own controller), `charges_enabled: true`, `payouts_enabled: true`, `details_submitted: true`
+- **Default currency:** USD
 
-Add a `stripe_mode` column to the `organizations` table (enum: `test` | `live`, default `test`). Migration file only — you apply it via your usual protocol.
+This is the ALP platform account. Both live connector entries carry a restricted key scoped to `acct_1HPL9DJdDAUSVXbN`, so `STRIPE_SECRET_KEY_LIVE` in the project (and the paired `STRIPE_PUBLISHABLE_KEY_LIVE` / `STRIPE_WEBHOOK_SECRET_LIVE` / `STRIPE_CONNECT_WEBHOOK_SECRET_LIVE`) resolve to this same ALPio account regardless of which duplicate is linked. The duplicate is safe from an "am I on the right account?" standpoint — they are the same platform.
 
-In the **Getting paid** section of Company settings, add a mode selector (visible/editable to `billing.manage`):
-- **Test mode** — badge shown, uses sandbox keys, all Pay buttons and client-facing invoices display a "TEST MODE — no real money" banner so a client never accidentally thinks a sandbox invoice is real.
-- **Live mode** — uses live keys. Requires Stripe Connect account to be `ready` in live before it can be toggled on.
+Caveat: the actual `STRIPE_SECRET_KEY_LIVE` secret value in Project Settings cannot be read; this identification is by matching each live connection's account via the Stripe API, plus the fact that both resolve to the same `acct_`.
 
-## Step 3 — Server-side key resolution
+## Live products whose name contains "OverWatch"
 
-Add `src/lib/stripe.server.ts` helpers (extend existing file):
-- `getStripeClient(mode)` returns a Stripe SDK instance built from `STRIPE_SECRET_KEY_TEST` or `STRIPE_SECRET_KEY_LIVE`.
-- `getStripeModeForOrganization(orgId)` reads `organizations.stripe_mode`.
-- All existing payment server functions (checkout session creation, Connect account link, refunds) resolve mode from the organization, then use the matching client. No mode flag is ever accepted from the browser.
+- `GET /v1/products/search?query=name~"OverWatch"` → **0 results**.
+- Full scan of `GET /v1/products?active=true&limit=100` (first page, 100 products; `has_more: true`) also shows **0 product names containing "OverWatch"** (case-insensitive). Names in the catalog are AOS/ALP/Contractor Circle/Level Up/coaching/one-off client SKUs.
 
-## Step 4 — Single webhook endpoint, tries both signing secrets
+**Conclusion on OverWatch SKUs:** none currently exist on the live ALPio account under that name. If OverWatch pricing needs to be represented on Stripe live, it would need to be created (not part of this audit). A second sweep beyond the first 100 products can be run on request, but Stripe's own search API already returned zero name matches across the full account.
 
-Keep one route: `src/routes/api/stripe/webhook.ts` (already exists). Behavior:
+## Nothing was changed
 
-1. Read raw body + `Stripe-Signature` header.
-2. Try verify against each configured secret in this order until one succeeds:
-   `STRIPE_WEBHOOK_SECRET_TEST`, `STRIPE_WEBHOOK_SECRET_LIVE`, `STRIPE_CONNECT_WEBHOOK_SECRET_TEST`, `STRIPE_CONNECT_WEBHOOK_SECRET_LIVE`.
-3. Missing/unset secrets are skipped silently (so you can run with only test secrets today).
-4. Once verified, tag the event with `mode: 'test' | 'live'` and `source: 'account' | 'connect'` for the idempotency + payment records.
-5. Reject with 401 only if none match.
-6. Idempotency table already planned in STRIPEPHASE1 — event id is unique, duplicates no-op.
-
-You configure **four Stripe webhook endpoints** total (two per environment) all pointing at the same URL:
-
-```
-https://builder-clarity.lovable.app/api/public/stripe/webhook
-```
-
-(Move the route to `/api/public/stripe/webhook` if it isn't already — Stripe is an external caller and the `/api/public/*` prefix bypasses Lovable's auth on published sites.)
-
-## Step 5 — Test-mode UI safety rail
-
-Anywhere a Stripe-driven surface is client-visible (client invoice page, Pay buttons, Connect status card): if the resolved org mode is `test`, render a persistent "Sandbox — no real payment" ribbon. Prevents any accidental client-facing use of test infrastructure.
-
-## Step 6 — Fire the sandbox tests
-
-Once secrets are in and code is deployed:
-1. In your Stripe sandbox dashboard, create the two webhook endpoints (account + Connect) pointing at the URL above.
-2. Copy the `whsec_...` for each into the two `_TEST` secrets.
-3. Use "Send test webhook" or `stripe trigger checkout.session.completed` / `stripe trigger account.updated`.
-4. I'll check server logs (`stack_modern--server-function-logs` on the published deployment) to confirm signature verification passed, the event was written idempotently, and the invoice/payment/Connect status updated correctly.
-
-## Step 7 — Go live
-
-When ready:
-1. You add the three `_LIVE` secrets.
-2. Create the two live webhook endpoints in Stripe live dashboard, pointing at the same URL, copy their signing secrets into the `_LIVE` slots.
-3. In each org that's ready, toggle Company settings → Getting paid → mode from Test to Live.
-
-No code change, no redeploy, no sandbox teardown.
-
-## Files touched
-
-- `supabase/migrations/<timestamp>_organization_stripe_mode.sql` (new)
-- `src/lib/stripe.server.ts` (extend: mode-aware client resolver)
-- `src/lib/payments.functions.ts` (thread org mode through Checkout, Connect account link, refunds)
-- `src/routes/api/stripe/webhook.ts` — or move to `src/routes/api/public/stripe/webhook.ts` if not already public — multi-secret verify + mode/source tagging
-- `src/components/billing/GettingPaidSection.tsx` (mode selector + guard against flipping to live before Connect is live-ready)
-- `src/components/billing/HowToPayBlock.tsx` + client invoice route (sandbox ribbon)
-- `src/integrations/supabase/types.ts` regenerates from the migration (auto)
-
-## What I need from you to start
-
-1. Approve this plan.
-2. Then I'll switch to build mode, delete the existing `STRIPE_SECRET_KEY`, and open the secure form for the three `_TEST` secrets. You paste them in.
-3. You create the two sandbox webhook endpoints in Stripe and give me their signing secrets (they'll go into the same secure form).
-4. I ship the code, we fire tests, verify logs.
+No products, prices, webhooks, accounts, or connector links were created, edited, archived, or removed.
