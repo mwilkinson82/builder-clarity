@@ -25,6 +25,7 @@ import {
   stripeModePersistencePatch,
   type StripeMode,
 } from "@/lib/stripe-mode";
+import { stripeConnectDetails } from "@/lib/stripe-connect-status";
 
 type StripeObject = Record<string, unknown> & {
   id?: string;
@@ -229,15 +230,7 @@ function subscriptionStatus(value: string) {
 }
 
 function connectAccountStatus(object: StripeObject) {
-  const chargesEnabled = Boolean(object.charges_enabled);
-  const payoutsEnabled = Boolean(object.payouts_enabled);
-  const detailsSubmitted = Boolean(object.details_submitted);
-
-  if (chargesEnabled && payoutsEnabled && detailsSubmitted) {
-    return { status: "active", ready: true };
-  }
-
-  return { status: "pending", ready: false };
+  return stripeConnectDetails(object);
 }
 
 function stripeConnectSchemaNotReady(error: { message?: string } | null) {

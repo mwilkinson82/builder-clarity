@@ -1,49 +1,44 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   Banknote,
   CheckCircle2,
+  ChevronDown,
   CreditCard,
-  Eye,
   ExternalLink,
   Gauge,
-  Landmark,
-  SearchCheck,
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { fmtUSDCents } from "@/lib/billing-format";
 import {
   getCompanyPaymentProfile,
-  listUnmatchedStripePayments,
   revealCompanyPaymentProfile,
   saveCompanyPaymentProfile,
   type CompanyPaymentProfileView,
-  type ReconcileInvoiceOption,
-  type UnmatchedStripePayment,
 } from "@/lib/payments.functions";
-import { recordInvoicePayment } from "@/lib/projects.functions";
 import { centsToDollars, dollarsToCents, renderRemittanceMemo } from "@/lib/payments-domain";
 import {
   getStripePaymentLimitContext,
   requestStripePaymentLimit,
 } from "@/lib/stripe-limit.functions";
 import type { StripeMode } from "@/lib/stripe-mode";
+import type { StripeConnectDetails, StripeConnectReadiness } from "@/lib/stripe-connect-status";
+import { StripeReconciliationPanel } from "@/components/billing/StripeReconciliationPanel";
+import {
+  GettingPaidBankPanel,
+  type GettingPaidProfileFormState,
+} from "@/components/billing/GettingPaidBankPanel";
 
 // Founder's expectation-setting copy for the Stripe status card. Do not
 // paraphrase: it sets the "direct wire for big money, Stripe for small" frame.
@@ -64,10 +59,13 @@ export interface GettingPaidStripeState {
 interface GettingPaidSectionProps {
   canManage: boolean;
   stripe: GettingPaidStripeState;
+  connectDetails?: StripeConnectDetails;
   onConnectStripe: (mode: StripeMode) => void;
   onActivateLiveStripe: () => void;
   onOpenStripeDashboard: (mode: StripeMode) => void;
+  onRefreshStripeStatus: () => void;
   stripeConnectPending: boolean;
+  stripeStatusPending: boolean;
   /** One quiet line about Overwatch subscription readiness — composed by the caller. */
   subscriptionNote: string;
   billingContactName: string;
@@ -78,20 +76,7 @@ interface GettingPaidSectionProps {
   billingContactSaving: boolean;
 }
 
-interface ProfileFormState {
-  bankName: string;
-  routingNumber: string;
-  accountNumber: string;
-  wireInstructions: string;
-  remittanceMemoTemplate: string;
-  directBank: boolean;
-  card: boolean;
-  achDebit: boolean;
-  cardFeePassThrough: boolean;
-  stripeThresholdDollars: string;
-}
-
-function formFromProfile(profile: CompanyPaymentProfileView): ProfileFormState {
+function formFromProfile(profile: CompanyPaymentProfileView): GettingPaidProfileFormState {
   return {
     bankName: profile.bankName,
     routingNumber: "",
@@ -106,23 +91,55 @@ function formFromProfile(profile: CompanyPaymentProfileView): ProfileFormState {
   };
 }
 
-function StatusRow({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  return (
-    <div className="flex items-center gap-2 text-sm">
-      {icon}
-      <span className="text-muted-foreground">{label}</span>
-      <span className="ml-auto font-medium">{value}</span>
-    </div>
-  );
+function readinessPresentation(readiness: StripeConnectReadiness) {
+  if (readiness === "ready") {
+    return {
+      title: "Stripe approved",
+      detail: "Card payments and payouts are enabled for this connected account.",
+      tone: "success",
+    } as const;
+  }
+  if (readiness === "under_review") {
+    return {
+      title: "Stripe review in progress",
+      detail:
+        "Stripe has the submitted information and is reviewing one or more payment capabilities. OverWatch checks this automatically.",
+      tone: "warning",
+    } as const;
+  }
+  if (readiness === "restricted") {
+    return {
+      title: "Stripe action overdue",
+      detail:
+        "Payments or payouts are restricted until the connected account resolves Stripe's requirements.",
+      tone: "danger",
+    } as const;
+  }
+  if (readiness === "action_required") {
+    return {
+      title: "Stripe needs more information",
+      detail:
+        "Open Stripe verification and complete the remaining business or payout requirements.",
+      tone: "warning",
+    } as const;
+  }
+  return {
+    title: "Live Stripe setup required",
+    detail: "Connect the company's live Stripe business before accepting real online payments.",
+    tone: "default",
+  } as const;
 }
 
 export function GettingPaidSection({
   canManage,
   stripe,
+  connectDetails,
   onConnectStripe,
   onActivateLiveStripe,
   onOpenStripeDashboard,
+  onRefreshStripeStatus,
   stripeConnectPending,
+  stripeStatusPending,
   subscriptionNote,
   billingContactName,
   billingContactEmail,
@@ -150,7 +167,7 @@ export function GettingPaidSection({
   });
   const paymentLimit = paymentLimitQuery.data;
 
-  const [form, setForm] = useState<ProfileFormState | null>(null);
+  const [form, setForm] = useState<GettingPaidProfileFormState | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [requestedLimitDollars, setRequestedLimitDollars] = useState("");
   const [stripeRequestReference, setStripeRequestReference] = useState("");
@@ -170,7 +187,7 @@ export function GettingPaidSection({
   }, [billingContactName, billingContactEmail]);
 
   const saveMutation = useMutation({
-    mutationFn: async (state: ProfileFormState) => {
+    mutationFn: async (state: GettingPaidProfileFormState) => {
       const thresholdDollars = Number(state.stripeThresholdDollars);
       return saveProfile({
         data: {
@@ -261,38 +278,58 @@ export function GettingPaidSection({
 
   if (!canManage) return null;
 
-  const liveReady = Boolean(stripe.liveAccountId) && stripe.liveConnectStatus === "active";
-  const stripeStateLabel =
-    stripe.mode === "live" && liveReady
-      ? "Live payments ready"
-      : liveReady
-        ? "Live account verified — activation required"
-        : stripe.liveAccountId
-          ? "Live verification in progress"
-          : stripe.testAccountId
-            ? "Sandbox connected — live setup required"
-            : "Live Stripe setup required";
+  const liveReady =
+    connectDetails?.ready ??
+    (Boolean(stripe.liveAccountId) && stripe.liveConnectStatus === "active");
+  const readiness: StripeConnectReadiness =
+    connectDetails?.readiness ??
+    (liveReady ? "ready" : stripe.liveAccountId ? "under_review" : "not_started");
+  const statusPresentation = readinessPresentation(readiness);
+  const accountName = connectDetails?.businessName || "Connected Stripe business";
+  const statusToneClass =
+    statusPresentation.tone === "success"
+      ? "border-success/30 bg-success/10 text-success"
+      : statusPresentation.tone === "danger"
+        ? "border-danger/30 bg-danger/10 text-danger"
+        : statusPresentation.tone === "warning"
+          ? "border-warning/30 bg-warning/10 text-warning"
+          : "border-hairline bg-muted text-foreground";
   const memoPreview = renderRemittanceMemo(
     form?.remittanceMemoTemplate ?? "Reference: Invoice {number}",
     "1042",
+  );
+  const currentLimit = paymentLimit?.currentLimitCents ?? 2_500_000;
+  const saveProfileButton = (label: string) => (
+    <Button
+      type="button"
+      disabled={!form || saveMutation.isPending || profile?.schemaMissing}
+      onClick={() => form && saveMutation.mutate(form)}
+    >
+      {saveMutation.isPending ? "Saving…" : label}
+    </Button>
   );
 
   return (
     <section
       id="getting-paid"
       data-testid="getting-paid-section"
-      className="scroll-mt-6 rounded-lg border border-hairline bg-card p-5 shadow-card"
+      className="scroll-mt-6 rounded-xl border border-hairline bg-card p-5 shadow-card"
     >
-      <div>
-        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-          <Banknote className="h-4 w-4" />
-          Getting paid
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <Banknote className="h-4 w-4" />
+            Getting paid
+          </div>
+          <h2 className="mt-1 font-serif text-2xl text-foreground">How clients pay this company</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            Your direct bank details print on invoices. Stripe adds card and bank-debit options for
+            smaller payments when you turn them on.
+          </p>
         </div>
-        <h2 className="mt-1 font-serif text-2xl text-foreground">How clients pay this company</h2>
-        <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Your direct bank details print on invoices. Stripe adds card and bank-debit options for
-          smaller payments when you turn them on.
-        </p>
+        <div className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${statusToneClass}`}>
+          {statusPresentation.title}
+        </div>
       </div>
 
       {profile?.schemaMissing && (
@@ -302,625 +339,454 @@ export function GettingPaidSection({
         </div>
       )}
 
-      <div className="mt-5 grid gap-6 lg:grid-cols-2">
-        {/* Tier 0: direct remittance details — the rail that never depends on Stripe. */}
-        <div className="space-y-4 rounded-md border border-hairline bg-surface p-4">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Landmark className="h-4 w-4" />
-            Direct bank transfer details
-          </div>
-          <p className="text-sm text-muted-foreground">
-            These wire/ACH details print on invoices that have Direct bank transfer turned on. This
-            is how requisition-sized payments reach you — no processor in the middle.
-          </p>
-          <div className="space-y-1.5">
-            <Label htmlFor="getting-paid-bank-name">Bank name</Label>
-            <Input
-              id="getting-paid-bank-name"
-              value={form?.bankName ?? ""}
-              placeholder="First National Bank"
-              disabled={!form || saveMutation.isPending}
-              onChange={(event) => setForm((c) => (c ? { ...c, bankName: event.target.value } : c))}
-            />
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="getting-paid-routing">Routing number</Label>
-              <Input
-                id="getting-paid-routing"
-                value={form?.routingNumber ?? ""}
-                placeholder={
-                  profile?.exists ? profile.routingMasked || "Enter routing number" : "021000021"
-                }
-                inputMode="numeric"
-                disabled={!form || saveMutation.isPending}
-                onChange={(event) =>
-                  setForm((c) => (c ? { ...c, routingNumber: event.target.value } : c))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="getting-paid-account">Account number</Label>
-              <Input
-                id="getting-paid-account"
-                value={form?.accountNumber ?? ""}
-                placeholder={
-                  profile?.exists
-                    ? profile.accountMasked || "Enter account number"
-                    : "Account number"
-                }
-                inputMode="numeric"
-                disabled={!form || saveMutation.isPending}
-                onChange={(event) =>
-                  setForm((c) => (c ? { ...c, accountNumber: event.target.value } : c))
-                }
-              />
-            </div>
-          </div>
-          {profile?.exists && !revealed && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={revealMutation.isPending}
-              onClick={() => revealMutation.mutate()}
-            >
-              <Eye className="mr-1.5 h-3.5 w-3.5" />
-              {revealMutation.isPending ? "Revealing…" : "Reveal saved numbers"}
-            </Button>
-          )}
-          {profile?.exists && (
-            <p className="text-xs text-muted-foreground">
-              Saved numbers stay masked ({profile.routingMasked || "none"} /{" "}
-              {profile.accountMasked || "none"}). Leave the fields blank to keep them; type new
-              numbers to replace them.
-            </p>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor="getting-paid-wire">Wire instructions (optional)</Label>
-            <Textarea
-              id="getting-paid-wire"
-              value={form?.wireInstructions ?? ""}
-              placeholder="SWIFT code, bank address, or anything else your bank asks payers to include."
-              rows={3}
-              disabled={!form || saveMutation.isPending}
-              onChange={(event) =>
-                setForm((c) => (c ? { ...c, wireInstructions: event.target.value } : c))
-              }
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="getting-paid-memo">Payment reference memo</Label>
-            <Input
-              id="getting-paid-memo"
-              value={form?.remittanceMemoTemplate ?? ""}
-              placeholder="Reference: Invoice {number}"
-              disabled={!form || saveMutation.isPending}
-              onChange={(event) =>
-                setForm((c) => (c ? { ...c, remittanceMemoTemplate: event.target.value } : c))
-              }
-            />
-            <p className="text-xs text-muted-foreground">
-              {"{number}"} becomes the invoice number. Preview: {memoPreview}
-            </p>
-          </div>
-        </div>
+      <Tabs defaultValue="overview" className="mt-5">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 lg:grid-cols-4">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="online">Online payments</TabsTrigger>
+          <TabsTrigger value="bank">Bank instructions</TabsTrigger>
+          <TabsTrigger value="support">Support & history</TabsTrigger>
+        </TabsList>
 
-        {/* Tier 1: Stripe Connect status + company-level payment defaults. */}
-        <div className="space-y-4 rounded-md border border-hairline bg-surface p-4">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <CreditCard className="h-4 w-4" />
-            Online payments (Stripe)
-          </div>
-          <div className="rounded-md border border-hairline bg-card p-4">
-            {stripe.mode !== "live" && (
-              <div className="mb-4 flex gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning">
-                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                <p>
-                  Sandbox accounts cannot receive real client payments and do not transfer into live
-                  mode. This company must complete one live Stripe setup before live invoice links
-                  can be activated.
-                </p>
-              </div>
-            )}
-            <div className="flex items-center gap-2">
-              {liveReady ? (
-                <CheckCircle2 className="h-4 w-4 text-success" />
-              ) : (
-                <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-              )}
-              <span className="text-sm font-medium">{stripeStateLabel}</span>
+        <TabsContent value="overview" className="mt-5 space-y-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className={`rounded-lg border p-4 ${statusToneClass}`}>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em]">
+                Stripe account
+              </p>
+              <p className="mt-2 text-sm font-semibold">{statusPresentation.title}</p>
+              <p className="mt-1 text-xs opacity-80">{accountName}</p>
             </div>
-            <p className="mt-2 text-sm text-muted-foreground">{STRIPE_EXPECTATION_COPY}</p>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Clients pay the contractor's connected Stripe account directly. Overwatch never
-              receives the invoice principal; it receives only a separately configured application
-              fee.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {!liveReady && (
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={stripeConnectPending}
-                  onClick={() => onConnectStripe("live")}
-                >
-                  {stripeConnectPending
-                    ? "Opening Stripe…"
-                    : stripe.liveAccountId
-                      ? "Resume live verification"
-                      : "Set up live Stripe"}
-                </Button>
-              )}
-              {liveReady && stripe.mode !== "live" && (
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={stripeConnectPending}
-                  onClick={onActivateLiveStripe}
-                >
-                  {stripeConnectPending ? "Activating…" : "Activate live payments"}
-                </Button>
-              )}
-              {stripe.liveAccountId && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={stripeConnectPending}
-                  onClick={() => onOpenStripeDashboard("live")}
-                >
-                  Open Stripe Dashboard
-                </Button>
-              )}
+            <div className="rounded-lg border border-hairline bg-surface p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Online limit
+              </p>
+              <p className="mt-2 font-mono text-lg font-semibold">
+                {fmtUSDCents(currentLimit / 100)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">per card or ACH debit payment</p>
             </div>
-            {!stripe.liveAccountId && stripe.testAccountId && (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="mt-2"
-                disabled={stripeConnectPending}
-                onClick={() => onConnectStripe("test")}
-              >
-                Open sandbox setup
-              </Button>
-            )}
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{subscriptionNote}</p>
-          </div>
-
-          <div className="rounded-md border border-hairline bg-card p-4">
-            <div className="flex items-center gap-2">
-              <Gauge className="h-4 w-4 text-clay" />
-              <span className="text-sm font-medium">Online-payment ceiling</span>
-              <span className="ml-auto font-mono text-sm font-semibold">
-                {fmtUSDCents((paymentLimit?.currentLimitCents ?? 2_500_000) / 100)}
-              </span>
-            </div>
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              This is OverWatch's hard limit for one card or ACH debit payment. Invoice overrides
-              cannot bypass it, and Stripe may enforce a lower account-specific limit. Larger
-              payments should use the direct bank instructions until both Stripe and OverWatch
-              approve an increase.
-            </p>
-            {paymentLimit?.latestRequest &&
-            ["submitted", "stripe_pending", "under_review"].includes(
-              paymentLimit.latestRequest.status,
-            ) ? (
-              <div className="mt-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-                Request for {fmtUSDCents(paymentLimit.latestRequest.requestedLimitCents / 100)} ·{" "}
-                {paymentLimit.latestRequest.status.replaceAll("_", " ")}
-              </div>
-            ) : (
-              <div className="mt-3 space-y-3">
-                <a
-                  href="https://support.stripe.com/contact"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-clay hover:underline"
-                >
-                  Ask Stripe to review this connected account's ACH limits
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="stripe-limit-request-amount">
-                      Requested single payment ($)
-                    </Label>
-                    <Input
-                      id="stripe-limit-request-amount"
-                      value={requestedLimitDollars}
-                      inputMode="decimal"
-                      placeholder="100000"
-                      disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
-                      onChange={(event) => setRequestedLimitDollars(event.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="stripe-limit-request-reference">
-                      Stripe case or approval reference
-                    </Label>
-                    <Input
-                      id="stripe-limit-request-reference"
-                      value={stripeRequestReference}
-                      placeholder="Optional until Stripe replies"
-                      disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
-                      onChange={(event) => setStripeRequestReference(event.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="stripe-limit-request-reason">Expected payment and context</Label>
-                  <Textarea
-                    id="stripe-limit-request-reason"
-                    value={limitRequestReason}
-                    rows={2}
-                    placeholder="Example: monthly commercial progress payments around $100,000."
-                    disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
-                    onChange={(event) => setLimitRequestReason(event.target.value)}
-                  />
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={
-                    !stripe.liveAccountId ||
-                    !paymentLimit?.requestSchemaReady ||
-                    paymentLimitMutation.isPending
-                  }
-                  onClick={() => paymentLimitMutation.mutate()}
-                >
-                  {paymentLimitMutation.isPending ? "Submitting…" : "Submit limit request"}
-                </Button>
-                {!stripe.liveAccountId && (
-                  <p className="text-xs text-muted-foreground">
-                    Create the live connected account before requesting more payment capacity.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <p className="text-sm font-medium">
-              Which payment options do new invoices offer clients?
-            </p>
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="getting-paid-default-direct" className="font-normal">
-                Direct bank transfer (wire/ACH to your account)
-              </Label>
-              <Switch
-                id="getting-paid-default-direct"
-                checked={form?.directBank ?? true}
-                disabled={!form || saveMutation.isPending}
-                onCheckedChange={(checked) =>
-                  setForm((c) => (c ? { ...c, directBank: checked } : c))
-                }
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="getting-paid-default-card" className="font-normal">
-                Card (needs Stripe)
-              </Label>
-              <Switch
-                id="getting-paid-default-card"
-                checked={form?.card ?? true}
-                disabled={!form || saveMutation.isPending}
-                onCheckedChange={(checked) => setForm((c) => (c ? { ...c, card: checked } : c))}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="getting-paid-default-ach" className="font-normal">
-                Bank debit / ACH (needs Stripe)
-              </Label>
-              <Switch
-                id="getting-paid-default-ach"
-                checked={form?.achDebit ?? true}
-                disabled={!form || saveMutation.isPending}
-                onCheckedChange={(checked) => setForm((c) => (c ? { ...c, achDebit: checked } : c))}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <Label htmlFor="getting-paid-fee-passthrough" className="font-normal">
-                  Add estimated card fee to card payments
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Adds a processing-fee line when a client pays by card. Check that surcharging is
-                  allowed in your state — that responsibility is yours.
-                </p>
-              </div>
-              <Switch
-                id="getting-paid-fee-passthrough"
-                checked={form?.cardFeePassThrough ?? false}
-                disabled={!form || saveMutation.isPending}
-                onCheckedChange={(checked) =>
-                  setForm((c) => (c ? { ...c, cardFeePassThrough: checked } : c))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="getting-paid-threshold">Hide card & bank debit above ($)</Label>
-              <Input
-                id="getting-paid-threshold"
-                value={form?.stripeThresholdDollars ?? ""}
-                inputMode="decimal"
-                disabled={!form || saveMutation.isPending}
-                onChange={(event) =>
-                  setForm((c) => (c ? { ...c, stripeThresholdDollars: event.target.value } : c))
-                }
-              />
-              <p className="text-xs text-muted-foreground">
-                Invoices above this amount show only your direct bank details, so requisition-sized
-                money skips processor fees. You can override this on any single invoice.
+            <div className="rounded-lg border border-hairline bg-surface p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Large payments
+              </p>
+              <p className="mt-2 text-sm font-semibold">Direct to your bank</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Wire instructions stay available above the online limit.
               </p>
             </div>
           </div>
-        </div>
-      </div>
 
-      <StripeReconciliationPanel />
+          <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
+            <div className="rounded-lg border border-hairline bg-surface p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    {liveReady ? (
+                      <CheckCircle2 className="h-4 w-4 text-success" />
+                    ) : (
+                      <ShieldCheck className="h-4 w-4 text-warning" />
+                    )}
+                    <h3 className="text-sm font-semibold">{statusPresentation.title}</h3>
+                  </div>
+                  <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                    {statusPresentation.detail}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={stripeStatusPending}
+                  onClick={onRefreshStripeStatus}
+                >
+                  {stripeStatusPending ? "Checking…" : "Refresh status"}
+                </Button>
+              </div>
 
-      <div className="mt-5 rounded-md border border-hairline bg-surface p-4">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <ShieldCheck className="h-4 w-4" />
-          Billing contact
-        </div>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Where subscription and payment notices for this company go.
-        </p>
-        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-          <div className="space-y-1.5">
-            <Label htmlFor="getting-paid-billing-contact">Billing contact</Label>
-            <Input
-              id="getting-paid-billing-contact"
-              value={contactForm.name}
-              placeholder="Owner or accounting contact"
-              disabled={!canEditBillingContact || billingContactSaving}
-              onChange={(event) =>
-                setContactForm((current) => ({ ...current, name: event.target.value }))
-              }
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="getting-paid-billing-email">Billing email</Label>
-            <Input
-              id="getting-paid-billing-email"
-              type="email"
-              value={contactForm.email}
-              placeholder="billing@company.com"
-              disabled={!canEditBillingContact || billingContactSaving}
-              onChange={(event) =>
-                setContactForm((current) => ({ ...current, email: event.target.value }))
-              }
-            />
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={
-              !canEditBillingContact ||
-              billingContactSaving ||
-              (contactForm.name === billingContactName && contactForm.email === billingContactEmail)
-            }
-            onClick={() => onSaveBillingContact(contactForm)}
-          >
-            {billingContactSaving ? "Saving…" : "Save billing contact"}
-          </Button>
-        </div>
-        {!canEditBillingContact && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Only people who can manage company settings can change the billing contact.
-          </p>
-        )}
-      </div>
-
-      <div className="mt-5 flex justify-end">
-        <Button
-          type="button"
-          disabled={!form || saveMutation.isPending || profile?.schemaMissing}
-          onClick={() => form && saveMutation.mutate(form)}
-        >
-          {saveMutation.isPending ? "Saving…" : "Save getting paid details"}
-        </Button>
-      </div>
-    </section>
-  );
-}
-
-function stripePaymentMethodLabel(type: string) {
-  if (type === "us_bank_account") return "Bank debit (ACH)";
-  if (type === "card") return "Card";
-  return type ? type.replace(/_/g, " ") : "Stripe";
-}
-
-function reconciliationDateLabel(iso: string) {
-  if (!iso) return "No date";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "No date";
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-type SweepResult = Awaited<ReturnType<typeof listUnmatchedStripePayments>>;
-
-/**
- * On-demand safety net (BILLINGBATCH2 Task 2): money that settled on Stripe
- * without a matching payment record — e.g. a payment from before webhooks
- * were wired up — is invisible to A/R until someone looks. This looks.
- */
-function StripeReconciliationPanel() {
-  const runSweep = useServerFn(listUnmatchedStripePayments);
-  const recordPayment = useServerFn(recordInvoicePayment);
-  const [sweep, setSweep] = useState<SweepResult | null>(null);
-  const [invoiceByPayment, setInvoiceByPayment] = useState<Record<string, string>>({});
-  const [bookedIds, setBookedIds] = useState<Set<string>>(new Set());
-
-  const sweepMutation = useMutation({
-    mutationFn: async () => runSweep(),
-    onSuccess: (result) => {
-      setSweep(result);
-      setBookedIds(new Set());
-      setInvoiceByPayment({});
-    },
-    onError: (error) => {
-      toast.error("Stripe check did not run", {
-        description: error instanceof Error ? error.message : "Try again.",
-      });
-    },
-  });
-
-  const recordMutation = useMutation({
-    mutationFn: async (payment: UnmatchedStripePayment) => {
-      const invoiceId = invoiceByPayment[payment.stripeChargeId];
-      if (!invoiceId) throw new Error("Pick the invoice this payment belongs to first.");
-      const stripeReference = payment.stripePaymentIntentId || payment.stripeChargeId;
-      return recordPayment({
-        data: {
-          invoiceId,
-          amount: payment.amount,
-          payment_method:
-            payment.paymentMethodType === "us_bank_account"
-              ? "ach"
-              : payment.paymentMethodType === "card"
-                ? "card"
-                : "other",
-          processor: "stripe",
-          processor_payment_id: stripeReference,
-          reference: stripeReference,
-          paid_at: payment.paidAtIso || undefined,
-          notes: `Recorded from the Stripe unmatched-payments check (${payment.stripeChargeId}).`,
-        },
-      });
-    },
-    onSuccess: (_result, payment) => {
-      setBookedIds((current) => new Set(current).add(payment.stripeChargeId));
-      toast.success("Payment recorded to invoice", {
-        description: "The invoice, ledger, and A/R now include this Stripe payment.",
-      });
-    },
-    onError: (error) => {
-      toast.error("Payment did not record", {
-        description: error instanceof Error ? error.message : "Try again.",
-      });
-    },
-  });
-
-  const unmatched = sweep?.ready ? sweep.payments : [];
-  const openInvoices: ReconcileInvoiceOption[] = sweep?.ready ? sweep.openInvoices : [];
-
-  return (
-    <div className="mt-5 rounded-md border border-hairline bg-surface p-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <SearchCheck className="h-4 w-4" />
-            Payment reconciliation
-          </div>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Compares recent Stripe payments against your recorded payments and flags money that
-            never reached an invoice — like a payment that settled before this company's account was
-            fully wired up.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={sweepMutation.isPending}
-          onClick={() => sweepMutation.mutate()}
-        >
-          {sweepMutation.isPending ? "Checking Stripe…" : "Check Stripe for unmatched payments"}
-        </Button>
-      </div>
-
-      {sweep && !sweep.ready ? (
-        <div className="mt-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
-          {sweep.reason}
-        </div>
-      ) : null}
-
-      {sweep?.ready ? (
-        <div className="mt-3 space-y-3">
-          <div className="text-xs text-muted-foreground">
-            Checked {sweep.checkedCount} settled Stripe payment
-            {sweep.checkedCount === 1 ? "" : "s"} ·{" "}
-            {unmatched.length === 0
-              ? "every one is recorded against an invoice."
-              : `${unmatched.length} not recorded anywhere.`}
-          </div>
-          {unmatched.map((payment) => {
-            const booked = bookedIds.has(payment.stripeChargeId);
-            const recording =
-              recordMutation.isPending &&
-              recordMutation.variables?.stripeChargeId === payment.stripeChargeId;
-            return (
-              <div
-                key={payment.stripeChargeId}
-                className={`rounded-md border p-3 ${
-                  booked ? "border-success/30 bg-success/5" : "border-warning/30 bg-warning/5"
-                }`}
-              >
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium tabular">
-                      {fmtUSDCents(payment.amount)} ·{" "}
-                      {stripePaymentMethodLabel(payment.paymentMethodType)} ·{" "}
-                      {reconciliationDateLabel(payment.paidAtIso)}
+              {stripe.liveAccountId ? (
+                <div className="mt-4 rounded-md border border-hairline bg-card p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Connected business receiving client payments
+                  </p>
+                  <p className="mt-1 text-sm font-semibold">{accountName}</p>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {stripe.liveAccountId}
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded border border-hairline bg-surface px-2.5 py-2">
+                      <span className="text-muted-foreground">Card payments</span>
+                      <span
+                        className={`ml-2 font-semibold ${connectDetails?.chargesEnabled ? "text-success" : "text-warning"}`}
+                      >
+                        {connectDetails?.chargesEnabled ? "Enabled" : "Paused"}
+                      </span>
                     </div>
-                    <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-                      {payment.stripePaymentIntentId || payment.stripeChargeId}
-                      {payment.description ? ` · ${payment.description}` : ""}
+                    <div className="rounded border border-hairline bg-surface px-2.5 py-2">
+                      <span className="text-muted-foreground">Payouts</span>
+                      <span
+                        className={`ml-2 font-semibold ${connectDetails?.payoutsEnabled ? "text-success" : "text-warning"}`}
+                      >
+                        {connectDetails?.payoutsEnabled ? "Enabled" : "Paused"}
+                      </span>
                     </div>
                   </div>
-                  {booked ? (
-                    <div className="flex items-center gap-1.5 text-sm font-medium text-success">
-                      <CheckCircle2 className="h-4 w-4" /> Recorded
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <Select
-                        value={invoiceByPayment[payment.stripeChargeId] ?? ""}
-                        onValueChange={(invoiceId) =>
-                          setInvoiceByPayment((current) => ({
-                            ...current,
-                            [payment.stripeChargeId]: invoiceId,
-                          }))
-                        }
-                      >
-                        <SelectTrigger className="h-9 sm:w-[320px]">
-                          <SelectValue placeholder="Record to invoice…" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {openInvoices.length === 0 ? (
-                            <SelectItem value="none" disabled>
-                              No open invoices found
-                            </SelectItem>
-                          ) : (
-                            openInvoices.map((invoice) => (
-                              <SelectItem key={invoice.id} value={invoice.id}>
-                                {invoice.projectName} · {invoice.label} ·{" "}
-                                {fmtUSDCents(invoice.openBalance)} open
-                              </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={recording || !invoiceByPayment[payment.stripeChargeId]}
-                        onClick={() => recordMutation.mutate(payment)}
-                      >
-                        {recording ? "Recording…" : "Record payment"}
-                      </Button>
-                    </div>
-                  )}
+                  {connectDetails?.currentlyDueCount ? (
+                    <p className="mt-2 text-xs font-medium text-warning">
+                      {connectDetails.currentlyDueCount} Stripe requirement
+                      {connectDetails.currentlyDueCount === 1 ? "" : "s"} still need information.
+                    </p>
+                  ) : connectDetails?.pendingVerificationCount ? (
+                    <p className="mt-2 text-xs font-medium text-warning">
+                      {connectDetails.pendingVerificationCount} submitted item
+                      {connectDetails.pendingVerificationCount === 1 ? " is" : "s are"} under Stripe
+                      review.
+                    </p>
+                  ) : null}
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    If this is not the contractor business that should receive invoice money, do not
+                    activate live payments.
+                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Clients pay this Stripe account directly. OverWatch never holds the invoice
+                    principal; it receives only the configured application fee.
+                  </p>
                 </div>
+              ) : null}
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {!liveReady ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={stripeConnectPending}
+                    onClick={() => onConnectStripe("live")}
+                  >
+                    {stripeConnectPending
+                      ? "Opening Stripe…"
+                      : stripe.liveAccountId
+                        ? "Continue in Stripe"
+                        : "Set up live Stripe"}
+                  </Button>
+                ) : null}
+                {liveReady && stripe.mode !== "live" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={stripeConnectPending}
+                    onClick={onActivateLiveStripe}
+                  >
+                    {stripeConnectPending ? "Activating…" : "Activate live payments"}
+                  </Button>
+                ) : null}
+                {stripe.liveAccountId ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={stripeConnectPending}
+                    onClick={() => onOpenStripeDashboard("live")}
+                  >
+                    Open Stripe in new tab <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                  </Button>
+                ) : null}
               </div>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
+
+              <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+                {STRIPE_EXPECTATION_COPY}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Stripe may also email the connected account contact. OverWatch checks the account
+                every 30 seconds while this page is open and whenever you return to it.
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-hairline bg-surface p-5">
+              <div className="flex items-center gap-2">
+                <Gauge className="h-4 w-4 text-clay" />
+                <h3 className="text-sm font-semibold">Path to $100,000 payments</h3>
+              </div>
+              <ol className="mt-4 space-y-3 text-sm">
+                <li className="flex gap-3">
+                  <span className="font-mono text-xs text-clay">01</span>
+                  <span>Get Stripe approval for the connected account's ACH limits.</span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="font-mono text-xs text-clay">02</span>
+                  <span>Record the approved amount and Stripe case in OverWatch.</span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="font-mono text-xs text-clay">03</span>
+                  <span>OverWatch verifies it, then raises this company's hard ceiling.</span>
+                </li>
+              </ol>
+              <p className="mt-4 text-xs text-muted-foreground">
+                Until both approvals are complete, larger invoices keep using direct wire
+                instructions.
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs leading-relaxed text-muted-foreground">{subscriptionNote}</p>
+        </TabsContent>
+
+        <TabsContent value="online" className="mt-5 space-y-4">
+          {stripe.mode !== "live" ? (
+            <div className="flex gap-2 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              Sandbox accounts cannot receive real client payments. Live setup and activation are
+              separate from the existing sandbox account.
+            </div>
+          ) : null}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-lg border border-hairline bg-surface p-5">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <CreditCard className="h-4 w-4" />
+                Invoice payment defaults
+              </div>
+              <div className="mt-4 space-y-4">
+                {[
+                  [
+                    "getting-paid-default-direct",
+                    "Direct bank transfer",
+                    form?.directBank ?? true,
+                    "directBank",
+                  ],
+                  ["getting-paid-default-card", "Card", form?.card ?? true, "card"],
+                  [
+                    "getting-paid-default-ach",
+                    "Bank debit / ACH",
+                    form?.achDebit ?? true,
+                    "achDebit",
+                  ],
+                ].map(([id, label, checked, key]) => (
+                  <div key={String(id)} className="flex items-center justify-between gap-3">
+                    <Label htmlFor={String(id)} className="font-normal">
+                      {String(label)}
+                    </Label>
+                    <Switch
+                      id={String(id)}
+                      checked={Boolean(checked)}
+                      disabled={!form || saveMutation.isPending}
+                      onCheckedChange={(next) =>
+                        setForm((current) =>
+                          current ? { ...current, [String(key)]: next } : current,
+                        )
+                      }
+                    />
+                  </div>
+                ))}
+                <div className="flex items-center justify-between gap-3 border-t border-hairline pt-4">
+                  <div>
+                    <Label htmlFor="getting-paid-fee-passthrough" className="font-normal">
+                      Add estimated card fee
+                    </Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      The contractor is responsible for confirming surcharges are permitted.
+                    </p>
+                  </div>
+                  <Switch
+                    id="getting-paid-fee-passthrough"
+                    checked={form?.cardFeePassThrough ?? false}
+                    disabled={!form || saveMutation.isPending}
+                    onCheckedChange={(next) =>
+                      setForm((current) =>
+                        current ? { ...current, cardFeePassThrough: next } : current,
+                      )
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5 border-t border-hairline pt-4">
+                  <Label htmlFor="getting-paid-threshold">Prefer direct bank above ($)</Label>
+                  <Input
+                    id="getting-paid-threshold"
+                    value={form?.stripeThresholdDollars ?? ""}
+                    inputMode="decimal"
+                    disabled={!form || saveMutation.isPending}
+                    onChange={(event) =>
+                      setForm((current) =>
+                        current
+                          ? { ...current, stripeThresholdDollars: event.target.value }
+                          : current,
+                      )
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This company preference can be changed per invoice, but no invoice can exceed
+                    OverWatch's hard online limit.
+                  </p>
+                </div>
+                <div className="flex justify-end">{saveProfileButton("Save payment defaults")}</div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-hairline bg-surface p-5">
+              <div className="flex items-center gap-2">
+                <Gauge className="h-4 w-4 text-clay" />
+                <h3 className="text-sm font-semibold">Online-payment ceiling</h3>
+                <span className="ml-auto font-mono text-sm font-semibold">
+                  {fmtUSDCents(currentLimit / 100)}
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                This hard limit applies to one card or ACH debit payment. Stripe can enforce a lower
+                account-specific limit.
+              </p>
+              {paymentLimit?.latestRequest &&
+              ["submitted", "stripe_pending", "under_review"].includes(
+                paymentLimit.latestRequest.status,
+              ) ? (
+                <div className="mt-4 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+                  Request for {fmtUSDCents(paymentLimit.latestRequest.requestedLimitCents / 100)} ·{" "}
+                  {paymentLimit.latestRequest.status.replaceAll("_", " ")}
+                </div>
+              ) : (
+                <Collapsible className="mt-4 rounded-md border border-hairline bg-card">
+                  <CollapsibleTrigger asChild>
+                    <Button type="button" variant="ghost" className="w-full justify-between px-4">
+                      Request a higher payment limit <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-3 border-t border-hairline p-4">
+                    <a
+                      href="https://support.stripe.com/contact"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-clay hover:underline"
+                    >
+                      Start with Stripe's connected-account limit review{" "}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="stripe-limit-request-amount">
+                          Requested single payment ($)
+                        </Label>
+                        <Input
+                          id="stripe-limit-request-amount"
+                          value={requestedLimitDollars}
+                          inputMode="decimal"
+                          placeholder="100000"
+                          disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
+                          onChange={(event) => setRequestedLimitDollars(event.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="stripe-limit-request-reference">
+                          Stripe case or approval reference
+                        </Label>
+                        <Input
+                          id="stripe-limit-request-reference"
+                          value={stripeRequestReference}
+                          placeholder="Add after Stripe replies"
+                          disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
+                          onChange={(event) => setStripeRequestReference(event.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="stripe-limit-request-reason">
+                        Expected payment and context
+                      </Label>
+                      <Textarea
+                        id="stripe-limit-request-reason"
+                        value={limitRequestReason}
+                        rows={3}
+                        placeholder="Example: monthly commercial progress payments around $100,000."
+                        disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
+                        onChange={(event) => setLimitRequestReason(event.target.value)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={
+                        !stripe.liveAccountId ||
+                        !paymentLimit?.requestSchemaReady ||
+                        paymentLimitMutation.isPending
+                      }
+                      onClick={() => paymentLimitMutation.mutate()}
+                    >
+                      {paymentLimitMutation.isPending
+                        ? "Submitting…"
+                        : "Submit for OverWatch review"}
+                    </Button>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="bank" className="mt-5">
+          <GettingPaidBankPanel
+            form={form}
+            profile={profile}
+            saving={saveMutation.isPending}
+            revealed={revealed}
+            revealPending={revealMutation.isPending}
+            memoPreview={memoPreview}
+            saveButton={saveProfileButton("Save bank instructions")}
+            onReveal={() => revealMutation.mutate()}
+            onChange={(patch) =>
+              setForm((current) => (current ? { ...current, ...patch } : current))
+            }
+          />
+        </TabsContent>
+
+        <TabsContent value="support" className="mt-5 space-y-4">
+          <div className="rounded-lg border border-hairline bg-surface p-4">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <ShieldCheck className="h-4 w-4" />
+              Billing contact
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Where subscription, payment, and Stripe readiness notices for this company go.
+            </p>
+            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <div className="space-y-1.5">
+                <Label htmlFor="getting-paid-billing-contact">Billing contact</Label>
+                <Input
+                  id="getting-paid-billing-contact"
+                  value={contactForm.name}
+                  placeholder="Owner or accounting contact"
+                  disabled={!canEditBillingContact || billingContactSaving}
+                  onChange={(event) =>
+                    setContactForm((current) => ({ ...current, name: event.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="getting-paid-billing-email">Billing email</Label>
+                <Input
+                  id="getting-paid-billing-email"
+                  type="email"
+                  value={contactForm.email}
+                  placeholder="billing@company.com"
+                  disabled={!canEditBillingContact || billingContactSaving}
+                  onChange={(event) =>
+                    setContactForm((current) => ({ ...current, email: event.target.value }))
+                  }
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={
+                  !canEditBillingContact ||
+                  billingContactSaving ||
+                  (contactForm.name === billingContactName &&
+                    contactForm.email === billingContactEmail)
+                }
+                onClick={() => onSaveBillingContact(contactForm)}
+              >
+                {billingContactSaving ? "Saving…" : "Save contact"}
+              </Button>
+            </div>
+          </div>
+          <StripeReconciliationPanel />
+        </TabsContent>
+      </Tabs>
+    </section>
   );
 }

@@ -1579,7 +1579,8 @@ await expectContains(
     /CONNECT_SELECT_WITHOUT_BILLING_EMAIL/,
     /stripe_schema_not_ready/,
     /isMissingSupabaseColumn/,
-    /status:\s*"pending"/,
+    /action === "status"/,
+    /connectDetails/,
     /requireCanManageOrganization/,
   ],
   "Stripe Connect onboarding route handles billing-email schema drift, creates account links, and updates company readiness",
@@ -1587,8 +1588,14 @@ await expectContains(
 
 await expectContains(
   "src/routes/api/stripe/webhook.ts",
-  [/account\.updated/, /stripe_schema_not_ready/, /status:\s*"pending"/],
+  [/account\.updated/, /stripe_schema_not_ready/, /stripeConnectDetails/],
   "Stripe webhook route keeps Connect status values aligned to the database constraint",
+);
+
+await expectContains(
+  "src/lib/stripe-connect-status.ts",
+  [/charges_enabled/, /payouts_enabled/, /details_submitted/, /under_review/, /restricted/],
+  "Stripe Connect readiness distinguishes review, action-required, restricted, and approved accounts",
 );
 
 await expectContains(
@@ -1643,9 +1650,7 @@ await expectContains(
     /overwatch_fee/,
     /net_payout/,
     /account\.updated/,
-    /charges_enabled/,
-    /payouts_enabled/,
-    /details_submitted/,
+    /stripeConnectDetails/,
   ],
   "Stripe webhook route records invoice, payment ledger, refund, and subscription outcomes",
 );
@@ -1703,19 +1708,38 @@ await expectContains(
   [
     /Getting paid/,
     /Stripe verifies new businesses/,
-    /Reveal saved numbers/,
-    /Direct bank transfer details/,
-    /Live payments ready/,
-    /Live verification in progress/,
-    /Sandbox connected — live setup required/,
+    /Stripe approved/,
+    /Stripe review in progress/,
+    /Stripe needs more information/,
     /Set up live Stripe/,
     /Activate live payments/,
     /Billing contact/,
-    /Save billing contact/,
+    /Save contact/,
+    /Path to \$100,000 payments/,
+    /Open Stripe in new tab/,
     /subscriptionNote/,
     /id="getting-paid"/,
   ],
   "Getting paid section is the single payments home: remittance entry, masked reveal, honest Connect states, billing contact, and the founder's expectation copy",
+);
+
+await expectContains(
+  "src/components/billing/GettingPaidBankPanel.tsx",
+  [/Reveal saved numbers/, /Direct bank transfer details/, /Payment reference memo/],
+  "Getting Paid keeps masked bank instructions in a focused payment-settings panel",
+);
+
+await expectContains(
+  "src/routes/_authenticated/team.tsx",
+  [
+    /section=paid&stripe=return/,
+    /section=paid&stripe=refresh/,
+    /window\.open/,
+    /launches Stripe in a separate tab/,
+    /action: "status"/,
+    /refetchInterval: 30_000/,
+  ],
+  "Stripe onboarding preserves Getting Paid, opens separately, and refreshes connected-account status",
 );
 
 await expectContains(

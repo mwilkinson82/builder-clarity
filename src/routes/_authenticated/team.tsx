@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
+import type { StripeConnectDetails } from "@/lib/stripe-connect-status";
 import { CapabilityPicker } from "@/components/team/CapabilityPicker";
 import { GettingPaidSection } from "@/components/billing/GettingPaidSection";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -221,11 +222,13 @@ type StripeConnectPayload = {
   mode?: "test" | "live";
   organizationId: string;
   paymentProcessorReady?: boolean;
+  connectDetails?: StripeConnectDetails;
 };
 
 type StripeConnectAction = {
-  action: "onboard" | "activate" | "dashboard";
+  action: "onboard" | "activate" | "dashboard" | "status";
   mode: "test" | "live";
+  targetWindow?: Window | null;
 };
 
 type UsageStatus = {
@@ -296,6 +299,24 @@ function usageStatus(used: number, limit: number, grantActive: boolean): UsageSt
 type ConsoleSection =
   "people" | "clients" | "plan" | "paid" | "assignments" | "company" | "profile";
 
+const CONSOLE_SECTIONS = new Set<ConsoleSection>([
+  "people",
+  "clients",
+  "plan",
+  "paid",
+  "assignments",
+  "company",
+  "profile",
+]);
+
+function initialConsoleSection(): ConsoleSection {
+  if (typeof window === "undefined") return "people";
+  const params = new URLSearchParams(window.location.search);
+  const requested = params.get("section") as ConsoleSection | null;
+  if (requested && CONSOLE_SECTIONS.has(requested)) return requested;
+  return params.has("stripe") ? "paid" : "people";
+}
+
 function TeamPage() {
   const queryClient = useQueryClient();
   const loadTeam = useServerFn(getTeamWorkspace);
@@ -354,7 +375,20 @@ function TeamPage() {
   const [logoImageFailedUrl, setLogoImageFailedUrl] = useState("");
   const [clientInviteForm, setClientInviteForm] = useState(emptyClientInvite);
   // Client-only: which console section the left nav is showing.
-  const [section, setSection] = useState<ConsoleSection>("people");
+  const [section, setSection] = useState<ConsoleSection>(initialConsoleSection);
+  const stripeReturnHandled = useRef(false);
+
+  useEffect(() => {
+    if (stripeReturnHandled.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const stripeReturn = params.get("stripe");
+    if (stripeReturn !== "return" && stripeReturn !== "refresh") return;
+    stripeReturnHandled.current = true;
+    setSection("paid");
+    toast.info("Checking the connected Stripe account", {
+      description: "OverWatch is retrieving Stripe's current review and payment-capability status.",
+    });
+  }, []);
 
   useEffect(() => {
     if (!team) return;
@@ -420,6 +454,34 @@ function TeamPage() {
       queryClient.invalidateQueries({ queryKey: ["team-workspace"] }),
       queryClient.invalidateQueries({ queryKey: ["projects"] }),
     ]);
+  };
+
+  const requestStripeConnect = async ({ action, mode }: StripeConnectAction) => {
+    if (!team?.organization.id) throw new Error("Company workspace is still loading.");
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) throw new Error("Sign in again before connecting Stripe.");
+
+    const response = await fetch("/api/stripe/connect/account-link", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        organizationId: team.organization.id,
+        action,
+        mode,
+        returnPath: `/team?section=paid&stripe=return&mode=${mode}`,
+        refreshPath: `/team?section=paid&stripe=refresh&mode=${mode}`,
+      }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as
+      (StripeConnectPayload & { ok?: boolean; error?: string }) | { ok?: boolean; error?: string };
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "Stripe setup did not open.");
+    }
+    return payload as StripeConnectPayload;
   };
 
   const profileMutation = useMutation({
@@ -509,34 +571,7 @@ function TeamPage() {
   });
 
   const stripeConnectMutation = useMutation({
-    mutationFn: async ({ action, mode }: StripeConnectAction) => {
-      if (!team?.organization.id) throw new Error("Company workspace is still loading.");
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) throw new Error("Sign in again before connecting Stripe.");
-
-      const response = await fetch("/api/stripe/connect/account-link", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          organizationId: team.organization.id,
-          action,
-          mode,
-          returnPath: `/team?stripe=return&mode=${mode}`,
-          refreshPath: `/team?stripe=refresh&mode=${mode}`,
-        }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as
-        | (StripeConnectPayload & { ok?: boolean; error?: string })
-        | { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || "Stripe setup did not open.");
-      }
-      return payload as StripeConnectPayload;
-    },
+    mutationFn: requestStripeConnect,
     onSuccess: async (payload, variables) => {
       if (payload.accountLinkUrl) {
         toast.success(
@@ -545,11 +580,11 @@ function TeamPage() {
             description: "Finish the secure Stripe onboarding screen, then return to Overwatch.",
           },
         );
-        window.location.assign(payload.accountLinkUrl);
+        variables.targetWindow?.location.replace(payload.accountLinkUrl);
         return;
       }
       if (payload.dashboardUrl) {
-        window.location.assign(payload.dashboardUrl);
+        variables.targetWindow?.location.replace(payload.dashboardUrl);
         return;
       }
       if (payload.activated) {
@@ -559,12 +594,52 @@ function TeamPage() {
         });
       }
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      variables.targetWindow?.close();
       toast.error("Stripe setup did not open", {
         description: error instanceof Error ? error.message : "Try again.",
       });
     },
   });
+
+  const stripeStatusQuery = useQuery({
+    queryKey: ["stripe-connect-status", team?.organization.id, "live"],
+    queryFn: () => requestStripeConnect({ action: "status", mode: "live" }),
+    enabled: section === "paid" && Boolean(team?.organization.stripe_connect_account_id_live),
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  });
+
+  const syncedStripeStatus = stripeStatusQuery.data?.connectDetails?.status;
+  useEffect(() => {
+    if (!syncedStripeStatus) return;
+    void queryClient.invalidateQueries({ queryKey: ["team-workspace"] });
+  }, [queryClient, syncedStripeStatus]);
+
+  const openStripeInNewTab = (action: "onboard" | "dashboard", mode: "test" | "live") => {
+    const targetWindow = window.open(
+      `/team?section=paid&stripe=opening&mode=${mode}`,
+      "overwatch-stripe",
+    );
+    if (!targetWindow) {
+      toast.error("Allow pop-ups to open Stripe", {
+        description: "OverWatch keeps this page open and launches Stripe in a separate tab.",
+      });
+      return;
+    }
+    targetWindow.opener = null;
+    targetWindow.focus();
+    stripeConnectMutation.mutate({ action, mode, targetWindow });
+  };
+
+  const selectSection = (next: ConsoleSection) => {
+    setSection(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", next);
+    url.searchParams.delete("stripe");
+    url.searchParams.delete("mode");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
 
   // Billing contact lives in Getting Paid but writes through the same
   // updateOrganization call as the company record. The validator blanks any
@@ -991,7 +1066,7 @@ function TeamPage() {
           <div className="flex flex-col gap-5 lg:flex-row lg:gap-8">
             <nav
               aria-label="Company settings sections"
-              className="flex gap-2 overflow-x-auto rounded-xl border border-hairline bg-surface p-2 lg:w-[272px] lg:flex-none lg:flex-col lg:gap-1 lg:self-start lg:overflow-visible lg:p-3"
+              className="flex gap-2 overflow-x-auto rounded-xl border border-hairline bg-surface p-2 lg:sticky lg:top-20 lg:w-[272px] lg:flex-none lg:flex-col lg:gap-1 lg:self-start lg:overflow-visible lg:p-3"
             >
               {navItems.map((item) => {
                 const active = section === item.id;
@@ -999,7 +1074,7 @@ function TeamPage() {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setSection(item.id)}
+                    onClick={() => selectSection(item.id)}
                     aria-current={active ? "page" : undefined}
                     className={`flex shrink-0 items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition lg:shrink ${
                       active
@@ -1733,9 +1808,8 @@ function TeamPage() {
                     liveAccountId: team.organization.stripe_connect_account_id_live,
                     liveConnectStatus: team.organization.stripe_connect_status_live,
                   }}
-                  onConnectStripe={(mode) =>
-                    stripeConnectMutation.mutate({ action: "onboard", mode })
-                  }
+                  connectDetails={stripeStatusQuery.data?.connectDetails}
+                  onConnectStripe={(mode) => openStripeInNewTab("onboard", mode)}
                   onActivateLiveStripe={() => {
                     if (
                       window.confirm(
@@ -1745,10 +1819,10 @@ function TeamPage() {
                       stripeConnectMutation.mutate({ action: "activate", mode: "live" });
                     }
                   }}
-                  onOpenStripeDashboard={(mode) =>
-                    stripeConnectMutation.mutate({ action: "dashboard", mode })
-                  }
+                  onOpenStripeDashboard={(mode) => openStripeInNewTab("dashboard", mode)}
+                  onRefreshStripeStatus={() => void stripeStatusQuery.refetch()}
                   stripeConnectPending={stripeConnectMutation.isPending}
+                  stripeStatusPending={stripeStatusQuery.isFetching}
                   subscriptionNote={subscriptionNote}
                   billingContactName={team.organization.billing_contact_name}
                   billingContactEmail={team.organization.billing_email}
