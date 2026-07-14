@@ -63,6 +63,8 @@ import {
   saveSubcontract,
   setActiveSubcontractDocument,
   setSubcontractPaymentSplit,
+  setSubcontractChangeOrderExposure,
+  setSubcontractPaymentExposure,
   setSubcontractPaymentStatus,
   updateSubcontractAllocation,
   updateSubcontractPayment,
@@ -80,6 +82,7 @@ interface BucketOption {
 interface Props {
   projectId: string;
   buckets: BucketOption[];
+  exposures: { id: string; title: string; status: string }[];
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -105,7 +108,7 @@ function KpiTile({ label, value, tone }: { label: string; value: string; tone?: 
   );
 }
 
-export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
+export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props) {
   const qc = useQueryClient();
   const listDirFn = useServerFn(listSubcontractors);
   const saveDirFn = useServerFn(saveSubcontractor);
@@ -117,8 +120,10 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const updateAllocFn = useServerFn(updateSubcontractAllocation);
   const deleteAllocFn = useServerFn(deleteSubcontractAllocation);
   const recordCoFn = useServerFn(recordSubcontractChangeOrder);
+  const setCoExposureFn = useServerFn(setSubcontractChangeOrderExposure);
   const deleteCoFn = useServerFn(deleteSubcontractChangeOrder);
   const payFn = useServerFn(recordSubcontractPayment);
+  const setPaymentExposureFn = useServerFn(setSubcontractPaymentExposure);
   const updatePayFn = useServerFn(updateSubcontractPayment);
   const setPayStatusFn = useServerFn(setSubcontractPaymentStatus);
   const deletePayFn = useServerFn(deleteSubcontractPayment);
@@ -335,6 +340,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       description: string;
       amount: number;
       coDate: string;
+      exposureId: string | null;
     }) =>
       recordCoFn({
         data: {
@@ -344,6 +350,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
           description: input.description,
           amount: input.amount,
           co_date: input.coDate,
+          exposureId: input.exposureId,
         },
       }),
     onSuccess: (row) => {
@@ -359,6 +366,15 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     onSuccess: () => invalidate(),
     onError: onError("remove the change order"),
   });
+  const setCoExposure = useMutation({
+    mutationFn: (input: { id: string; exposureId: string | null }) =>
+      setCoExposureFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Change order Risk Tally link updated");
+    },
+    onError: onError("update the change order risk link"),
+  });
   const recordPayment = useMutation({
     mutationFn: (input: {
       subcontractId: string;
@@ -367,6 +383,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       payment_date: string;
       notes: string;
       status: "draft" | "approved" | "paid";
+      exposureId: string | null;
     }) =>
       payFn({
         data: {
@@ -378,6 +395,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
           reference: "",
           notes: input.notes,
           status: input.status,
+          exposureId: input.exposureId,
         },
       }),
     onSuccess: (row) => {
@@ -397,6 +415,15 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       }
     },
     onError: onError("record the payment"),
+  });
+  const setPaymentExposure = useMutation({
+    mutationFn: (input: { id: string; exposureId: string | null }) =>
+      setPaymentExposureFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Pay app Risk Tally link updated");
+    },
+    onError: onError("update the pay app risk link"),
   });
   const saveSplit = useMutation({
     // The server reads the owning sub off the payment row itself — sending it
@@ -870,17 +897,22 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               onUpdateAllocation={(id, amount) => updateAlloc.mutate({ id, amount })}
               onRemoveAllocation={(id) => removeAlloc.mutate(id)}
               changeOrders={subChangeOrders}
-              onRecordChangeOrder={(costBucketId, description, amount, coDate) =>
+              exposures={exposures}
+              onRecordChangeOrder={(costBucketId, description, amount, coDate, exposureId) =>
                 recordCo.mutate({
                   subcontractId: sub.id,
                   costBucketId,
                   description,
                   amount,
                   coDate,
+                  exposureId,
                 })
               }
+              onSetChangeOrderExposure={(id, exposureId) =>
+                setCoExposure.mutate({ id, exposureId })
+              }
               onRemoveChangeOrder={(id) => removeCo.mutate(id)}
-              onPay={(amount, retainage_held, payment_date, notes, stage) =>
+              onPay={(amount, retainage_held, payment_date, notes, stage, exposureId) =>
                 recordPayment.mutate({
                   subcontractId: sub.id,
                   amount,
@@ -888,7 +920,11 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
                   payment_date,
                   notes,
                   status: stage,
+                  exposureId,
                 })
+              }
+              onSetPaymentExposure={(id, exposureId) =>
+                setPaymentExposure.mutate({ id, exposureId })
               }
               onUpdatePayment={(id, edit) => updatePayment.mutate({ id, edit })}
               onSetPaymentStage={(id, stage) => setPayStage.mutate({ id, status: stage })}

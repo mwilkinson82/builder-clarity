@@ -137,6 +137,9 @@ export interface CostActualRow {
   cost_document_id: string;
   // Optional attribution to the risk tally. Cost code remains the accounting home.
   exposure_id: string | null;
+  // Signed amount of Budget Open this recognized direct cost relieved. Stored
+  // by the database trigger so void/delete/move can restore it exactly.
+  budget_open_relief: number;
   // Optional subcontract commitment represented by this actual. Exactly one may
   // be set; the Budget layer uses it to relieve Open without duplicating cost.
   subcontract_change_order_id: string | null;
@@ -442,6 +445,7 @@ const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => ({
   import_batch_id: (row.import_batch_id as string | null) ?? null,
   cost_document_id: str(row.cost_document_id),
   exposure_id: (row.exposure_id as string | null) ?? null,
+  budget_open_relief: num(row.budget_open_relief),
   subcontract_change_order_id: (row.subcontract_change_order_id as string | null) ?? null,
   subcontract_payment_id: (row.subcontract_payment_id as string | null) ?? null,
   cost_code: str(row.cost_code),

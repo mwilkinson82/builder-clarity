@@ -51,10 +51,12 @@ export interface CardAllocation {
 }
 export interface CardChangeOrder {
   id: string;
+  subcontract_id: string;
   cost_code: string;
   description: string;
   amount: number; // signed dollars: change order +, credit −
   co_date: string;
+  exposure_id: string | null;
 }
 export interface CardPayment {
   id: string;
@@ -71,6 +73,13 @@ export interface CardPayment {
   // the check#/wire confirmation (reference), shown on the paid row.
   payment_method?: string;
   reference?: string;
+  exposure_id: string | null;
+}
+
+interface RiskOption {
+  id: string;
+  title: string;
+  status: string;
 }
 
 const SUB_PAY_METHOD_LABEL: Record<string, string> = {
@@ -320,12 +329,15 @@ interface CardProps {
   onUpdateAllocation: (id: string, amount: number) => void;
   onRemoveAllocation: (id: string) => void;
   changeOrders: CardChangeOrder[];
+  exposures: RiskOption[];
   onRecordChangeOrder: (
     costBucketId: string | null,
     description: string,
     amount: number,
     coDate: string,
+    exposureId: string | null,
   ) => void;
+  onSetChangeOrderExposure: (id: string, exposureId: string | null) => void;
   onRemoveChangeOrder: (id: string) => void;
   onPay: (
     amount: number,
@@ -333,7 +345,9 @@ interface CardProps {
     paymentDate: string,
     notes: string,
     stage: PayStage,
+    exposureId: string | null,
   ) => void;
+  onSetPaymentExposure: (id: string, exposureId: string | null) => void;
   onUpdatePayment: (id: string, edit: PaymentEdit) => void;
   onSetPaymentStage: (id: string, stage: "approved" | "paid") => void;
   // Marking paid opens a "how paid" dialog in the workspace (field request
@@ -381,9 +395,12 @@ export function SubcontractCard({
   onUpdateAllocation,
   onRemoveAllocation,
   changeOrders,
+  exposures,
   onRecordChangeOrder,
+  onSetChangeOrderExposure,
   onRemoveChangeOrder,
   onPay,
+  onSetPaymentExposure,
   onUpdatePayment,
   onSetPaymentStage,
   onMarkPaid,
@@ -416,6 +433,7 @@ export function SubcontractCard({
   const [payAmount, setPayAmount] = useState(0);
   const [payDate, setPayDate] = useState(today);
   const [payNotes, setPayNotes] = useState("");
+  const [payExposure, setPayExposure] = useState("");
   // New pay apps land as a draft (field request 2026-07-09) — nothing hits the
   // budget until the PM approves it and marks it paid.
   const [payStage, setPayStage] = useState<PayStage>("draft");
@@ -444,6 +462,7 @@ export function SubcontractCard({
   const [coDesc, setCoDesc] = useState("");
   const [coBucket, setCoBucket] = useState("");
   const [coDate, setCoDate] = useState(today);
+  const [coExposure, setCoExposure] = useState("");
   // Which payments show their per-cost-code split
   const [splitOpen, setSplitOpen] = useState<Record<string, boolean>>({});
 
@@ -494,15 +513,17 @@ export function SubcontractCard({
     setPayNotes("");
     setPayDate(today());
     setPayStage("draft");
+    setPayExposure("");
     setModalSplitManual(false);
     setPayModalOpen(true);
   };
   const submitPayModal = () => {
-    onPay(payAmount, retainageHeld, payDate, payNotes.trim(), payStage);
+    onPay(payAmount, retainageHeld, payDate, payNotes.trim(), payStage, payExposure || null);
     setPayAmount(0);
     setPayNotes("");
     setPayDate(today());
     setPayStage("draft");
+    setPayExposure("");
     setModalSplitManual(false);
     setPayModalOpen(false);
   };
@@ -736,6 +757,25 @@ export function SubcontractCard({
                     {co.co_date}
                     {co.cost_code ? ` · ${co.cost_code}` : ""}
                   </span>
+                  <label className="mt-1 flex max-w-sm items-center gap-2 text-[10px] text-muted-foreground">
+                    Risk Tally
+                    <select
+                      value={co.exposure_id ?? ""}
+                      onChange={(event) =>
+                        onSetChangeOrderExposure(co.id, event.target.value || null)
+                      }
+                      onClick={(event) => event.stopPropagation()}
+                      className="min-w-0 flex-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+                      aria-label="Risk Tally attribution for subcontract change order"
+                    >
+                      <option value="">Not linked</option>
+                      {exposures.map((exposure) => (
+                        <option key={exposure.id} value={exposure.id}>
+                          {exposure.title} · {exposure.status}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </span>
                 <span className="flex items-center gap-3">
                   <span
@@ -796,6 +836,19 @@ export function SubcontractCard({
             aria-label="Change order date"
           />
           <MoneyInput value={coAmount} onValueChange={setCoAmount} align="right" />
+          <select
+            value={coExposure}
+            onChange={(event) => setCoExposure(event.target.value)}
+            className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            aria-label="Risk Tally attribution (optional)"
+          >
+            <option value="">Risk Tally (optional)…</option>
+            {exposures.map((exposure) => (
+              <option key={exposure.id} value={exposure.id}>
+                {exposure.title} · {exposure.status}
+              </option>
+            ))}
+          </select>
           <Button
             type="button"
             size="sm"
@@ -808,10 +861,12 @@ export function SubcontractCard({
                 coDesc.trim(),
                 coKind === "credit" ? -coAmount : coAmount,
                 coDate,
+                coExposure || null,
               );
               setCoAmount(0);
               setCoDesc("");
               setCoBucket("");
+              setCoExposure("");
             }}
           >
             <Plus className="h-3.5 w-3.5" /> Add
@@ -819,8 +874,8 @@ export function SubcontractCard({
         </div>
         <p className="mt-1 text-[11px] text-muted-foreground">
           The base contract stays untouched — the revised total is shown above. A change order
-          tagged to a cost code carries into that code&apos;s committed on the job budget and
-          dashboard automatically; leave it untagged and it stays here on the card only.
+          tagged to a cost code carries into that code&apos;s committed on the job budget. Link a
+          Risk Tally item to show committed subcontract exposure before it becomes paid cost.
         </p>
       </div>
 
@@ -1044,6 +1099,24 @@ export function SubcontractCard({
                             {p.reference ? ` · ${p.reference}` : ""}
                           </span>
                         ) : null}
+                        <label className="flex max-w-sm items-center gap-2 text-[10px] text-muted-foreground">
+                          Risk Tally
+                          <select
+                            value={p.exposure_id ?? ""}
+                            onChange={(event) =>
+                              onSetPaymentExposure(p.id, event.target.value || null)
+                            }
+                            className="min-w-0 flex-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+                            aria-label="Risk Tally attribution for subcontract pay app"
+                          >
+                            <option value="">Not linked</option>
+                            {exposures.map((exposure) => (
+                              <option key={exposure.id} value={exposure.id}>
+                                {exposure.title} · {exposure.status}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <span className="flex items-center gap-3">
                           {p.status === "draft" ? (
                             <button
@@ -1187,6 +1260,25 @@ export function SubcontractCard({
                 onChange={(e) => setPayNotes(e.target.value)}
                 placeholder="Description (e.g. Pay app #3, foundations)"
               />
+            </label>
+            <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-2">
+              Risk Tally attribution (optional)
+              <select
+                value={payExposure}
+                onChange={(event) => setPayExposure(event.target.value)}
+                className="h-9 w-full rounded-md border border-hairline bg-surface px-3 text-sm font-normal normal-case tracking-normal text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+              >
+                <option value="">Not linked to a risk</option>
+                {exposures.map((exposure) => (
+                  <option key={exposure.id} value={exposure.id}>
+                    {exposure.title} · {exposure.status}
+                  </option>
+                ))}
+              </select>
+              <span className="block text-[11px] font-normal normal-case tracking-normal text-muted-foreground">
+                The link is visible immediately; only a paid app counts as actual incurred on the
+                risk.
+              </span>
             </label>
           </div>
 
