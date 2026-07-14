@@ -408,13 +408,12 @@ function ProjectPage() {
   const [activeProjectTab, setActiveProjectTab] = useState<ProjectTabValue>(
     search.tab ?? "dashboard",
   );
-  // Multi-expand navigation: the current destination opens its group, while
-  // every other group keeps the state the user chose. Opening one section must
-  // never collapse the section they are currently using.
-  const [expandedNavGroupKeys, setExpandedNavGroupKeys] = useState<Set<string>>(() => {
-    const initialGroupKey = projectNavGroupKeyForTab(search.tab ?? "dashboard");
-    return new Set(initialGroupKey ? [initialGroupKey] : []);
-  });
+  // Multi-expand navigation: every project group starts open so the full
+  // workspace is discoverable without accordion hunting. After first paint,
+  // each group still keeps the expanded/collapsed state the user chooses.
+  const [expandedNavGroupKeys, setExpandedNavGroupKeys] = useState<Set<string>>(
+    () => new Set(PROJECT_NAV_GROUPS.map((group) => group.key)),
+  );
   const [focusedRiskExposureId, setFocusedRiskExposureId] = useState<string | null>(null);
   const handleRiskFocusHandled = useCallback(() => setFocusedRiskExposureId(null), []);
   // Budget-drawer drill-through: land the Daily WIP tab on a specific day.
@@ -2548,7 +2547,8 @@ function ProjectPage() {
                   to a destination opens its group without closing any section
                   the user already opened. Deep links (?tab=…) and every tab
                   value remain unchanged. */}
-              {/* CRM cross-link — a single collapsed row ("CRM ▸"). */}
+              {/* Portfolio-level cross-links stay available inside a project so
+                  users never have to back out just to reach CRM or Estimating. */}
               <button
                 type="button"
                 onClick={() => navigate({ to: "/", search: { tab: "crm" } })}
@@ -2557,6 +2557,16 @@ function ProjectPage() {
                 className="flex w-auto shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground lg:w-full lg:shrink"
               >
                 <span className="font-medium">CRM</span>
+                <span className="text-[11.5px] text-muted-foreground">▸</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate({ to: "/estimates" })}
+                aria-label="Estimating: Estimates and Plan Room"
+                title="Estimating: Estimates and Plan Room"
+                className="flex w-auto shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground lg:w-full lg:shrink"
+              >
+                <span className="font-medium">Estimating</span>
                 <span className="text-[11.5px] text-muted-foreground">▸</span>
               </button>
               {PROJECT_NAV_GROUPS.map((group) => {

@@ -706,6 +706,9 @@ await expectContains(
     // group without deleting the user's previously expanded group keys.
     /const isActiveGroup = group\.key === activeNavGroup\?\.key/,
     /const isExpanded = expandedNavGroupKeys\.has\(group\.key\)/,
+    // NAVDISCOVERY1: every group is visible on first paint; users may still
+    // collapse any group independently after the initial render.
+    /new Set\(PROJECT_NAV_GROUPS\.map\(\(group\) => group\.key\)\)/,
     /setExpandedNavGroupKeys\(\(current\) => \{/,
     /next\.add\(activeGroupKey\)/,
     /navGroupHint/,
@@ -720,6 +723,10 @@ await expectContains(
     /\{activeNavGroup\.label\} · \{activeNavItem\.label\}/,
     /aria-label=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
     /title=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
+    // Estimating is reachable directly from the project rail; no portfolio
+    // detour is required.
+    /onClick=\{\(\) => navigate\(\{ to: "\/estimates" \}\)\}/,
+    /aria-label="Estimating: Estimates and Plan Room"/,
     // Billing is lazy-loaded (PROJECTDECOMP1 part 3): the rail hosts a Suspense
     // boundary and the workspace itself lives in its own module (pinned below).
     /const BillingWorkspace = lazy\(/,
