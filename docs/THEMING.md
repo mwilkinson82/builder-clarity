@@ -67,8 +67,9 @@ structural work; the floating nav rail is the one soft wide glow
 ## Structural signatures (v2, reused across the app)
 
 - **Project nav** — a floating rounded sidebar (radius ~15px, `shadow-nav`),
-  grouped CRM · Money · Field · Risk · Parties · Docs, active group expanded,
-  status hints on the right of each item.
+  grouped CRM · IOR · Plan & Procurement · Commercial · Field · Client &
+  Records. Groups expand independently, the active destination's group opens
+  automatically, and status hints sit on the right of each item.
 - **Portfolio shell** — a top-bar (Portfolio · CRM · Estimates · Team ·
   Billing) with company switcher, NO project sidebar. Used by business-layer
   pages.

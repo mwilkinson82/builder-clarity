@@ -672,12 +672,14 @@ await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
     // NAVLABELS: the rail leads with the text label (not an icon-only compact
-    // collapse) and groups all 13 destinations into four mono-eyebrow clusters.
+    // collapse) and groups the project destinations around the IOR workflow.
     /const PROJECT_NAV_GROUPS: ProjectNavGroup\[\] = \[/,
-    /label: "Money"[\s\S]*label: "Field"[\s\S]*label: "Risk"[\s\S]*label: "Parties"/,
-    /"dashboard", "sov", "billing", "change-orders"/,
-    /"schedule", "daily-reports", "daily-wip", "inspections"/,
-    /"subcontractors", "client-portal", "ior-report"/,
+    /label: "IOR"[\s\S]*label: "Plan & Procurement"[\s\S]*label: "Commercial"[\s\S]*label: "Field"[\s\S]*label: "Client & Records"/,
+    /"dashboard", "risk-tally", "todos", "claims", "ior-report"/,
+    /"schedule", "rfi-submittals"/,
+    /"sov", "subcontractors", "change-orders", "billing"/,
+    /"daily-reports", "daily-wip", "inspections"/,
+    /"client-portal", "file-room"/,
     /const companyName = project\.organization_name \|\| "Overwatch company"/,
     // v2 shell: mobile slim top bar; on desktop the rail head carries company +
     // project switcher and the rail foot carries Portfolio/Sign out.
@@ -694,11 +696,16 @@ await expectContains(
     /lg:grid-cols-\[248px_minmax\(0,1fr\)\]/,
     // v2 floating rail: rounded paper card with the one soft wide glow.
     /PROJECT_NAV_RAIL_CLASS[\s\S]*rounded-\[15px\][\s\S]*shadow-nav/,
-    // ACCORDION: the active group expands to its tabs; inactive groups collapse
-    // to a single status-hint row that jumps to the group's first tab.
+    // MULTI-EXPAND: each group toggles independently. A destination opens its
+    // group without deleting the user's previously expanded group keys.
     /const isActiveGroup = group\.key === activeNavGroup\?\.key/,
+    /const isExpanded = expandedNavGroupKeys\.has\(group\.key\)/,
+    /setExpandedNavGroupKeys\(\(current\) => \{/,
+    /next\.add\(activeGroupKey\)/,
     /navGroupHint/,
-    /onClick=\{\(\) => setProjectTab\(group\.values\[0\]\)\}/,
+    /onClick=\{\(\) => toggleNavGroup\(group\.key\)\}/,
+    /aria-expanded="true"/,
+    /aria-expanded="false"/,
     /const isActive = activeProjectTab === item\.value/,
     // Active tab = quiet paper2 fill + a clay dot (Radix data-state wins over the
     // shadcn TabsTrigger base).
@@ -712,7 +719,7 @@ await expectContains(
     /const BillingWorkspace = lazy\(/,
     /<Suspense/,
   ],
-  "project nav rail leads with labels, grouped into Money/Field/Risk/Parties clusters with a status sub-line (NAVLABELS)",
+  "project nav rail leads with IOR-first labels and independently expandable groups (NAVLABELS)",
 );
 
 // PROJECTDECOMP1 part 3: the billing workspace — stage rail (overview / costs /
@@ -2664,20 +2671,21 @@ await expectContains(
   "budget ledger teaches the import/add path when empty",
 );
 
-// NAVLABELS: the "More" overflow menu is retired — all 13 destinations live on
-// the labeled, grouped rail. IOR Reports sits in the Parties cluster; deep links
-// (?tab=…) still resolve via setProjectTab / the search-sync effect.
+// NAVLABELS: the "More" overflow menu is retired — every destination lives on
+// the labeled, grouped rail. Reviews & Reports sits in the IOR cluster; deep
+// links (?tab=…) still resolve via setProjectTab / the search-sync effect.
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
     // Every destination is rendered from its group; nothing is demoted to "More".
     /group\.values\.map\(\(value\) => \{/,
     /const item = navItemByValue\.get\(value\);/,
-    /key: "parties", label: "Parties", values: \["subcontractors", "client-portal", "ior-report"\]/,
+    /key: "ior"[\s\S]*values: \["dashboard", "risk-tally", "todos", "claims", "ior-report"\]/,
+    /label: "Reviews & Reports"/,
     // Deep-link resolution is unchanged.
     /if \(search\.tab\) setProjectTab\(search\.tab\)/,
   ],
-  "project nav rail renders all 13 tabs from their groups (no More menu); IOR Reports is in Parties, deep links still resolve (NAVLABELS)",
+  "project nav rail renders every tab from its group; IOR reports stay with IOR and deep links still resolve (NAVLABELS)",
 );
 
 // POLISH1 Task 1: one shared state chip (empty / in-progress / complete /
@@ -3128,7 +3136,7 @@ await expectContains(
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
-  [/value: "file-room"/, /<ProjectFileRoom projectId=\{projectId\}/, /label: "Docs"/],
+  [/value: "file-room"/, /<ProjectFileRoom projectId=\{projectId\}/, /label: "Client & Records"/],
   "file-room tab is wired onto the project nav rail",
 );
 
