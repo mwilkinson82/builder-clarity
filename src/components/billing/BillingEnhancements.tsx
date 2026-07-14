@@ -1803,7 +1803,7 @@ export function ProjectCostTrackingPanel({
                 <Plus className="h-3.5 w-3.5" /> Add cost
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-3xl">
+            <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-3xl">
               <DialogHeaderV2
                 eyebrow="Cost"
                 title={
@@ -1821,7 +1821,7 @@ export function ProjectCostTrackingPanel({
                     : "Record cost backup against the same cost codes used by the SOV and WIP."
                 }
               />
-              <div className="grid gap-4 py-2">
+              <div className="min-h-0 grid gap-4 overflow-y-auto overscroll-contain py-2 pr-2 [scrollbar-gutter:stable]">
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="space-y-1.5">
                     <Label>Cost code</Label>
@@ -2265,7 +2265,7 @@ export function ProjectCostTrackingPanel({
                   disabled={costSaveBusy}
                 />
               </div>
-              <DialogFooter className="gap-2 sm:items-center sm:justify-between">
+              <DialogFooter className="gap-2 border-t border-hairline pt-4 sm:items-center sm:justify-between">
                 {editingCostId ? (
                   <div className="flex items-center gap-2">
                     {editingCost?.status === "draft" ? (
