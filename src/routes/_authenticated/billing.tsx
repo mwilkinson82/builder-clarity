@@ -3,11 +3,11 @@
 // Every figure binds live query data (listPortfolioBilling +
 // getReceivablesCockpit); the tabs supersede the old single-scroll summary
 // tiles and WIP-schedule card list, carrying every figure they showed.
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { BarChart3 } from "lucide-react";
+import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { listPortfolioBilling } from "@/lib/billing.functions";
@@ -70,8 +70,9 @@ function BillingPortfolioPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <PortfolioTopBar active="billing" />
       <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1500px] items-center justify-between px-6 py-6 lg:px-10">
+        <div className="mx-auto max-w-[1500px] px-6 py-6 lg:px-10">
           <div>
             <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
               {companyName} · Portfolio
@@ -80,16 +81,6 @@ function BillingPortfolioPage() {
             <p className="mt-1 max-w-[64ch] text-[13.5px] text-muted-foreground">
               Cash owed, revenue to capture, and the forecast — across every active job.
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button asChild size="sm" variant="outline" className="gap-1.5">
-              <Link to="/reports">
-                <BarChart3 className="h-3.5 w-3.5" /> Reports
-              </Link>
-            </Button>
-            <Button asChild size="sm" variant="outline">
-              <Link to="/">Portfolio</Link>
-            </Button>
           </div>
         </div>
       </header>

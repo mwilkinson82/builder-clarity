@@ -1,10 +1,9 @@
-import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   AlertTriangle,
-  ArrowLeft,
   BriefcaseBusiness,
   Building2,
   CheckCircle2,
@@ -14,7 +13,6 @@ import {
   FileImage,
   Gauge,
   Globe,
-  LogOut,
   MailPlus,
   MapPin,
   Phone,
@@ -29,6 +27,7 @@ import {
 import { toast } from "sonner";
 
 import { AppFooter } from "@/components/layout/AppFooter";
+import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -291,8 +290,6 @@ type ConsoleSection =
 
 function TeamPage() {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const router = useRouter();
   const loadTeam = useServerFn(getTeamWorkspace);
   const saveProfile = useServerFn(updateMyProfile);
   const saveOrganization = useServerFn(updateOrganization);
@@ -805,12 +802,6 @@ function TeamPage() {
     },
   });
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    router.invalidate();
-    navigate({ to: "/auth" });
-  };
-
   const storageLogoUrl = useMemo(() => {
     if (!team?.organization.id) return "";
     const { data } = supabase.storage
@@ -933,15 +924,22 @@ function TeamPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1600px] flex-col gap-4 px-6 py-5 lg:flex-row lg:items-center lg:justify-between lg:px-10">
-          <div>
-            <Button asChild variant="ghost" size="sm" className="-ml-3 mb-2 gap-1.5">
-              <Link to="/">
-                <ArrowLeft className="h-3.5 w-3.5" />
-                Portfolio
+      <PortfolioTopBar
+        active="team"
+        actions={
+          canOpenOverwatchAdmin ? (
+            <Button asChild variant="outline" size="sm">
+              <Link to="/admin">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Admin
               </Link>
             </Button>
+          ) : undefined
+        }
+      />
+      <header className="border-b border-hairline bg-surface-elevated">
+        <div className="mx-auto max-w-[1600px] px-6 py-5 lg:px-10">
+          <div>
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-clay">
               <span className="inline-block h-px w-7 bg-accent" />
               {team?.organization.name || "Company Workspace"}
@@ -951,20 +949,6 @@ function TeamPage() {
               Who works here, what each person can do, what clients can see, and how this company
               gets paid.
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {canOpenOverwatchAdmin && (
-              <Button asChild variant="outline" size="sm">
-                <Link to="/admin">
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  Admin
-                </Link>
-              </Button>
-            )}
-            <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5">
-              <LogOut className="h-3.5 w-3.5" />
-              Sign out
-            </Button>
           </div>
         </div>
       </header>
