@@ -34,6 +34,11 @@ import {
 } from "@/lib/stripe-limit.functions";
 import type { StripeMode } from "@/lib/stripe-mode";
 import type { StripeConnectDetails, StripeConnectReadiness } from "@/lib/stripe-connect-status";
+import {
+  applicationFeeFromDollars,
+  formatBasisPoints,
+  STRIPE_STANDARD_US_FEES,
+} from "@/lib/stripe-fee-config";
 import { StripeReconciliationPanel } from "@/components/billing/StripeReconciliationPanel";
 import {
   GettingPaidBankPanel,
@@ -299,6 +304,20 @@ export function GettingPaidSection({
     "1042",
   );
   const currentLimit = paymentLimit?.currentLimitCents ?? 2_500_000;
+  const currentLimitDollars = currentLimit / 100;
+  const applicationFeeBps = paymentLimit?.applicationFeeBps;
+  const resolvedApplicationFeeBps = applicationFeeBps ?? 0;
+  const exampleCardFee =
+    (currentLimitDollars * STRIPE_STANDARD_US_FEES.cardPercent) / 100 +
+    STRIPE_STANDARD_US_FEES.cardFixedCents / 100;
+  const exampleAchFee = Math.min(
+    (currentLimitDollars * STRIPE_STANDARD_US_FEES.achDebitPercent) / 100,
+    STRIPE_STANDARD_US_FEES.achDebitCapCents / 100,
+  );
+  const exampleOverwatchFee = applicationFeeFromDollars(
+    currentLimitDollars,
+    resolvedApplicationFeeBps,
+  );
   const saveProfileButton = (label: string) => (
     <Button
       type="button"
@@ -373,6 +392,93 @@ export function GettingPaidSection({
               <p className="mt-1 text-xs text-muted-foreground">
                 Wire instructions stay available above the online limit.
               </p>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-hairline bg-surface p-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <CreditCard className="h-4 w-4 text-clay" />
+                  <h3 className="text-sm font-semibold">What online payments cost</h3>
+                </div>
+                <p className="mt-2 max-w-3xl text-xs leading-relaxed text-muted-foreground">
+                  The connected company pays Stripe's processing fee. Any OverWatch application fee
+                  is separate and is deducted from the same transaction. The invoice principal never
+                  lands in an OverWatch bank account.
+                </p>
+              </div>
+              <a
+                href="https://stripe.com/pricing"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-clay hover:underline"
+              >
+                Stripe pricing <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="rounded-md border border-hairline bg-card p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Card · Stripe
+                </p>
+                <p className="mt-1 font-mono text-sm font-semibold">
+                  {STRIPE_STANDARD_US_FEES.cardPercent}% + {"$"}
+                  {(STRIPE_STANDARD_US_FEES.cardFixedCents / 100).toFixed(2)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Standard U.S. online-card pricing
+                </p>
+              </div>
+              <div className="rounded-md border border-hairline bg-card p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  ACH debit · Stripe
+                </p>
+                <p className="mt-1 font-mono text-sm font-semibold">
+                  {STRIPE_STANDARD_US_FEES.achDebitPercent}% · $
+                  {(STRIPE_STANDARD_US_FEES.achDebitCapCents / 100).toFixed(0)} cap
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Standard settlement; account pricing can vary
+                </p>
+              </div>
+              <div className="rounded-md border border-clay/25 bg-clay/5 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-clay">
+                  OverWatch application fee
+                </p>
+                <p className="mt-1 font-mono text-sm font-semibold">
+                  {paymentLimitQuery.isLoading
+                    ? "Checking…"
+                    : paymentLimitQuery.isError
+                      ? "Unavailable"
+                      : formatBasisPoints(resolvedApplicationFeeBps)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {paymentLimitQuery.isLoading
+                    ? "Retrieving the fee used by invoice checkout."
+                    : paymentLimitQuery.isError
+                      ? "Refresh the page before activating online payments."
+                      : resolvedApplicationFeeBps === 0
+                        ? "No OverWatch transaction fee is currently configured."
+                        : "Transferred to OverWatch; separate from Stripe processing."}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-md border border-hairline bg-card px-3 py-2.5 text-xs text-muted-foreground">
+              At the current {fmtUSDCents(currentLimitDollars)} online limit, standard pricing is
+              approximately{" "}
+              <strong className="text-foreground">{fmtUSDCents(exampleAchFee)}</strong> for ACH or{" "}
+              <strong className="text-foreground">{fmtUSDCents(exampleCardFee)}</strong> for a
+              domestic card, plus an OverWatch fee of{" "}
+              <strong className="text-foreground">
+                {applicationFeeBps === undefined
+                  ? "pending fee check"
+                  : fmtUSDCents(exampleOverwatchFee)}
+              </strong>
+              . Final Stripe pricing and any dispute, failure, verification, or
+              accelerated-settlement fees are controlled by Stripe.
             </div>
           </div>
 
