@@ -34,6 +34,7 @@ export function InvoicePaymentMethodToggles({
     enabled,
     invoiceTotalCents: dollarsToCents(invoiceTotal),
     thresholdCents: context?.stripeAmountThresholdCents ?? 0,
+    platformLimitCents: context?.stripePaymentLimitCents,
   });
 
   const setKey = (key: string, next: boolean) =>
@@ -92,7 +93,20 @@ export function InvoicePaymentMethodToggles({
           <span className="text-xs text-muted-foreground">— {stripeBlockedNote}</span>
         )}
       </label>
-      {availability.stripeHiddenByThreshold && (
+      {availability.stripeBlockedByPlatformLimit ? (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <div className="flex items-center gap-1.5 font-medium">
+            <Landmark className="h-3.5 w-3.5" />
+            Card & bank debit are unavailable on this invoice
+          </div>
+          <p className="mt-1">
+            The amount is above OverWatch's current online-payment ceiling of{" "}
+            {fmtUSD((context?.stripePaymentLimitCents ?? 0) / 100)}. This ceiling cannot be
+            overridden on an invoice; use direct bank transfer or request an increase under Your
+            Company → Getting paid.
+          </p>
+        </div>
+      ) : availability.stripeHiddenByThreshold ? (
         <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
           <div className="flex items-center gap-1.5 font-medium">
             <Landmark className="h-3.5 w-3.5" />
@@ -114,7 +128,7 @@ export function InvoicePaymentMethodToggles({
             Offer card & bank debit on this invoice anyway
           </label>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

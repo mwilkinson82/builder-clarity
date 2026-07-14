@@ -40,10 +40,16 @@ export interface WebhookEventStore {
     eventId: string,
     eventType: string,
     claimedAtIso: string,
+    livemode: boolean,
   ): Promise<"inserted" | "conflict" | "no_store">;
   getExisting(eventId: string): Promise<ExistingClaim>;
   /** Re-establish a `processing` claim (stale re-take or vanished row). */
-  retake(eventId: string, eventType: string, claimedAtIso: string): Promise<void>;
+  retake(
+    eventId: string,
+    eventType: string,
+    claimedAtIso: string,
+    livemode: boolean,
+  ): Promise<void>;
   /** The ONLY writer of `processed`. Called only after the handler succeeds. */
   markProcessed(eventId: string, processedAtIso: string): Promise<void>;
   /** Best-effort DELETE on failure. No longer load-bearing: if it fails, the
@@ -81,16 +87,17 @@ export async function claimWebhookEvent(
   store: WebhookEventStore,
   eventId: string,
   eventType: string,
-  opts: { nowMs: number; staleSeconds: number },
+  opts: { nowMs: number; staleSeconds: number; livemode?: boolean },
 ): Promise<WebhookClaim> {
   const nowIso = new Date(opts.nowMs).toISOString();
-  const inserted = await store.insertClaim(eventId, eventType, nowIso);
+  const livemode = opts.livemode ?? false;
+  const inserted = await store.insertClaim(eventId, eventType, nowIso, livemode);
   if (inserted === "no_store") return "no_store";
   if (inserted === "inserted") return "fresh";
 
   const decision = classifyExistingClaim(await store.getExisting(eventId), opts);
   if (decision === "retry_stale") {
-    await store.retake(eventId, eventType, nowIso);
+    await store.retake(eventId, eventType, nowIso, livemode);
     return "retry_stale";
   }
   return decision;
@@ -140,7 +147,7 @@ export function createSupabaseWebhookEventStore(admin: unknown): WebhookEventSto
   const table = () =>
     (admin as { from(relation: string): StoreQuery }).from("stripe_webhook_events");
   return {
-    async insertClaim(eventId, eventType, claimedAtIso) {
+    async insertClaim(eventId, eventType, claimedAtIso, livemode) {
       // INSERT ... ON CONFLICT DO NOTHING RETURNING event_id. The .select()
       // returns the inserted row only when we actually won the insert; a
       // conflict yields zero rows and no error.
@@ -149,6 +156,7 @@ export function createSupabaseWebhookEventStore(admin: unknown): WebhookEventSto
           {
             event_id: eventId,
             event_type: eventType,
+            livemode,
             status: "processing",
             claimed_at: claimedAtIso,
           },
@@ -175,13 +183,14 @@ export function createSupabaseWebhookEventStore(admin: unknown): WebhookEventSto
       const row = data as { status?: string; claimed_at?: string };
       return { status: row.status ?? "processing", claimedAtIso: row.claimed_at ?? "" };
     },
-    async retake(eventId, eventType, claimedAtIso) {
+    async retake(eventId, eventType, claimedAtIso, livemode) {
       // Upsert (DO UPDATE) so a row always exists for markProcessed to flip --
       // covers both the stale-row and vanished-row cases.
       const { error } = await table().upsert(
         {
           event_id: eventId,
           event_type: eventType,
+          livemode,
           status: "processing",
           claimed_at: claimedAtIso,
         },

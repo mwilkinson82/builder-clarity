@@ -7,7 +7,7 @@ import { CreditCard, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getPaymentMethodContext } from "@/lib/payments.functions";
 
-const DISMISS_KEY = "overwatch.billing.stripe-connect-nudge-dismissed";
+const DISMISS_KEY = "overwatch.billing.stripe-live-connect-nudge-dismissed-v2";
 
 function readDismissed() {
   try {
@@ -33,7 +33,10 @@ export function StripeConnectNudge() {
     staleTime: 5 * 60 * 1000,
   });
 
-  if (dismissed || !data || data.stripeReady || data.stripeAccountId) return null;
+  if (dismissed || !data || data.stripeMode === "live") return null;
+
+  const sandboxOnly = Boolean(data.testStripeAccountId) && !data.liveStripeAccountId;
+  const livePending = Boolean(data.liveStripeAccountId) && !data.liveStripeReady;
 
   return (
     <div
@@ -43,11 +46,19 @@ export function StripeConnectNudge() {
       <div className="flex items-start gap-3">
         <CreditCard className="mt-0.5 h-4 w-4 text-muted-foreground" />
         <div>
-          <p className="text-sm font-medium">Connect Stripe before you need it</p>
+          <p className="text-sm font-medium">
+            {sandboxOnly
+              ? "Move Stripe out of sandbox"
+              : livePending
+                ? "Finish live Stripe verification"
+                : "Set up live Stripe before you need it"}
+          </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Stripe verifies new businesses, and that takes time. Connect early so card and bank
-            debit are ready when a client wants them — your direct bank details keep working either
-            way.
+            {sandboxOnly
+              ? "The existing sandbox account cannot receive real client payments and does not carry into live mode. Complete one live setup for this company; direct bank details keep working while Stripe verifies it."
+              : livePending
+                ? "This company's live connected account still needs information before real invoice payments can be activated."
+                : "Stripe verifies each company before it can receive real card and bank-debit payments. Set it up early; direct bank details keep working either way."}
           </p>
           <Button asChild size="sm" variant="outline" className="mt-3">
             <Link to="/team">Open Getting paid settings</Link>

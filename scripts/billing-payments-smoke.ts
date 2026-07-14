@@ -208,6 +208,7 @@ const bigInvoice = methodAvailability({
   enabled: allOn,
   invoiceTotalCents: 2500001,
   thresholdCents: DEFAULT_STRIPE_AMOUNT_THRESHOLD_CENTS,
+  platformLimitCents: 100_000_000,
 });
 assert.equal(bigInvoice.card.available, false);
 assert.equal(bigInvoice.card.reason, "over_threshold");
@@ -231,6 +232,7 @@ const overridden = methodAvailability({
   enabled: { ...allOn, allow_stripe_over_threshold: true },
   invoiceTotalCents: 20000000,
   thresholdCents: DEFAULT_STRIPE_AMOUNT_THRESHOLD_CENTS,
+  platformLimitCents: 100_000_000,
 });
 assert.equal(overridden.card.available, true);
 assert.equal(overridden.stripeHiddenByThreshold, false);

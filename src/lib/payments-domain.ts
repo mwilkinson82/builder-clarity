@@ -173,6 +173,10 @@ export const FALLBACK_ENABLED_METHODS: EnabledPaymentMethods = {
 };
 
 export const DEFAULT_STRIPE_AMOUNT_THRESHOLD_CENTS = 2_500_000; // $25,000
+// First-live safety ceiling. Unlike the company preference above, this is a
+// hard per-payment limit and an invoice override can never bypass it. Support
+// may raise the per-organization database value only after Stripe approval.
+export const DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS = 2_500_000; // $25,000
 
 function readFlag(source: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const value = source[key];
@@ -211,6 +215,7 @@ export interface MethodAvailabilityInput {
   enabled: EnabledPaymentMethods;
   invoiceTotalCents: number;
   thresholdCents: number;
+  platformLimitCents?: number;
 }
 
 export interface MethodAvailabilityEntry {
@@ -218,7 +223,13 @@ export interface MethodAvailabilityEntry {
   enabled: boolean;
   // The client actually sees a way to pay with it right now.
   available: boolean;
-  reason: "" | "no_payment_profile" | "stripe_not_ready" | "over_threshold" | "toggled_off";
+  reason:
+    | ""
+    | "no_payment_profile"
+    | "stripe_not_ready"
+    | "platform_limit"
+    | "over_threshold"
+    | "toggled_off";
 }
 
 export interface MethodAvailability {
@@ -226,11 +237,17 @@ export interface MethodAvailability {
   card: MethodAvailabilityEntry;
   ach_debit: MethodAvailabilityEntry;
   stripeHiddenByThreshold: boolean;
+  stripeBlockedByPlatformLimit: boolean;
 }
 
 export function methodAvailability(input: MethodAvailabilityInput): MethodAvailability {
   const threshold =
     input.thresholdCents > 0 ? input.thresholdCents : DEFAULT_STRIPE_AMOUNT_THRESHOLD_CENTS;
+  const platformLimit =
+    Number(input.platformLimitCents) > 0
+      ? Number(input.platformLimitCents)
+      : DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS;
+  const overPlatformLimit = input.invoiceTotalCents > platformLimit;
   const overThreshold =
     input.invoiceTotalCents > threshold && !input.enabled.allow_stripe_over_threshold;
 
@@ -245,9 +262,11 @@ export function methodAvailability(input: MethodAvailabilityInput): MethodAvaila
 
   const stripeBlocked: MethodAvailabilityEntry["reason"] = !input.stripeReady
     ? "stripe_not_ready"
-    : overThreshold
-      ? "over_threshold"
-      : "";
+    : overPlatformLimit
+      ? "platform_limit"
+      : overThreshold
+        ? "over_threshold"
+        : "";
 
   return {
     direct_bank: entry(
@@ -257,7 +276,11 @@ export function methodAvailability(input: MethodAvailabilityInput): MethodAvaila
     card: entry(input.enabled.card, stripeBlocked),
     ach_debit: entry(input.enabled.ach_debit, stripeBlocked),
     stripeHiddenByThreshold:
-      overThreshold && input.stripeReady && (input.enabled.card || input.enabled.ach_debit),
+      (overThreshold || overPlatformLimit) &&
+      input.stripeReady &&
+      (input.enabled.card || input.enabled.ach_debit),
+    stripeBlockedByPlatformLimit:
+      overPlatformLimit && input.stripeReady && (input.enabled.card || input.enabled.ach_debit),
   };
 }
 

@@ -10,6 +10,7 @@ import type {
   PaymentLedgerRow,
 } from "@/lib/projects.functions";
 import type { BillingLineItemRow } from "@/lib/billing.functions";
+import { ORGANIZATION_STRIPE_SELECT, stripeConnectionForMode } from "@/lib/stripe-mode";
 
 export type ClientAccessStatus = "pending" | "active" | "revoked";
 export type ClientChangeOrderStatus = "not_sent" | "sent" | "approved" | "rejected";
@@ -830,6 +831,8 @@ export interface ClientInvoicePaymentOptions {
   /** Stripe methods the client can start right now (guardrail applied). */
   card: boolean;
   achDebit: boolean;
+  onlinePaymentLimitCents: number;
+  blockedByPlatformLimit: boolean;
 }
 
 /**
@@ -860,7 +863,7 @@ async function buildClientPaymentOptions(
 
   const from = (relation: string) => (admin as SupabaseLike).from(relation);
 
-  const [profileRes, orgRes] = await Promise.all([
+  const [profileRes, initialOrgRes] = await Promise.all([
     from("organization_payment_profiles")
       .select(
         "bank_name,routing_number,account_number,wire_instructions,remittance_memo_template,default_payment_methods,stripe_amount_threshold_cents",
@@ -868,10 +871,20 @@ async function buildClientPaymentOptions(
       .eq("organization_id", organizationId)
       .maybeSingle(),
     from("organizations")
-      .select("stripe_connect_account_id,stripe_connect_status,payment_processor_ready")
+      .select(`${ORGANIZATION_STRIPE_SELECT},stripe_payment_limit_cents`)
       .eq("id", organizationId)
       .maybeSingle(),
   ]);
+  let orgRes = initialOrgRes;
+  if (
+    orgRes.error?.code === "PGRST204" ||
+    (orgRes.error?.message ?? "").includes("stripe_payment_limit_cents")
+  ) {
+    orgRes = await from("organizations")
+      .select(ORGANIZATION_STRIPE_SELECT)
+      .eq("id", organizationId)
+      .maybeSingle();
+  }
   // Pre-migration or missing rows: no profile, no direct-bank block.
   const profile = profileRes.error ? null : (profileRes.data as Record<string, unknown> | null);
   const org = orgRes.error ? null : (orgRes.data as Record<string, unknown> | null);
@@ -879,12 +892,12 @@ async function buildClientPaymentOptions(
   const hasBankDetails = Boolean(
     profile && profile.bank_name && profile.routing_number && profile.account_number,
   );
-  const stripeReady = domain.stripeConnectReady({
-    accountId: str(org?.stripe_connect_account_id),
-    connectStatus: str(org?.stripe_connect_status, "not_connected"),
-    processorReady: bool(org?.payment_processor_ready),
-  });
+  const stripeReady = stripeConnectionForMode(org ?? {}).ready;
   const thresholdCents = num(profile?.stripe_amount_threshold_cents);
+  const platformLimitCents =
+    num(org?.stripe_payment_limit_cents) > 0
+      ? num(org?.stripe_payment_limit_cents)
+      : domain.DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS;
 
   return invoices
     .filter((invoice) => invoice.status !== "void" && invoice.status !== "draft")
@@ -897,8 +910,11 @@ async function buildClientPaymentOptions(
         hasPaymentProfile: hasBankDetails,
         stripeReady,
         enabled,
-        invoiceTotalCents: domain.dollarsToCents(invoice.total_due),
+        invoiceTotalCents: domain.dollarsToCents(
+          Math.max(0, invoice.total_due - invoice.paid_amount),
+        ),
         thresholdCents,
+        platformLimitCents,
       });
       return {
         invoiceId: invoice.id,
@@ -916,6 +932,8 @@ async function buildClientPaymentOptions(
           : null,
         card: availability.card.available,
         achDebit: availability.ach_debit.available,
+        onlinePaymentLimitCents: platformLimitCents,
+        blockedByPlatformLimit: availability.stripeBlockedByPlatformLimit,
       };
     });
 }

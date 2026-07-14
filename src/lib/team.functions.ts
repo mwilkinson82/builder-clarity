@@ -12,6 +12,7 @@ import {
   type CapabilityKey,
   type CapabilitySet,
 } from "@/lib/capabilities";
+import { stripeConnectionForMode, type StripeMode } from "@/lib/stripe-mode";
 
 const ACCOUNT_ROLES = [
   "owner",
@@ -56,8 +57,13 @@ export interface TeamOrganization {
   stripe_subscription_id: string;
   stripe_price_id: string;
   stripe_checkout_session_id: string;
+  stripe_mode: StripeMode;
   stripe_connect_account_id: string;
   stripe_connect_status: string;
+  stripe_connect_account_id_test: string;
+  stripe_connect_status_test: string;
+  stripe_connect_account_id_live: string;
+  stripe_connect_status_live: string;
   subscription_current_period_end: string;
   subscription_cancel_at_period_end: boolean;
   payment_processor_ready: boolean;
@@ -182,8 +188,13 @@ const ORGANIZATION_COMMERCIAL_COLUMNS = [
   "stripe_subscription_id",
   "stripe_price_id",
   "stripe_checkout_session_id",
+  "stripe_mode",
   "stripe_connect_account_id",
   "stripe_connect_status",
+  "stripe_connect_account_id_test",
+  "stripe_connect_status_test",
+  "stripe_connect_account_id_live",
+  "stripe_connect_status_live",
   "subscription_current_period_end",
   "subscription_cancel_at_period_end",
   "payment_processor_ready",
@@ -245,6 +256,7 @@ function missingIdentityOrganizationColumn(error: { code?: string; message?: str
 function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
   const contractorCircleGrant = bool(row.contractor_circle_grant);
   const organizationId = row.id as string;
+  const stripeConnection = stripeConnectionForMode(row);
 
   return {
     id: organizationId,
@@ -272,11 +284,16 @@ function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
     stripe_subscription_id: str(row.stripe_subscription_id),
     stripe_price_id: str(row.stripe_price_id),
     stripe_checkout_session_id: str(row.stripe_checkout_session_id),
-    stripe_connect_account_id: str(row.stripe_connect_account_id),
-    stripe_connect_status: str(row.stripe_connect_status, "not_connected"),
+    stripe_mode: stripeConnection.mode,
+    stripe_connect_account_id: stripeConnection.accountId,
+    stripe_connect_status: stripeConnection.connectStatus,
+    stripe_connect_account_id_test: str(row.stripe_connect_account_id_test),
+    stripe_connect_status_test: str(row.stripe_connect_status_test, "not_connected"),
+    stripe_connect_account_id_live: str(row.stripe_connect_account_id_live),
+    stripe_connect_status_live: str(row.stripe_connect_status_live, "not_connected"),
     subscription_current_period_end: str(row.subscription_current_period_end),
     subscription_cancel_at_period_end: bool(row.subscription_cancel_at_period_end),
-    payment_processor_ready: bool(row.payment_processor_ready),
+    payment_processor_ready: stripeConnection.ready,
     project_limit: contractorCircleGrant
       ? CONTRACTOR_CIRCLE_GRANT_LIMITS.projects
       : num(row.project_limit),

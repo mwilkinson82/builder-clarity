@@ -20,6 +20,11 @@ import {
   DEFAULT_WEBHOOK_STALE_SECONDS,
   type WebhookEventStore,
 } from "@/lib/stripe-webhook-idempotency";
+import {
+  stripeModeColumnNames,
+  stripeModePersistencePatch,
+  type StripeMode,
+} from "@/lib/stripe-mode";
 
 type StripeObject = Record<string, unknown> & {
   id?: string;
@@ -55,18 +60,25 @@ type DynamicQuery = PromiseLike<DynamicQueryResult> & {
   delete(): DynamicQuery;
   eq(column: string, value: unknown): DynamicQuery;
   insert(values: unknown): DynamicQuery;
+  in(column: string, values: unknown[]): DynamicQuery;
   maybeSingle(): DynamicQuery;
   select(columns?: string): DynamicQuery;
   single(): DynamicQuery;
   update(values: unknown): DynamicQuery;
+  upsert(
+    values: unknown,
+    options?: { onConflict?: string; ignoreDuplicates?: boolean },
+  ): DynamicQuery;
 };
 
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as { from(table: string): DynamicQuery }).from(relation);
 
 const CONNECT_PERSISTENCE_COLUMNS = [
-  "stripe_connect_account_id",
-  "stripe_connect_status",
+  "stripe_connect_account_id_test",
+  "stripe_connect_status_test",
+  "stripe_connect_account_id_live",
+  "stripe_connect_status_live",
   "payment_processor_ready",
 ] as const;
 
@@ -94,6 +106,119 @@ function webhookStaleSeconds() {
 
 function sessionMetadata(object: StripeObject) {
   return object.metadata ?? {};
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function notificationEnabled(preferences: unknown) {
+  const prefs = objectRecord(preferences);
+  return prefs.billing !== false && prefs["billing.paid"] !== false;
+}
+
+function canReceiveBillingNotification(row: Record<string, unknown>) {
+  const capabilities = objectRecord(row.capabilities);
+  return row.role === "owner" || row.role === "admin" || capabilities["billing.manage"] === true;
+}
+
+function currencyFromCents(amountCents: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+    amountCents / 100,
+  );
+}
+
+async function ensureInvoicePaidNotifications(
+  admin: unknown,
+  invoice: Record<string, unknown>,
+  object: StripeObject,
+) {
+  const projectId = str(invoice.project_id);
+  if (!projectId) return;
+
+  const { data: project, error: projectError } = await dynamicTable(admin, "projects")
+    .select("id,name,job_number,organization_id,owner_id")
+    .eq("id", projectId)
+    .single();
+  if (projectError || !project) throw new Error(projectError?.message || "Project not found.");
+
+  const organizationId = str(project.organization_id);
+  if (!organizationId) return;
+  const [organizationMembers, projectMembers] = await Promise.all([
+    dynamicTable(admin, "organization_memberships")
+      .select("user_id,role,status,capabilities")
+      .eq("organization_id", organizationId)
+      .eq("status", "active"),
+    dynamicTable(admin, "project_memberships")
+      .select("user_id,role,status")
+      .eq("project_id", projectId)
+      .eq("status", "active"),
+  ]);
+  if (organizationMembers.error) throw new Error(organizationMembers.error.message);
+  if (projectMembers.error) throw new Error(projectMembers.error.message);
+
+  const recipientIds = new Set<string>();
+  const projectOwnerId = str(project.owner_id);
+  if (projectOwnerId) recipientIds.add(projectOwnerId);
+  for (const row of (organizationMembers.data ?? []) as unknown as Record<string, unknown>[]) {
+    if (canReceiveBillingNotification(row) && str(row.user_id)) recipientIds.add(str(row.user_id));
+  }
+  for (const row of (projectMembers.data ?? []) as unknown as Record<string, unknown>[]) {
+    if ((row.role === "owner" || row.role === "manager") && str(row.user_id)) {
+      recipientIds.add(str(row.user_id));
+    }
+  }
+  if (recipientIds.size === 0) return;
+
+  const profiles = await dynamicTable(admin, "profiles")
+    .select("id,notification_prefs")
+    .in("id", [...recipientIds]);
+  if (profiles.error) throw new Error(profiles.error.message);
+  const enabledIds = ((profiles.data ?? []) as unknown as Record<string, unknown>[])
+    .filter((profile) => notificationEnabled(profile.notification_prefs))
+    .map((profile) => str(profile.id))
+    .filter(Boolean);
+  if (enabledIds.length === 0) return;
+
+  const metadata = sessionMetadata(object);
+  const sessionId = str(object.id);
+  const invoiceId = str(invoice.id);
+  const invoiceLabel = str(invoice.invoice_number) || "Invoice";
+  const projectName = str(project.name) || "Project";
+  const amountCents = Math.max(
+    0,
+    Math.round(num(object.amount_total)) - Math.round(num(metadata.surcharge_cents)),
+  );
+  const amountLabel = currencyFromCents(amountCents);
+  const { error } = await dynamicTable(admin, "notifications").upsert(
+    enabledIds.map((recipientId) => ({
+      recipient_id: recipientId,
+      organization_id: organizationId,
+      actor_id: null,
+      type: "billing.paid",
+      title: `${amountLabel} payment received`,
+      body: `${invoiceLabel} for ${projectName} was paid through Stripe and recorded in OverWatch.`,
+      project_id: projectId,
+      entity_type: "billing_invoice",
+      entity_id: invoiceId,
+      url: `/projects/${projectId}?tab=billing&invoice=${invoiceId}`,
+      dedupe_key: `billing.paid:${sessionId}`,
+      data: {
+        invoice_id: invoiceId,
+        invoice_number: invoiceLabel,
+        project_id: projectId,
+        project_name: projectName,
+        amount_cents: amountCents,
+        stripe_checkout_session_id: sessionId,
+        stripe_payment_intent_id: str(object.payment_intent),
+        stripe_mode: str(metadata.stripe_mode),
+      },
+    })),
+    { onConflict: "recipient_id,dedupe_key", ignoreDuplicates: true },
+  );
+  if (error) throw new Error(error.message);
 }
 
 function subscriptionStatus(value: string) {
@@ -281,7 +406,7 @@ async function markInvoicePaid(object: StripeObject) {
   if (!invoiceId) return;
 
   const { data: invoice, error: invoiceError } = await dynamicTable(admin, "billing_invoices")
-    .select("id,project_id,billing_application_id,total_due,paid_amount")
+    .select("id,project_id,billing_application_id,invoice_number,title,total_due,paid_amount")
     .eq("id", invoiceId)
     .single();
   if (invoiceError || !invoice) throw new Error(invoiceError?.message || "Invoice not found.");
@@ -316,7 +441,13 @@ async function markInvoicePaid(object: StripeObject) {
       paidCents: Math.round(num(invoice.paid_amount) * 100),
     },
   );
-  if (!plan.payment || !plan.invoicePatch) return;
+  if (!plan.payment || !plan.invoicePatch) {
+    // The payment ledger can already exist when a previous delivery booked the
+    // money but notification delivery failed. Re-attempt the idempotent notice
+    // so Stripe retries heal the secondary experience without double-booking.
+    if (existingPayment) await ensureInvoicePaidNotifications(admin, invoice, object);
+    return;
+  }
 
   const insertPayload: Record<string, unknown> = {
     project_id: invoice.project_id,
@@ -368,6 +499,8 @@ async function markInvoicePaid(object: StripeObject) {
       .eq("id", invoice.billing_application_id);
     if (updatePayAppError) throw new Error(updatePayAppError.message);
   }
+
+  await ensureInvoicePaidNotifications(admin, invoice, object);
 }
 
 async function markInvoiceFailed(object: StripeObject) {
@@ -485,24 +618,36 @@ async function markSubscriptionUpdated(object: StripeObject) {
   if (error) throw new Error(error.message);
 }
 
-async function markConnectAccountUpdated(object: StripeObject) {
+async function markConnectAccountUpdated(object: StripeObject, livemode: boolean) {
   const accountId = str(object.id);
   if (!accountId) return;
 
   const admin = createSupabaseAdminClient();
   const status = connectAccountStatus(object);
+  const mode: StripeMode = livemode ? "live" : "test";
+  const columns = stripeModeColumnNames(mode);
   const { error } = await dynamicTable(admin, "organizations")
-    .update({
-      stripe_connect_status: status.status,
-      payment_processor_ready: status.ready,
-    })
-    .eq("stripe_connect_account_id", accountId);
+    .update(stripeModePersistencePatch(mode, accountId, status.status))
+    .eq(columns.accountId, accountId);
   if (error) {
     if (isMissingAnySupabaseColumn(error, CONNECT_PERSISTENCE_COLUMNS)) {
       throw stripeConnectSchemaNotReady(error);
     }
     throw new Error(error.message);
   }
+
+  // Keep the temporary legacy aliases synchronized only when this event is
+  // for the organization's active mode. A live event must never overwrite a
+  // company that is still deliberately running its sandbox connection.
+  const { error: activeModeError } = await dynamicTable(admin, "organizations")
+    .update({
+      stripe_connect_account_id: accountId,
+      stripe_connect_status: status.status,
+      payment_processor_ready: status.ready,
+    })
+    .eq(columns.accountId, accountId)
+    .eq("stripe_mode", mode);
+  if (activeModeError) throw new Error(activeModeError.message);
 }
 
 // Exported for direct testing (STRIPEIDEMPOTENCY1 Task 3). The route below is a
@@ -531,6 +676,7 @@ export async function handleStripeWebhook(request: Request): Promise<Response> {
       const claim = await claimWebhookEvent(store, event.id, event.type, {
         nowMs: Date.now(),
         staleSeconds: webhookStaleSeconds(),
+        livemode: Boolean(event.livemode),
       });
       if (claim === "already_processed") {
         return jsonOk({ received: true, duplicate: true, eventId: event.id });
@@ -574,7 +720,7 @@ export async function handleStripeWebhook(request: Request): Promise<Response> {
         await markSubscriptionUpdated(object);
         break;
       case "account.updated":
-        await markConnectAccountUpdated(object);
+        await markConnectAccountUpdated(object, Boolean(event.livemode));
         break;
       default:
         // Well-formed but unhandled (e.g. payout.*, balance.available):
@@ -589,7 +735,12 @@ export async function handleStripeWebhook(request: Request): Promise<Response> {
       await completion.store.markProcessed(completion.eventId, new Date().toISOString());
     }
 
-    return jsonOk({ received: true, eventId: event.id, eventType: event.type });
+    return jsonOk({
+      received: true,
+      eventId: event.id,
+      eventType: event.type,
+      livemode: Boolean(event.livemode),
+    });
   } catch (error) {
     // Failures return non-2xx (jsonError) so Stripe retries. Best-effort
     // release deletes the claim so the retry need not wait out the stale

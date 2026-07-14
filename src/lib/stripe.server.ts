@@ -1,6 +1,9 @@
 import process from "node:process";
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
+import { normalizeStripeMode, type StripeMode } from "@/lib/stripe-mode";
+
+export type { StripeMode } from "@/lib/stripe-mode";
 
 export const STRIPE_API_VERSION = "2026-02-25.clover";
 export const DEFAULT_APP_ORIGIN = "https://overwatch.alpcontractorcircle.com";
@@ -95,8 +98,6 @@ export function getAppOrigin(request?: Request) {
   }
 }
 
-export type StripeMode = "test" | "live";
-
 /**
  * Resolve the outbound Stripe secret key for the given mode. Prefers the
  * explicit `_TEST` / `_LIVE` variant, then falls back to the legacy
@@ -188,8 +189,7 @@ export async function getOrganizationStripeMode(
       .eq("id", organizationId)
       .maybeSingle();
     if (error) return "test";
-    const raw = data?.stripe_mode;
-    return raw === "live" ? "live" : "test";
+    return normalizeStripeMode(data?.stripe_mode);
   } catch {
     return "test";
   }
@@ -588,6 +588,7 @@ export async function verifyStripeWebhookPayload(rawBody: string, signatureHeade
     id: string;
     type: string;
     account?: string;
+    livemode: boolean;
     data?: { object?: Record<string, unknown> };
   };
 }

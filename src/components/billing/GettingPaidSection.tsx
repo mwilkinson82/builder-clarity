@@ -6,9 +6,12 @@ import {
   CheckCircle2,
   CreditCard,
   Eye,
+  ExternalLink,
+  Gauge,
   Landmark,
   SearchCheck,
   ShieldCheck,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -35,12 +38,12 @@ import {
   type UnmatchedStripePayment,
 } from "@/lib/payments.functions";
 import { recordInvoicePayment } from "@/lib/projects.functions";
+import { centsToDollars, dollarsToCents, renderRemittanceMemo } from "@/lib/payments-domain";
 import {
-  centsToDollars,
-  dollarsToCents,
-  renderRemittanceMemo,
-  stripeConnectReady,
-} from "@/lib/payments-domain";
+  getStripePaymentLimitContext,
+  requestStripePaymentLimit,
+} from "@/lib/stripe-limit.functions";
+import type { StripeMode } from "@/lib/stripe-mode";
 
 // Founder's expectation-setting copy for the Stripe status card. Do not
 // paraphrase: it sets the "direct wire for big money, Stripe for small" frame.
@@ -48,15 +51,22 @@ const STRIPE_EXPECTATION_COPY =
   "Stripe verifies new businesses — card and bank-debit payments suit smaller amounts while your account builds history. For large requisitions, your invoices already carry your direct wire instructions.";
 
 export interface GettingPaidStripeState {
+  mode: StripeMode;
   accountId: string;
   connectStatus: string;
   processorReady: boolean;
+  testAccountId: string;
+  testConnectStatus: string;
+  liveAccountId: string;
+  liveConnectStatus: string;
 }
 
 interface GettingPaidSectionProps {
   canManage: boolean;
   stripe: GettingPaidStripeState;
-  onConnectStripe: () => void;
+  onConnectStripe: (mode: StripeMode) => void;
+  onActivateLiveStripe: () => void;
+  onOpenStripeDashboard: (mode: StripeMode) => void;
   stripeConnectPending: boolean;
   /** One quiet line about Overwatch subscription readiness — composed by the caller. */
   subscriptionNote: string;
@@ -110,6 +120,8 @@ export function GettingPaidSection({
   canManage,
   stripe,
   onConnectStripe,
+  onActivateLiveStripe,
+  onOpenStripeDashboard,
   stripeConnectPending,
   subscriptionNote,
   billingContactName,
@@ -122,6 +134,8 @@ export function GettingPaidSection({
   const fetchProfile = useServerFn(getCompanyPaymentProfile);
   const saveProfile = useServerFn(saveCompanyPaymentProfile);
   const revealProfile = useServerFn(revealCompanyPaymentProfile);
+  const fetchPaymentLimit = useServerFn(getStripePaymentLimitContext);
+  const submitPaymentLimitRequest = useServerFn(requestStripePaymentLimit);
 
   const profileQuery = useQuery({
     queryKey: ["company-payment-profile"],
@@ -129,9 +143,18 @@ export function GettingPaidSection({
     enabled: canManage,
   });
   const profile = profileQuery.data;
+  const paymentLimitQuery = useQuery({
+    queryKey: ["stripe-payment-limit"],
+    queryFn: () => fetchPaymentLimit(),
+    enabled: canManage,
+  });
+  const paymentLimit = paymentLimitQuery.data;
 
   const [form, setForm] = useState<ProfileFormState | null>(null);
   const [revealed, setRevealed] = useState(false);
+  const [requestedLimitDollars, setRequestedLimitDollars] = useState("");
+  const [stripeRequestReference, setStripeRequestReference] = useState("");
+  const [limitRequestReason, setLimitRequestReason] = useState("");
   const [contactForm, setContactForm] = useState({
     name: billingContactName,
     email: billingContactEmail,
@@ -203,14 +226,52 @@ export function GettingPaidSection({
     },
   });
 
+  const paymentLimitMutation = useMutation({
+    mutationFn: () => {
+      const requested = Number(requestedLimitDollars.replaceAll(",", ""));
+      if (!Number.isFinite(requested) || requested <= 0) {
+        throw new Error("Enter the largest single payment Stripe approved or is reviewing.");
+      }
+      return submitPaymentLimitRequest({
+        data: {
+          requestedLimitDollars: requested,
+          stripeRequestReference,
+          reason: limitRequestReason,
+        },
+      });
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["stripe-payment-limit"] });
+      setRequestedLimitDollars("");
+      setStripeRequestReference("");
+      setLimitRequestReason("");
+      toast.success("Payment-limit request recorded", {
+        description:
+          result.status === "stripe_pending"
+            ? "Stripe approval is still required before OverWatch can raise the ceiling."
+            : "OverWatch support can now verify the Stripe approval and review the request.",
+      });
+    },
+    onError: (error) => {
+      toast.error("Payment-limit request was not submitted", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    },
+  });
+
   if (!canManage) return null;
 
-  const stripeReady = stripeConnectReady(stripe);
-  const stripeStateLabel = stripeReady
-    ? "Ready for card & bank-debit payments"
-    : stripe.accountId
-      ? "Verification in progress"
-      : "Not connected";
+  const liveReady = Boolean(stripe.liveAccountId) && stripe.liveConnectStatus === "active";
+  const stripeStateLabel =
+    stripe.mode === "live" && liveReady
+      ? "Live payments ready"
+      : liveReady
+        ? "Live account verified — activation required"
+        : stripe.liveAccountId
+          ? "Live verification in progress"
+          : stripe.testAccountId
+            ? "Sandbox connected — live setup required"
+            : "Live Stripe setup required";
   const memoPreview = renderRemittanceMemo(
     form?.remittanceMemoTemplate ?? "Reference: Invoice {number}",
     "1042",
@@ -352,8 +413,18 @@ export function GettingPaidSection({
             Online payments (Stripe)
           </div>
           <div className="rounded-md border border-hairline bg-card p-4">
+            {stripe.mode !== "live" && (
+              <div className="mb-4 flex gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>
+                  Sandbox accounts cannot receive real client payments and do not transfer into live
+                  mode. This company must complete one live Stripe setup before live invoice links
+                  can be activated.
+                </p>
+              </div>
+            )}
             <div className="flex items-center gap-2">
-              {stripeReady ? (
+              {liveReady ? (
                 <CheckCircle2 className="h-4 w-4 text-success" />
               ) : (
                 <ShieldCheck className="h-4 w-4 text-muted-foreground" />
@@ -361,22 +432,154 @@ export function GettingPaidSection({
               <span className="text-sm font-medium">{stripeStateLabel}</span>
             </div>
             <p className="mt-2 text-sm text-muted-foreground">{STRIPE_EXPECTATION_COPY}</p>
-            {!stripeReady && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Clients pay the contractor's connected Stripe account directly. Overwatch never
+              receives the invoice principal; it receives only a separately configured application
+              fee.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!liveReady && (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={stripeConnectPending}
+                  onClick={() => onConnectStripe("live")}
+                >
+                  {stripeConnectPending
+                    ? "Opening Stripe…"
+                    : stripe.liveAccountId
+                      ? "Resume live verification"
+                      : "Set up live Stripe"}
+                </Button>
+              )}
+              {liveReady && stripe.mode !== "live" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={stripeConnectPending}
+                  onClick={onActivateLiveStripe}
+                >
+                  {stripeConnectPending ? "Activating…" : "Activate live payments"}
+                </Button>
+              )}
+              {stripe.liveAccountId && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={stripeConnectPending}
+                  onClick={() => onOpenStripeDashboard("live")}
+                >
+                  Open Stripe Dashboard
+                </Button>
+              )}
+            </div>
+            {!stripe.liveAccountId && stripe.testAccountId && (
               <Button
                 type="button"
                 size="sm"
-                className="mt-3"
+                variant="ghost"
+                className="mt-2"
                 disabled={stripeConnectPending}
-                onClick={onConnectStripe}
+                onClick={() => onConnectStripe("test")}
               >
-                {stripeConnectPending
-                  ? "Opening Stripe…"
-                  : stripe.accountId
-                    ? "Resume Stripe verification"
-                    : "Connect Stripe"}
+                Open sandbox setup
               </Button>
             )}
             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{subscriptionNote}</p>
+          </div>
+
+          <div className="rounded-md border border-hairline bg-card p-4">
+            <div className="flex items-center gap-2">
+              <Gauge className="h-4 w-4 text-clay" />
+              <span className="text-sm font-medium">Online-payment ceiling</span>
+              <span className="ml-auto font-mono text-sm font-semibold">
+                {fmtUSDCents((paymentLimit?.currentLimitCents ?? 2_500_000) / 100)}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              This is OverWatch's hard limit for one card or ACH debit payment. Invoice overrides
+              cannot bypass it, and Stripe may enforce a lower account-specific limit. Larger
+              payments should use the direct bank instructions until both Stripe and OverWatch
+              approve an increase.
+            </p>
+            {paymentLimit?.latestRequest &&
+            ["submitted", "stripe_pending", "under_review"].includes(
+              paymentLimit.latestRequest.status,
+            ) ? (
+              <div className="mt-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                Request for {fmtUSDCents(paymentLimit.latestRequest.requestedLimitCents / 100)} ·{" "}
+                {paymentLimit.latestRequest.status.replaceAll("_", " ")}
+              </div>
+            ) : (
+              <div className="mt-3 space-y-3">
+                <a
+                  href="https://support.stripe.com/contact"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-clay hover:underline"
+                >
+                  Ask Stripe to review this connected account's ACH limits
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="stripe-limit-request-amount">
+                      Requested single payment ($)
+                    </Label>
+                    <Input
+                      id="stripe-limit-request-amount"
+                      value={requestedLimitDollars}
+                      inputMode="decimal"
+                      placeholder="100000"
+                      disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
+                      onChange={(event) => setRequestedLimitDollars(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="stripe-limit-request-reference">
+                      Stripe case or approval reference
+                    </Label>
+                    <Input
+                      id="stripe-limit-request-reference"
+                      value={stripeRequestReference}
+                      placeholder="Optional until Stripe replies"
+                      disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
+                      onChange={(event) => setStripeRequestReference(event.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="stripe-limit-request-reason">Expected payment and context</Label>
+                  <Textarea
+                    id="stripe-limit-request-reason"
+                    value={limitRequestReason}
+                    rows={2}
+                    placeholder="Example: monthly commercial progress payments around $100,000."
+                    disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
+                    onChange={(event) => setLimitRequestReason(event.target.value)}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={
+                    !stripe.liveAccountId ||
+                    !paymentLimit?.requestSchemaReady ||
+                    paymentLimitMutation.isPending
+                  }
+                  onClick={() => paymentLimitMutation.mutate()}
+                >
+                  {paymentLimitMutation.isPending ? "Submitting…" : "Submit limit request"}
+                </Button>
+                {!stripe.liveAccountId && (
+                  <p className="text-xs text-muted-foreground">
+                    Create the live connected account before requesting more payment capacity.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-3">

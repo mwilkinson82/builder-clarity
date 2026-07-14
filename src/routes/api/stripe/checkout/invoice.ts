@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   appendStripeForm,
   getAppOrigin,
-  getOrganizationStripeMode,
   isMissingSupabaseColumn,
   jsonError,
   jsonOk,
@@ -15,6 +14,12 @@ import {
 } from "@/lib/stripe.server";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import {
+  ORGANIZATION_STRIPE_SELECT,
+  stripeConnectionForMode,
+  type OrganizationStripeColumns,
+} from "@/lib/stripe-mode";
+import {
+  DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
   dollarsToCents,
   estimatedCardFeeCents,
   methodAvailability,
@@ -54,11 +59,9 @@ type ProjectRecord = {
   organization_id: string | null;
 };
 
-type OrganizationPaymentRecord = {
+type OrganizationPaymentRecord = OrganizationStripeColumns & {
   id: string;
-  stripe_connect_account_id: string;
-  stripe_connect_status: string;
-  payment_processor_ready: boolean;
+  stripe_payment_limit_cents?: number | null;
 };
 
 type DynamicQueryResult<T = unknown> = {
@@ -168,25 +171,39 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             );
           }
 
-          const { data: organization, error: organizationError } = await dynamicTable(
+          let { data: organization, error: organizationError } = await dynamicTable(
             context.admin,
             "organizations",
           )
-            .select("id,stripe_connect_account_id,stripe_connect_status,payment_processor_ready")
+            .select(`id,${ORGANIZATION_STRIPE_SELECT},stripe_payment_limit_cents`)
             .eq("id", projectRecord.organization_id)
             .single();
+          if (
+            organizationError &&
+            isMissingSupabaseColumn(organizationError, "stripe_payment_limit_cents")
+          ) {
+            // Safe deploy ordering: code may reach Lovable moments before the
+            // guardrail migration. Default to the conservative cap, never to
+            // unlimited checkout.
+            ({ data: organization, error: organizationError } = await dynamicTable(
+              context.admin,
+              "organizations",
+            )
+              .select(`id,${ORGANIZATION_STRIPE_SELECT}`)
+              .eq("id", projectRecord.organization_id)
+              .single());
+          }
           if (organizationError) throw new Error(organizationError.message);
           if (!organization) throw new Error("Organization not found.");
 
           const orgPayment = organization as unknown as OrganizationPaymentRecord;
-          const connectReady =
-            orgPayment.payment_processor_ready &&
-            orgPayment.stripe_connect_status === "active" &&
-            Boolean(orgPayment.stripe_connect_account_id);
-          if (!connectReady) {
+          const stripeConnection = stripeConnectionForMode(orgPayment);
+          if (!stripeConnection.ready) {
             throw new RouteError(
               "stripe_connect_not_ready",
-              "Online payments are not ready for this company. Finish Stripe Connect setup in Your Company before enabling invoice pay links.",
+              stripeConnection.mode === "live"
+                ? "Live online payments are not ready for this company. Finish live Stripe verification in Your Company before enabling invoice pay links."
+                : "Sandbox online payments are not ready for this company. Finish Stripe Connect setup in Your Company before testing invoice pay links.",
               409,
             );
           }
@@ -230,15 +247,30 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             ),
             stripeReady: true, // connectReady was enforced above
             enabled: enabledMethods,
-            invoiceTotalCents: dollarsToCents(invoiceRecord.total_due),
+            invoiceTotalCents: dollarsToCents(openBalance),
             thresholdCents: Number(profile?.stripe_amount_threshold_cents ?? 0),
+            platformLimitCents:
+              Number(orgPayment.stripe_payment_limit_cents) > 0
+                ? Number(orgPayment.stripe_payment_limit_cents)
+                : DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
           });
           if (body.method && !availability[body.method].available) {
+            const reason = availability[body.method].reason;
             throw new RouteError(
-              "payment_method_not_available",
-              availability[body.method].reason === "over_threshold"
-                ? "This invoice is above the company's online payment limit. Use the direct bank transfer details on the invoice."
-                : "This payment method is not enabled for this invoice.",
+              reason === "platform_limit"
+                ? "payment_exceeds_overwatch_limit"
+                : "payment_method_not_available",
+              reason === "platform_limit"
+                ? `This payment is above the company's current OverWatch online-payment ceiling of $${(
+                    (Number(orgPayment.stripe_payment_limit_cents) > 0
+                      ? Number(orgPayment.stripe_payment_limit_cents)
+                      : DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS) / 100
+                  ).toLocaleString(
+                    "en-US",
+                  )}. Use the direct bank instructions or have the company request a higher limit after Stripe approval.`
+                : reason === "over_threshold"
+                  ? "This invoice is above the company's preferred online payment threshold. Use the direct bank transfer details on the invoice."
+                  : "This payment method is not enabled for this invoice.",
               409,
             );
           }
@@ -325,6 +357,14 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           appendStripeForm(form, "metadata[invoice_id]", invoiceRecord.id);
           appendStripeForm(form, "metadata[project_id]", projectRecord.id);
           appendStripeForm(form, "metadata[organization_id]", projectRecord.organization_id);
+          appendStripeForm(form, "metadata[stripe_mode]", stripeConnection.mode);
+          appendStripeForm(
+            form,
+            "metadata[overwatch_payment_limit_cents]",
+            Number(orgPayment.stripe_payment_limit_cents) > 0
+              ? Number(orgPayment.stripe_payment_limit_cents)
+              : DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
+          );
           appendStripeForm(
             form,
             "metadata[billing_application_id]",
@@ -335,6 +375,11 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           appendStripeForm(form, "payment_intent_data[metadata][kind]", "client_invoice");
           appendStripeForm(form, "payment_intent_data[metadata][invoice_id]", invoiceRecord.id);
           appendStripeForm(form, "payment_intent_data[metadata][project_id]", projectRecord.id);
+          appendStripeForm(
+            form,
+            "payment_intent_data[metadata][stripe_mode]",
+            stripeConnection.mode,
+          );
           appendStripeForm(
             form,
             "payment_intent_data[metadata][billing_application_id]",
@@ -358,8 +403,9 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           const session = await stripePost<StripeCheckoutSession>(
             "checkout/sessions",
             form,
-            `invoice-checkout:${invoiceRecord.id}:${openBalance}:${stripeMethods.join("+")}:${surchargeCents}`,
-            orgPayment.stripe_connect_account_id,
+            `invoice-checkout:${invoiceRecord.id}:${stripeConnection.mode}:${openBalance}:${stripeMethods.join("+")}:${surchargeCents}`,
+            stripeConnection.accountId,
+            stripeConnection.mode,
           );
 
           const now = new Date().toISOString();
