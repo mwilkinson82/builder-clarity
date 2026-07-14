@@ -165,10 +165,11 @@ class FakeQuery {
 
 // --- Helpers ---------------------------------------------------------------
 
-function creditPackEvent(eventId: string, sessionId = "cs_test_credit") {
+function creditPackEvent(eventId: string, sessionId = "cs_test_credit", livemode = false) {
   return {
     id: eventId,
     type: "checkout.session.completed",
+    livemode,
     data: {
       object: {
         id: sessionId,
@@ -250,6 +251,7 @@ describe("handleStripeWebhook idempotency", () => {
     const first = await post();
     expect(first.status).toBe(200);
     expect(webhookRow(db, "evt_dup")?.status).toBe("processed");
+    expect(webhookRow(db, "evt_dup")?.livemode).toBe(false);
     expect(purchaseRows(db)).toHaveLength(1);
 
     const callsAfterFirst = db.fromCalls["credit_ledger"] ?? 0;
@@ -260,6 +262,16 @@ describe("handleStripeWebhook idempotency", () => {
     // Handler never ran again: no new credit_ledger access, still one purchase.
     expect(db.fromCalls["credit_ledger"] ?? 0).toBe(callsAfterFirst);
     expect(purchaseRows(db)).toHaveLength(1);
+  });
+
+  it("stamps live deliveries with event.livemode", async () => {
+    const db = new FakeSupabase();
+    h.db = db;
+    h.event = creditPackEvent("evt_live", "cs_live_credit", true);
+
+    const response = await post();
+    expect(response.status).toBe(200);
+    expect(webhookRow(db, "evt_live")?.livemode).toBe(true);
   });
 
   it("a fresh concurrent claim returns non-2xx and does not double-invoke", async () => {

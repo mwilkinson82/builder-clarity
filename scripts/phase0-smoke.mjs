@@ -1567,10 +1567,14 @@ await expectContains(
     /account_links/,
     /account_onboarding/,
     /controller\[fees\]\[payer\]/,
+    /controller\[fees\]\[payer\]", "account"/,
+    /controller\[losses\]\[payments\]", "stripe"/,
+    /controller\[stripe_dashboard\]\[type\]", "full"/,
     /controller\[stripe_dashboard\]\[type\]/,
     /capabilities\[card_payments\]\[requested\]/,
     /capabilities\[transfers\]\[requested\]/,
     /stripe_connect_account_id/,
+    /stripe_connect_account_id_live/,
     /payment_processor_ready/,
     /CONNECT_SELECT_WITHOUT_BILLING_EMAIL/,
     /stripe_schema_not_ready/,
@@ -1598,11 +1602,12 @@ await expectContains(
     /payment_link_sent_at/,
     /payment_intent_data\[metadata\]\[invoice_id\]/,
     /stripe_connect_not_ready/,
-    /payment_processor_ready/,
+    /stripeConnectionForMode/,
     // Payments Phase 1: sessions became DIRECT charges created on the
     // connected account (Stripe-Account header) per the spec and Stripe's
     // Connect docs, replacing the destination-charge transfer_data pin.
-    /stripe_connect_account_id/,
+    /stripeConnection\.accountId/,
+    /stripeConnection\.mode/,
     /Stripe-Account header/,
     /payment_intent_data\[application_fee_amount\]/,
   ],
@@ -1700,10 +1705,11 @@ await expectContains(
     /Stripe verifies new businesses/,
     /Reveal saved numbers/,
     /Direct bank transfer details/,
-    /Ready for card & bank-debit payments/,
-    /Verification in progress/,
-    /Not connected/,
-    /Connect Stripe/,
+    /Live payments ready/,
+    /Live verification in progress/,
+    /Sandbox connected — live setup required/,
+    /Set up live Stripe/,
+    /Activate live payments/,
     /Billing contact/,
     /Save billing contact/,
     /subscriptionNote/,
@@ -2614,6 +2620,18 @@ expectSql(
     /Contractor Circle users working/i,
   ],
   "Stripe commercial readiness migration stages subscription and invoice payment fields",
+);
+
+expectSql(
+  sql,
+  [
+    /stripe_connect_account_id_test/i,
+    /stripe_connect_status_test/i,
+    /stripe_connect_account_id_live/i,
+    /stripe_connect_status_live/i,
+    /stripe_webhook_events[\s\S]*livemode boolean/i,
+  ],
+  "Stripe live cutover keeps sandbox/live connected accounts separate and tags webhook mode",
 );
 
 expectSql(

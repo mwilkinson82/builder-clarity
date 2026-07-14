@@ -213,11 +213,19 @@ type TeamUsageSnapshot = {
 };
 
 type StripeConnectPayload = {
-  accountId: string;
-  accountLinkUrl: string;
-  connectStatus: string;
+  accountId?: string;
+  accountLinkUrl?: string;
+  dashboardUrl?: string;
+  activated?: boolean;
+  connectStatus?: string;
+  mode?: "test" | "live";
   organizationId: string;
-  paymentProcessorReady: boolean;
+  paymentProcessorReady?: boolean;
+};
+
+type StripeConnectAction = {
+  action: "onboard" | "activate" | "dashboard";
+  mode: "test" | "live";
 };
 
 type UsageStatus = {
@@ -501,7 +509,7 @@ function TeamPage() {
   });
 
   const stripeConnectMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ action, mode }: StripeConnectAction) => {
       if (!team?.organization.id) throw new Error("Company workspace is still loading.");
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
@@ -515,24 +523,41 @@ function TeamPage() {
         },
         body: JSON.stringify({
           organizationId: team.organization.id,
-          returnPath: "/team?stripe=return",
-          refreshPath: "/team?stripe=refresh",
+          action,
+          mode,
+          returnPath: `/team?stripe=return&mode=${mode}`,
+          refreshPath: `/team?stripe=refresh&mode=${mode}`,
         }),
       });
       const payload = (await response.json().catch(() => ({}))) as
         | (StripeConnectPayload & { ok?: boolean; error?: string })
         | { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok || !("accountLinkUrl" in payload)) {
+      if (!response.ok || !payload.ok) {
         throw new Error(payload.error || "Stripe setup did not open.");
       }
-      return payload;
+      return payload as StripeConnectPayload;
     },
-    onSuccess: (payload) => {
-      toast.success("Stripe setup opened", {
-        description:
-          "Finish the secure Stripe onboarding screen to enable online invoice payments.",
-      });
-      window.location.assign(payload.accountLinkUrl);
+    onSuccess: async (payload, variables) => {
+      if (payload.accountLinkUrl) {
+        toast.success(
+          variables.mode === "live" ? "Live Stripe setup opened" : "Sandbox setup opened",
+          {
+            description: "Finish the secure Stripe onboarding screen, then return to Overwatch.",
+          },
+        );
+        window.location.assign(payload.accountLinkUrl);
+        return;
+      }
+      if (payload.dashboardUrl) {
+        window.location.assign(payload.dashboardUrl);
+        return;
+      }
+      if (payload.activated) {
+        await refreshWorkspace();
+        toast.success("Live payments activated", {
+          description: "New invoice checkout sessions now use this company's live Stripe account.",
+        });
+      }
     },
     onError: (error) => {
       toast.error("Stripe setup did not open", {
@@ -1084,12 +1109,17 @@ function TeamPage() {
                     icon={<CreditCard className="h-4 w-4" />}
                     label="Payments"
                     value={
-                      team.organization.payment_processor_ready ? "Online ready" : "Manual only"
+                      team.organization.stripe_mode === "live" &&
+                      team.organization.payment_processor_ready
+                        ? "Live ready"
+                        : team.organization.stripe_connect_account_id_live
+                          ? "Live setup pending"
+                          : "Sandbox only"
                     }
                     sub={
-                      team.organization.stripe_connect_account_id
-                        ? "Stripe setup started"
-                        : "Stripe not connected"
+                      team.organization.stripe_mode === "live"
+                        ? "Real payments active"
+                        : "Live activation required"
                     }
                   />
                 </section>
@@ -1694,11 +1724,30 @@ function TeamPage() {
                 <GettingPaidSection
                   canManage={Boolean(team.canManageSettings || team.canManageBilling)}
                   stripe={{
+                    mode: team.organization.stripe_mode,
                     accountId: team.organization.stripe_connect_account_id,
                     connectStatus: team.organization.stripe_connect_status,
                     processorReady: team.organization.payment_processor_ready,
+                    testAccountId: team.organization.stripe_connect_account_id_test,
+                    testConnectStatus: team.organization.stripe_connect_status_test,
+                    liveAccountId: team.organization.stripe_connect_account_id_live,
+                    liveConnectStatus: team.organization.stripe_connect_status_live,
                   }}
-                  onConnectStripe={() => stripeConnectMutation.mutate()}
+                  onConnectStripe={(mode) =>
+                    stripeConnectMutation.mutate({ action: "onboard", mode })
+                  }
+                  onActivateLiveStripe={() => {
+                    if (
+                      window.confirm(
+                        "Activate live Stripe payments for this company? New invoice checkout sessions will move real money.",
+                      )
+                    ) {
+                      stripeConnectMutation.mutate({ action: "activate", mode: "live" });
+                    }
+                  }}
+                  onOpenStripeDashboard={(mode) =>
+                    stripeConnectMutation.mutate({ action: "dashboard", mode })
+                  }
                   stripeConnectPending={stripeConnectMutation.isPending}
                   subscriptionNote={subscriptionNote}
                   billingContactName={team.organization.billing_contact_name}
@@ -2171,21 +2220,23 @@ function TeamPage() {
                         <MiniStat
                           label="Stripe"
                           value={
+                            team.organization.stripe_mode === "live" &&
                             team.organization.payment_processor_ready
-                              ? "Connect ready"
-                              : team.organization.stripe_connect_account_id
-                                ? "Setup started"
-                                : team.organization.stripe_customer_id
-                                  ? "Customer linked"
+                              ? "Live ready"
+                              : team.organization.stripe_connect_account_id_live
+                                ? "Live setup started"
+                                : team.organization.stripe_connect_account_id_test
+                                  ? "Sandbox only"
                                   : "Not connected"
                           }
                         />
                         <MiniStat
                           label="Payments"
                           value={
+                            team.organization.stripe_mode === "live" &&
                             team.organization.payment_processor_ready
-                              ? "Online ready"
-                              : "Manual only"
+                              ? "Online live"
+                              : "Manual / sandbox"
                           }
                         />
                         <MiniStat

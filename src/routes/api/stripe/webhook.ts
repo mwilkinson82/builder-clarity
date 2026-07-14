@@ -20,6 +20,11 @@ import {
   DEFAULT_WEBHOOK_STALE_SECONDS,
   type WebhookEventStore,
 } from "@/lib/stripe-webhook-idempotency";
+import {
+  stripeModeColumnNames,
+  stripeModePersistencePatch,
+  type StripeMode,
+} from "@/lib/stripe-mode";
 
 type StripeObject = Record<string, unknown> & {
   id?: string;
@@ -65,8 +70,10 @@ const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as { from(table: string): DynamicQuery }).from(relation);
 
 const CONNECT_PERSISTENCE_COLUMNS = [
-  "stripe_connect_account_id",
-  "stripe_connect_status",
+  "stripe_connect_account_id_test",
+  "stripe_connect_status_test",
+  "stripe_connect_account_id_live",
+  "stripe_connect_status_live",
   "payment_processor_ready",
 ] as const;
 
@@ -485,24 +492,36 @@ async function markSubscriptionUpdated(object: StripeObject) {
   if (error) throw new Error(error.message);
 }
 
-async function markConnectAccountUpdated(object: StripeObject) {
+async function markConnectAccountUpdated(object: StripeObject, livemode: boolean) {
   const accountId = str(object.id);
   if (!accountId) return;
 
   const admin = createSupabaseAdminClient();
   const status = connectAccountStatus(object);
+  const mode: StripeMode = livemode ? "live" : "test";
+  const columns = stripeModeColumnNames(mode);
   const { error } = await dynamicTable(admin, "organizations")
-    .update({
-      stripe_connect_status: status.status,
-      payment_processor_ready: status.ready,
-    })
-    .eq("stripe_connect_account_id", accountId);
+    .update(stripeModePersistencePatch(mode, accountId, status.status))
+    .eq(columns.accountId, accountId);
   if (error) {
     if (isMissingAnySupabaseColumn(error, CONNECT_PERSISTENCE_COLUMNS)) {
       throw stripeConnectSchemaNotReady(error);
     }
     throw new Error(error.message);
   }
+
+  // Keep the temporary legacy aliases synchronized only when this event is
+  // for the organization's active mode. A live event must never overwrite a
+  // company that is still deliberately running its sandbox connection.
+  const { error: activeModeError } = await dynamicTable(admin, "organizations")
+    .update({
+      stripe_connect_account_id: accountId,
+      stripe_connect_status: status.status,
+      payment_processor_ready: status.ready,
+    })
+    .eq(columns.accountId, accountId)
+    .eq("stripe_mode", mode);
+  if (activeModeError) throw new Error(activeModeError.message);
 }
 
 // Exported for direct testing (STRIPEIDEMPOTENCY1 Task 3). The route below is a
@@ -531,6 +550,7 @@ export async function handleStripeWebhook(request: Request): Promise<Response> {
       const claim = await claimWebhookEvent(store, event.id, event.type, {
         nowMs: Date.now(),
         staleSeconds: webhookStaleSeconds(),
+        livemode: Boolean(event.livemode),
       });
       if (claim === "already_processed") {
         return jsonOk({ received: true, duplicate: true, eventId: event.id });
@@ -574,7 +594,7 @@ export async function handleStripeWebhook(request: Request): Promise<Response> {
         await markSubscriptionUpdated(object);
         break;
       case "account.updated":
-        await markConnectAccountUpdated(object);
+        await markConnectAccountUpdated(object, Boolean(event.livemode));
         break;
       default:
         // Well-formed but unhandled (e.g. payout.*, balance.available):
@@ -589,7 +609,12 @@ export async function handleStripeWebhook(request: Request): Promise<Response> {
       await completion.store.markProcessed(completion.eventId, new Date().toISOString());
     }
 
-    return jsonOk({ received: true, eventId: event.id, eventType: event.type });
+    return jsonOk({
+      received: true,
+      eventId: event.id,
+      eventType: event.type,
+      livemode: Boolean(event.livemode),
+    });
   } catch (error) {
     // Failures return non-2xx (jsonError) so Stripe retries. Best-effort
     // release deletes the claim so the retry need not wait out the stale

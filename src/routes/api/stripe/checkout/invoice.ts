@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   appendStripeForm,
   getAppOrigin,
-  getOrganizationStripeMode,
   isMissingSupabaseColumn,
   jsonError,
   jsonOk,
@@ -14,6 +13,11 @@ import {
   type StripeCheckoutSession,
 } from "@/lib/stripe.server";
 import { billingDocumentLabel } from "@/lib/billing-labels";
+import {
+  ORGANIZATION_STRIPE_SELECT,
+  stripeConnectionForMode,
+  type OrganizationStripeColumns,
+} from "@/lib/stripe-mode";
 import {
   dollarsToCents,
   estimatedCardFeeCents,
@@ -54,11 +58,8 @@ type ProjectRecord = {
   organization_id: string | null;
 };
 
-type OrganizationPaymentRecord = {
+type OrganizationPaymentRecord = OrganizationStripeColumns & {
   id: string;
-  stripe_connect_account_id: string;
-  stripe_connect_status: string;
-  payment_processor_ready: boolean;
 };
 
 type DynamicQueryResult<T = unknown> = {
@@ -172,21 +173,20 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             context.admin,
             "organizations",
           )
-            .select("id,stripe_connect_account_id,stripe_connect_status,payment_processor_ready")
+            .select(`id,${ORGANIZATION_STRIPE_SELECT}`)
             .eq("id", projectRecord.organization_id)
             .single();
           if (organizationError) throw new Error(organizationError.message);
           if (!organization) throw new Error("Organization not found.");
 
           const orgPayment = organization as unknown as OrganizationPaymentRecord;
-          const connectReady =
-            orgPayment.payment_processor_ready &&
-            orgPayment.stripe_connect_status === "active" &&
-            Boolean(orgPayment.stripe_connect_account_id);
-          if (!connectReady) {
+          const stripeConnection = stripeConnectionForMode(orgPayment);
+          if (!stripeConnection.ready) {
             throw new RouteError(
               "stripe_connect_not_ready",
-              "Online payments are not ready for this company. Finish Stripe Connect setup in Your Company before enabling invoice pay links.",
+              stripeConnection.mode === "live"
+                ? "Live online payments are not ready for this company. Finish live Stripe verification in Your Company before enabling invoice pay links."
+                : "Sandbox online payments are not ready for this company. Finish Stripe Connect setup in Your Company before testing invoice pay links.",
               409,
             );
           }
@@ -325,6 +325,7 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           appendStripeForm(form, "metadata[invoice_id]", invoiceRecord.id);
           appendStripeForm(form, "metadata[project_id]", projectRecord.id);
           appendStripeForm(form, "metadata[organization_id]", projectRecord.organization_id);
+          appendStripeForm(form, "metadata[stripe_mode]", stripeConnection.mode);
           appendStripeForm(
             form,
             "metadata[billing_application_id]",
@@ -335,6 +336,11 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           appendStripeForm(form, "payment_intent_data[metadata][kind]", "client_invoice");
           appendStripeForm(form, "payment_intent_data[metadata][invoice_id]", invoiceRecord.id);
           appendStripeForm(form, "payment_intent_data[metadata][project_id]", projectRecord.id);
+          appendStripeForm(
+            form,
+            "payment_intent_data[metadata][stripe_mode]",
+            stripeConnection.mode,
+          );
           appendStripeForm(
             form,
             "payment_intent_data[metadata][billing_application_id]",
@@ -358,8 +364,9 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           const session = await stripePost<StripeCheckoutSession>(
             "checkout/sessions",
             form,
-            `invoice-checkout:${invoiceRecord.id}:${openBalance}:${stripeMethods.join("+")}:${surchargeCents}`,
-            orgPayment.stripe_connect_account_id,
+            `invoice-checkout:${invoiceRecord.id}:${stripeConnection.mode}:${openBalance}:${stripeMethods.join("+")}:${surchargeCents}`,
+            stripeConnection.accountId,
+            stripeConnection.mode,
           );
 
           const now = new Date().toISOString();

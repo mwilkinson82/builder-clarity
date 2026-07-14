@@ -9,6 +9,7 @@ import {
   Landmark,
   SearchCheck,
   ShieldCheck,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -35,12 +36,8 @@ import {
   type UnmatchedStripePayment,
 } from "@/lib/payments.functions";
 import { recordInvoicePayment } from "@/lib/projects.functions";
-import {
-  centsToDollars,
-  dollarsToCents,
-  renderRemittanceMemo,
-  stripeConnectReady,
-} from "@/lib/payments-domain";
+import { centsToDollars, dollarsToCents, renderRemittanceMemo } from "@/lib/payments-domain";
+import type { StripeMode } from "@/lib/stripe-mode";
 
 // Founder's expectation-setting copy for the Stripe status card. Do not
 // paraphrase: it sets the "direct wire for big money, Stripe for small" frame.
@@ -48,15 +45,22 @@ const STRIPE_EXPECTATION_COPY =
   "Stripe verifies new businesses — card and bank-debit payments suit smaller amounts while your account builds history. For large requisitions, your invoices already carry your direct wire instructions.";
 
 export interface GettingPaidStripeState {
+  mode: StripeMode;
   accountId: string;
   connectStatus: string;
   processorReady: boolean;
+  testAccountId: string;
+  testConnectStatus: string;
+  liveAccountId: string;
+  liveConnectStatus: string;
 }
 
 interface GettingPaidSectionProps {
   canManage: boolean;
   stripe: GettingPaidStripeState;
-  onConnectStripe: () => void;
+  onConnectStripe: (mode: StripeMode) => void;
+  onActivateLiveStripe: () => void;
+  onOpenStripeDashboard: (mode: StripeMode) => void;
   stripeConnectPending: boolean;
   /** One quiet line about Overwatch subscription readiness — composed by the caller. */
   subscriptionNote: string;
@@ -110,6 +114,8 @@ export function GettingPaidSection({
   canManage,
   stripe,
   onConnectStripe,
+  onActivateLiveStripe,
+  onOpenStripeDashboard,
   stripeConnectPending,
   subscriptionNote,
   billingContactName,
@@ -205,12 +211,17 @@ export function GettingPaidSection({
 
   if (!canManage) return null;
 
-  const stripeReady = stripeConnectReady(stripe);
-  const stripeStateLabel = stripeReady
-    ? "Ready for card & bank-debit payments"
-    : stripe.accountId
-      ? "Verification in progress"
-      : "Not connected";
+  const liveReady = Boolean(stripe.liveAccountId) && stripe.liveConnectStatus === "active";
+  const stripeStateLabel =
+    stripe.mode === "live" && liveReady
+      ? "Live payments ready"
+      : liveReady
+        ? "Live account verified — activation required"
+        : stripe.liveAccountId
+          ? "Live verification in progress"
+          : stripe.testAccountId
+            ? "Sandbox connected — live setup required"
+            : "Live Stripe setup required";
   const memoPreview = renderRemittanceMemo(
     form?.remittanceMemoTemplate ?? "Reference: Invoice {number}",
     "1042",
@@ -352,8 +363,18 @@ export function GettingPaidSection({
             Online payments (Stripe)
           </div>
           <div className="rounded-md border border-hairline bg-card p-4">
+            {stripe.mode !== "live" && (
+              <div className="mb-4 flex gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>
+                  Sandbox accounts cannot receive real client payments and do not transfer into live
+                  mode. This company must complete one live Stripe setup before live invoice links
+                  can be activated.
+                </p>
+              </div>
+            )}
             <div className="flex items-center gap-2">
-              {stripeReady ? (
+              {liveReady ? (
                 <CheckCircle2 className="h-4 w-4 text-success" />
               ) : (
                 <ShieldCheck className="h-4 w-4 text-muted-foreground" />
@@ -361,19 +382,58 @@ export function GettingPaidSection({
               <span className="text-sm font-medium">{stripeStateLabel}</span>
             </div>
             <p className="mt-2 text-sm text-muted-foreground">{STRIPE_EXPECTATION_COPY}</p>
-            {!stripeReady && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Clients pay the contractor's connected Stripe account directly. Overwatch never
+              receives the invoice principal; it receives only a separately configured application
+              fee.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!liveReady && (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={stripeConnectPending}
+                  onClick={() => onConnectStripe("live")}
+                >
+                  {stripeConnectPending
+                    ? "Opening Stripe…"
+                    : stripe.liveAccountId
+                      ? "Resume live verification"
+                      : "Set up live Stripe"}
+                </Button>
+              )}
+              {liveReady && stripe.mode !== "live" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={stripeConnectPending}
+                  onClick={onActivateLiveStripe}
+                >
+                  {stripeConnectPending ? "Activating…" : "Activate live payments"}
+                </Button>
+              )}
+              {stripe.liveAccountId && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={stripeConnectPending}
+                  onClick={() => onOpenStripeDashboard("live")}
+                >
+                  Open Stripe Dashboard
+                </Button>
+              )}
+            </div>
+            {!stripe.liveAccountId && stripe.testAccountId && (
               <Button
                 type="button"
                 size="sm"
-                className="mt-3"
+                variant="ghost"
+                className="mt-2"
                 disabled={stripeConnectPending}
-                onClick={onConnectStripe}
+                onClick={() => onConnectStripe("test")}
               >
-                {stripeConnectPending
-                  ? "Opening Stripe…"
-                  : stripe.accountId
-                    ? "Resume Stripe verification"
-                    : "Connect Stripe"}
+                Open sandbox setup
               </Button>
             )}
             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{subscriptionNote}</p>

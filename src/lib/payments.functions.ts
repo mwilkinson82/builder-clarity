@@ -9,9 +9,14 @@ import {
   methodAvailability,
   renderRemittanceMemo,
   resolveEnabledMethods,
-  stripeConnectReady,
   type EnabledPaymentMethods,
 } from "@/lib/payments-domain";
+import {
+  ORGANIZATION_STRIPE_SELECT,
+  stripeConnectionForMode,
+  type OrganizationStripeColumns,
+  type StripeMode,
+} from "@/lib/stripe-mode";
 
 type PaymentsServerContext = {
   supabase: SupabaseClient;
@@ -267,11 +272,12 @@ export const saveCompanyPaymentProfile = createServerFn({ method: "POST" })
     return profileView(saved as unknown as PaymentProfileRow, false);
   });
 
-type OrganizationStripeRow = {
+type OrganizationStripeRow = OrganizationStripeColumns & {
   id: string;
-  stripe_connect_account_id: string;
-  stripe_connect_status: string;
-  payment_processor_ready: boolean;
+  mode: StripeMode;
+  accountId: string;
+  connectStatus: string;
+  ready: boolean;
 };
 
 async function loadOrganizationStripe(
@@ -279,26 +285,30 @@ async function loadOrganizationStripe(
   organizationId: string,
 ): Promise<OrganizationStripeRow> {
   const { data, error } = await dynamicTable(supabase, "organizations")
-    .select("id,stripe_connect_account_id,stripe_connect_status,payment_processor_ready")
+    .select(`id,${ORGANIZATION_STRIPE_SELECT}`)
     .eq("id", organizationId)
     .maybeSingle();
   if (error) {
     if (isMissingRelation(error) || error.code === "PGRST204") {
       return {
         id: organizationId,
-        stripe_connect_account_id: "",
-        stripe_connect_status: "not_connected",
-        payment_processor_ready: false,
+        mode: "test",
+        accountId: "",
+        connectStatus: "not_connected",
+        ready: false,
       };
     }
     throw new Error(error.message);
   }
-  const row = (data ?? {}) as Partial<OrganizationStripeRow>;
+  const row = (data ?? {}) as OrganizationStripeColumns;
+  const selected = stripeConnectionForMode(row);
   return {
+    ...row,
     id: organizationId,
-    stripe_connect_account_id: row.stripe_connect_account_id ?? "",
-    stripe_connect_status: row.stripe_connect_status || "not_connected",
-    payment_processor_ready: Boolean(row.payment_processor_ready),
+    mode: selected.mode,
+    accountId: selected.accountId,
+    connectStatus: selected.connectStatus,
+    ready: selected.ready,
   };
 }
 
@@ -308,6 +318,13 @@ export interface PaymentMethodContext {
   stripeAccountId: string;
   stripeConnectStatus: string;
   stripeReady: boolean;
+  stripeMode: StripeMode;
+  testStripeAccountId: string;
+  testStripeConnectStatus: string;
+  testStripeReady: boolean;
+  liveStripeAccountId: string;
+  liveStripeConnectStatus: string;
+  liveStripeReady: boolean;
   defaultPaymentMethods: EnabledPaymentMethods;
   cardFeePassThrough: boolean;
   stripeAmountThresholdCents: number;
@@ -322,16 +339,21 @@ async function buildPaymentMethodContext(
     loadOrganizationStripe(ctx.supabase, organizationId),
   ]);
   const view = profileView(profile, false);
+  const testConnection = stripeConnectionForMode(org, "test");
+  const liveConnection = stripeConnectionForMode(org, "live");
   return {
     organizationId,
     hasPaymentProfile: view.hasBankDetails,
-    stripeAccountId: org.stripe_connect_account_id,
-    stripeConnectStatus: org.stripe_connect_status,
-    stripeReady: stripeConnectReady({
-      accountId: org.stripe_connect_account_id,
-      connectStatus: org.stripe_connect_status,
-      processorReady: org.payment_processor_ready,
-    }),
+    stripeAccountId: org.accountId,
+    stripeConnectStatus: org.connectStatus,
+    stripeReady: org.ready,
+    stripeMode: org.mode,
+    testStripeAccountId: testConnection.accountId,
+    testStripeConnectStatus: testConnection.connectStatus,
+    testStripeReady: testConnection.ready,
+    liveStripeAccountId: liveConnection.accountId,
+    liveStripeConnectStatus: liveConnection.connectStatus,
+    liveStripeReady: liveConnection.ready,
     defaultPaymentMethods: view.defaultPaymentMethods,
     cardFeePassThrough: view.cardFeePassThrough,
     stripeAmountThresholdCents: view.stripeAmountThresholdCents,
@@ -447,17 +469,11 @@ export const expireInvoiceCheckout = createServerFn({ method: "POST" })
     if (!organizationId) return { ok: true, cleared: false, reason: "no_organization" };
 
     const org = await loadOrganizationStripe(admin, organizationId);
-    if (!org.stripe_connect_account_id) {
+    if (!org.accountId) {
       return { ok: true, cleared: false, reason: "not_connected" };
     }
-    const mode = await stripeServer.getOrganizationStripeMode(admin, organizationId);
-
     try {
-      await stripeServer.expireStripeCheckoutSession(
-        sessionId,
-        org.stripe_connect_account_id,
-        mode,
-      );
+      await stripeServer.expireStripeCheckoutSession(sessionId, org.accountId, org.mode);
     } catch {
       // Session is not open (completed, or already expired). Completed means
       // money may be moving: never clear the lock here — the webhook decides.
@@ -523,7 +539,7 @@ export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
     const stripeServer = await import("@/lib/stripe.server");
     const admin = stripeServer.createSupabaseAdminClient();
     const org = await loadOrganizationStripe(admin, organizationId);
-    if (!org.stripe_connect_account_id) {
+    if (!org.accountId) {
       return {
         ready: false as const,
         reason: "Stripe is not connected yet. Connect Stripe before checking for payments.",
@@ -532,12 +548,10 @@ export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
         openInvoices: [] as ReconcileInvoiceOption[],
       };
     }
-    const mode = await stripeServer.getOrganizationStripeMode(admin, organizationId);
-
     const chargePage = await stripeServer.stripeGet<{ data: StripeChargeLite[] }>(
       "charges?limit=100",
-      mode,
-      org.stripe_connect_account_id,
+      org.mode,
+      org.accountId,
     );
     const settled = (chargePage.data ?? []).filter(
       (charge) =>
@@ -631,7 +645,7 @@ export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
     return {
       ready: true as const,
       reason: "",
-      mode,
+      mode: org.mode,
       checkedCount: settled.length,
       payments,
       openInvoices,

@@ -10,6 +10,7 @@ import type {
   PaymentLedgerRow,
 } from "@/lib/projects.functions";
 import type { BillingLineItemRow } from "@/lib/billing.functions";
+import { ORGANIZATION_STRIPE_SELECT, stripeConnectionForMode } from "@/lib/stripe-mode";
 
 export type ClientAccessStatus = "pending" | "active" | "revoked";
 export type ClientChangeOrderStatus = "not_sent" | "sent" | "approved" | "rejected";
@@ -867,10 +868,7 @@ async function buildClientPaymentOptions(
       )
       .eq("organization_id", organizationId)
       .maybeSingle(),
-    from("organizations")
-      .select("stripe_connect_account_id,stripe_connect_status,payment_processor_ready")
-      .eq("id", organizationId)
-      .maybeSingle(),
+    from("organizations").select(ORGANIZATION_STRIPE_SELECT).eq("id", organizationId).maybeSingle(),
   ]);
   // Pre-migration or missing rows: no profile, no direct-bank block.
   const profile = profileRes.error ? null : (profileRes.data as Record<string, unknown> | null);
@@ -879,11 +877,7 @@ async function buildClientPaymentOptions(
   const hasBankDetails = Boolean(
     profile && profile.bank_name && profile.routing_number && profile.account_number,
   );
-  const stripeReady = domain.stripeConnectReady({
-    accountId: str(org?.stripe_connect_account_id),
-    connectStatus: str(org?.stripe_connect_status, "not_connected"),
-    processorReady: bool(org?.payment_processor_ready),
-  });
+  const stripeReady = stripeConnectionForMode(org ?? {}).ready;
   const thresholdCents = num(profile?.stripe_amount_threshold_cents);
 
   return invoices

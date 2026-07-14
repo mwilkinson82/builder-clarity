@@ -2803,7 +2803,11 @@ export type Database = {
           storage_limit_mb: number
           stripe_checkout_session_id: string
           stripe_connect_account_id: string
+          stripe_connect_account_id_live: string
+          stripe_connect_account_id_test: string
           stripe_connect_status: string
+          stripe_connect_status_live: string
+          stripe_connect_status_test: string
           stripe_customer_id: string
           stripe_mode: Database["public"]["Enums"]["stripe_mode"]
           stripe_price_id: string
@@ -2844,7 +2848,11 @@ export type Database = {
           storage_limit_mb?: number
           stripe_checkout_session_id?: string
           stripe_connect_account_id?: string
+          stripe_connect_account_id_live?: string
+          stripe_connect_account_id_test?: string
           stripe_connect_status?: string
+          stripe_connect_status_live?: string
+          stripe_connect_status_test?: string
           stripe_customer_id?: string
           stripe_mode?: Database["public"]["Enums"]["stripe_mode"]
           stripe_price_id?: string
@@ -2885,7 +2893,11 @@ export type Database = {
           storage_limit_mb?: number
           stripe_checkout_session_id?: string
           stripe_connect_account_id?: string
+          stripe_connect_account_id_live?: string
+          stripe_connect_account_id_test?: string
           stripe_connect_status?: string
+          stripe_connect_status_live?: string
+          stripe_connect_status_test?: string
           stripe_customer_id?: string
           stripe_mode?: Database["public"]["Enums"]["stripe_mode"]
           stripe_price_id?: string
@@ -5292,6 +5304,7 @@ export type Database = {
           claimed_at: string
           event_id: string
           event_type: string
+          livemode: boolean | null
           processed_at: string
           status: string
         }
@@ -5299,6 +5312,7 @@ export type Database = {
           claimed_at?: string
           event_id: string
           event_type?: string
+          livemode?: boolean | null
           processed_at?: string
           status?: string
         }
@@ -5306,6 +5320,7 @@ export type Database = {
           claimed_at?: string
           event_id?: string
           event_type?: string
+          livemode?: boolean | null
           processed_at?: string
           status?: string
         }
