@@ -338,6 +338,7 @@ export function PortfolioHome() {
             <Link to="/estimates">Estimates</Link>
             <Link to="/billing">Billing</Link>
             <Link to="/reports">Reports</Link>
+            <Link to="/team">Team</Link>
           </nav>
           <div className="ow-header__right">
             <div className="ow-search" role="search">
