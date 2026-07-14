@@ -443,7 +443,7 @@ export function BudgetLineDrawer({
                     />
                     <div className="space-y-1">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                        Additional forecast beyond subcontract
+                        PM forecast adjustment
                       </div>
                       <MoneyInput
                         value={Math.max(0, ftc - (subCost?.committed ?? 0))}
@@ -454,7 +454,8 @@ export function BudgetLineDrawer({
                         className="ml-auto h-9 w-36"
                       />
                       <div className="max-w-[13rem] text-[11px] leading-snug text-muted-foreground">
-                        Add only cost still expected outside the unpaid subcontract balance.
+                        Add only cost still expected beyond the automatic unpaid subcontract
+                        balance. This is the PM&apos;s manual forecast layer.
                       </div>
                     </div>
                   </div>

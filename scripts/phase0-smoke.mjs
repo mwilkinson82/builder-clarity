@@ -3428,8 +3428,27 @@ await expectContains(
 );
 await expectContains(
   "src/components/outcome/ExposuresTable.tsx",
-  [/Actual incurred/, /Linked cost actuals/, /actualIncurredByExposure/],
-  "risk tally shows recognized cost actuals already incurred against each risk",
+  [
+    /Actual incurred/,
+    /Linked costs \+ paid apps/,
+    /Sub committed/,
+    /actualIncurredByExposure/,
+    /subcontractCommittedByExposure/,
+  ],
+  "risk tally separates recognized and paid actuals from subcontract commitments",
+);
+await expectContains(
+  "supabase/migrations/20260714203742_subcontract_risk_and_cost_open_relief.sql",
+  [
+    /budget_open_relief numeric NOT NULL DEFAULT 0/,
+    /tg_prepare_cost_actual_open_relief/,
+    /SELECT GREATEST\(0, COALESCE\(ftc, 0\) \+ restored_old_relief\)[\s\S]*FOR UPDATE/,
+    /ftc = GREATEST\([\s\S]*old_relief - new_relief/,
+    /subcontract_change_orders[\s\S]*exposure_id uuid/,
+    /subcontract_payments[\s\S]*exposure_id uuid/,
+    /tg_validate_subcontract_exposure_project/,
+  ],
+  "recognized direct costs relieve Budget Open reversibly and subcontract records link to same-project risks",
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",

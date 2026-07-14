@@ -1883,7 +1883,9 @@ export function ProjectCostTrackingPanel({
                       </SelectContent>
                     </Select>
                     <p className="text-[11px] text-muted-foreground">
-                      A draft doesn&apos;t count as job cost until it&apos;s approved or paid.
+                      A draft does not affect Actuals or Budget Open. Once recognized, a direct cost
+                      increases Actuals and automatically relieves Open on this cost code; voiding
+                      it restores the same amount.
                     </p>
                   </div>
                 </div>
@@ -2169,60 +2171,6 @@ export function ProjectCostTrackingPanel({
                       }
                     />
                   </div>
-                </div>
-                <div className="space-y-1.5 rounded-md border border-hairline bg-surface p-3">
-                  <Label>Subcontract commitment (optional)</Label>
-                  <Select
-                    value={
-                      draft.subcontract_change_order_id
-                        ? `co:${draft.subcontract_change_order_id}`
-                        : draft.subcontract_payment_id
-                          ? `payment:${draft.subcontract_payment_id}`
-                          : "unlinked"
-                    }
-                    onValueChange={(value) => {
-                      const [kind, id] = value.split(":");
-                      const linkedChangeOrder =
-                        kind === "co"
-                          ? projectSubcontractsQuery.data?.change_orders.find(
-                              (changeOrder) => changeOrder.id === id,
-                            )
-                          : undefined;
-                      const linkedBucket = linkedChangeOrder?.cost_bucket_id
-                        ? buckets.find((bucket) => bucket.id === linkedChangeOrder.cost_bucket_id)
-                        : undefined;
-                      setDraft({
-                        ...draft,
-                        subcontract_change_order_id: kind === "co" ? id || null : null,
-                        subcontract_payment_id: kind === "payment" ? id || null : null,
-                        ...(linkedBucket
-                          ? {
-                              cost_bucket_id: linkedBucket.id,
-                              cost_code: linkedBucket.cost_code,
-                            }
-                          : {}),
-                      });
-                    }}
-                  >
-                    <SelectTrigger aria-label="Link this cost to a subcontract commitment">
-                      <SelectValue placeholder="Not linked to a subcontract commitment" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="unlinked">
-                        Not linked to a subcontract commitment
-                      </SelectItem>
-                      {subcontractTargetOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-[11px] leading-relaxed text-muted-foreground">
-                    Once this invoice is approved, its actual cost reduces Budget Open on the cost
-                    code instead of stacking on top of the same subcontract commitment. Multi-line
-                    invoices should use a pay app when their allocations span different cost codes.
-                  </p>
                 </div>
                 <div className="space-y-1.5 rounded-md border border-hairline bg-surface p-3">
                   <Label>Risk tally attribution (optional)</Label>

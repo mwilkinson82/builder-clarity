@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { CostActualRow } from "../src/lib/billing.functions";
-import { groupCostActualsByDocument, recognizedRiskActuals } from "../src/lib/cost-documents";
+import {
+  groupCostActualsByDocument,
+  recognizedRiskActuals,
+  summarizeRiskLinkedCosts,
+} from "../src/lib/cost-documents";
+import type {
+  SubcontractChangeOrderRow,
+  SubcontractPaymentRow,
+} from "../src/lib/subcontracts.functions";
 
 const cost = (patch: Partial<CostActualRow>): CostActualRow =>
   ({
@@ -10,6 +18,7 @@ const cost = (patch: Partial<CostActualRow>): CostActualRow =>
     import_batch_id: null,
     cost_document_id: "00000000-0000-4000-8000-000000000100",
     exposure_id: null,
+    budget_open_relief: 0,
     cost_code: "03-8005",
     description: "Invoice line",
     category: "subcontract",
@@ -66,5 +75,22 @@ describe("cost documents", () => {
     ];
 
     expect(recognizedRiskActuals(actuals).map((actual) => actual.id)).toEqual(["approved"]);
+  });
+
+  it("separates paid subcontract actuals from subcontract CO commitments", () => {
+    const exposureId = "00000000-0000-4000-8000-000000000200";
+    const payment = (status: "draft" | "approved" | "paid", amount: number) =>
+      ({ exposure_id: exposureId, status, amount }) as SubcontractPaymentRow;
+    const changeOrder = (amount: number) =>
+      ({ exposure_id: exposureId, amount }) as SubcontractChangeOrderRow;
+
+    const totals = summarizeRiskLinkedCosts(
+      [cost({ exposure_id: exposureId, amount: 125 })],
+      [payment("draft", 900), payment("approved", 800), payment("paid", 300)],
+      [changeOrder(1_000), changeOrder(-100)],
+    );
+
+    expect(totals.actualByExposure.get(exposureId)).toBe(425);
+    expect(totals.committedByExposure.get(exposureId)).toBe(900);
   });
 });

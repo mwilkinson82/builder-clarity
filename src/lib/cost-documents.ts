@@ -1,4 +1,9 @@
 import type { CostActualRow } from "@/lib/billing.functions";
+import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
+import type {
+  SubcontractChangeOrderRow,
+  SubcontractPaymentRow,
+} from "@/lib/subcontracts.functions";
 
 export type CostDocumentGroup = {
   id: string;
@@ -29,4 +34,45 @@ export function recognizedRiskActuals(actuals: CostActualRow[]): CostActualRow[]
     (actual) =>
       Boolean(actual.exposure_id) && actual.status !== "draft" && actual.status !== "void",
   );
+}
+
+export function summarizeRiskLinkedCosts(
+  actuals: CostActualRow[],
+  payments: SubcontractPaymentRow[],
+  changeOrders: SubcontractChangeOrderRow[],
+) {
+  const actualByExposureCents = new Map<string, number>();
+  const committedByExposureCents = new Map<string, number>();
+
+  for (const actual of recognizedRiskActuals(actuals)) {
+    if (!actual.exposure_id) continue;
+    actualByExposureCents.set(
+      actual.exposure_id,
+      (actualByExposureCents.get(actual.exposure_id) ?? 0) + dollarsToCents(actual.amount),
+    );
+  }
+  for (const payment of payments) {
+    if (!payment.exposure_id || payment.status !== "paid") continue;
+    actualByExposureCents.set(
+      payment.exposure_id,
+      (actualByExposureCents.get(payment.exposure_id) ?? 0) + dollarsToCents(payment.amount),
+    );
+  }
+  for (const changeOrder of changeOrders) {
+    if (!changeOrder.exposure_id) continue;
+    committedByExposureCents.set(
+      changeOrder.exposure_id,
+      (committedByExposureCents.get(changeOrder.exposure_id) ?? 0) +
+        dollarsToCents(changeOrder.amount),
+    );
+  }
+
+  return {
+    actualByExposure: new Map(
+      [...actualByExposureCents].map(([id, cents]) => [id, centsToDollars(cents)]),
+    ),
+    committedByExposure: new Map(
+      [...committedByExposureCents].map(([id, cents]) => [id, centsToDollars(cents)]),
+    ),
+  };
 }

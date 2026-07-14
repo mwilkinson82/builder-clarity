@@ -89,6 +89,7 @@ export interface SubcontractPaymentRow {
   notes: string;
   status: SubPaymentStatus;
   approved_at: string | null;
+  exposure_id: string | null;
   // How this pay app was paid (field request 2026-07-10, mirrors cost #273):
   // method wire/check/card/ach/other; the check#/wire confirmation lives on
   // `reference`; the date paid on `payment_date`.
@@ -111,6 +112,7 @@ export interface SubcontractChangeOrderRow {
   description: string;
   amount: number;
   co_date: string;
+  exposure_id: string | null;
 }
 // One version of a subcontract's paper — original, an amendment, a re-negotiated
 // copy. Many per subcontract; exactly one is_active = the current contract.
@@ -182,6 +184,7 @@ const normalizePayment = (row: Record<string, unknown>): SubcontractPaymentRow =
   notes: str(row.notes),
   status: str(row.status, "paid") as SubPaymentStatus,
   approved_at: (row.approved_at as string | null) ?? null,
+  exposure_id: (row.exposure_id as string | null) ?? null,
   payment_method: str(row.payment_method),
   compliance_override_reason: str(row.compliance_override_reason),
   compliance_overridden_at: (row.compliance_overridden_at as string | null) ?? null,
@@ -195,7 +198,35 @@ const normalizeChangeOrder = (row: Record<string, unknown>): SubcontractChangeOr
   description: str(row.description),
   amount: num(row.amount),
   co_date: str(row.co_date),
+  exposure_id: (row.exposure_id as string | null) ?? null,
 });
+
+const RISK_LINKS_NOT_ENABLED =
+  "Subcontract Risk Tally links aren't enabled yet — the database update is still pending.";
+
+function isMissingExposureColumn(error: DynamicSupabaseError | null) {
+  const message = error?.message ?? "";
+  return (
+    (error?.code === "PGRST204" || /column|schema cache/i.test(message)) &&
+    /exposure_id/i.test(message)
+  );
+}
+
+async function validateExposureForProject(
+  supabase: unknown,
+  exposureId: string | null,
+  projectId: string,
+) {
+  if (!exposureId) return;
+  const { data: exposure, error } = await dynamicTable(supabase, "exposures")
+    .select("id,project_id")
+    .eq("id", exposureId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!exposure || str((exposure as Record<string, unknown>).project_id) !== projectId) {
+    throw new Error("That risk belongs to a different project or is no longer available.");
+  }
+}
 const normalizeDocument = (row: Record<string, unknown>): SubcontractDocumentRow => ({
   id: str(row.id),
   project_id: str(row.project_id),
@@ -485,10 +516,12 @@ export const recordSubcontractChangeOrder = createServerFn({ method: "POST" })
           .number()
           .refine((value) => value !== 0, "Enter the change order or credit amount."),
         co_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "co_date must be YYYY-MM-DD"),
+        exposureId: z.string().uuid().nullable().default(null),
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractChangeOrderRow> => {
+    await validateExposureForProject(context.supabase, data.exposureId, data.projectId);
     let costCode = "";
     let bucketLabel = "";
     if (data.costBucketId) {
@@ -519,14 +552,42 @@ export const recordSubcontractChangeOrder = createServerFn({ method: "POST" })
         description: data.description || bucketLabel,
         amount: data.amount,
         co_date: data.co_date,
+        exposure_id: data.exposureId,
       })
       .select("*")
       .single();
     if (error) {
+      if (data.exposureId && isMissingExposureColumn(error))
+        throw new Error(RISK_LINKS_NOT_ENABLED);
       if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
       throw new Error(error.message);
     }
     return normalizeChangeOrder(row as Record<string, unknown>);
+  });
+
+export const setSubcontractChangeOrderExposure = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ id: z.string().uuid(), exposureId: z.string().uuid().nullable() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SubcontractChangeOrderRow> => {
+    const current = await dynamicTable(context.supabase, "subcontract_change_orders")
+      .select("id,project_id")
+      .eq("id", data.id)
+      .single();
+    if (current.error) throw new Error(current.error.message);
+    const projectId = str((current.data as Record<string, unknown>).project_id);
+    await validateExposureForProject(context.supabase, data.exposureId, projectId);
+    const result = await dynamicTable(context.supabase, "subcontract_change_orders")
+      .update({ exposure_id: data.exposureId })
+      .eq("id", data.id)
+      .select("*")
+      .single();
+    if (result.error) {
+      if (isMissingExposureColumn(result.error)) throw new Error(RISK_LINKS_NOT_ENABLED);
+      throw new Error(result.error.message);
+    }
+    return normalizeChangeOrder(result.data as Record<string, unknown>);
   });
 
 export const deleteSubcontractChangeOrder = createServerFn({ method: "POST" })
@@ -711,13 +772,15 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
         // Lifecycle stage the row lands in. Default 'paid' = the pre-lifecycle
         // behaviour, so existing callers keep recording paid facts.
         status: z.enum(["draft", "approved", "paid"]).default("paid"),
+        exposureId: z.string().uuid().nullable().default(null),
         // A typed reason overrides a failing gate (audited); absent → gate blocks.
         override_reason: z.string().max(500).optional(),
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
-    const { projectId, subcontractId, status, override_reason, ...fields } = data;
+    const { projectId, subcontractId, status, override_reason, exposureId, ...fields } = data;
+    await validateExposureForProject(context.supabase, exposureId, projectId);
 
     // Logging a DRAFT pay app needs nothing on file — that's the inbox. Landing
     // directly at approved-for-payment or paid is gated (field request
@@ -748,7 +811,12 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
         }
       : {};
 
-    const base = { project_id: projectId, subcontract_id: subcontractId, ...fields };
+    const base = {
+      project_id: projectId,
+      subcontract_id: subcontractId,
+      exposure_id: exposureId,
+      ...fields,
+    };
     let insertRes = await dynamicTable(context.supabase, "subcontract_payments")
       .insert({
         ...base,
@@ -758,6 +826,19 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
       })
       .select("*")
       .single();
+    if (insertRes.error && isMissingExposureColumn(insertRes.error)) {
+      if (exposureId) throw new Error(RISK_LINKS_NOT_ENABLED);
+      const { exposure_id: _exposureId, ...baseWithoutExposure } = base;
+      insertRes = await dynamicTable(context.supabase, "subcontract_payments")
+        .insert({
+          ...baseWithoutExposure,
+          status,
+          ...(status === "approved" ? { approved_at: now } : {}),
+          ...overrideStamp,
+        })
+        .select("*")
+        .single();
+    }
     if (insertRes.error && overriding && isMissingOverrideColumn(insertRes.error)) {
       throw new Error(OVERRIDE_NOT_ENABLED);
     }
@@ -765,8 +846,9 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
       // Migration not applied yet: a paid row is exactly the legacy shape, so
       // record it the old way; the new stages have nothing to fall back to.
       if (status !== "paid") throw new Error(STAGES_NOT_ENABLED);
+      const { exposure_id: _exposureId, ...legacyBase } = base;
       insertRes = await dynamicTable(context.supabase, "subcontract_payments")
-        .insert(base)
+        .insert(legacyBase)
         .select("*")
         .single();
     }
@@ -783,6 +865,31 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
         .eq("id", gate.consumeWaiverId);
     }
     return payment;
+  });
+
+export const setSubcontractPaymentExposure = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ id: z.string().uuid(), exposureId: z.string().uuid().nullable() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
+    const current = await dynamicTable(context.supabase, "subcontract_payments")
+      .select("id,project_id")
+      .eq("id", data.id)
+      .single();
+    if (current.error) throw new Error(current.error.message);
+    const projectId = str((current.data as Record<string, unknown>).project_id);
+    await validateExposureForProject(context.supabase, data.exposureId, projectId);
+    const result = await dynamicTable(context.supabase, "subcontract_payments")
+      .update({ exposure_id: data.exposureId })
+      .eq("id", data.id)
+      .select("*")
+      .single();
+    if (result.error) {
+      if (isMissingExposureColumn(result.error)) throw new Error(RISK_LINKS_NOT_ENABLED);
+      throw new Error(result.error.message);
+    }
+    return normalizePayment(result.data as Record<string, unknown>);
   });
 
 // Walk a pay app forward: draft → approved (for payment) → paid. BOTH forward

@@ -2977,6 +2977,8 @@ function ProjectPage() {
               <RiskAllocationWorkbench
                 exposures={exposures}
                 costActuals={billingWorkspaceQuery.data?.costActuals ?? []}
+                subcontractPayments={subcontractsQuery.data?.payments ?? []}
+                subcontractChangeOrders={subcontractsQuery.data?.change_orders ?? []}
                 rollup={rollup}
                 guidance={guidance}
                 focusedExposureId={focusedRiskExposureId}
@@ -3215,6 +3217,11 @@ function ProjectPage() {
                   </Button>
                 </div>
               )}
+              <p className="text-xs text-muted-foreground">
+                Open is remaining committed or forecasted cost. Recognized direct costs relieve it
+                automatically. Click any cost-code row to review the calculation or add a PM
+                forecast adjustment beyond the automatic subcontract balance.
+              </p>
               <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
                 <BudgetLedgerTable
                   buckets={ledgerBuckets}
@@ -3512,7 +3519,11 @@ function ProjectPage() {
             </TabsContent>
 
             <TabsContent value="subcontractors" className="mt-0">
-              <SubcontractorsWorkspace projectId={projectId} buckets={buckets} />
+              <SubcontractorsWorkspace
+                projectId={projectId}
+                buckets={buckets}
+                exposures={exposures}
+              />
             </TabsContent>
 
             <TabsContent value="client-portal" className="mt-0">

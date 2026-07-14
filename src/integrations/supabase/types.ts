@@ -1001,6 +1001,7 @@ export type Database = {
           amount: number
           approved_at: string | null
           approved_by: string | null
+          budget_open_relief: number
           category: string
           cost_bucket_id: string | null
           cost_code: string
@@ -1039,6 +1040,7 @@ export type Database = {
           amount?: number
           approved_at?: string | null
           approved_by?: string | null
+          budget_open_relief?: number
           category?: string
           cost_bucket_id?: string | null
           cost_code?: string
@@ -1077,6 +1079,7 @@ export type Database = {
           amount?: number
           approved_at?: string | null
           approved_by?: string | null
+          budget_open_relief?: number
           category?: string
           cost_bucket_id?: string | null
           cost_code?: string
@@ -5425,6 +5428,7 @@ export type Database = {
           cost_code: string
           created_at: string
           description: string
+          exposure_id: string | null
           id: string
           project_id: string
           subcontract_id: string
@@ -5437,6 +5441,7 @@ export type Database = {
           cost_code?: string
           created_at?: string
           description?: string
+          exposure_id?: string | null
           id?: string
           project_id: string
           subcontract_id: string
@@ -5449,6 +5454,7 @@ export type Database = {
           cost_code?: string
           created_at?: string
           description?: string
+          exposure_id?: string | null
           id?: string
           project_id?: string
           subcontract_id?: string
@@ -5460,6 +5466,13 @@ export type Database = {
             columns: ["cost_bucket_id"]
             isOneToOne: false
             referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subcontract_change_orders_exposure_id_fkey"
+            columns: ["exposure_id"]
+            isOneToOne: false
+            referencedRelation: "exposures"
             referencedColumns: ["id"]
           },
           {
@@ -5605,6 +5618,7 @@ export type Database = {
           compliance_overridden_by: string | null
           compliance_override_reason: string
           created_at: string
+          exposure_id: string | null
           id: string
           notes: string
           payment_date: string
@@ -5623,6 +5637,7 @@ export type Database = {
           compliance_overridden_by?: string | null
           compliance_override_reason?: string
           created_at?: string
+          exposure_id?: string | null
           id?: string
           notes?: string
           payment_date?: string
@@ -5641,6 +5656,7 @@ export type Database = {
           compliance_overridden_by?: string | null
           compliance_override_reason?: string
           created_at?: string
+          exposure_id?: string | null
           id?: string
           notes?: string
           payment_date?: string
@@ -5653,6 +5669,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "subcontract_payments_exposure_id_fkey"
+            columns: ["exposure_id"]
+            isOneToOne: false
+            referencedRelation: "exposures"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "subcontract_payments_project_id_fkey"
             columns: ["project_id"]

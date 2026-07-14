@@ -135,6 +135,7 @@ function TreatmentBadge({ path }: { path: ResponsePath }) {
 export function ExposuresTable({
   exposures,
   actualIncurredByExposure,
+  subcontractCommittedByExposure,
   focusedExposureId,
   onFocusExposureHandled,
   openCreateSignal,
@@ -147,6 +148,7 @@ export function ExposuresTable({
 }: {
   exposures: ExposureRow[];
   actualIncurredByExposure?: ReadonlyMap<string, number>;
+  subcontractCommittedByExposure?: ReadonlyMap<string, number>;
   focusedExposureId?: string | null;
   onFocusExposureHandled?: () => void;
   /** Increment to open the create-risk dialog from outside (workbench header "+ Log risk"). */
@@ -279,6 +281,7 @@ export function ExposuresTable({
               key={e.id}
               exposure={e}
               actualIncurred={actualIncurredByExposure?.get(e.id) ?? 0}
+              subcontractCommitted={subcontractCommittedByExposure?.get(e.id) ?? 0}
               highlightLabel={e.id === topEHoldId ? "Top E-Hold" : undefined}
               spotlighted={spotlightExposureId === e.id}
               onEdit={openEdit}
@@ -308,6 +311,7 @@ export function ExposuresTable({
               key={e.id}
               exposure={e}
               actualIncurred={actualIncurredByExposure?.get(e.id) ?? 0}
+              subcontractCommitted={subcontractCommittedByExposure?.get(e.id) ?? 0}
               highlightLabel={e.id === topCHoldId ? "Top C-Hold" : undefined}
               spotlighted={spotlightExposureId === e.id}
               onEdit={openEdit}
@@ -329,6 +333,7 @@ export function ExposuresTable({
               key={e.id}
               exposure={e}
               actualIncurred={actualIncurredByExposure?.get(e.id) ?? 0}
+              subcontractCommitted={subcontractCommittedByExposure?.get(e.id) ?? 0}
               highlightLabel={e.id === topUnclassifiedId ? "Top risk" : undefined}
               spotlighted={spotlightExposureId === e.id}
               onEdit={openEdit}
@@ -350,6 +355,7 @@ export function ExposuresTable({
               key={e.id}
               exposure={e}
               actualIncurred={actualIncurredByExposure?.get(e.id) ?? 0}
+              subcontractCommitted={subcontractCommittedByExposure?.get(e.id) ?? 0}
               spotlighted={spotlightExposureId === e.id}
               onEdit={openEdit}
               onDelete={onDelete}
@@ -692,6 +698,7 @@ function RiskGroupRow({ label, detail, count }: { label: string; detail: string;
 function RiskRow({
   exposure,
   actualIncurred,
+  subcontractCommitted,
   highlightLabel,
   spotlighted,
   onEdit,
@@ -702,6 +709,7 @@ function RiskRow({
 }: {
   exposure: ExposureRow;
   actualIncurred: number;
+  subcontractCommitted: number;
   highlightLabel?: string;
   spotlighted?: boolean;
   onEdit: (exposure: ExposureRow) => void;
@@ -825,7 +833,16 @@ function RiskRow({
             <div className="mt-0.5 font-serif text-base leading-tight text-warning">
               {fmtUSD(actualIncurred)}
             </div>
-            <div className="mt-0.5 text-[10px] text-muted-foreground">Linked cost actuals</div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground">Linked costs + paid apps</div>
+          </div>
+          <div className="min-w-0 rounded-md border border-accent/30 bg-accent/5 px-2 py-1.5 lg:mt-2.5 lg:px-0 lg:py-1.5">
+            <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+              Sub committed
+            </div>
+            <div className="mt-0.5 font-serif text-base leading-tight text-accent-foreground">
+              {fmtUSD(subcontractCommitted)}
+            </div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground">Linked subcontract COs</div>
           </div>
         </div>
         <div className="mt-3 text-xs">
