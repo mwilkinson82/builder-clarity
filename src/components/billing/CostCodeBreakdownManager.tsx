@@ -126,8 +126,9 @@ export function CostCodeBreakdownManager({
             (sum, item) => sum + item.planned_amount_cents,
             0,
           );
-          const budgetCents = Math.round(bucket.original_budget * 100);
-          const remainingCents = budgetCents - plannedCents;
+          const plannedAmount = plannedCents / 100;
+          const budgetAmount = bucket.original_budget;
+          const remainingAmount = budgetAmount - plannedAmount;
           const open = openBucketId === bucket.id;
           const draft = drafts[bucket.id] ?? emptyDraft();
 
@@ -155,17 +156,17 @@ export function CostCodeBreakdownManager({
                 </span>
                 <span className="text-right">
                   <span className="block font-serif text-base tabular text-foreground">
-                    {fmtUSDCents(plannedCents)} / {fmtUSDCents(budgetCents)}
+                    {fmtUSDCents(plannedAmount)} / {fmtUSDCents(budgetAmount)}
                   </span>
                   <span
                     className={cn(
                       "block text-[11px]",
-                      remainingCents < 0 ? "text-danger" : "text-muted-foreground",
+                      remainingAmount < 0 ? "text-danger" : "text-muted-foreground",
                     )}
                   >
-                    {remainingCents < 0
-                      ? `${fmtUSDCents(Math.abs(remainingCents))} over the code budget`
-                      : `${fmtUSDCents(remainingCents)} left to plan`}
+                    {remainingAmount < 0
+                      ? `${fmtUSDCents(Math.abs(remainingAmount))} over the code budget`
+                      : `${fmtUSDCents(remainingAmount)} left to plan`}
                   </span>
                 </span>
               </button>
@@ -188,7 +189,7 @@ export function CostCodeBreakdownManager({
                             </div>
                           </div>
                           <div className="font-medium tabular text-foreground">
-                            {fmtUSDCents(item.planned_amount_cents)}
+                            {fmtUSDCents(item.planned_amount_cents / 100)}
                           </div>
                           <Button
                             type="button"
