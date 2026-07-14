@@ -81,5 +81,7 @@ describe("Money dashboard forecast bridge", () => {
     expect(html).toContain("Gap to signed GP target");
     expect(html).toContain("$455,750 below current signed");
     expect(html).toContain("$173,000 total holds");
+    expect(html.indexOf("GP recovery bridge")).toBeLessThan(html.indexOf("01 · Revenue forecast"));
+    expect(html.indexOf("GP recovery bridge")).toBeLessThan(html.indexOf("02 · Cost forecast"));
   });
 });
