@@ -28,7 +28,7 @@ interface ClientPortalWorkspaceProps {
 }
 
 type AccessPermissionField =
-  "can_view_change_orders" | "can_view_daily_reports" | "can_view_billing";
+  "can_view_change_orders" | "can_view_daily_reports" | "can_view_billing" | "can_view_selections";
 
 interface AccessPermissionInput {
   accessId: string;
@@ -256,7 +256,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
     );
   }
 
-  const matrixColumns = 6;
+  const matrixColumns = 7;
 
   return (
     <div className="space-y-5">
@@ -291,6 +291,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
                 <MatrixHeader center>Change orders</MatrixHeader>
                 <MatrixHeader center>Daily reports</MatrixHeader>
                 <MatrixHeader center>Billing</MatrixHeader>
+                <MatrixHeader center>Selections</MatrixHeader>
                 <MatrixHeader center>Status</MatrixHeader>
                 <MatrixHeader center>Link</MatrixHeader>
               </tr>
@@ -357,6 +358,18 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
                             })
                           }
                         />
+                        <MatrixSwitchCell
+                          checked={access.can_view_selections}
+                          saving={isPermissionSaving(access.id, "can_view_selections")}
+                          ariaLabel={`Selections for ${displayName}`}
+                          onChange={(value) =>
+                            accessPermissionMutation.mutate({
+                              accessId: access.id,
+                              field: "can_view_selections",
+                              value,
+                            })
+                          }
+                        />
                         <td className="px-4 py-3.5 text-center">
                           <span
                             className={`inline-flex rounded-full border px-2.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.06em] ${seatStatusClass(access.status)}`}
@@ -410,6 +423,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
                           {contactSubLine(contact, contact.email)}
                         </div>
                       </td>
+                      <td className="px-4 py-3.5 text-center text-xs text-muted-foreground">—</td>
                       <td className="px-4 py-3.5 text-center text-xs text-muted-foreground">—</td>
                       <td className="px-4 py-3.5 text-center text-xs text-muted-foreground">—</td>
                       <td className="px-4 py-3.5 text-center text-xs text-muted-foreground">—</td>

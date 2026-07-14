@@ -198,7 +198,10 @@ import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pd
 import { toast } from "sonner";
 import {
   Activity,
+  ArrowLeft,
   CalendarClock,
+  ChevronDown,
+  ChevronRight,
   ClipboardCheck,
   ClipboardList,
   Download,
@@ -218,6 +221,7 @@ import {
   ShieldAlert,
   Gavel,
   Plus,
+  PackageCheck,
   Trash2,
   Users,
 } from "lucide-react";
@@ -231,9 +235,16 @@ const BillingWorkspace = lazy(() =>
   })),
 );
 
+const SelectionsWorkspace = lazy(() =>
+  import("@/components/outcome/SelectionsWorkspace").then((module) => ({
+    default: module.SelectionsWorkspace,
+  })),
+);
+
 const PROJECT_TAB_VALUES = [
   "dashboard",
   "schedule",
+  "selections",
   "inspections",
   "risk-tally",
   "claims",
@@ -277,7 +288,7 @@ const PROJECT_NAV_GROUPS: ProjectNavGroup[] = [
   {
     key: "plan-procurement",
     label: "Plan & Procurement",
-    values: ["schedule", "rfi-submittals"],
+    values: ["schedule", "selections", "rfi-submittals"],
   },
   {
     key: "commercial",
@@ -2274,6 +2285,12 @@ function ProjectPage() {
       alert: project.schedule_variance_weeks > 0,
     },
     {
+      value: "selections",
+      label: "Selections",
+      detail: "Owner decisions",
+      icon: PackageCheck,
+    },
+    {
       value: "inspections",
       label: "Inspections",
       detail: `${openInspectionCount} open`,
@@ -2519,6 +2536,13 @@ function ProjectPage() {
                     </Select>
                   </div>
                 </div>
+                <Link
+                  to="/"
+                  className="mt-3 flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Portfolio
+                </Link>
               </div>
               {/* Multi-expand rail: each group toggles independently. Navigating
                   to a destination opens its group without closing any section
@@ -2557,9 +2581,10 @@ function ProjectPage() {
                         )}
                       >
                         {group.label}
-                        <span aria-hidden="true" className="text-[11px] text-muted-foreground">
-                          ▾
-                        </span>
+                        <ChevronDown
+                          aria-hidden="true"
+                          className="h-5 w-5 shrink-0 text-muted-foreground"
+                        />
                       </button>
                       <div id={groupContentId}>
                         {group.values.map((value) => {
@@ -2631,20 +2656,17 @@ function ProjectPage() {
                           {hint.text}
                         </span>
                       )}
-                      <span className="shrink-0 text-[11.5px] text-muted-foreground">▸</span>
+                      <ChevronRight
+                        aria-hidden="true"
+                        className="h-5 w-5 shrink-0 text-muted-foreground"
+                      />
                     </span>
                   </button>
                 );
               })}
-              {/* v2: rail foot — the way back out and sign-out live here on
-                  desktop (mobile keeps them in the slim top bar). */}
-              <div className="mt-auto hidden w-full items-center justify-between gap-2 border-t border-hairline pt-2.5 lg:flex">
-                <Link
-                  to="/"
-                  className="rounded px-1.5 text-xs text-muted-foreground transition hover:text-foreground"
-                >
-                  ← Portfolio
-                </Link>
+              {/* Sign-out stays anchored at the bottom; Portfolio now lives
+                  beneath the project switcher so it is always discoverable. */}
+              <div className="mt-auto hidden w-full items-center justify-end border-t border-hairline pt-2.5 lg:flex">
                 <button
                   type="button"
                   onClick={signOut}
@@ -2871,6 +2893,16 @@ function ProjectPage() {
                 subtitle="Completion forecast, interim milestones, critical path movement, and schedule-linked risk."
               />
               <ScheduleRisk project={project} lastReviewForecast={lastReviewForecast} />
+            </TabsContent>
+
+            <TabsContent value="selections" className="mt-0">
+              <Suspense
+                fallback={
+                  <div className="h-48 animate-pulse rounded-xl border border-hairline bg-card" />
+                }
+              >
+                <SelectionsWorkspace projectId={projectId} />
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="inspections" className="mt-0">
