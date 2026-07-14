@@ -3324,6 +3324,16 @@ await expectContains(
   "cost-document and risk-link migration preserves allocation rows and enforces project scope",
 );
 await expectContains(
+  "supabase/migrations/20260714124530_backfill_legacy_cost_documents.sql",
+  [
+    /cost_document_id = id/,
+    /date_trunc\('second', created_at\)/,
+    /grouped\.line_count > 1/,
+    /created_at < timestamptz '2026-07-14 16:43:01\+00'/,
+  ],
+  "legacy multi-line invoices are narrowly regrouped by their same-second save signature",
+);
+await expectContains(
   "src/components/billing/BillingEnhancements.tsx",
   [
     /groupCostActualsByDocument/,
