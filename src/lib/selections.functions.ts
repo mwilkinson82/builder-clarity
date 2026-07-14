@@ -2,7 +2,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
+  approvalGateDecisionStatus,
   calculateSelectionDates,
+  procurementReleaseAllowed,
   selectionInstallDate,
   type SelectionDecisionStatus,
   type SelectionProcurementStatus,
@@ -30,6 +32,12 @@ export interface ProjectSelectionRow {
   category: string;
   room_area: string;
   description: string;
+  approval_gate_type: SelectionApprovalGateType;
+  approval_gate_entry_id: string | null;
+  approval_gate_override_acknowledged: boolean;
+  approval_gate_override_reason: string;
+  approval_gate_overridden_by: string | null;
+  approval_gate_overridden_at: string | null;
   decision_status: SelectionDecisionStatus;
   procurement_status: SelectionProcurementStatus;
   schedule_activity_id: string | null;
@@ -81,6 +89,18 @@ export interface SelectionScheduleActivity {
   baseline_start_date: string | null;
 }
 
+export type SelectionApprovalGateType = "owner_selection" | "submittal" | "rfi";
+
+export interface SelectionApprovalGateEntry {
+  id: string;
+  kind: "submittal" | "rfi";
+  number: string;
+  item: string;
+  description: string;
+  status: string;
+  date_returned: string | null;
+}
+
 const optionInput = z.object({
   id: z.string().uuid().optional(),
   title: z.string().trim().min(1).max(200),
@@ -99,6 +119,10 @@ const saveSelectionInput = z.object({
   category: z.string().max(120).default(""),
   room_area: z.string().max(120).default(""),
   description: z.string().max(4000).default(""),
+  approval_gate_type: z.enum(["owner_selection", "submittal", "rfi"]).default("owner_selection"),
+  approval_gate_entry_id: z.string().uuid().nullable().default(null),
+  approval_gate_override_acknowledged: z.boolean().default(false),
+  approval_gate_override_reason: z.string().trim().max(1000).default(""),
   schedule_activity_id: z.string().uuid().nullable().default(null),
   schedule_override_acknowledged: z.boolean().default(false),
   need_on_site_date: z.string().date().nullable().default(null),
@@ -145,6 +169,14 @@ function isMissingSelections(error: unknown) {
   );
 }
 
+function isMissingApprovalGateLog(error: unknown) {
+  const candidate = error as { code?: string; message?: string } | null;
+  return (
+    candidate?.code === "PGRST205" ||
+    /submittal_log_entries|schema cache|could not find the table/i.test(candidate?.message ?? "")
+  );
+}
+
 function normalizeOption(row: Record<string, unknown>): ProjectSelectionOptionRow {
   return {
     id: str(row.id),
@@ -173,6 +205,12 @@ function normalizeSelection(
     category: str(row.category),
     room_area: str(row.room_area),
     description: str(row.description),
+    approval_gate_type: str(row.approval_gate_type, "owner_selection") as SelectionApprovalGateType,
+    approval_gate_entry_id: str(row.approval_gate_entry_id) || null,
+    approval_gate_override_acknowledged: bool(row.approval_gate_override_acknowledged),
+    approval_gate_override_reason: str(row.approval_gate_override_reason),
+    approval_gate_overridden_by: str(row.approval_gate_overridden_by) || null,
+    approval_gate_overridden_at: str(row.approval_gate_overridden_at) || null,
     decision_status: str(row.decision_status, "draft") as SelectionDecisionStatus,
     procurement_status: str(row.procurement_status, "not_released") as SelectionProcurementStatus,
     schedule_activity_id: str(row.schedule_activity_id) || null,
@@ -225,7 +263,10 @@ async function selectionBundle(context: ServerContext, projectId: string, client
     .eq("project_id", projectId);
   const [selectionsRes, optionsRes, decisionsRes] = await Promise.all([
     clientOnly
-      ? selectionQuery.eq("client_visible", true).order("client_decision_due_date")
+      ? selectionQuery
+          .eq("client_visible", true)
+          .eq("approval_gate_type", "owner_selection")
+          .order("client_decision_due_date")
       : selectionQuery.order("client_decision_due_date"),
     context.supabase
       .from("project_selection_options")
@@ -268,7 +309,7 @@ export const listProjectSelections = createServerFn({ method: "GET" })
     const ctx = context as unknown as ServerContext;
     await canManage(ctx, data.projectId);
     const bundle = await selectionBundle(ctx, data.projectId);
-    const [activitiesRes, accessRes, contactsRes] = await Promise.all([
+    const [activitiesRes, accessRes, contactsRes, approvalGatesRes] = await Promise.all([
       ctx.supabase
         .from("schedule_activities")
         .select("id,activity_id,name,forecast_start_date,start_date,baseline_start_date")
@@ -280,10 +321,18 @@ export const listProjectSelections = createServerFn({ method: "GET" })
         .eq("project_id", data.projectId)
         .neq("status", "revoked"),
       ctx.supabase.from("client_contacts").select("id,name,email").neq("status", "inactive"),
+      ctx.supabase
+        .from("submittal_log_entries")
+        .select("id,kind,number,item,description,status,date_returned")
+        .eq("project_id", data.projectId)
+        .order("sort_order"),
     ]);
     if (activitiesRes.error) throw new Error(activitiesRes.error.message);
     if (accessRes.error && !bundle.migrationRequired) throw new Error(accessRes.error.message);
     if (contactsRes.error) throw new Error(contactsRes.error.message);
+    if (approvalGatesRes.error && !isMissingApprovalGateLog(approvalGatesRes.error)) {
+      throw new Error(approvalGatesRes.error.message);
+    }
     const contacts = new Map(rows(contactsRes.data).map((contact) => [str(contact.id), contact]));
     const clientSeats: SelectionClientSeat[] = rows(accessRes.data)
       .filter((access) => access.can_view_selections !== false)
@@ -304,7 +353,18 @@ export const listProjectSelections = createServerFn({ method: "GET" })
       start_date: str(row.start_date) || null,
       baseline_start_date: str(row.baseline_start_date) || null,
     }));
-    return { ...bundle, clientSeats, scheduleActivities };
+    const approvalGateEntries: SelectionApprovalGateEntry[] = rows(approvalGatesRes.data).map(
+      (row) => ({
+        id: str(row.id),
+        kind: str(row.kind, "submittal") as SelectionApprovalGateEntry["kind"],
+        number: str(row.number),
+        item: str(row.item),
+        description: str(row.description),
+        status: str(row.status),
+        date_returned: str(row.date_returned) || null,
+      }),
+    );
+    return { ...bundle, clientSeats, scheduleActivities, approvalGateEntries };
   });
 
 export const saveProjectSelection = createServerFn({ method: "POST" })
@@ -325,6 +385,33 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
       current = currentRes.data as Record<string, unknown>;
     }
     let needOnSiteDate = data.need_on_site_date;
+    let approvalGateStatus: SelectionDecisionStatus = "draft";
+    if (data.approval_gate_override_acknowledged) {
+      if (data.approval_gate_override_reason.length < 10) {
+        throw new Error(
+          "Explain why this package can be released without its normal approval gate.",
+        );
+      }
+      approvalGateStatus = "approved";
+    } else if (data.approval_gate_type !== "owner_selection") {
+      if (!data.approval_gate_entry_id) {
+        throw new Error(
+          `Choose the ${data.approval_gate_type === "submittal" ? "submittal" : "RFI"} that controls procurement release.`,
+        );
+      }
+      const gateRes = await ctx.supabase
+        .from("submittal_log_entries")
+        .select("id,kind,status")
+        .eq("id", data.approval_gate_entry_id)
+        .eq("project_id", data.projectId)
+        .single();
+      if (gateRes.error) throw new Error(gateRes.error.message);
+      const gate = gateRes.data as Record<string, unknown>;
+      if (str(gate.kind) !== data.approval_gate_type) {
+        throw new Error("The linked approval record does not match the selected gate type.");
+      }
+      approvalGateStatus = approvalGateDecisionStatus(str(gate.status));
+    }
     if (data.schedule_activity_id) {
       const activityRes = await ctx.supabase
         .from("schedule_activities")
@@ -356,6 +443,17 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
       category: data.category,
       room_area: data.room_area,
       description: data.description,
+      approval_gate_type: data.approval_gate_type,
+      approval_gate_entry_id:
+        data.approval_gate_type === "owner_selection" ? null : data.approval_gate_entry_id,
+      approval_gate_override_acknowledged: data.approval_gate_override_acknowledged,
+      approval_gate_override_reason: data.approval_gate_override_acknowledged
+        ? data.approval_gate_override_reason
+        : "",
+      approval_gate_overridden_by: data.approval_gate_override_acknowledged ? ctx.userId : null,
+      approval_gate_overridden_at: data.approval_gate_override_acknowledged
+        ? new Date().toISOString()
+        : null,
       schedule_activity_id: data.schedule_activity_id,
       schedule_override_acknowledged: data.schedule_override_acknowledged,
       need_on_site_date: dates.needOnSiteDate,
@@ -366,6 +464,8 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
       client_decision_due_date: dates.clientDecisionDueDate,
       assigned_client_contact_id: data.assigned_client_contact_id,
       allowance_cents: data.allowance_cents,
+      decision_status: approvalGateStatus,
+      approved_at: approvalGateStatus === "approved" ? new Date().toISOString() : null,
       updated_by: ctx.userId,
     };
     let selectionId = data.selectionId;
@@ -374,11 +474,9 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
         .from("project_selections")
         .update({
           ...shared,
-          decision_status: "draft",
           client_visible: false,
           client_sent_at: null,
           client_decided_at: null,
-          approved_at: null,
           selected_option_id: null,
           version: num(current?.version) + 1,
         })
@@ -442,12 +540,23 @@ export const updateSelectionProcurementStatus = createServerFn({ method: "POST" 
     const ctx = context as unknown as ServerContext;
     const currentRes = await ctx.supabase
       .from("project_selections")
-      .select("project_id")
+      .select("project_id,decision_status")
       .eq("id", data.selectionId)
       .single();
     if (currentRes.error) throw new Error(currentRes.error.message);
-    const projectId = str((currentRes.data as Record<string, unknown>).project_id);
+    const current = currentRes.data as Record<string, unknown>;
+    const projectId = str(current.project_id);
     await canManage(ctx, projectId);
+    if (
+      !procurementReleaseAllowed(
+        str(current.decision_status, "draft") as SelectionDecisionStatus,
+        data.status,
+      )
+    ) {
+      throw new Error(
+        "This material package cannot be released until its approval gate has cleared.",
+      );
+    }
     const updateRes = await ctx.supabase
       .from("project_selections")
       .update({ procurement_status: data.status, updated_by: ctx.userId })
@@ -472,6 +581,11 @@ export const sendSelectionForClientDecision = createServerFn({ method: "POST" })
     const selection = selectionRes.data as Record<string, unknown>;
     const projectId = str(selection.project_id);
     await canManage(ctx, projectId);
+    if (str(selection.approval_gate_type, "owner_selection") !== "owner_selection") {
+      throw new Error(
+        "This material package clears through its linked submittal or RFI, not the client portal.",
+      );
+    }
     const contactId = str(selection.assigned_client_contact_id);
     if (!contactId) throw new Error("Choose a client contact before sending this selection.");
     const [contactRes, accessRes, projectRes, optionsRes] = await Promise.all([
@@ -590,5 +704,26 @@ export const recordClientSelectionDecision = createServerFn({ method: "POST" })
       p_user_agent: str(ctx.claims?.user_agent),
     });
     if (result.error) throw new Error(result.error.message);
-    return { ok: true, decisionId: result.data as string };
+    const decisionId = result.data as string;
+    try {
+      const { notifyProjectTeamOfSelectionDecision } =
+        await import("@/lib/selection-decision-notifications.server");
+      const notification = await notifyProjectTeamOfSelectionDecision(decisionId);
+      return { ok: true, decisionId, notification };
+    } catch (error) {
+      console.error("Selection decision saved, but project-team notification failed", {
+        decision_id: decisionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        ok: true,
+        decisionId,
+        notification: {
+          inAppCount: 0,
+          emailSentCount: 0,
+          emailFailedCount: 1,
+          emailSkippedCount: 0,
+        },
+      };
+    }
   });

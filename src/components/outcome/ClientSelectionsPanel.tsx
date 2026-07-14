@@ -55,12 +55,21 @@ export function ClientSelectionsPanel({ projectId }: ClientSelectionsPanelProps)
       decision: "approved" | "revision_requested";
       notes: string;
     }) => recordDecision({ data: input }),
-    onSuccess: async (_, input) => {
+    onSuccess: async (result, input) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["client-selections", projectId] }),
         queryClient.invalidateQueries({ queryKey: ["project-selections", projectId] }),
       ]);
-      toast.success(input.decision === "approved" ? "Selection approved" : "Revision request sent");
+      const title = input.decision === "approved" ? "Selection approved" : "Revision request sent";
+      const delivery = result.notification;
+      toast.success(title, {
+        description:
+          delivery.emailFailedCount > 0
+            ? "The project team can see the decision in Overwatch, but email delivery needs attention."
+            : delivery.inAppCount > 0 || delivery.emailSentCount > 0
+              ? "The project team was notified."
+              : "Your decision was saved.",
+      });
     },
     onError: (error) =>
       toast.error("Your decision did not save", {
