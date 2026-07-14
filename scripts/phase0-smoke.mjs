@@ -260,8 +260,20 @@ await expectContains(
 
 await expectContains(
   "src/routes/auth.tsx",
-  [/sendOverwatchMagicLink/, /context:\s*"login"/],
-  "public auth page sends magic links through Overwatch email route",
+  [
+    /sendOverwatchMagicLink/,
+    /context:\s*"login"/,
+    /onSubmit=\{onMagicLinkSubmit\}/,
+    /Email me a sign-in link/,
+    /No[\s\n]+password needed/,
+  ],
+  "public auth page uses magic links as its single primary sign-in path",
+);
+
+await expectNotContains(
+  "src/routes/auth.tsx",
+  [/signInWithPassword/, /supabase\.auth\.signUp/, /Continue with Google/, /Forgot password/],
+  "public auth page does not advertise password, self-signup, or unconfigured Google flows",
 );
 
 await expectContains(
