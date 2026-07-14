@@ -21,11 +21,12 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { CalendarClock, EyeOff, Pencil, Plus, Trash2, X } from "lucide-react";
+import { CalendarClock, EyeOff, Pencil, Plus, Trash2, UsersRound, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   FieldResourceEditor,
   type FieldResourceDraft,
@@ -539,7 +540,8 @@ function DailyLogWorkLinesImpl(
                     ) : null}
                     {entry.crew_count ? (
                       <span>
-                        {entry.crew_count} {entry.crew_count === 1 ? "crew" : "crews"} ·{" "}
+                        {entry.crew_count} {entry.crew_count === 1 ? "crew" : "crews"} ×{" "}
+                        {entry.people_per_crew}/crew ={" "}
                         {crewPeople(entry.crew_count, entry.people_per_crew)} people
                       </span>
                     ) : null}
@@ -680,41 +682,87 @@ function DailyLogWorkLinesImpl(
               helpText="Bought-out subcontractors appear above. A typed vendor stays flagged for the PM to match or buy out later."
             />
           </div>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Crews</span>
-            <Input
-              type="number"
-              min={0}
-              value={draft.crew_count || ""}
-              onChange={(event) => setField("crew_count", Number(event.target.value) || 0)}
-            />
-            <span className="text-[11px] text-muted-foreground">
-              {draft.crew_count > 0
-                ? `${crewPeople(draft.crew_count, draft.people_per_crew)} people total`
-                : "How many crews worked"}
-            </span>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">People per crew</span>
-            <Input
-              type="number"
-              min={1}
-              max={100}
-              value={draft.people_per_crew || ""}
-              onChange={(event) => setField("people_per_crew", Number(event.target.value) || 2)}
-            />
-            <span className="text-[11px] text-muted-foreground">Defaults to 2</span>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Hours per person</span>
-            <Input
-              type="number"
-              min={0}
-              step="0.25"
-              value={draft.hours || ""}
-              onChange={(event) => setField("hours", Number(event.target.value) || 0)}
-            />
-          </label>
+          <fieldset className="rounded-md border border-hairline bg-card p-3 sm:col-span-2">
+            <legend className="px-1 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+              Crew makeup today
+            </legend>
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-end">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Crew count</span>
+                <Input
+                  type="number"
+                  min={0}
+                  value={draft.crew_count || ""}
+                  onChange={(event) => setField("crew_count", Number(event.target.value) || 0)}
+                />
+              </label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 justify-start gap-2 border-accent/35 bg-accent/5 px-3 text-left text-foreground hover:bg-accent/10 sm:min-w-44"
+                    aria-label={`Configure crew size, currently ${draft.people_per_crew} people per crew`}
+                  >
+                    <UsersRound className="h-4 w-4 text-accent" />
+                    <span>
+                      <span className="block text-[10px] leading-none text-muted-foreground">
+                        People per crew
+                      </span>
+                      <span className="mt-0.5 block text-sm font-semibold">
+                        {draft.people_per_crew} {draft.people_per_crew === 1 ? "person" : "people"}
+                      </span>
+                    </span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="center" className="w-72 space-y-3">
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">Configure crew size</div>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      Set the number of people in each crew for this work line today. Tomorrow can
+                      use a different crew size.
+                    </p>
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-muted-foreground">People per crew</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={draft.people_per_crew || ""}
+                      onChange={(event) =>
+                        setField(
+                          "people_per_crew",
+                          Math.min(100, Math.max(1, Number(event.target.value) || 2)),
+                        )
+                      }
+                      autoFocus
+                    />
+                  </label>
+                </PopoverContent>
+              </Popover>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Hours per person</span>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.25"
+                  value={draft.hours || ""}
+                  onChange={(event) => setField("hours", Number(event.target.value) || 0)}
+                />
+              </label>
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+              <span>
+                Defaults to 2 people for a new work line; change it whenever field makeup changes.
+              </span>
+              <span className="shrink-0 font-medium tabular-nums text-foreground">
+                {draft.crew_count > 0
+                  ? `${draft.crew_count} × ${draft.people_per_crew} = ${crewPeople(draft.crew_count, draft.people_per_crew)} people`
+                  : "Enter crew count"}
+              </span>
+            </div>
+          </fieldset>
           <div className="flex flex-col gap-1 sm:col-span-2">
             <span className="text-xs text-muted-foreground">Installed quantities</span>
             <p className="text-[11px] text-muted-foreground">
