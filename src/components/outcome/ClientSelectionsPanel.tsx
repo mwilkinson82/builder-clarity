@@ -140,7 +140,9 @@ export function ClientSelectionsPanel({ projectId }: ClientSelectionsPanelProps)
               <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-hairline bg-hairline sm:grid-cols-3">
                 <DateCell
                   label="Decision due"
-                  value={formatDate(selection.client_decision_due_date)}
+                  value={formatDate(
+                    selection.follow_on_approval_due_date ?? selection.client_decision_due_date,
+                  )}
                 />
                 <DateCell label="Order by" value={formatDate(selection.order_by_date)} />
                 <DateCell label="Needed on site" value={formatDate(selection.need_on_site_date)} />

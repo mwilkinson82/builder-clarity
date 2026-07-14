@@ -14,6 +14,7 @@ describe("selection procurement dates", () => {
       needOnSiteDate: "2026-10-12",
       orderByDate: "2026-08-24",
       clientDecisionDueDate: "2026-08-17",
+      followOnApprovalDueDate: null,
     });
   });
 
@@ -29,6 +30,24 @@ describe("selection procurement dates", () => {
       needOnSiteDate: null,
       orderByDate: null,
       clientDecisionDueDate: null,
+      followOnApprovalDueDate: null,
+    });
+  });
+
+  it("works backward through an RFI and a follow-on approval gate", () => {
+    expect(
+      calculateSelectionDates({
+        needOnSiteDate: "2026-10-12",
+        procurementLeadDays: 42,
+        deliveryBufferDays: 7,
+        clientReviewDays: 14,
+        upstreamReviewDays: 10,
+      }),
+    ).toEqual({
+      needOnSiteDate: "2026-10-12",
+      orderByDate: "2026-08-24",
+      followOnApprovalDueDate: "2026-08-10",
+      clientDecisionDueDate: "2026-07-31",
     });
   });
 

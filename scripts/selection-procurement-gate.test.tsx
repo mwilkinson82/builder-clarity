@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   approvalGateDecisionStatus,
   procurementReleaseAllowed,
+  rfiProcurementDecisionStatus,
 } from "../src/lib/selections-domain";
 
 describe("selection procurement release gate", () => {
@@ -25,5 +26,41 @@ describe("selection procurement release gate", () => {
     expect(approvalGateDecisionStatus("aan")).toBe("approved");
     expect(approvalGateDecisionStatus("rar")).toBe("revision_requested");
     expect(approvalGateDecisionStatus("ur")).toBe("sent");
+  });
+
+  it("branches an answered RFI into the required follow-on gate", () => {
+    expect(rfiProcurementDecisionStatus({ rfiStatus: "a", outcome: "direct_release" })).toBe(
+      "approved",
+    );
+    expect(
+      rfiProcurementDecisionStatus({
+        rfiStatus: "a",
+        outcome: "requires_submittal",
+        followOnSubmittalStatus: "ur",
+      }),
+    ).toBe("sent");
+    expect(
+      rfiProcurementDecisionStatus({
+        rfiStatus: "a",
+        outcome: "requires_submittal",
+        followOnSubmittalStatus: "aan",
+      }),
+    ).toBe("approved");
+    expect(
+      rfiProcurementDecisionStatus({
+        rfiStatus: "a",
+        outcome: "requires_client_selection",
+      }),
+    ).toBe("draft");
+  });
+
+  it("does not advance to a follow-on gate before the RFI is answered", () => {
+    expect(
+      rfiProcurementDecisionStatus({
+        rfiStatus: "ur",
+        outcome: "requires_submittal",
+        followOnSubmittalStatus: "a",
+      }),
+    ).toBe("sent");
   });
 });

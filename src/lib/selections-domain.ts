@@ -1,18 +1,23 @@
 export type SelectionDecisionStatus = "draft" | "sent" | "revision_requested" | "approved";
 export type SelectionProcurementStatus =
-  "not_released" | "ordered" | "shipped" | "received" | "installed";
+  "not_released" | "ordered" | "shipped" | "received" | "installed" | "not_required";
+
+export type SelectionRfiOutcome =
+  "direct_release" | "requires_submittal" | "requires_client_selection" | "no_procurement";
 
 export interface SelectionDateInputs {
   needOnSiteDate: string | null;
   procurementLeadDays: number;
   deliveryBufferDays: number;
   clientReviewDays: number;
+  upstreamReviewDays?: number;
 }
 
 export interface SelectionDates {
   needOnSiteDate: string | null;
   orderByDate: string | null;
   clientDecisionDueDate: string | null;
+  followOnApprovalDueDate: string | null;
 }
 
 const DAY_MS = 86_400_000;
@@ -37,17 +42,29 @@ function clampDays(value: number) {
 export function calculateSelectionDates(input: SelectionDateInputs): SelectionDates {
   const needOnSite = parseDateOnly(input.needOnSiteDate);
   if (!needOnSite) {
-    return { needOnSiteDate: null, orderByDate: null, clientDecisionDueDate: null };
+    return {
+      needOnSiteDate: null,
+      orderByDate: null,
+      clientDecisionDueDate: null,
+      followOnApprovalDueDate: null,
+    };
   }
   const orderBy = new Date(
     needOnSite.getTime() -
       (clampDays(input.procurementLeadDays) + clampDays(input.deliveryBufferDays)) * DAY_MS,
   );
-  const decisionDue = new Date(orderBy.getTime() - clampDays(input.clientReviewDays) * DAY_MS);
+  const followOnApprovalDue = new Date(
+    orderBy.getTime() - clampDays(input.clientReviewDays) * DAY_MS,
+  );
+  const decisionDue = new Date(
+    followOnApprovalDue.getTime() - clampDays(input.upstreamReviewDays ?? 0) * DAY_MS,
+  );
   return {
     needOnSiteDate: formatDateOnly(needOnSite),
     orderByDate: formatDateOnly(orderBy),
     clientDecisionDueDate: formatDateOnly(decisionDue),
+    followOnApprovalDueDate:
+      clampDays(input.upstreamReviewDays ?? 0) > 0 ? formatDateOnly(followOnApprovalDue) : null,
   };
 }
 
@@ -82,4 +99,24 @@ export function approvalGateDecisionStatus(status: string): SelectionDecisionSta
   if (status === "a" || status === "aan") return "approved";
   if (status === "rar") return "revision_requested";
   return "sent";
+}
+
+export function rfiProcurementDecisionStatus(input: {
+  rfiStatus: string;
+  outcome: SelectionRfiOutcome;
+  followOnSubmittalStatus?: string | null;
+  clientDecisionStatus?: SelectionDecisionStatus;
+}): SelectionDecisionStatus {
+  const rfiDecision = approvalGateDecisionStatus(input.rfiStatus);
+  if (rfiDecision !== "approved") return rfiDecision;
+
+  if (input.outcome === "requires_submittal") {
+    return input.followOnSubmittalStatus
+      ? approvalGateDecisionStatus(input.followOnSubmittalStatus)
+      : "draft";
+  }
+  if (input.outcome === "requires_client_selection") {
+    return input.clientDecisionStatus ?? "draft";
+  }
+  return "approved";
 }
