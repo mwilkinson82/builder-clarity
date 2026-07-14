@@ -156,6 +156,12 @@ export interface CostActualRow {
   payment_method: string;
   payment_reference: string;
   paid_date: string | null;
+  // Supplier invoice backup in the private project-docs bucket. Multi-line
+  // invoices intentionally share the same path across their cost-code rows.
+  invoice_attachment_path: string;
+  invoice_attachment_name: string;
+  invoice_attachment_type: string;
+  invoice_attachment_size: number;
   // Dollars of daily WIP this cost SETTLES (field feedback 2026-07-13) — netted
   // out of the self-perform rollup so the invoice doesn't double-count the lump.
   // 0 pre-migration (column absent → read defensively).
@@ -408,6 +414,10 @@ const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => ({
   payment_method: str(row.payment_method),
   payment_reference: str(row.payment_reference),
   paid_date: (row.paid_date as string | null) ?? null,
+  invoice_attachment_path: str(row.invoice_attachment_path),
+  invoice_attachment_name: str(row.invoice_attachment_name),
+  invoice_attachment_type: str(row.invoice_attachment_type),
+  invoice_attachment_size: num(row.invoice_attachment_size),
   // Read defensively: pre-migration the column is absent → 0 (no settlement).
   daily_wip_offset: num(row.daily_wip_offset ?? 0),
   voided_at: (row.voided_at as string | null) ?? null,
@@ -1114,6 +1124,10 @@ const costActualInput = z.object({
   // invoice now covers. Netted out at the rollup chokepoint so the same dollars
   // aren't counted twice. Non-negative; a credit (amount < 0) forces 0 upstream.
   daily_wip_offset: z.number().min(0).default(0).optional(),
+  invoice_attachment_path: z.string().max(1000).default(""),
+  invoice_attachment_name: z.string().max(500).default(""),
+  invoice_attachment_type: z.string().max(200).default(""),
+  invoice_attachment_size: z.number().int().min(0).default(0),
 });
 
 // The draft/approved stages need the payables-approval migration, and credits
@@ -1121,6 +1135,9 @@ const costActualInput = z.object({
 // applied yet the DB CHECK rejects the write — translate that into plain English
 // instead of surfacing a constraint name.
 const mapCostStatusError = (message: string) => {
+  if (/invoice_attachment_(path|name|type|size)/i.test(message)) {
+    return "Invoice uploads are not enabled yet (database update pending). Apply the cost invoice attachment migration, then try again.";
+  }
   if (message.includes("cost_actuals_status_check")) {
     return 'The invoice approval stages are not enabled yet (database update pending). Save the cost as "Committed" or "Paid" for now.';
   }
@@ -1168,6 +1185,10 @@ export const createCostActual = createServerFn({ method: "POST" })
       status: data.status,
       notes: data.notes,
       daily_wip_offset: data.amount < 0 ? 0 : (data.daily_wip_offset ?? 0),
+      invoice_attachment_path: data.invoice_attachment_path,
+      invoice_attachment_name: data.invoice_attachment_name,
+      invoice_attachment_type: data.invoice_attachment_type,
+      invoice_attachment_size: data.invoice_attachment_size,
       ...(data.status === "approved"
         ? { approved_at: new Date().toISOString(), approved_by: ctx.userId }
         : {}),
@@ -1213,6 +1234,10 @@ const updateCostActualInput = z.object({
   // untouched (undefined → omitted from the PostgREST body), so we never wipe an
   // offset set at creation; a supplied value updates it.
   daily_wip_offset: z.number().min(0).optional(),
+  invoice_attachment_path: z.string().max(1000).optional(),
+  invoice_attachment_name: z.string().max(500).optional(),
+  invoice_attachment_type: z.string().max(200).optional(),
+  invoice_attachment_size: z.number().int().min(0).optional(),
 });
 
 export const updateCostActual = createServerFn({ method: "POST" })
@@ -1283,7 +1308,7 @@ export const updateCostActual = createServerFn({ method: "POST" })
       const { daily_wip_offset: _drop, ...withoutOffset } = updatePayload;
       updateRes = await runUpdate(withoutOffset);
     }
-    if (updateRes.error) throw new Error(updateRes.error.message);
+    if (updateRes.error) throw new Error(mapCostStatusError(updateRes.error.message));
     if (!updateRes.data) {
       throw new Error(
         "This cost changed state while you were editing — someone marked it paid or voided it. Reload and try again.",
