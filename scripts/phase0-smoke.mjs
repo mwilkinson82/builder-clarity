@@ -2862,25 +2862,31 @@ await expectContains(
   "Budget tab is one clickable ledger with a line-editor drawer",
 );
 
-// BUDGETENGINE Phase 4: fold the budget-vs-cost picture into Billing so the whole
-// financial story lives in one place, and rename the standalone tab "Budget"
-// (value stays "sov" for deep links). Billing renders the read-only ledger from
-// the same buckets + exposure allocations.
+// BILLINGSOV1 (founder decision 2026-07-14): Billing starts with the owner-facing
+// Schedule of Values, never the internal build budget. The standalone Budget
+// workspace keeps the budget-vs-cost ledger; Billing renders a contract-only SOV
+// table from line contract values and approved change-order allocations.
 await expectContains(
   "src/components/project/billing/BillingWorkspace.tsx",
   [
-    /import \{ BudgetLedgerTable \}/,
-    // v2 notebook reskin: "budget" is now numbered stage 1 (value unchanged);
-    // the "Budget vs Cost" ledger title became the stage title "Budget".
-    /value: "budget",[\s\S]*?title: "Budget",/,
-    /<BudgetLedgerTable[\s\S]*?exposures=\{exposures\}[\s\S]*?allocations=\{exposureAllocations\}/,
+    /import \{ BillingSovTable \}/,
+    // The technical key stays "budget" so existing deep links remain valid;
+    // the user-facing stage and panel are SOV throughout.
+    /value: "budget",[\s\S]*?title: "SOV",/,
+    /budget: \{[\s\S]*?title: "Schedule of values",/,
+    /<BillingSovTable[\s\S]*?buckets=\{buckets\}[\s\S]*?changeOrders=\{changeOrders\}[\s\S]*?changeOrderAllocations=/,
   ],
-  "billing workspace folds in the budget-vs-cost ledger tab",
+  "billing workspace starts with the owner-facing SOV stage",
+);
+await expectContains(
+  "src/components/project/billing/BillingSovTable.tsx",
+  [/Original SOV/, /Approved COs/, /Revised SOV/, /Owner-facing contract value/],
+  "billing SOV separates owner contract value from the internal build budget",
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
-  [/label: "Budget"/, /title="Budget"/, /exposureAllocations=\{exposureAllocationsQuery\.data/],
-  "budget tab is renamed from SOV/Costs and feeds Billing its exposures + allocations",
+  [/label: "Budget"/, /title="Budget"/, /<BudgetLedgerTable[\s\S]*?onOpenLine=/],
+  "standalone Budget remains the internal editable cost ledger",
 );
 
 // BUDGETLOCK1 (founder decision 2026-07-06): the budget is a locked baseline —

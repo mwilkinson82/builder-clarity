@@ -72,15 +72,13 @@ import type {
   BillingOutputFormat,
   BucketRow,
   ChangeOrderRow,
-  ExposureAllocationRow,
-  ExposureRow,
   ProjectRow,
 } from "@/lib/projects.functions";
 import type { Rollup } from "@/lib/ior";
 
-import { BudgetLedgerTable } from "@/components/project/BudgetLedgerTable";
 import { BillingApplicationRowEditor } from "./BillingApplicationRowEditor";
 import { BillingInvoiceRowEditor } from "./BillingInvoiceRowEditor";
+import { BillingSovTable } from "./BillingSovTable";
 import { SovMetric } from "./billing-workspace-atoms";
 
 export function BillingWorkspace({
@@ -88,11 +86,7 @@ export function BillingWorkspace({
   rollup,
   changeOrders,
   buckets,
-  ledgerBuckets,
-  subCostByBucket,
   selfPerformByBucket,
-  exposures,
-  exposureAllocations,
   billingApplications,
   billingInvoices,
   billingWorkspace,
@@ -135,21 +129,7 @@ export function BillingWorkspace({
   rollup: Rollup;
   changeOrders: ChangeOrderRow[];
   buckets: BucketRow[];
-  // Same buckets with self-perform daily WIP folded into actuals — mirrors the
-  // top-level Budget tab so the billing-side ledger reads identically. Falls back
-  // to raw `buckets` when the route doesn't supply it.
-  ledgerBuckets?: BucketRow[];
-  // Subcontractor cost + self-perform layers, threaded through so the Budget
-  // stage's ledger tracks actuals/open on subcontracted lines (e.g. a bought-out
-  // "Saw Cutting" scope) exactly the way the Budget tab does. Without these, a
-  // pure sub line collapses to $0 actuals/open on the billing side.
-  subCostByBucket?: ReadonlyMap<
-    string,
-    { paid: number; open: number; committed?: number; earned?: number }
-  >;
   selfPerformByBucket?: ReadonlyMap<string, number>;
-  exposures: ExposureRow[];
-  exposureAllocations: ExposureAllocationRow[];
   billingApplications: BillingApplicationRow[];
   billingInvoices: BillingInvoiceRow[];
   billingWorkspace?: BillingWorkspaceData;
@@ -467,8 +447,8 @@ export function BillingWorkspace({
   };
   // Default landing is the mock's Pay applications. But pay-app-detail is a
   // blocked stage until the SOV exists (railNoSov), so with no schedule of
-  // values we land on Budget instead — always safe, and stage 1 is exactly
-  // where the SOV gets imported. No blocked/crash on first paint either way.
+  // values we land on the SOV instead — always safe, and stage 1 is exactly
+  // where the contract schedule is reviewed. No blocked/crash on first paint.
   const [billingStage, setBillingStage] = useState(() =>
     buckets.length === 0 ? "budget" : "pay-app-detail",
   );
@@ -678,7 +658,7 @@ export function BillingWorkspace({
     {
       value: "budget",
       step: 1,
-      title: "Budget",
+      title: "SOV",
       chip:
         railSovLineCount > 0
           ? `${railSovLineCount} SOV ${railSovLineCount === 1 ? "line" : "lines"}`
@@ -734,8 +714,8 @@ export function BillingWorkspace({
   // (New pay application / Create invoice) is wired into the header in render.
   const stageHeaders: Record<string, { title: string; sub: string }> = {
     budget: {
-      title: "Budget",
-      sub: "Your cost baseline — the schedule of values every pay application bills against.",
+      title: "Schedule of values",
+      sub: "The owner-facing contract schedule every pay application bills against.",
     },
     "pay-app-detail": {
       title: "Pay applications",
@@ -1275,17 +1255,11 @@ export function BillingWorkspace({
             </TabsContent>
 
             <TabsContent value="budget" className="mt-0">
-              <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
-                <BudgetLedgerTable
-                  buckets={ledgerBuckets ?? buckets}
-                  exposures={exposures}
-                  allocations={exposureAllocations}
-                  changeOrders={changeOrders}
-                  changeOrderAllocations={billingWorkspace?.changeOrderAllocations ?? []}
-                  subCostByBucket={subCostByBucket}
-                  selfPerformByBucket={selfPerformByBucket}
-                />
-              </div>
+              <BillingSovTable
+                buckets={buckets}
+                changeOrders={changeOrders}
+                changeOrderAllocations={billingWorkspace?.changeOrderAllocations ?? []}
+              />
             </TabsContent>
 
             <TabsContent value="invoice-ledger" className="mt-0">
