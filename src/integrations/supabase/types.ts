@@ -4108,6 +4108,7 @@ export type Database = {
           approval_gate_override_reason: string
           approval_gate_type: string
           approved_at: string | null
+          approving_party: string
           assigned_client_contact_id: string | null
           category: string
           client_decided_at: string | null
@@ -4120,17 +4121,23 @@ export type Database = {
           decision_status: string
           delivery_buffer_days: number
           description: string
+          follow_on_approval_due_date: string | null
+          follow_on_approval_gate_entry_id: string | null
           id: string
           need_on_site_date: string | null
           order_by_date: string | null
           procurement_lead_days: number
           procurement_status: string
           project_id: string
+          responsible_party: string
+          rfi_outcome: string | null
+          rfi_response_days: number
           room_area: string
           schedule_activity_id: string | null
           schedule_override_acknowledged: boolean
           selected_option_id: string | null
           selection_number: string
+          spec_section: string
           title: string
           updated_at: string
           updated_by: string | null
@@ -4145,6 +4152,7 @@ export type Database = {
           approval_gate_override_reason?: string
           approval_gate_type?: string
           approved_at?: string | null
+          approving_party?: string
           assigned_client_contact_id?: string | null
           category?: string
           client_decided_at?: string | null
@@ -4157,17 +4165,23 @@ export type Database = {
           decision_status?: string
           delivery_buffer_days?: number
           description?: string
+          follow_on_approval_due_date?: string | null
+          follow_on_approval_gate_entry_id?: string | null
           id?: string
           need_on_site_date?: string | null
           order_by_date?: string | null
           procurement_lead_days?: number
           procurement_status?: string
           project_id: string
+          responsible_party?: string
+          rfi_outcome?: string | null
+          rfi_response_days?: number
           room_area?: string
           schedule_activity_id?: string | null
           schedule_override_acknowledged?: boolean
           selected_option_id?: string | null
           selection_number?: string
+          spec_section?: string
           title: string
           updated_at?: string
           updated_by?: string | null
@@ -4182,6 +4196,7 @@ export type Database = {
           approval_gate_override_reason?: string
           approval_gate_type?: string
           approved_at?: string | null
+          approving_party?: string
           assigned_client_contact_id?: string | null
           category?: string
           client_decided_at?: string | null
@@ -4194,17 +4209,23 @@ export type Database = {
           decision_status?: string
           delivery_buffer_days?: number
           description?: string
+          follow_on_approval_due_date?: string | null
+          follow_on_approval_gate_entry_id?: string | null
           id?: string
           need_on_site_date?: string | null
           order_by_date?: string | null
           procurement_lead_days?: number
           procurement_status?: string
           project_id?: string
+          responsible_party?: string
+          rfi_outcome?: string | null
+          rfi_response_days?: number
           room_area?: string
           schedule_activity_id?: string | null
           schedule_override_acknowledged?: boolean
           selected_option_id?: string | null
           selection_number?: string
+          spec_section?: string
           title?: string
           updated_at?: string
           updated_by?: string | null
@@ -4223,6 +4244,13 @@ export type Database = {
             columns: ["assigned_client_contact_id"]
             isOneToOne: false
             referencedRelation: "client_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_selections_follow_on_gate_entry_id_fkey"
+            columns: ["follow_on_approval_gate_entry_id"]
+            isOneToOne: false
+            referencedRelation: "submittal_log_entries"
             referencedColumns: ["id"]
           },
           {
