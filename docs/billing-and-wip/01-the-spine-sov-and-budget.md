@@ -136,7 +136,7 @@ ledger.
 
 ## Exposures → At Risk / Contingency (the IOR overlay)
 
-The IOR (Independent Оversight Role) tracks **exposures** — emergent risk that
+The IOR (**Indicated Outcome Report**) tracks **exposures** — emergent risk that
 isn't yet a committed cost — in `public.exposures` (each has a `dollar_exposure`
 and a `hold_class`: `E-Hold` = at-risk, `C-Hold` = contingency). Those
 exposures are spread across cost codes via `public.exposure_allocations`. Summed

@@ -18,9 +18,11 @@ per activity into `public.daily_wip_entries`:
 
 - **cost code** (`cost_bucket_id`, nullable — you can log before the work is
   coded),
-- **self-perform labor**: `crew_count`, `hours`, `labor_rate` (blended $/hr),
+- **self-perform labor**: `crew_count`, `people_per_crew`, `hours`,
+  `labor_rate` (blended $/person-hour),
 - **materials** (`material_cost`), **equipment** (`equipment_cost`),
-- **production**: `quantity` + `unit` (so a production rate falls out),
+- **production**: `quantity` + `unit` (so a production rate falls out), plus an
+  optional `target_production_rate` for actual-versus-target management,
 - `activity` free-text label + `notes`.
 
 ## The math (derived, never stored)
@@ -29,15 +31,16 @@ Labor cost is **always** derived from its inputs so it can't drift. The
 cents-safe math lives in [`daily-wip.ts`](../../src/lib/daily-wip.ts):
 
 ```
-labor cost (per row)  = crew_count × hours × labor_rate      (rounded to cents)
+labor cost (per row)  = crew_count × people_per_crew × hours × labor_rate
+                        (rounded to cents)
 work in place (row)   = labor cost + material_cost + equipment_cost
 day total             = Σ rows, summed in integer cents, converted once
-labor-hours (row)     = crew_count × hours
+labor-hours (row)     = crew_count × people_per_crew × hours
 production rate (row) = quantity ÷ labor-hours   (null unless both > 0)
 ```
 
 `labor_cost` is **not** a column in the table — it is computed everywhere it is
-shown, from `crew_count × hours × labor_rate`, so the stored inputs are the
+shown, from `crew_count × people_per_crew × hours × labor_rate`, so the stored inputs are the
 single source of truth. Verified by
 [`scripts/daily-wip-smoke.ts`](../../scripts/daily-wip-smoke.ts)
 (`npm run test:wip`): labor cents-exact, day roll-up, production rate, and
@@ -86,12 +89,25 @@ gracefully** until the table exists: reads return `[]` and writes surface a
 clear "not enabled yet" message (`isMissingDailyWipTable`). The app never breaks
 ahead of the migration.
 
-## Deferred (later Workspace B slices)
+## Implemented follow-on slices
 
-- **Subcontractor progress vs lump-sum commitments** — needs the
-  procurement/buyout **commitments** object, which does not exist yet. Sub
-  progress tracked against commitments is the same object the buyout arc will
-  use.
+- **Subcontractor progress vs lump-sum commitments** — Daily WIP can now earn
+  subcontract cost against bought-out commitments. This supersedes the earlier
+  note that subcontract progress was deferred.
+- **Actual versus target production** — PMs can set an optional target rate per
+  work line. The production panel compares installed quantity per labor-hour
+  with that target and reports ahead, on pace, or behind without inventing a
+  verdict when either side is missing.
+- **Configurable crew size** — the field records people per crew. Existing rows
+  retain the historical two-person default.
+
+## Still deferred
+
+- Roll production pace into the project's targeted billing forecast.
+- Recommend an SOV completion/billing position for PM certification; Daily WIP
+  must not create a pay application automatically.
+- Feed Daily WIP into CPM progress only through a reviewable, explicitly
+  configured rule rather than silently moving schedule activities.
 - ~~Pay-app pre-fill from WIP~~ — **cancelled by founder decision 2026-07-06**:
   the bill comes from the SOV, never from daily tracking (see above).
 

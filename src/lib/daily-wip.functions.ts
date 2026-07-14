@@ -77,7 +77,9 @@ function isMissingDailyWipTable(error: DynamicSupabaseError | null) {
 // them errors on the unknown column. Strip both and retry so the line still
 // saves (without the new fields). Mirrors billing.functions' isMissingWipOffsetColumn.
 const isMissingDailyWipLineColumn = (message: string) =>
-  /percent_basis|quantity_items|unmatched_vendor_name/i.test(message);
+  /percent_basis|quantity_items|unmatched_vendor_name|people_per_crew|target_production_rate/i.test(
+    message,
+  );
 
 const isMissingUnmatchedVendorColumn = (message: string) => /unmatched_vendor_name/i.test(message);
 
@@ -95,6 +97,7 @@ export interface DailyWipEntryRow {
   entry_date: string;
   activity: string;
   crew_count: number;
+  people_per_crew: number;
   hours: number;
   labor_rate: number;
   material_cost: number;
@@ -103,6 +106,7 @@ export interface DailyWipEntryRow {
   equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
+  target_production_rate: number | null;
   // Repeatable installed quantities/counts on this line (500 LF conduit, 24 boxes).
   // The scalar quantity/unit above is the primary/roll-up (the productionRate read).
   quantity_items: { quantity: number; unit: string; description?: string }[];
@@ -129,6 +133,7 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   entry_date: str(row.entry_date),
   activity: str(row.activity),
   crew_count: num(row.crew_count),
+  people_per_crew: num(row.people_per_crew) > 0 ? num(row.people_per_crew) : 2,
   hours: num(row.hours),
   labor_rate: num(row.labor_rate),
   material_cost: num(row.material_cost),
@@ -137,6 +142,8 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   equipment_items: normalizeItems(row.equipment_items),
   quantity: num(row.quantity),
   unit: str(row.unit),
+  target_production_rate:
+    row.target_production_rate == null ? null : num(row.target_production_rate),
   quantity_items: Array.isArray(row.quantity_items)
     ? normalizeQuantityItems(row.quantity_items)
     : [],
@@ -164,6 +171,7 @@ const entryFieldsInput = z.object({
   entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "entry_date must be YYYY-MM-DD"),
   activity: z.string().max(500).default(""),
   crew_count: z.number().min(0).default(0),
+  people_per_crew: z.number().int().positive().max(100).default(2),
   hours: z.number().min(0).default(0),
   labor_rate: z.number().min(0).default(0),
   material_cost: z.number().min(0).default(0),
@@ -172,6 +180,7 @@ const entryFieldsInput = z.object({
   equipment_items: z.array(lineItemInput).max(100).default([]),
   quantity: z.number().min(0).default(0),
   unit: z.string().max(40).default(""),
+  target_production_rate: z.number().positive().max(1_000_000_000).nullable().default(null),
   // A repeatable list of installed quantities/counts (units are free text so
   // counts like "junction boxes" work). Drives nothing in the math — the scalar
   // quantity/unit remains the productionRate roll-up (led by the primary item).
@@ -305,6 +314,8 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
         percent_basis: _pb,
         quantity_items: _qi,
         unmatched_vendor_name: _uv,
+        people_per_crew: _pc,
+        target_production_rate: _tr,
         ...withoutLineCols
       } = payload;
       saveRes = await runSave(withoutLineCols);

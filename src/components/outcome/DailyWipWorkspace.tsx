@@ -1,6 +1,6 @@
 // Workspace B — the daily WIP recording surface (BILLINGDESIGN P2). Pick any
 // date, see that day's daily report alongside it, and record the work put in
-// place: self-perform crews (2 people each × hours × blended rate), materials, and
+// place: self-perform crews (people per crew × hours × blended rate), materials, and
 // equipment, against a cost code. The day's totals fall out cents-safe, and a
 // production rate comes for free when a quantity is logged.
 //
@@ -58,6 +58,7 @@ import {
   laborCost,
   crewPeople,
   priorSubPercent,
+  productionPace,
   productionRate,
   lineProfitToday,
   priorCodePercent,
@@ -100,6 +101,7 @@ interface SaveWipInput {
   entry_date: string;
   activity: string;
   crew_count: number;
+  people_per_crew: number;
   hours: number;
   labor_rate: number;
   material_cost: number;
@@ -108,6 +110,7 @@ interface SaveWipInput {
   equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
+  target_production_rate: number | null;
   // Preserved through the PM's costing save so they're never wiped (the super owns
   // them on the daily-log side). Label + display only; they drive no cost math.
   quantity_items: { quantity: number; unit: string; description: string }[];
@@ -126,12 +129,14 @@ interface EntryDraft {
   unmatched_vendor_name: string;
   activity: string;
   crew_count: number;
+  people_per_crew: number;
   hours: number;
   labor_rate: number;
   material_items: DraftCostItem[];
   equipment_items: DraftCostItem[];
   quantity: number;
   unit: string;
+  target_production_rate: number | null;
   // Round-tripped so a PM edit preserves the super's itemized quantities + basis.
   quantity_items: { quantity: number; unit: string; description: string }[];
   percent_basis: "sov" | "cpm";
@@ -146,12 +151,14 @@ const emptyDraft: EntryDraft = {
   unmatched_vendor_name: "",
   activity: "",
   crew_count: 0,
+  people_per_crew: 2,
   hours: 0,
   labor_rate: 0,
   material_items: [],
   equipment_items: [],
   quantity: 0,
   unit: "",
+  target_production_rate: null,
   quantity_items: [],
   percent_basis: "sov",
   percent_complete: 0,
@@ -375,20 +382,15 @@ export function DailyWipWorkspace({
   // whole to-date amount. This resolves that prior cumulative % from ALL entries
   // (the baseline came from an earlier day, not the day on screen).
   const priorPercentFor = useCallback(
-    (row: {
-      subcontractor_id: string | null;
-      cost_bucket_id: string | null;
-      entry_date?: string;
-      updated_at?: string | null;
-      id?: string | null;
-    }) =>
+    (row: DailyWipRowLike) =>
       priorSubPercent(
         {
-          subcontractor_id: row.subcontractor_id,
-          cost_bucket_id: row.cost_bucket_id,
+          subcontractor_id: row.subcontractor_id ?? null,
+          cost_bucket_id: row.cost_bucket_id ?? null,
           entry_date: row.entry_date ?? selectedDate,
           updated_at: row.updated_at,
           id: row.id,
+          percent_complete: row.percent_complete ?? 0,
         },
         entriesQuery.data ?? [],
       ),
@@ -552,12 +554,14 @@ export function DailyWipWorkspace({
       entry_date: selectedDate,
       updated_at: "9999-12-31T23:59:59.999Z",
       id: editingId,
+      percent_complete: draft.percent_complete,
     },
     entriesQuery.data ?? [],
   );
   const draftWorkInPlace = rowWorkInPlace(
     {
       crew_count: draft.crew_count,
+      people_per_crew: draft.people_per_crew,
       hours: draft.hours,
       labor_rate: draft.labor_rate,
       material_cost: draftMaterial,
@@ -613,6 +617,7 @@ export function DailyWipWorkspace({
       entry_date: selectedDate,
       activity: draft.activity.trim(),
       crew_count: draft.crew_count,
+      people_per_crew: draft.people_per_crew,
       hours: draft.hours,
       labor_rate: draft.labor_rate,
       material_cost: sumLineItems(material_items),
@@ -621,6 +626,7 @@ export function DailyWipWorkspace({
       equipment_items,
       quantity: draft.quantity,
       unit: draft.unit.trim(),
+      target_production_rate: draft.target_production_rate,
       // Preserve the super's itemized quantities + % basis through the costing save.
       quantity_items: draft.quantity_items,
       percent_basis: draft.percent_basis,
@@ -643,6 +649,7 @@ export function DailyWipWorkspace({
       unmatched_vendor_name: entry.unmatched_vendor_name,
       activity: entry.activity,
       crew_count: entry.crew_count,
+      people_per_crew: entry.people_per_crew,
       hours: entry.hours,
       labor_rate: entry.labor_rate,
       // Surface any lump cost with no line items as a single editable line, so
@@ -656,6 +663,7 @@ export function DailyWipWorkspace({
       ),
       quantity: entry.quantity,
       unit: entry.unit,
+      target_production_rate: entry.target_production_rate,
       quantity_items: entry.quantity_items.map((q) => ({
         quantity: q.quantity,
         unit: q.unit,
@@ -989,7 +997,7 @@ export function DailyWipWorkspace({
                   />
                 </label>
               </div>
-              <div className="mt-1 grid gap-3.5 sm:grid-cols-4">
+              <div className="mt-1 grid gap-3.5 sm:grid-cols-5">
                 <label className="flex flex-col gap-1">
                   <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     Crews
@@ -1003,7 +1011,24 @@ export function DailyWipWorkspace({
                     }
                   />
                   <span className="text-[10px] text-muted-foreground">
-                    1 crew = 2 people · {crewPeople(draft.crew_count)} people
+                    {crewPeople(draft.crew_count, draft.people_per_crew)} people total
+                  </span>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    People per crew
+                  </span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={draft.people_per_crew || ""}
+                    onChange={(event) =>
+                      setDraftField("people_per_crew", Number(event.target.value) || 2)
+                    }
+                  />
+                  <span className="text-[10px] text-muted-foreground">
+                    Defaults to 2 for legacy lines
                   </span>
                 </label>
                 <label className="flex flex-col gap-1">
@@ -1035,12 +1060,12 @@ export function DailyWipWorkspace({
                     {fmtUSD(draftLabor)}
                   </div>
                   <span className="text-[10px] text-muted-foreground">
-                    {draft.crew_count || 0} crews × 2 people × {draft.hours || 0} hrs ×{" "}
-                    {fmtUSD(draft.labor_rate)}
+                    {draft.crew_count || 0} crews × {draft.people_per_crew || 2} people ×{" "}
+                    {draft.hours || 0} hrs × {fmtUSD(draft.labor_rate)}
                   </span>
                 </label>
               </div>
-              <div className="mt-1 grid gap-3.5 sm:grid-cols-3">
+              <div className="mt-1 grid gap-3.5 sm:grid-cols-4">
                 {draft.quantity_items.length > 0 ? (
                   <div className="sm:col-span-2">
                     <InstalledQuantities items={draft.quantity_items} />
@@ -1072,6 +1097,27 @@ export function DailyWipWorkspace({
                     </label>
                   </>
                 )}
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    Target rate
+                  </span>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={draft.target_production_rate ?? ""}
+                    placeholder="qty / labor hr"
+                    onChange={(event) =>
+                      setDraftField(
+                        "target_production_rate",
+                        event.target.value === "" ? null : Number(event.target.value) || null,
+                      )
+                    }
+                  />
+                  <span className="text-[10px] text-muted-foreground">
+                    Optional management target
+                  </span>
+                </label>
                 <label className="flex flex-col gap-1">
                   <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     % complete
@@ -1328,18 +1374,43 @@ export function DailyWipWorkspace({
               <div className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
                 Production
               </div>
-              <ul className="mt-2 space-y-1 text-sm">
+              <ul className="mt-2 space-y-2 text-sm">
                 {entries
-                  .map((entry) => ({ entry, rate: productionRate(entry) }))
+                  .map((entry) => ({
+                    entry,
+                    rate: productionRate(entry),
+                    pace: productionPace(entry),
+                  }))
                   .filter((row) => row.rate != null)
-                  .map(({ entry, rate }) => (
-                    <li key={entry.id} className="flex justify-between gap-2 text-muted-foreground">
-                      <span className="truncate">
-                        {entry.activity || bucketLabel(entry.cost_bucket_id)}
-                      </span>
-                      <span className="shrink-0 tabular-nums text-foreground">
-                        {(rate as number).toFixed(2)} {entry.unit || "unit"}/hr
-                      </span>
+                  .map(({ entry, rate, pace }) => (
+                    <li key={entry.id} className="border-b border-hairline/60 pb-2 last:border-0">
+                      <div className="flex justify-between gap-2 text-muted-foreground">
+                        <span className="truncate">
+                          {entry.activity || bucketLabel(entry.cost_bucket_id)}
+                        </span>
+                        <span className="shrink-0 tabular-nums text-foreground">
+                          {(rate as number).toFixed(2)} {entry.unit || "unit"}/labor hr
+                        </span>
+                      </div>
+                      {pace ? (
+                        <div
+                          className={`mt-0.5 text-right text-[11px] font-medium tabular-nums ${
+                            pace.status === "ahead"
+                              ? "text-success"
+                              : pace.status === "behind"
+                                ? "text-danger"
+                                : "text-warning"
+                          }`}
+                        >
+                          {pace.status === "on-pace" ? "On pace" : pace.status} · target{" "}
+                          {pace.targetRate.toFixed(2)} · {pace.variancePercent >= 0 ? "+" : ""}
+                          {(pace.variancePercent * 100).toFixed(1)}%
+                        </div>
+                      ) : (
+                        <div className="mt-0.5 text-right text-[11px] text-muted-foreground">
+                          No target set
+                        </div>
+                      )}
                     </li>
                   ))}
                 {entries.every((entry) => productionRate(entry) == null) ? (
