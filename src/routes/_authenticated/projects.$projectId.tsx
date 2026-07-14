@@ -768,8 +768,11 @@ function ProjectPage() {
       data.change_orders,
       // Explicit per-payment splits override the pro-rata paid distribution.
       data.payment_allocations,
+      // Recognized supplier invoices linked to a sub CO/pay app already live in
+      // bucket actuals; they relieve Open here without adding cost twice.
+      costActualsQuery.data ?? [],
     );
-  }, [subcontractsQuery.data, dailyWipEntriesQuery.data]);
+  }, [subcontractsQuery.data, dailyWipEntriesQuery.data, costActualsQuery.data]);
   // Budget-drawer drill-through (field request 2026-07-09): the actual rows
   // behind an edited line — its self-perform daily-log lines (a bought-out sub
   // line belongs to the subcontract layer's story, so it's excluded exactly the

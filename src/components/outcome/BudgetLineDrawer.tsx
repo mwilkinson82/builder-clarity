@@ -199,8 +199,9 @@ export function BudgetLineDrawer({
     setFtc(bucket?.ftc ?? 0);
   }, [open, bucket]);
 
-  // A bought-out line's actual/forecast are the subcontract ledger's, not
-  // manual — shown read-only, matching the top ledger row you clicked.
+  // A bought-out line's actual and minimum remaining commitment are driven by
+  // the subcontract ledger. The PM may still carry ADDITIONAL forecast beyond
+  // that commitment through the bucket FTC field.
   const hasSub = Boolean(subCost && ((subCost.paid ?? 0) > 0 || (subCost.committed ?? 0) > 0));
   const { fac } = bucket ? sovLineForecastWithSubs(bucket, subCost) : { fac: 0 };
   const actualInclusive = (bucket?.actual_to_date ?? 0) + (subCost?.paid ?? 0);
@@ -217,7 +218,7 @@ export function BudgetLineDrawer({
       (!budgetLocked && contractValue !== bucket.contract_value) ||
       (!budgetLocked && budget !== bucket.original_budget) ||
       (!hasSub && actual !== bucket.actual_to_date) ||
-      (!hasSub && ftc !== bucket.ftc)
+      ftc !== bucket.ftc
     );
   }, [
     isCreate,
@@ -274,7 +275,7 @@ export function BudgetLineDrawer({
       patch.actual_to_date = actual;
       overrideEdits.push({ field: "actual_to_date", from: bucket.actual_to_date, to: actual });
     }
-    if (!hasSub && ftc !== bucket.ftc) {
+    if (ftc !== bucket.ftc) {
       patch.ftc = ftc;
       overrideEdits.push({ field: "ftc", from: bucket.ftc, to: ftc });
     }
@@ -405,7 +406,7 @@ export function BudgetLineDrawer({
                   <div>
                     <DrivenValue
                       value={fmtUSD(actualInclusive)}
-                      note={`Driven by the subcontractor buyout — ${fmtUSD(subCost?.paid ?? 0)} paid to date. Record payments in the Subcontractors tab.`}
+                      note={`Recorded cost invoices plus ${fmtUSD(subCost?.paid ?? 0)} of subcontract payments not already represented by linked actuals.`}
                     />
                     {subEarned > (subCost?.paid ?? 0) ? (
                       <div className="mt-1 text-[11px] text-muted-foreground">
@@ -435,10 +436,28 @@ export function BudgetLineDrawer({
                 help={hasSub ? undefined : "Remaining cost you expect on this line."}
               >
                 {hasSub ? (
-                  <DrivenValue
-                    value={fmtUSD(forecastInclusive)}
-                    note={`Remaining commitment on the buyout — ${fmtUSD(subCost?.committed ?? 0)} committed, less what's been paid.`}
-                  />
+                  <div className="space-y-2 text-right">
+                    <DrivenValue
+                      value={fmtUSD(forecastInclusive)}
+                      note={`Remaining commitment on the buyout — ${fmtUSD(subCost?.committed ?? 0)} committed, less paid and linked recognized actuals.`}
+                    />
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                        Additional forecast beyond subcontract
+                      </div>
+                      <MoneyInput
+                        value={Math.max(0, ftc - (subCost?.committed ?? 0))}
+                        onValueChange={(value) =>
+                          setFtc(Math.max(0, subCost?.committed ?? 0) + Math.max(0, value))
+                        }
+                        align="right"
+                        className="ml-auto h-9 w-36"
+                      />
+                      <div className="max-w-[13rem] text-[11px] leading-snug text-muted-foreground">
+                        Add only cost still expected outside the unpaid subcontract balance.
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   <MoneyInput
                     value={ftc}
