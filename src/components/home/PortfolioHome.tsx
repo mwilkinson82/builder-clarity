@@ -332,6 +332,7 @@ export function PortfolioHome() {
             <a className="is-active" href="/" aria-current="page">
               Portfolio
             </a>
+            <a href={PROJECTS_HREF}>Projects</a>
             {access.canSeeOwnerView ? <a href={CRM_HREF}>CRM</a> : null}
             <Link to="/estimates">Estimates</Link>
             <Link to="/billing">Billing</Link>

@@ -288,8 +288,24 @@ await expectContains(
     // (b6 CRM reskin); the old hand-rolled companyInitials(headerCompanyName)
     // header block was replaced by <PortfolioTopBar active="crm" />.
     /PortfolioTopBar/,
+    /active=\{portfolioTab === "pipeline" \? "crm" : "projects"\}/,
   ],
   "portfolio route supports member project creation, responsive ledger navigation, company-scoped identity, and command-center first viewport",
+);
+
+await expectContains(
+  "src/components/home/PortfolioHome.tsx",
+  [/const PROJECTS_HREF = "\/\?tab=projects"/, /<a href=\{PROJECTS_HREF\}>Projects<\/a>/],
+  "portfolio home header links directly to the project catalog",
+);
+
+await expectContains(
+  "src/components/layout/PortfolioTopBar.tsx",
+  [
+    /type NavKey = "portfolio" \| "projects"/,
+    /search=\{\{ tab: "projects" \}\} className=\{navItemClass\("projects"\)\}/,
+  ],
+  "shared portfolio header keeps the project catalog in its primary navigation",
 );
 
 await expectNotContains(
