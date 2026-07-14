@@ -2554,6 +2554,7 @@ export type Database = {
           body: string
           created_at: string
           data: Json
+          dedupe_key: string | null
           entity_id: string | null
           entity_type: string
           id: string
@@ -2570,6 +2571,7 @@ export type Database = {
           body?: string
           created_at?: string
           data?: Json
+          dedupe_key?: string | null
           entity_id?: string | null
           entity_type?: string
           id?: string
@@ -2586,6 +2588,7 @@ export type Database = {
           body?: string
           created_at?: string
           data?: Json
+          dedupe_key?: string | null
           entity_id?: string | null
           entity_type?: string
           id?: string
@@ -2810,6 +2813,7 @@ export type Database = {
           stripe_connect_status_test: string
           stripe_customer_id: string
           stripe_mode: Database["public"]["Enums"]["stripe_mode"]
+          stripe_payment_limit_cents: number
           stripe_price_id: string
           stripe_subscription_id: string
           subscription_cancel_at_period_end: boolean
@@ -2855,6 +2859,7 @@ export type Database = {
           stripe_connect_status_test?: string
           stripe_customer_id?: string
           stripe_mode?: Database["public"]["Enums"]["stripe_mode"]
+          stripe_payment_limit_cents?: number
           stripe_price_id?: string
           stripe_subscription_id?: string
           subscription_cancel_at_period_end?: boolean
@@ -2900,6 +2905,7 @@ export type Database = {
           stripe_connect_status_test?: string
           stripe_customer_id?: string
           stripe_mode?: Database["public"]["Enums"]["stripe_mode"]
+          stripe_payment_limit_cents?: number
           stripe_price_id?: string
           stripe_subscription_id?: string
           subscription_cancel_at_period_end?: boolean
@@ -5292,6 +5298,59 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "sov_mapping_profiles_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stripe_limit_requests: {
+        Row: {
+          created_at: string
+          current_limit_cents: number
+          id: string
+          organization_id: string
+          reason: string
+          requested_by: string
+          requested_limit_cents: number
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          stripe_request_reference: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_limit_cents: number
+          id?: string
+          organization_id: string
+          reason?: string
+          requested_by: string
+          requested_limit_cents: number
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          stripe_request_reference?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_limit_cents?: number
+          id?: string
+          organization_id?: string
+          reason?: string
+          requested_by?: string
+          requested_limit_cents?: number
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          stripe_request_reference?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stripe_limit_requests_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"

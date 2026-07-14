@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   DEFAULT_STRIPE_AMOUNT_THRESHOLD_CENTS,
+  DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
   dollarsToCents,
   maskAccountTail,
   methodAvailability,
@@ -278,16 +279,23 @@ type OrganizationStripeRow = OrganizationStripeColumns & {
   accountId: string;
   connectStatus: string;
   ready: boolean;
+  stripePaymentLimitCents: number;
 };
 
 async function loadOrganizationStripe(
   supabase: unknown,
   organizationId: string,
 ): Promise<OrganizationStripeRow> {
-  const { data, error } = await dynamicTable(supabase, "organizations")
-    .select(`id,${ORGANIZATION_STRIPE_SELECT}`)
+  let { data, error } = await dynamicTable(supabase, "organizations")
+    .select(`id,${ORGANIZATION_STRIPE_SELECT},stripe_payment_limit_cents`)
     .eq("id", organizationId)
     .maybeSingle();
+  if (error?.code === "PGRST204") {
+    ({ data, error } = await dynamicTable(supabase, "organizations")
+      .select(`id,${ORGANIZATION_STRIPE_SELECT}`)
+      .eq("id", organizationId)
+      .maybeSingle());
+  }
   if (error) {
     if (isMissingRelation(error) || error.code === "PGRST204") {
       return {
@@ -296,6 +304,7 @@ async function loadOrganizationStripe(
         accountId: "",
         connectStatus: "not_connected",
         ready: false,
+        stripePaymentLimitCents: DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
       };
     }
     throw new Error(error.message);
@@ -309,6 +318,10 @@ async function loadOrganizationStripe(
     accountId: selected.accountId,
     connectStatus: selected.connectStatus,
     ready: selected.ready,
+    stripePaymentLimitCents:
+      Number((data as Record<string, unknown> | null)?.stripe_payment_limit_cents) > 0
+        ? Number((data as Record<string, unknown>).stripe_payment_limit_cents)
+        : DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
   };
 }
 
@@ -328,6 +341,7 @@ export interface PaymentMethodContext {
   defaultPaymentMethods: EnabledPaymentMethods;
   cardFeePassThrough: boolean;
   stripeAmountThresholdCents: number;
+  stripePaymentLimitCents: number;
 }
 
 async function buildPaymentMethodContext(
@@ -357,6 +371,7 @@ async function buildPaymentMethodContext(
     defaultPaymentMethods: view.defaultPaymentMethods,
     cardFeePassThrough: view.cardFeePassThrough,
     stripeAmountThresholdCents: view.stripeAmountThresholdCents,
+    stripePaymentLimitCents: org.stripePaymentLimitCents,
   };
 }
 

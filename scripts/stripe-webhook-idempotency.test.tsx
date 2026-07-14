@@ -53,6 +53,7 @@ class FakeQuery {
   private values: Row | Row[] = {};
   private upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
   private filters: Array<[string, unknown]> = [];
+  private inFilters: Array<[string, unknown[]]> = [];
   private cardinality: "many" | "maybe" | "one" = "many";
   private returning = false;
 
@@ -75,7 +76,7 @@ class FakeQuery {
     this.values = values;
     return this;
   }
-  upsert(values: Row, options?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+  upsert(values: Row | Row[], options?: { onConflict?: string; ignoreDuplicates?: boolean }) {
     this.kind = "upsert";
     this.values = values;
     this.upsertOpts = options ?? {};
@@ -87,6 +88,10 @@ class FakeQuery {
   }
   eq(column: string, value: unknown) {
     this.filters.push([column, value]);
+    return this;
+  }
+  in(column: string, values: unknown[]) {
+    this.inFilters.push([column, values]);
     return this;
   }
   maybeSingle() {
@@ -102,7 +107,10 @@ class FakeQuery {
   }
 
   private matches(row: Row) {
-    return this.filters.every(([c, v]) => row[c] === v);
+    return (
+      this.filters.every(([c, v]) => row[c] === v) &&
+      this.inFilters.every(([c, values]) => values.includes(row[c]))
+    );
   }
 
   private shape(found: Row[]) {
@@ -145,21 +153,24 @@ class FakeQuery {
     }
 
     // upsert
-    const values = this.values as Row;
+    const valueRows = Array.isArray(this.values) ? this.values : [this.values];
     const keys = (this.upsertOpts.onConflict ?? "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    const existing = rows.find((r) => keys.every((k) => r[k] === values[k]));
-    if (existing) {
-      if (this.upsertOpts.ignoreDuplicates)
-        return { data: this.returning ? [] : null, error: null };
-      Object.assign(existing, values);
-      return { data: this.returning ? [{ ...existing }] : null, error: null };
+    const returned: Row[] = [];
+    for (const values of valueRows) {
+      const existing = rows.find((r) => keys.every((k) => r[k] === values[k]));
+      if (existing) {
+        if (!this.upsertOpts.ignoreDuplicates) Object.assign(existing, values);
+        if (!this.upsertOpts.ignoreDuplicates) returned.push({ ...existing });
+        continue;
+      }
+      const row = { ...values };
+      rows.push(row);
+      returned.push({ ...row });
     }
-    const row = { ...values };
-    rows.push(row);
-    return { data: this.returning ? [{ ...row }] : null, error: null };
+    return { data: this.returning ? returned : null, error: null };
   }
 }
 
@@ -183,6 +194,59 @@ function creditPackEvent(eventId: string, sessionId = "cs_test_credit", livemode
       },
     },
   };
+}
+
+function invoicePaidEvent(eventId: string, sessionId = "cs_live_invoice") {
+  return {
+    id: eventId,
+    type: "checkout.session.completed",
+    livemode: true,
+    data: {
+      object: {
+        id: sessionId,
+        payment_status: "paid",
+        payment_intent: "pi_live_invoice",
+        amount_total: 100,
+        metadata: {
+          kind: "client_invoice",
+          invoice_id: "invoice_1",
+          project_id: "project_1",
+          organization_id: "org_1",
+          surcharge_cents: "0",
+          overwatch_fee_amount_cents: "0",
+          stripe_mode: "live",
+        },
+      },
+    },
+  };
+}
+
+function seedInvoicePaymentContext(db: FakeSupabase) {
+  db.rows("billing_invoices").push({
+    id: "invoice_1",
+    project_id: "project_1",
+    billing_application_id: null,
+    invoice_number: "INV-1",
+    title: "Canary",
+    total_due: 1,
+    paid_amount: 0,
+    status: "sent",
+  });
+  db.rows("projects").push({
+    id: "project_1",
+    name: "Canary project",
+    job_number: "001",
+    organization_id: "org_1",
+    owner_id: "user_1",
+  });
+  db.rows("organization_memberships").push({
+    organization_id: "org_1",
+    user_id: "user_1",
+    role: "owner",
+    status: "active",
+    capabilities: {},
+  });
+  db.rows("profiles").push({ id: "user_1", notification_prefs: {} });
 }
 
 function post() {
@@ -375,6 +439,42 @@ describe("handleStripeWebhook idempotency", () => {
     const dup = await post();
     expect((await dup.json()).duplicate).toBe(true);
     expect(purchaseRows(db)).toHaveLength(1);
+  });
+
+  it("books a paid invoice once and retries its in-app notification without double-booking money", async () => {
+    const db = new FakeSupabase();
+    seedInvoicePaymentContext(db);
+    h.db = db;
+    h.event = invoicePaidEvent("evt_invoice_paid");
+    db.missing.add("notifications");
+
+    const first = await post();
+    expect(first.status).toBe(500);
+    expect(db.rows("payment_ledger")).toHaveLength(1);
+    expect(db.rows("billing_invoices")[0]).toMatchObject({
+      paid_amount: 1,
+      status: "paid",
+      online_payment_status: "paid",
+    });
+    expect(webhookRow(db, "evt_invoice_paid")).toBeUndefined();
+
+    db.missing.delete("notifications");
+    const retry = await post();
+    expect(retry.status).toBe(200);
+    expect(db.rows("payment_ledger")).toHaveLength(1);
+    expect(db.rows("notifications")).toHaveLength(1);
+    expect(db.rows("notifications")[0]).toMatchObject({
+      recipient_id: "user_1",
+      type: "billing.paid",
+      title: "$1.00 payment received",
+      dedupe_key: "billing.paid:cs_live_invoice",
+    });
+
+    h.event = invoicePaidEvent("evt_invoice_paid_second_delivery");
+    const secondDelivery = await post();
+    expect(secondDelivery.status).toBe(200);
+    expect(db.rows("payment_ledger")).toHaveLength(1);
+    expect(db.rows("notifications")).toHaveLength(1);
   });
 
   it("well-formed unhandled events complete and mark processed (never 400)", async () => {

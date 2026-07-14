@@ -109,6 +109,7 @@ export function BillingInvoiceRowEditor({
         ),
         invoiceTotalCents: dollarsToCents(invoice.total_due),
         thresholdCents: paymentMethodContext.stripeAmountThresholdCents,
+        platformLimitCents: paymentMethodContext.stripePaymentLimitCents,
       })
     : null;
   const onlinePayAvailable = Boolean(

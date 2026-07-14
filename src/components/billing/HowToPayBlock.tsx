@@ -2,6 +2,7 @@ import { Copy, CreditCard, ExternalLink, Hourglass, Landmark } from "lucide-reac
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { fmtUSDCents } from "@/lib/billing-format";
 import type { ClientInvoicePaymentOptions } from "@/lib/client-portal.functions";
 import type { PendingPaymentLockState } from "@/lib/payments-domain";
 
@@ -98,6 +99,17 @@ export function HowToPayBlock({
           <p className="mt-2 text-sm text-muted-foreground">
             A payment for this invoice is already on its way (bank debits can take a few business
             days to settle). To avoid paying twice, online payment reopens if it fails or expires.
+          </p>
+        </div>
+      ) : null}
+
+      {options?.blockedByPlatformLimit && !locked ? (
+        <div className="mt-3 rounded-md border border-warning/30 bg-warning/10 p-4">
+          <div className="text-sm font-medium text-warning">Online payment limit</div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This payment is above the contractor's current online-payment ceiling of{" "}
+            {fmtUSDCents(options.onlinePaymentLimitCents / 100)}. Use the direct bank instructions
+            below or contact the contractor before sending money.
           </p>
         </div>
       ) : null}

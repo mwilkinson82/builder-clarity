@@ -52,6 +52,28 @@ Stripe references:
 - [Risk and negative-balance responsibility](https://docs.stripe.com/connect/risk-management)
 - [Controller-property account configurations](https://docs.stripe.com/connect/migrate-to-controller-properties)
 
+## Initial payment ceiling and increases
+
+Every company starts with an OverWatch hard ceiling of **$25,000 per online
+payment**. The company can choose a lower Stripe threshold in its payment
+preferences, but an invoice override cannot bypass the OverWatch ceiling.
+Stripe may independently enforce a lower per-transaction or weekly ACH limit
+for a connected account.
+
+An owner or billing manager requests more capacity in **Company -> Getting
+paid**:
+
+1. Open Stripe Support from the company's connected account and request the
+   needed ACH transaction and weekly limits.
+2. Record the requested amount and Stripe case or approval reference in
+   OverWatch.
+3. OverWatch support verifies Stripe's approval, then updates the company's
+   `stripe_payment_limit_cents` and closes the request.
+
+The request form records and tracks the work; it does not grant Stripe approval
+or automatically raise the OverWatch ceiling. Large requisitions use the
+invoice's direct bank or wire instructions until both approvals are complete.
+
 ## Required server environment
 
 Keep test and live credentials side by side during the rollout:
@@ -95,15 +117,20 @@ falls back to the legacy or test account ID.
 4. Wait until Overwatch shows **Live account verified - activation required**.
 5. Confirm both Stripe live webhook endpoints show successful deliveries.
 6. Select **Activate live payments** for ALP only.
-7. Create a small real invoice, pay it, and verify all four outcomes:
+7. Create a **$1.00** real invoice and pay it by card. Verify all six outcomes:
    - Checkout and charge are live in ALP's connected Stripe account.
    - The client payment books once in Overwatch.
+   - The invoice becomes paid and its open balance becomes $0.00.
+   - The project owner and active billing managers receive one in-app
+     `billing.paid` notification; repeated webhook delivery creates no duplicate.
    - `stripe_webhook_events.livemode` is `true`.
    - The configured application fee (currently zero unless set) matches the
      platform's Stripe balance/reporting.
-8. Refund the canary and verify the invoice/payment ledger reverses correctly.
-9. Roll companies one at a time. Each company completes its own live setup and
-   explicitly activates only after verification.
+8. In Stripe, confirm both live webhook endpoints show successful deliveries
+   for the canary. A failed delivery must be resolved before rollout.
+9. Refund the canary and verify the invoice/payment ledger reverses correctly.
+10. Roll companies one at a time. Each company completes its own live setup and
+    explicitly activates only after verification.
 
 Do not delete the legacy `stripe_connect_account_id` columns during this
 rollout. They remain synchronized with the active mode for compatibility and

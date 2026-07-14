@@ -6,6 +6,8 @@ import {
   CheckCircle2,
   CreditCard,
   Eye,
+  ExternalLink,
+  Gauge,
   Landmark,
   SearchCheck,
   ShieldCheck,
@@ -37,6 +39,10 @@ import {
 } from "@/lib/payments.functions";
 import { recordInvoicePayment } from "@/lib/projects.functions";
 import { centsToDollars, dollarsToCents, renderRemittanceMemo } from "@/lib/payments-domain";
+import {
+  getStripePaymentLimitContext,
+  requestStripePaymentLimit,
+} from "@/lib/stripe-limit.functions";
 import type { StripeMode } from "@/lib/stripe-mode";
 
 // Founder's expectation-setting copy for the Stripe status card. Do not
@@ -128,6 +134,8 @@ export function GettingPaidSection({
   const fetchProfile = useServerFn(getCompanyPaymentProfile);
   const saveProfile = useServerFn(saveCompanyPaymentProfile);
   const revealProfile = useServerFn(revealCompanyPaymentProfile);
+  const fetchPaymentLimit = useServerFn(getStripePaymentLimitContext);
+  const submitPaymentLimitRequest = useServerFn(requestStripePaymentLimit);
 
   const profileQuery = useQuery({
     queryKey: ["company-payment-profile"],
@@ -135,9 +143,18 @@ export function GettingPaidSection({
     enabled: canManage,
   });
   const profile = profileQuery.data;
+  const paymentLimitQuery = useQuery({
+    queryKey: ["stripe-payment-limit"],
+    queryFn: () => fetchPaymentLimit(),
+    enabled: canManage,
+  });
+  const paymentLimit = paymentLimitQuery.data;
 
   const [form, setForm] = useState<ProfileFormState | null>(null);
   const [revealed, setRevealed] = useState(false);
+  const [requestedLimitDollars, setRequestedLimitDollars] = useState("");
+  const [stripeRequestReference, setStripeRequestReference] = useState("");
+  const [limitRequestReason, setLimitRequestReason] = useState("");
   const [contactForm, setContactForm] = useState({
     name: billingContactName,
     email: billingContactEmail,
@@ -204,6 +221,39 @@ export function GettingPaidSection({
     },
     onError: (error) => {
       toast.error("Could not reveal bank details", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    },
+  });
+
+  const paymentLimitMutation = useMutation({
+    mutationFn: () => {
+      const requested = Number(requestedLimitDollars.replaceAll(",", ""));
+      if (!Number.isFinite(requested) || requested <= 0) {
+        throw new Error("Enter the largest single payment Stripe approved or is reviewing.");
+      }
+      return submitPaymentLimitRequest({
+        data: {
+          requestedLimitDollars: requested,
+          stripeRequestReference,
+          reason: limitRequestReason,
+        },
+      });
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["stripe-payment-limit"] });
+      setRequestedLimitDollars("");
+      setStripeRequestReference("");
+      setLimitRequestReason("");
+      toast.success("Payment-limit request recorded", {
+        description:
+          result.status === "stripe_pending"
+            ? "Stripe approval is still required before OverWatch can raise the ceiling."
+            : "OverWatch support can now verify the Stripe approval and review the request.",
+      });
+    },
+    onError: (error) => {
+      toast.error("Payment-limit request was not submitted", {
         description: error instanceof Error ? error.message : "Try again.",
       });
     },
@@ -437,6 +487,99 @@ export function GettingPaidSection({
               </Button>
             )}
             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{subscriptionNote}</p>
+          </div>
+
+          <div className="rounded-md border border-hairline bg-card p-4">
+            <div className="flex items-center gap-2">
+              <Gauge className="h-4 w-4 text-clay" />
+              <span className="text-sm font-medium">Online-payment ceiling</span>
+              <span className="ml-auto font-mono text-sm font-semibold">
+                {fmtUSDCents((paymentLimit?.currentLimitCents ?? 2_500_000) / 100)}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              This is OverWatch's hard limit for one card or ACH debit payment. Invoice overrides
+              cannot bypass it, and Stripe may enforce a lower account-specific limit. Larger
+              payments should use the direct bank instructions until both Stripe and OverWatch
+              approve an increase.
+            </p>
+            {paymentLimit?.latestRequest &&
+            ["submitted", "stripe_pending", "under_review"].includes(
+              paymentLimit.latestRequest.status,
+            ) ? (
+              <div className="mt-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                Request for {fmtUSDCents(paymentLimit.latestRequest.requestedLimitCents / 100)} ·{" "}
+                {paymentLimit.latestRequest.status.replaceAll("_", " ")}
+              </div>
+            ) : (
+              <div className="mt-3 space-y-3">
+                <a
+                  href="https://support.stripe.com/contact"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-clay hover:underline"
+                >
+                  Ask Stripe to review this connected account's ACH limits
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="stripe-limit-request-amount">
+                      Requested single payment ($)
+                    </Label>
+                    <Input
+                      id="stripe-limit-request-amount"
+                      value={requestedLimitDollars}
+                      inputMode="decimal"
+                      placeholder="100000"
+                      disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
+                      onChange={(event) => setRequestedLimitDollars(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="stripe-limit-request-reference">
+                      Stripe case or approval reference
+                    </Label>
+                    <Input
+                      id="stripe-limit-request-reference"
+                      value={stripeRequestReference}
+                      placeholder="Optional until Stripe replies"
+                      disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
+                      onChange={(event) => setStripeRequestReference(event.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="stripe-limit-request-reason">Expected payment and context</Label>
+                  <Textarea
+                    id="stripe-limit-request-reason"
+                    value={limitRequestReason}
+                    rows={2}
+                    placeholder="Example: monthly commercial progress payments around $100,000."
+                    disabled={!stripe.liveAccountId || paymentLimitMutation.isPending}
+                    onChange={(event) => setLimitRequestReason(event.target.value)}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={
+                    !stripe.liveAccountId ||
+                    !paymentLimit?.requestSchemaReady ||
+                    paymentLimitMutation.isPending
+                  }
+                  onClick={() => paymentLimitMutation.mutate()}
+                >
+                  {paymentLimitMutation.isPending ? "Submitting…" : "Submit limit request"}
+                </Button>
+                {!stripe.liveAccountId && (
+                  <p className="text-xs text-muted-foreground">
+                    Create the live connected account before requesting more payment capacity.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-3">

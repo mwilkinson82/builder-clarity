@@ -5,6 +5,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 /**
  * v2 business-layer shell: the shared top bar for every portfolio/business
@@ -101,6 +102,7 @@ export function PortfolioTopBar({ active, actions }: { active: NavKey; actions?:
 
       <div className="ml-auto flex items-center gap-3">
         {actions}
+        <NotificationBell />
         <button
           type="button"
           onClick={() => {

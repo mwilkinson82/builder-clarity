@@ -32,6 +32,7 @@ import { homeInitials, useHomeAccess, useHomeIdentity, type HomeIdentity } from 
 import { useHomeMetrics } from "./use-home-metrics";
 import { compactUSD, type HomeMetrics } from "./portfolio-home-metrics";
 import { AvatarMenu } from "./home-avatar-menu";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import "./portfolio-home.css";
 
 type HomeView = "owner" | "pm";
@@ -348,6 +349,7 @@ export function PortfolioHome() {
             <a href={PROJECTS_HREF} className="ow-btn ow-btn--signal">
               + New project
             </a>
+            <NotificationBell className="border-white/15 bg-white/10 text-white/75 hover:text-white" />
             <AvatarMenu identity={identity} />
           </div>
         </header>

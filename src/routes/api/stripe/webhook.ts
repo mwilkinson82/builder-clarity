@@ -60,10 +60,15 @@ type DynamicQuery = PromiseLike<DynamicQueryResult> & {
   delete(): DynamicQuery;
   eq(column: string, value: unknown): DynamicQuery;
   insert(values: unknown): DynamicQuery;
+  in(column: string, values: unknown[]): DynamicQuery;
   maybeSingle(): DynamicQuery;
   select(columns?: string): DynamicQuery;
   single(): DynamicQuery;
   update(values: unknown): DynamicQuery;
+  upsert(
+    values: unknown,
+    options?: { onConflict?: string; ignoreDuplicates?: boolean },
+  ): DynamicQuery;
 };
 
 const dynamicTable = (supabase: unknown, relation: string) =>
@@ -101,6 +106,119 @@ function webhookStaleSeconds() {
 
 function sessionMetadata(object: StripeObject) {
   return object.metadata ?? {};
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function notificationEnabled(preferences: unknown) {
+  const prefs = objectRecord(preferences);
+  return prefs.billing !== false && prefs["billing.paid"] !== false;
+}
+
+function canReceiveBillingNotification(row: Record<string, unknown>) {
+  const capabilities = objectRecord(row.capabilities);
+  return row.role === "owner" || row.role === "admin" || capabilities["billing.manage"] === true;
+}
+
+function currencyFromCents(amountCents: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+    amountCents / 100,
+  );
+}
+
+async function ensureInvoicePaidNotifications(
+  admin: unknown,
+  invoice: Record<string, unknown>,
+  object: StripeObject,
+) {
+  const projectId = str(invoice.project_id);
+  if (!projectId) return;
+
+  const { data: project, error: projectError } = await dynamicTable(admin, "projects")
+    .select("id,name,job_number,organization_id,owner_id")
+    .eq("id", projectId)
+    .single();
+  if (projectError || !project) throw new Error(projectError?.message || "Project not found.");
+
+  const organizationId = str(project.organization_id);
+  if (!organizationId) return;
+  const [organizationMembers, projectMembers] = await Promise.all([
+    dynamicTable(admin, "organization_memberships")
+      .select("user_id,role,status,capabilities")
+      .eq("organization_id", organizationId)
+      .eq("status", "active"),
+    dynamicTable(admin, "project_memberships")
+      .select("user_id,role,status")
+      .eq("project_id", projectId)
+      .eq("status", "active"),
+  ]);
+  if (organizationMembers.error) throw new Error(organizationMembers.error.message);
+  if (projectMembers.error) throw new Error(projectMembers.error.message);
+
+  const recipientIds = new Set<string>();
+  const projectOwnerId = str(project.owner_id);
+  if (projectOwnerId) recipientIds.add(projectOwnerId);
+  for (const row of (organizationMembers.data ?? []) as unknown as Record<string, unknown>[]) {
+    if (canReceiveBillingNotification(row) && str(row.user_id)) recipientIds.add(str(row.user_id));
+  }
+  for (const row of (projectMembers.data ?? []) as unknown as Record<string, unknown>[]) {
+    if ((row.role === "owner" || row.role === "manager") && str(row.user_id)) {
+      recipientIds.add(str(row.user_id));
+    }
+  }
+  if (recipientIds.size === 0) return;
+
+  const profiles = await dynamicTable(admin, "profiles")
+    .select("id,notification_prefs")
+    .in("id", [...recipientIds]);
+  if (profiles.error) throw new Error(profiles.error.message);
+  const enabledIds = ((profiles.data ?? []) as unknown as Record<string, unknown>[])
+    .filter((profile) => notificationEnabled(profile.notification_prefs))
+    .map((profile) => str(profile.id))
+    .filter(Boolean);
+  if (enabledIds.length === 0) return;
+
+  const metadata = sessionMetadata(object);
+  const sessionId = str(object.id);
+  const invoiceId = str(invoice.id);
+  const invoiceLabel = str(invoice.invoice_number) || "Invoice";
+  const projectName = str(project.name) || "Project";
+  const amountCents = Math.max(
+    0,
+    Math.round(num(object.amount_total)) - Math.round(num(metadata.surcharge_cents)),
+  );
+  const amountLabel = currencyFromCents(amountCents);
+  const { error } = await dynamicTable(admin, "notifications").upsert(
+    enabledIds.map((recipientId) => ({
+      recipient_id: recipientId,
+      organization_id: organizationId,
+      actor_id: null,
+      type: "billing.paid",
+      title: `${amountLabel} payment received`,
+      body: `${invoiceLabel} for ${projectName} was paid through Stripe and recorded in OverWatch.`,
+      project_id: projectId,
+      entity_type: "billing_invoice",
+      entity_id: invoiceId,
+      url: `/projects/${projectId}?tab=billing&invoice=${invoiceId}`,
+      dedupe_key: `billing.paid:${sessionId}`,
+      data: {
+        invoice_id: invoiceId,
+        invoice_number: invoiceLabel,
+        project_id: projectId,
+        project_name: projectName,
+        amount_cents: amountCents,
+        stripe_checkout_session_id: sessionId,
+        stripe_payment_intent_id: str(object.payment_intent),
+        stripe_mode: str(metadata.stripe_mode),
+      },
+    })),
+    { onConflict: "recipient_id,dedupe_key", ignoreDuplicates: true },
+  );
+  if (error) throw new Error(error.message);
 }
 
 function subscriptionStatus(value: string) {
@@ -288,7 +406,7 @@ async function markInvoicePaid(object: StripeObject) {
   if (!invoiceId) return;
 
   const { data: invoice, error: invoiceError } = await dynamicTable(admin, "billing_invoices")
-    .select("id,project_id,billing_application_id,total_due,paid_amount")
+    .select("id,project_id,billing_application_id,invoice_number,title,total_due,paid_amount")
     .eq("id", invoiceId)
     .single();
   if (invoiceError || !invoice) throw new Error(invoiceError?.message || "Invoice not found.");
@@ -323,7 +441,13 @@ async function markInvoicePaid(object: StripeObject) {
       paidCents: Math.round(num(invoice.paid_amount) * 100),
     },
   );
-  if (!plan.payment || !plan.invoicePatch) return;
+  if (!plan.payment || !plan.invoicePatch) {
+    // The payment ledger can already exist when a previous delivery booked the
+    // money but notification delivery failed. Re-attempt the idempotent notice
+    // so Stripe retries heal the secondary experience without double-booking.
+    if (existingPayment) await ensureInvoicePaidNotifications(admin, invoice, object);
+    return;
+  }
 
   const insertPayload: Record<string, unknown> = {
     project_id: invoice.project_id,
@@ -375,6 +499,8 @@ async function markInvoicePaid(object: StripeObject) {
       .eq("id", invoice.billing_application_id);
     if (updatePayAppError) throw new Error(updatePayAppError.message);
   }
+
+  await ensureInvoicePaidNotifications(admin, invoice, object);
 }
 
 async function markInvoiceFailed(object: StripeObject) {

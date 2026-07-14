@@ -321,6 +321,7 @@ export function BillingWorkspace({
       ),
       invoiceTotalCents: dollarsToCents(invoice.total_due),
       thresholdCents: paymentMethodContext.stripeAmountThresholdCents,
+      platformLimitCents: paymentMethodContext.stripePaymentLimitCents,
     });
     return availability.card.available || availability.ach_debit.available;
   };

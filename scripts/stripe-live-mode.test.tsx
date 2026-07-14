@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS, methodAvailability } from "@/lib/payments-domain";
 import { stripeConnectionForMode, stripeModePersistencePatch } from "@/lib/stripe-mode";
 
 describe("Stripe live/test account isolation", () => {
@@ -61,5 +62,45 @@ describe("Stripe live/test account isolation", () => {
       stripe_connect_account_id_live: "acct_live",
       stripe_connect_status_live: "active",
     });
+  });
+});
+
+describe("Stripe payment ceiling", () => {
+  const enabled = {
+    direct_bank: true,
+    card: true,
+    ach_debit: true,
+    allow_stripe_over_threshold: true,
+  };
+
+  it("cannot be bypassed by an invoice threshold override", () => {
+    const result = methodAvailability({
+      enabled,
+      invoiceTotalCents: DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS + 1,
+      thresholdCents: 1_000,
+      platformLimitCents: DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
+      stripeReady: true,
+      hasPaymentProfile: true,
+    });
+
+    expect(result.card).toMatchObject({ available: false, reason: "platform_limit" });
+    expect(result.ach_debit).toMatchObject({ available: false, reason: "platform_limit" });
+    expect(result.direct_bank.available).toBe(true);
+    expect(result.stripeBlockedByPlatformLimit).toBe(true);
+  });
+
+  it("allows a payment exactly at the ceiling", () => {
+    const result = methodAvailability({
+      enabled,
+      invoiceTotalCents: DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
+      thresholdCents: 1_000,
+      platformLimitCents: DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
+      stripeReady: true,
+      hasPaymentProfile: true,
+    });
+
+    expect(result.card.available).toBe(true);
+    expect(result.ach_debit.available).toBe(true);
+    expect(result.stripeBlockedByPlatformLimit).toBe(false);
   });
 });

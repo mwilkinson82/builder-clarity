@@ -2637,6 +2637,25 @@ expectSql(
 expectSql(
   sql,
   [
+    /stripe_payment_limit_cents bigint not null default 2500000/i,
+    /create table if not exists public\.stripe_limit_requests/i,
+    /stripe_limit_requests_one_open_per_org_idx/i,
+    /alter table public\.stripe_limit_requests enable row level security/i,
+    /alter table public\.notifications[\s\S]*add column if not exists dedupe_key text/i,
+    /notifications_recipient_dedupe_key_idx/i,
+  ],
+  "Stripe payment guardrails cap each company, track increase requests, and dedupe paid notifications",
+);
+
+await expectContains(
+  "src/components/notifications/NotificationBell.tsx",
+  [/billing\.paid/, /mark_all_notifications_read/, /Notifications/],
+  "authenticated headers expose the in-app notification inbox",
+);
+
+expectSql(
+  sql,
+  [
     /create table if not exists public\.organization_payment_profiles/i,
     /remittance_memo_template/i,
     /stripe_amount_threshold_cents bigint not null default 2500000/i,
