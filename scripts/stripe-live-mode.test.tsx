@@ -1,6 +1,44 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS, methodAvailability } from "@/lib/payments-domain";
 import { stripeConnectionForMode, stripeModePersistencePatch } from "@/lib/stripe-mode";
+import { stripeConnectDetails } from "@/lib/stripe-connect-status";
+
+describe("Stripe connected-account readiness", () => {
+  it("distinguishes Stripe review from approval", () => {
+    expect(
+      stripeConnectDetails({
+        id: "acct_live",
+        details_submitted: true,
+        requirements: { pending_verification: ["company.tax_id"] },
+      }),
+    ).toMatchObject({ readiness: "under_review", status: "pending", ready: false });
+  });
+
+  it("surfaces required work and the connected business name", () => {
+    expect(
+      stripeConnectDetails({
+        id: "acct_live",
+        settings: { dashboard: { display_name: "Athena Software" } },
+        requirements: { currently_due: ["external_account", "business_profile.url"] },
+      }),
+    ).toMatchObject({
+      businessName: "Athena Software",
+      readiness: "action_required",
+      currentlyDueCount: 2,
+    });
+  });
+
+  it("marks charges and payouts as ready only when both are enabled", () => {
+    expect(
+      stripeConnectDetails({
+        id: "acct_live",
+        charges_enabled: true,
+        payouts_enabled: true,
+        details_submitted: true,
+      }),
+    ).toMatchObject({ readiness: "ready", status: "active", ready: true });
+  });
+});
 
 describe("Stripe live/test account isolation", () => {
   it("never falls back to a sandbox account when live mode is selected", () => {

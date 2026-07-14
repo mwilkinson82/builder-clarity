@@ -22,13 +22,17 @@ import {
   type OrganizationStripeColumns,
   type StripeMode,
 } from "@/lib/stripe-mode";
+import {
+  stripeConnectDetails,
+  type StripeConnectAccountSnapshot,
+} from "@/lib/stripe-connect-status";
 
 const connectAccountLinkInput = z.object({
   organizationId: z.string().uuid().optional(),
   returnPath: z.string().max(500).optional(),
   refreshPath: z.string().max(500).optional(),
   mode: z.enum(["test", "live"]).default("live"),
-  action: z.enum(["onboard", "activate", "dashboard"]).default("onboard"),
+  action: z.enum(["onboard", "activate", "dashboard", "status"]).default("onboard"),
 });
 
 type OrganizationRecord = OrganizationStripeColumns & {
@@ -37,11 +41,8 @@ type OrganizationRecord = OrganizationStripeColumns & {
   billing_email: string;
 };
 
-type StripeConnectAccount = {
+type StripeConnectAccount = StripeConnectAccountSnapshot & {
   id: string;
-  charges_enabled?: boolean;
-  payouts_enabled?: boolean;
-  details_submitted?: boolean;
   controller?: {
     stripe_dashboard?: { type?: "express" | "full" | "none" | null } | null;
   } | null;
@@ -102,14 +103,6 @@ function normalizedInternalPath(value: string | undefined, fallback: string) {
   return value;
 }
 
-function connectStatus(account: StripeConnectAccount) {
-  if (account.charges_enabled && account.payouts_enabled && account.details_submitted) {
-    return { status: "active", ready: true };
-  }
-
-  return { status: "pending", ready: false };
-}
-
 function stripeConnectSchemaNotReady(error: { message?: string } | null) {
   return new RouteError(
     "stripe_schema_not_ready",
@@ -153,7 +146,7 @@ async function syncConnectAccountStatus(
   mode: StripeMode,
   currentMode: StripeMode,
 ) {
-  const status = connectStatus(account);
+  const status = stripeConnectDetails(account);
   const patch: Record<string, unknown> = stripeModePersistencePatch(
     mode,
     account.id,
@@ -259,6 +252,35 @@ export const Route = createFileRoute("/api/stripe/connect/account-link")({
           const currentMode = normalizeStripeMode(orgRecord.stripe_mode);
           const selected = stripeConnectionForMode(orgRecord, body.mode);
 
+          if (body.action === "status") {
+            if (!selected.accountId) {
+              return jsonOk({
+                organizationId: orgRecord.id,
+                mode: body.mode,
+                connectDetails: stripeConnectDetails({}),
+              });
+            }
+            const account = await stripeGet<StripeConnectAccount>(
+              `accounts/${selected.accountId}`,
+              body.mode,
+            );
+            const connectDetails = await syncConnectAccountStatus(
+              context,
+              orgRecord.id,
+              account,
+              body.mode,
+              currentMode,
+            );
+            return jsonOk({
+              organizationId: orgRecord.id,
+              mode: body.mode,
+              accountId: account.id,
+              connectStatus: connectDetails.status,
+              paymentProcessorReady: connectDetails.ready,
+              connectDetails,
+            });
+          }
+
           if (body.action === "activate") {
             if (!selected.accountId) {
               throw new RouteError(
@@ -300,6 +322,7 @@ export const Route = createFileRoute("/api/stripe/connect/account-link")({
               accountId: account.id,
               connectStatus: status.status,
               paymentProcessorReady: status.ready,
+              connectDetails: status,
               organizationId: orgRecord.id,
             });
           }
@@ -315,6 +338,13 @@ export const Route = createFileRoute("/api/stripe/connect/account-link")({
             const account = await stripeGet<StripeConnectAccount>(
               `accounts/${selected.accountId}`,
               body.mode,
+            );
+            const connectDetails = await syncConnectAccountStatus(
+              context,
+              orgRecord.id,
+              account,
+              body.mode,
+              currentMode,
             );
             const dashboardType = account.controller?.stripe_dashboard?.type;
             const dashboardUrl =
@@ -334,6 +364,7 @@ export const Route = createFileRoute("/api/stripe/connect/account-link")({
               dashboardType: dashboardType ?? "full",
               mode: body.mode,
               organizationId: orgRecord.id,
+              connectDetails,
             });
           }
 
@@ -377,6 +408,7 @@ export const Route = createFileRoute("/api/stripe/connect/account-link")({
             accountLinkUrl: accountLink.url,
             connectStatus: status.status,
             paymentProcessorReady: status.ready,
+            connectDetails: status,
             organizationId: orgRecord.id,
             mode: body.mode,
             returnUrl: returnUrl.toString(),
