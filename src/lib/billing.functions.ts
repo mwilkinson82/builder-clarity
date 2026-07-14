@@ -137,6 +137,10 @@ export interface CostActualRow {
   cost_document_id: string;
   // Optional attribution to the risk tally. Cost code remains the accounting home.
   exposure_id: string | null;
+  // Optional subcontract commitment represented by this actual. Exactly one may
+  // be set; the Budget layer uses it to relieve Open without duplicating cost.
+  subcontract_change_order_id: string | null;
+  subcontract_payment_id: string | null;
   cost_code: string;
   description: string;
   category: "direct" | "labor" | "material" | "equipment" | "subcontract" | "overhead";
@@ -438,6 +442,8 @@ const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => ({
   import_batch_id: (row.import_batch_id as string | null) ?? null,
   cost_document_id: str(row.cost_document_id),
   exposure_id: (row.exposure_id as string | null) ?? null,
+  subcontract_change_order_id: (row.subcontract_change_order_id as string | null) ?? null,
+  subcontract_payment_id: (row.subcontract_payment_id as string | null) ?? null,
   cost_code: str(row.cost_code),
   description: str(row.description),
   category: str(row.category, "direct") as CostActualRow["category"],
@@ -1318,36 +1324,42 @@ export const updateCostBucketBillingSettings = createServerFn({ method: "POST" }
     return { ok: true };
   });
 
-const costActualInput = z.object({
-  projectId: z.string().uuid(),
-  cost_bucket_id: z.string().uuid().nullable().optional(),
-  cost_code: z.string().max(64).default(""),
-  description: z.string().min(1).max(500),
-  category: z
-    .enum(["direct", "labor", "material", "equipment", "subcontract", "overhead"])
-    .default("direct"),
-  // Signed: a negative amount is a supplier credit / refund (field feedback
-  // 2026-07-13). The bucket rollup trigger applies the signed delta, so a credit
-  // reduces the code's actuals.
-  amount: z.number(),
-  vendor: z.string().max(200).default(""),
-  reference_number: z.string().max(200).default(""),
-  cost_date: z.string().min(1),
-  status: z.enum(["draft", "committed", "approved", "paid"]).default("committed"),
-  notes: z.string().max(2000).default(""),
-  // Dollars of daily WIP this cost SETTLES (field feedback 2026-07-13): the
-  // self-perform lump already folded into the bucket actual, which this vendor
-  // invoice now covers. Netted out at the rollup chokepoint so the same dollars
-  // aren't counted twice. Non-negative; a credit (amount < 0) forces 0 upstream.
-  daily_wip_offset: z.number().min(0).default(0).optional(),
-  invoice_attachment_path: z.string().max(1000).default(""),
-  invoice_attachment_name: z.string().max(500).default(""),
-  invoice_attachment_type: z.string().max(200).default(""),
-  invoice_attachment_size: z.number().int().min(0).default(0),
-  credit_applies_to_id: z.string().uuid().nullable().default(null),
-  cost_document_id: z.string().uuid().optional(),
-  exposure_id: z.string().uuid().nullable().default(null),
-});
+const costActualInput = z
+  .object({
+    projectId: z.string().uuid(),
+    cost_bucket_id: z.string().uuid().nullable().optional(),
+    cost_code: z.string().max(64).default(""),
+    description: z.string().min(1).max(500),
+    category: z
+      .enum(["direct", "labor", "material", "equipment", "subcontract", "overhead"])
+      .default("direct"),
+    // Signed: a negative amount is a supplier credit / refund (field feedback
+    // 2026-07-13). The bucket rollup trigger applies the signed delta, so a credit
+    // reduces the code's actuals.
+    amount: z.number(),
+    vendor: z.string().max(200).default(""),
+    reference_number: z.string().max(200).default(""),
+    cost_date: z.string().min(1),
+    status: z.enum(["draft", "committed", "approved", "paid"]).default("committed"),
+    notes: z.string().max(2000).default(""),
+    // Dollars of daily WIP this cost SETTLES (field feedback 2026-07-13): the
+    // self-perform lump already folded into the bucket actual, which this vendor
+    // invoice now covers. Netted out at the rollup chokepoint so the same dollars
+    // aren't counted twice. Non-negative; a credit (amount < 0) forces 0 upstream.
+    daily_wip_offset: z.number().min(0).default(0).optional(),
+    invoice_attachment_path: z.string().max(1000).default(""),
+    invoice_attachment_name: z.string().max(500).default(""),
+    invoice_attachment_type: z.string().max(200).default(""),
+    invoice_attachment_size: z.number().int().min(0).default(0),
+    credit_applies_to_id: z.string().uuid().nullable().default(null),
+    cost_document_id: z.string().uuid().optional(),
+    exposure_id: z.string().uuid().nullable().default(null),
+    subcontract_change_order_id: z.string().uuid().nullable().default(null),
+    subcontract_payment_id: z.string().uuid().nullable().default(null),
+  })
+  .refine((value) => !(value.subcontract_change_order_id && value.subcontract_payment_id), {
+    message: "Link a cost to either a subcontract change order or a progress payment, not both.",
+  });
 
 // The draft/approved stages need the payables-approval migration, and credits
 // (negative amounts) need the cost_actual_credits migration. If either isn't
@@ -1359,6 +1371,9 @@ const mapCostStatusError = (message: string) => {
   }
   if (/invoice_attachment_(path|name|type|size)/i.test(message)) {
     return "Invoice uploads are not enabled yet (database update pending). Apply the cost invoice attachment migration, then try again.";
+  }
+  if (/subcontract_change_order_id|subcontract_payment_id|subcontract link/i.test(message)) {
+    return "Subcontract cost links are not enabled yet (database update pending). Apply the cost-to-subcontract migration, then try again.";
   }
   if (message.includes("cost_actuals_status_check")) {
     return 'The invoice approval stages are not enabled yet (database update pending). Save the cost as "Committed" or "Paid" for now.';
@@ -1374,6 +1389,8 @@ const mapCostStatusError = (message: string) => {
 // the cost still records (just without the WIP-settlement) until the desk applies
 // it. Mirrors isMissingPaymentColumn's strip-and-retry pattern.
 const isMissingWipOffsetColumn = (message: string) => /daily_wip_offset/i.test(message);
+const isMissingSubcontractLinkColumn = (message: string) =>
+  /subcontract_change_order_id|subcontract_payment_id/i.test(message);
 
 export const createCostActual = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -1414,6 +1431,8 @@ export const createCostActual = createServerFn({ method: "POST" })
       credit_applies_to_id: data.amount < 0 ? data.credit_applies_to_id : null,
       ...(data.cost_document_id ? { cost_document_id: data.cost_document_id } : {}),
       exposure_id: data.exposure_id,
+      subcontract_change_order_id: data.subcontract_change_order_id,
+      subcontract_payment_id: data.subcontract_payment_id,
       ...(data.status === "approved"
         ? { approved_at: new Date().toISOString(), approved_by: ctx.userId }
         : {}),
@@ -1425,6 +1444,22 @@ export const createCostActual = createServerFn({ method: "POST" })
     if (insertRes.error && isMissingWipOffsetColumn(insertRes.error.message)) {
       const { daily_wip_offset: _drop, ...withoutOffset } = insertPayload;
       insertRes = await dynamicTable(ctx.supabase, "cost_actuals").insert(withoutOffset);
+    }
+    // A deploy may briefly precede its Lovable-applied migration. Unlinked costs
+    // still save during that window; a selected link fails clearly instead of
+    // silently discarding the user's accounting attribution.
+    if (
+      insertRes.error &&
+      isMissingSubcontractLinkColumn(insertRes.error.message) &&
+      !data.subcontract_change_order_id &&
+      !data.subcontract_payment_id
+    ) {
+      const {
+        subcontract_change_order_id: _dropCo,
+        subcontract_payment_id: _dropPayment,
+        ...withoutSubcontractLinks
+      } = insertPayload;
+      insertRes = await dynamicTable(ctx.supabase, "cost_actuals").insert(withoutSubcontractLinks);
     }
     if (insertRes.error) throw new Error(mapCostStatusError(insertRes.error.message));
     return { ok: true };
@@ -1440,32 +1475,38 @@ export const createCostActual = createServerFn({ method: "POST" })
 // handles amount deltas and bucket moves). PAID is the line in the sand —
 // money already went out the door, so a paid row stays locked: void it and
 // enter a corrected cost, keeping both in the audit trail.
-const updateCostActualInput = z.object({
-  id: z.string().uuid(),
-  cost_bucket_id: z.string().uuid().nullable().optional(),
-  cost_code: z.string().max(64).default(""),
-  description: z.string().min(1).max(500),
-  category: z
-    .enum(["direct", "labor", "material", "equipment", "subcontract", "overhead"])
-    .default("direct"),
-  // Signed: negative = supplier credit / refund (see costActualInput).
-  amount: z.number(),
-  vendor: z.string().max(200).default(""),
-  reference_number: z.string().max(200).default(""),
-  cost_date: z.string().min(1),
-  notes: z.string().max(2000).default(""),
-  // Daily-WIP this cost settles (see costActualInput). Optional with NO forced
-  // default here: an edit that doesn't carry the field leaves the stored offset
-  // untouched (undefined → omitted from the PostgREST body), so we never wipe an
-  // offset set at creation; a supplied value updates it.
-  daily_wip_offset: z.number().min(0).optional(),
-  invoice_attachment_path: z.string().max(1000).optional(),
-  invoice_attachment_name: z.string().max(500).optional(),
-  invoice_attachment_type: z.string().max(200).optional(),
-  invoice_attachment_size: z.number().int().min(0).optional(),
-  credit_applies_to_id: z.string().uuid().nullable().optional(),
-  exposure_id: z.string().uuid().nullable().optional(),
-});
+const updateCostActualInput = z
+  .object({
+    id: z.string().uuid(),
+    cost_bucket_id: z.string().uuid().nullable().optional(),
+    cost_code: z.string().max(64).default(""),
+    description: z.string().min(1).max(500),
+    category: z
+      .enum(["direct", "labor", "material", "equipment", "subcontract", "overhead"])
+      .default("direct"),
+    // Signed: negative = supplier credit / refund (see costActualInput).
+    amount: z.number(),
+    vendor: z.string().max(200).default(""),
+    reference_number: z.string().max(200).default(""),
+    cost_date: z.string().min(1),
+    notes: z.string().max(2000).default(""),
+    // Daily-WIP this cost settles (see costActualInput). Optional with NO forced
+    // default here: an edit that doesn't carry the field leaves the stored offset
+    // untouched (undefined → omitted from the PostgREST body), so we never wipe an
+    // offset set at creation; a supplied value updates it.
+    daily_wip_offset: z.number().min(0).optional(),
+    invoice_attachment_path: z.string().max(1000).optional(),
+    invoice_attachment_name: z.string().max(500).optional(),
+    invoice_attachment_type: z.string().max(200).optional(),
+    invoice_attachment_size: z.number().int().min(0).optional(),
+    credit_applies_to_id: z.string().uuid().nullable().optional(),
+    exposure_id: z.string().uuid().nullable().optional(),
+    subcontract_change_order_id: z.string().uuid().nullable().optional(),
+    subcontract_payment_id: z.string().uuid().nullable().optional(),
+  })
+  .refine((value) => !(value.subcontract_change_order_id && value.subcontract_payment_id), {
+    message: "Link a cost to either a subcontract change order or a progress payment, not both.",
+  });
 
 export const updateCostActual = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -1536,6 +1577,19 @@ export const updateCostActual = createServerFn({ method: "POST" })
     if (updateRes.error && isMissingWipOffsetColumn(updateRes.error.message)) {
       const { daily_wip_offset: _drop, ...withoutOffset } = updatePayload;
       updateRes = await runUpdate(withoutOffset);
+    }
+    if (
+      updateRes.error &&
+      isMissingSubcontractLinkColumn(updateRes.error.message) &&
+      !data.subcontract_change_order_id &&
+      !data.subcontract_payment_id
+    ) {
+      const {
+        subcontract_change_order_id: _dropCo,
+        subcontract_payment_id: _dropPayment,
+        ...withoutSubcontractLinks
+      } = updatePayload;
+      updateRes = await runUpdate(withoutSubcontractLinks);
     }
     if (updateRes.error) throw new Error(mapCostStatusError(updateRes.error.message));
     if (!updateRes.data) {
@@ -2063,6 +2117,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       subCoRes,
       subSplitRes,
       dailyWipRes,
+      costActualRes,
     ] = await Promise.all([
       dynamicTable(ctx.supabase, "cost_buckets").select("*").in("project_id", ids),
       dynamicTable(ctx.supabase, "exposures").select("*").in("project_id", ids),
@@ -2077,6 +2132,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
         .select("*")
         .in("project_id", ids),
       dynamicTable(ctx.supabase, "daily_wip_entries").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "cost_actuals").select("*").in("project_id", ids),
     ]);
     if (bucketRes.error) throw new Error(bucketRes.error.message);
     // Exposures / allocations power the At Risk + Contingency columns only; if
@@ -2140,6 +2196,10 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       isMissingRestRelation(dailyWipRes.error, "daily_wip_entries") || !dailyWipRes.data
         ? []
         : (dailyWipRes.data as Record<string, unknown>[]);
+    const rawCostActuals =
+      isMissingRestRelation(costActualRes.error, "cost_actuals") || !costActualRes.data
+        ? []
+        : (costActualRes.data as Record<string, unknown>[]);
 
     const bucketsByProject = groupRawByProject(rawBuckets);
     const exposuresByProject = groupRawByProject(rawExposures);
@@ -2152,6 +2212,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
     const subCosByProject = groupRawByProject(rawSubCos);
     const subSplitsByProject = groupRawByProject(rawSubSplits);
     const dailyWipByProject = groupRawByProject(rawDailyWip);
+    const costActualsByProject = groupRawByProject(rawCostActuals);
 
     const projects = projectRows.map((projectRow) => {
       const pid = projectRow.id as string;
@@ -2189,6 +2250,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
         // Coded sub COs fold into committed — job-cost reporting matches the
         // Budget grid and dashboard after a change order lands.
         (subCosByProject.get(pid) ?? []).map((row) => ({
+          id: str(row.id),
           subcontract_id: str(row.subcontract_id),
           cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
           amount: num(row.amount),
@@ -2198,6 +2260,13 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
           payment_id: str(row.payment_id),
           cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
           amount: num(row.amount),
+        })),
+        (costActualsByProject.get(pid) ?? []).map((row) => ({
+          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          amount: num(row.amount),
+          status: str(row.status),
+          subcontract_change_order_id: (row.subcontract_change_order_id as string | null) ?? null,
+          subcontract_payment_id: (row.subcontract_payment_id as string | null) ?? null,
         })),
       );
       const ledger = computeBudgetLedger(

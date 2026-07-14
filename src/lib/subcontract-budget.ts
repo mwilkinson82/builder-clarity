@@ -1,14 +1,16 @@
 // Additive subcontractor cost layer for the budget ledger.
 //
 // A subcontract "buyout" is COMMITTED cost against one or more cost codes; a
-// progress payment against it is ACTUAL cost. This module summarizes, per cost
-// bucket, the committed / paid / open (remaining commitment) amounts so the
+// progress payment or linked supplier invoice against it is ACTUAL cost. This
+// module summarizes, per cost bucket, the committed / paid / linked actual /
+// open (remaining commitment) amounts so the
 // budget ledger can fold them in ADDITIVELY:
 //   actuals             += Σ sub payments (gross work value)
 //   open (forecast)     += Σ (committed − paid)  = remaining commitment
-// Nothing here touches cost_actuals or the shared budget trigger — this is a
-// parallel, additive layer, exactly like change-order allocations. All math runs
-// in integer cents; dollars exist only at the edges.
+// Cost actuals already live in each bucket's actual_to_date. A linked actual
+// therefore RELIEVES open here but is not added to paid, preventing the same
+// invoice from increasing projected cost twice. All math runs in integer cents;
+// dollars exist only at the edges.
 //
 // Founder call (2026-07-07): the additive layer, not a global trigger change.
 // Retainage held from a payment is cash-flow only — the COST incurred is the
@@ -73,7 +75,10 @@ export interface SubBucketCost {
   // pro-rata), dollars. This is "actual cost" on the budget — what's actually
   // gone out the door.
   paid: number;
-  open: number; // max(0, committed − paid) = remaining commitment (forecast)
+  // Recognized cost_actuals linked to a subcontract CO/payment. Already present
+  // in the bucket's base actuals, so display/audit only in this layer.
+  linkedActual: number;
+  open: number; // max(0, committed − paid − linkedActual) = remaining commitment
   // Earned value: the buyout commitment × the sub's field percent-complete on
   // this code, dollars. What the work in place is WORTH (progress/production),
   // distinct from what's been paid. Display-only — it never drives the ledger
@@ -115,18 +120,32 @@ export function subEarnedKey(subcontractorId: string, costBucketId: string): str
 // A sub change order/credit as the budget layer sees it: signed dollars tagged
 // (or not) to a cost code. Mirrors subcontract_change_orders rows.
 export interface SubChangeOrderBudgetLike {
+  id?: string;
   subcontract_id: string;
   cost_bucket_id: string | null;
   // Signed dollars: a change order is positive, a credit is negative.
   amount: number;
 }
 
+export interface LinkedSubcontractActualLike {
+  cost_bucket_id: string | null;
+  amount: number;
+  status?: string;
+  subcontract_change_order_id?: string | null;
+  subcontract_payment_id?: string | null;
+}
+
+const isRecognizedActual = (actual: LinkedSubcontractActualLike) =>
+  actual.status !== "draft" && actual.status !== "void" && numeric(actual.amount) > 0;
+
 // Per cost bucket: committed = Σ executed-sub allocations + Σ signed change
 // orders TAGGED to that code (field request 2026-07-09: "change orders didn't
 // roll up to the dashboards" — a coded CO now carries into committed
 // automatically; untagged COs stay on the card until coded); paid = each
 // subcontract's payments distributed pro-rata across its allocations (actual cash
-// out); open = max(0, committed − paid) = remaining commitment; earned = Σ
+// out), excluding the portion already represented by a linked cost actual;
+// linkedActual = recognized invoice cost already in the bucket actual;
+// open = max(0, committed − paid − linkedActual) = remaining commitment; earned = Σ
 // (allocation commitment × the sub's field percent-complete on that code) — what
 // the work in place is worth, display-only (it does NOT drive actuals/forecast).
 // Only EXECUTED subcontracts contribute. Cents-safe throughout. With no
@@ -142,10 +161,40 @@ export function summarizeSubCostByBucket(
   changeOrders: SubChangeOrderBudgetLike[] = [],
   // Explicit per-payment splits; a payment with rows here bypasses pro-rata.
   paymentSplits: PaymentSplitLike[] = [],
+  // Recognized invoice/cost rows linked to a subcontract CO or progress payment.
+  // These already sit in cost_buckets.actual_to_date and only relieve Open here.
+  linkedActuals: LinkedSubcontractActualLike[] = [],
 ): Map<string, SubBucketCost> {
   const executedSubs = subcontracts.filter((s) => s.status === "executed");
   const executed = new Set(executedSubs.map((s) => s.id));
   const companyBySub = new Map(executedSubs.map((s) => [s.id, s.subcontractor_id] as const));
+  const paymentById = new Map(payments.filter((p) => p.id).map((p) => [p.id as string, p]));
+  const changeOrderById = new Map(
+    changeOrders.filter((co) => co.id).map((co) => [co.id as string, co]),
+  );
+  const linkedCentsByBucket = new Map<string, number>();
+  const linkedCentsByPayment = new Map<string, number>();
+  for (const actual of linkedActuals) {
+    if (!actual.cost_bucket_id || !isRecognizedActual(actual)) continue;
+    const cents = dollarsToCents(numeric(actual.amount));
+    if (actual.subcontract_payment_id) {
+      const payment = paymentById.get(actual.subcontract_payment_id);
+      if (!payment || !executed.has(payment.subcontract_id)) continue;
+      linkedCentsByPayment.set(
+        actual.subcontract_payment_id,
+        (linkedCentsByPayment.get(actual.subcontract_payment_id) ?? 0) + cents,
+      );
+    } else if (actual.subcontract_change_order_id) {
+      const changeOrder = changeOrderById.get(actual.subcontract_change_order_id);
+      if (!changeOrder || !executed.has(changeOrder.subcontract_id)) continue;
+    } else {
+      continue;
+    }
+    linkedCentsByBucket.set(
+      actual.cost_bucket_id,
+      (linkedCentsByBucket.get(actual.cost_bucket_id) ?? 0) + cents,
+    );
+  }
   const splitPaymentIds = new Set(paymentSplits.map((split) => split.payment_id));
   // Payments the user explicitly coded (field request 2026-07-09): their cash
   // lands exactly where they said, and they leave the pro-rata pool entirely.
@@ -157,13 +206,20 @@ export function summarizeSubCostByBucket(
     // Skipping BEFORE the split check also keeps an unpaid payment's explicit
     // split rows off the buckets (it never joins explicitlySplitIds).
     if (!isPaidPayment(p)) continue;
+    const grossCents = dollarsToCents(numeric(p.amount));
+    // A linked invoice already contributes actual cost through the bucket. Only
+    // any unmatched remainder of the progress payment stays additive here.
+    const remainingCents = Math.max(
+      0,
+      grossCents - (p.id ? (linkedCentsByPayment.get(p.id) ?? 0) : 0),
+    );
     if (p.id && splitPaymentIds.has(p.id)) {
       explicitlySplitIds.add(p.id);
       continue;
     }
     paidCentsBySub.set(
       p.subcontract_id,
-      (paidCentsBySub.get(p.subcontract_id) ?? 0) + dollarsToCents(numeric(p.amount)),
+      (paidCentsBySub.get(p.subcontract_id) ?? 0) + remainingCents,
     );
   }
 
@@ -217,13 +273,29 @@ export function summarizeSubCostByBucket(
   // buckets (uncoded rows stay off the bucket map, same as unallocated cash).
   // The server enforces rows sum to the payment, so nothing double-counts with
   // the pro-rata pool those payments already left.
+  const splitsByPayment = new Map<string, PaymentSplitLike[]>();
   for (const split of paymentSplits) {
     if (!explicitlySplitIds.has(split.payment_id)) continue;
-    if (!split.cost_bucket_id) continue;
-    paidCentsByBucket.set(
-      split.cost_bucket_id,
-      (paidCentsByBucket.get(split.cost_bucket_id) ?? 0) + dollarsToCents(numeric(split.amount)),
+    const list = splitsByPayment.get(split.payment_id) ?? [];
+    list.push(split);
+    splitsByPayment.set(split.payment_id, list);
+  }
+  for (const [paymentId, splits] of splitsByPayment) {
+    const payment = paymentById.get(paymentId);
+    if (!payment) continue;
+    const remainingCents = Math.max(
+      0,
+      dollarsToCents(numeric(payment.amount)) - (linkedCentsByPayment.get(paymentId) ?? 0),
     );
+    const shares = distributeCents(
+      remainingCents,
+      splits.map((split) => dollarsToCents(numeric(split.amount))),
+    );
+    for (let index = 0; index < splits.length; index += 1) {
+      const bucketId = splits[index].cost_bucket_id;
+      if (!bucketId) continue;
+      paidCentsByBucket.set(bucketId, (paidCentsByBucket.get(bucketId) ?? 0) + shares[index]);
+    }
   }
 
   // Fold signed change orders/credits into committed on their tagged code. Only
@@ -243,16 +315,19 @@ export function summarizeSubCostByBucket(
   const bucketIds = new Set<string>([
     ...committedCentsByBucket.keys(),
     ...paidCentsByBucket.keys(),
+    ...linkedCentsByBucket.keys(),
   ]);
   for (const bucketId of bucketIds) {
     // Floor at 0: a credit larger than the code's buyout can't drive committed
     // negative (open already floors the same way).
     const committedCents = Math.max(0, committedCentsByBucket.get(bucketId) ?? 0);
     const paidCents = paidCentsByBucket.get(bucketId) ?? 0;
-    const openCents = Math.max(0, committedCents - paidCents);
+    const linkedActualCents = linkedCentsByBucket.get(bucketId) ?? 0;
+    const openCents = Math.max(0, committedCents - paidCents - linkedActualCents);
     out.set(bucketId, {
       committed: centsToDollars(committedCents),
       paid: centsToDollars(paidCents),
+      linkedActual: centsToDollars(linkedActualCents),
       open: centsToDollars(openCents),
       earned: centsToDollars(earnedCentsByBucket.get(bucketId) ?? 0),
     });

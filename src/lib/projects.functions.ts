@@ -1479,9 +1479,7 @@ export const listProjects = createServerFn({ method: "GET" })
       // project dashboard does. Only cost_bucket_id/status/daily_wip_offset are
       // needed. Degrades to empty pre-billing-tables; daily_wip_offset read
       // defensively so a pre-migration project nets 0.
-      dynamicTable(context.supabase, "cost_actuals")
-        .select("project_id,cost_bucket_id,status,daily_wip_offset")
-        .in("project_id", ids),
+      dynamicTable(context.supabase, "cost_actuals").select("*").in("project_id", ids),
     ]);
     if (expRes.error) throw new Error(expRes.error.message);
     if (cosRes.error) throw new Error(cosRes.error.message);
@@ -1632,6 +1630,7 @@ export const listProjects = createServerFn({ method: "GET" })
         // Coded sub COs fold into committed here too, so the portfolio matches
         // the project dashboard after a change order lands.
         (scoByP[p.id] ?? []).map((row) => ({
+          id: str(row.id),
           subcontract_id: str(row.subcontract_id),
           cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
           amount: num(row.amount),
@@ -1641,6 +1640,13 @@ export const listProjects = createServerFn({ method: "GET" })
           payment_id: str(row.payment_id),
           cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
           amount: num(row.amount),
+        })),
+        (caByP[p.id] ?? []).map((row) => ({
+          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          amount: num(row.amount),
+          status: str(row.status),
+          subcontract_change_order_id: (row.subcontract_change_order_id as string | null) ?? null,
+          subcontract_payment_id: (row.subcontract_payment_id as string | null) ?? null,
         })),
       );
       // Self-perform daily WIP folds into actual + forecast the same way as on the
@@ -2234,6 +2240,7 @@ export const getProject = createServerFn({ method: "GET" })
       undefined,
       subChangeOrderRows as unknown as SummarizeArgs[4],
       subPaymentSplitRows as unknown as SummarizeArgs[5],
+      costActualRows as unknown as SummarizeArgs[6],
     );
 
     // Self-perform WIP cost per code, folded into actual + forecast (displacement,

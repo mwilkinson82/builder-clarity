@@ -13,6 +13,7 @@ import { summarizeCostSettlement } from "@/lib/cost-settlement";
 import { groupCostActualsByDocument } from "@/lib/cost-documents";
 import { findOrCreateVendor, listVendors, saveVendor } from "@/lib/vendors.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
+import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
@@ -72,6 +73,9 @@ type CostActualDraft = {
   cost_document_id?: string;
   /** Optional risk-tally attribution; cost code remains required accounting context. */
   exposure_id: string | null;
+  /** Optional subcontract commitment this incurred cost relieves. */
+  subcontract_change_order_id: string | null;
+  subcontract_payment_id: string | null;
   cost_bucket_id: string | null;
   cost_code: string;
   description: string;
@@ -1172,6 +1176,7 @@ export function ProjectCostTrackingPanel({
   const recordCostPaymentFn = useServerFn(recordCostActualPayment);
   const listVendorsFn = useServerFn(listVendors);
   const listSubsFn = useServerFn(listSubcontractors);
+  const listProjectSubcontractsFn = useServerFn(listProjectSubcontracts);
   const findOrCreateVendorFn = useServerFn(findOrCreateVendor);
   const saveVendorFn = useServerFn(saveVendor);
   const vendorsQuery = useQuery({
@@ -1183,6 +1188,10 @@ export function ProjectCostTrackingPanel({
     queryKey: ["subcontractors-directory"],
     queryFn: () => listSubsFn(),
     staleTime: 30_000,
+  });
+  const projectSubcontractsQuery = useQuery({
+    queryKey: ["subcontracts", projectId],
+    queryFn: () => listProjectSubcontractsFn({ data: { projectId } }),
   });
   const costLedgerDetailsQuery = useQuery({
     queryKey: ["cost-ledger-details", projectId],
@@ -1277,6 +1286,42 @@ export function ProjectCostTrackingPanel({
   };
   const vendorNames = (vendorsQuery.data ?? []).map((vendor) => vendor.name);
   const subNames = (subsQuery.data ?? []).map((sub) => sub.name);
+  const subNameById = new Map((subsQuery.data ?? []).map((sub) => [sub.id, sub.name]));
+  const projectSubcontractById = new Map(
+    (projectSubcontractsQuery.data?.subcontracts ?? []).map((subcontract) => [
+      subcontract.id,
+      subcontract,
+    ]),
+  );
+  const subcontractTargetOptions = [
+    ...(projectSubcontractsQuery.data?.change_orders ?? []).flatMap((changeOrder) => {
+      const subcontract = projectSubcontractById.get(changeOrder.subcontract_id);
+      if (!subcontract || subcontract.status !== "executed") return [];
+      const subName =
+        subNameById.get(subcontract.subcontractor_id) || subcontract.title || "Subcontract";
+      return [
+        {
+          value: `co:${changeOrder.id}`,
+          label: `${subName} · CO: ${changeOrder.description || changeOrder.cost_code || "Change order"}`,
+        },
+      ];
+    }),
+    ...(projectSubcontractsQuery.data?.payments ?? []).flatMap((payment) => {
+      const subcontract = projectSubcontractById.get(payment.subcontract_id);
+      if (!subcontract || subcontract.status !== "executed") return [];
+      const subName =
+        subNameById.get(subcontract.subcontractor_id) || subcontract.title || "Subcontract";
+      return [
+        {
+          value: `payment:${payment.id}`,
+          label: `${subName} · Pay app ${payment.reference || payment.payment_date} · ${fmtUSD(payment.amount)}`,
+        },
+      ];
+    }),
+  ];
+  const subcontractTargetLabelByValue = new Map(
+    subcontractTargetOptions.map((option) => [option.value, option.label]),
+  );
   // Enrolling a new name in the vendor directory is best-effort: the cost row
   // is the real record and saves regardless; a directory hiccup stays silent.
   const enrollVendor = useMutation({
@@ -1289,6 +1334,8 @@ export function ProjectCostTrackingPanel({
   // cost until someone approves the spend or marks it paid.
   const [draft, setDraft] = useState<CostActualDraft>(() => ({
     exposure_id: null,
+    subcontract_change_order_id: null,
+    subcontract_payment_id: null,
     cost_bucket_id: buckets[0]?.id ?? null,
     cost_code: buckets[0]?.cost_code ?? "",
     description: "",
@@ -1509,6 +1556,8 @@ export function ProjectCostTrackingPanel({
     setDraft({
       cost_document_id: actual.cost_document_id || actual.id,
       exposure_id: actual.exposure_id,
+      subcontract_change_order_id: actual.subcontract_change_order_id,
+      subcontract_payment_id: actual.subcontract_payment_id,
       cost_bucket_id: actual.cost_bucket_id,
       cost_code: actual.cost_code,
       description: actual.description,
@@ -1538,6 +1587,8 @@ export function ProjectCostTrackingPanel({
     setInvoiceFile(null);
     setDraft({
       exposure_id: null,
+      subcontract_change_order_id: null,
+      subcontract_payment_id: null,
       cost_bucket_id: buckets[0]?.id ?? null,
       cost_code: buckets[0]?.cost_code ?? "",
       description: "",
@@ -2120,6 +2171,60 @@ export function ProjectCostTrackingPanel({
                   </div>
                 </div>
                 <div className="space-y-1.5 rounded-md border border-hairline bg-surface p-3">
+                  <Label>Subcontract commitment (optional)</Label>
+                  <Select
+                    value={
+                      draft.subcontract_change_order_id
+                        ? `co:${draft.subcontract_change_order_id}`
+                        : draft.subcontract_payment_id
+                          ? `payment:${draft.subcontract_payment_id}`
+                          : "unlinked"
+                    }
+                    onValueChange={(value) => {
+                      const [kind, id] = value.split(":");
+                      const linkedChangeOrder =
+                        kind === "co"
+                          ? projectSubcontractsQuery.data?.change_orders.find(
+                              (changeOrder) => changeOrder.id === id,
+                            )
+                          : undefined;
+                      const linkedBucket = linkedChangeOrder?.cost_bucket_id
+                        ? buckets.find((bucket) => bucket.id === linkedChangeOrder.cost_bucket_id)
+                        : undefined;
+                      setDraft({
+                        ...draft,
+                        subcontract_change_order_id: kind === "co" ? id || null : null,
+                        subcontract_payment_id: kind === "payment" ? id || null : null,
+                        ...(linkedBucket
+                          ? {
+                              cost_bucket_id: linkedBucket.id,
+                              cost_code: linkedBucket.cost_code,
+                            }
+                          : {}),
+                      });
+                    }}
+                  >
+                    <SelectTrigger aria-label="Link this cost to a subcontract commitment">
+                      <SelectValue placeholder="Not linked to a subcontract commitment" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="unlinked">
+                        Not linked to a subcontract commitment
+                      </SelectItem>
+                      {subcontractTargetOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    Once this invoice is approved, its actual cost reduces Budget Open on the cost
+                    code instead of stacking on top of the same subcontract commitment. Multi-line
+                    invoices should use a pay app when their allocations span different cost codes.
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-md border border-hairline bg-surface p-3">
                   <Label>Risk tally attribution (optional)</Label>
                   <Select
                     value={draft.exposure_id ?? "unlinked"}
@@ -2439,6 +2544,21 @@ export function ProjectCostTrackingPanel({
               const linkedRisks = riskIds
                 .map((id) => exposures.find((exposure) => exposure.id === id)?.title)
                 .filter((title): title is string => Boolean(title));
+              const subcontractTargetValues = [
+                ...new Set(
+                  document.lines.flatMap((line) => [
+                    ...(line.subcontract_change_order_id
+                      ? [`co:${line.subcontract_change_order_id}`]
+                      : []),
+                    ...(line.subcontract_payment_id
+                      ? [`payment:${line.subcontract_payment_id}`]
+                      : []),
+                  ]),
+                ),
+              ];
+              const linkedSubcontractTargets = subcontractTargetValues
+                .map((value) => subcontractTargetLabelByValue.get(value))
+                .filter((label): label is string => Boolean(label));
               return (
                 <div
                   key={document.id}
@@ -2469,6 +2589,11 @@ export function ProjectCostTrackingPanel({
                         {linkedRisks.length > 0 ? (
                           <span className="font-medium text-warning">
                             Actual incurred → {linkedRisks.join(", ")}
+                          </span>
+                        ) : null}
+                        {linkedSubcontractTargets.length > 0 ? (
+                          <span className="font-medium text-success">
+                            Reduces Budget Open → {linkedSubcontractTargets.join(", ")}
                           </span>
                         ) : null}
                       </div>

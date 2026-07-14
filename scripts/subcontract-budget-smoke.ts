@@ -44,6 +44,110 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
   );
 }
 
+// ── Linked invoice actuals burn down Budget Open without stacking projected
+//    cost. The invoice is already inside bucket.actual_to_date, so this layer
+//    relieves the same subcontract commitment instead of adding another actual. ──
+{
+  const subs = [{ id: "s-linked", contract_value: 100_000, status: "executed" }];
+  const allocs = [{ subcontract_id: "s-linked", cost_bucket_id: "b-linked", amount: 100_000 }];
+  const changeOrders = [
+    {
+      id: "co-linked",
+      subcontract_id: "s-linked",
+      cost_bucket_id: "b-linked",
+      amount: 20_000,
+    },
+  ];
+  const linkedActuals = [
+    {
+      cost_bucket_id: "b-linked",
+      amount: 15_000,
+      status: "approved",
+      subcontract_change_order_id: "co-linked",
+    },
+  ];
+  const subCost = summarizeSubCostByBucket(
+    subs,
+    allocs,
+    [],
+    new Map(),
+    changeOrders,
+    [],
+    linkedActuals,
+  );
+  assert.equal(subCost.get("b-linked")?.committed, 120_000, "base buyout + sub CO committed");
+  assert.equal(subCost.get("b-linked")?.linkedActual, 15_000, "linked invoice is identified");
+  assert.equal(subCost.get("b-linked")?.paid, 0, "linked invoice is not added a second time");
+  assert.equal(subCost.get("b-linked")?.open, 105_000, "linked invoice reduces unpaid Open");
+
+  const row = computeBudgetLedger(
+    [
+      {
+        id: "b-linked",
+        cost_code: "0300",
+        bucket: "Structure",
+        contract_value: 150_000,
+        original_budget: 120_000,
+        actual_to_date: 15_000,
+        ftc: 120_000,
+      },
+    ],
+    [],
+    [],
+    [],
+    [],
+    subCost,
+  ).rows.find((candidate) => candidate.costBucketId === "b-linked");
+  assert.equal(row?.actuals, 15_000, "invoice remains the one actual cost");
+  assert.equal(row?.open, 105_000, "Open burns down by the same 15k");
+  assert.equal(row?.eac, 120_000, "Projected cost stays flat at the commitment");
+
+  const draft = summarizeSubCostByBucket(
+    subs,
+    allocs,
+    [],
+    new Map(),
+    changeOrders,
+    [],
+    [{ ...linkedActuals[0], status: "draft" }],
+  );
+  assert.equal(draft.get("b-linked")?.open, 120_000, "draft invoice does not relieve Open");
+}
+
+// ── A cost linked to an existing paid progress payment deduplicates only the
+//    represented portion. Any unmatched payment remainder stays additive. ──
+{
+  const subs = [{ id: "s-pay", contract_value: 100_000, status: "executed" }];
+  const allocs = [{ subcontract_id: "s-pay", cost_bucket_id: "b-pay", amount: 100_000 }];
+  const payments = [
+    {
+      id: "pay-1",
+      subcontract_id: "s-pay",
+      amount: 20_000,
+      status: "paid",
+    },
+  ];
+  const result = summarizeSubCostByBucket(
+    subs,
+    allocs,
+    payments,
+    new Map(),
+    [],
+    [],
+    [
+      {
+        cost_bucket_id: "b-pay",
+        amount: 15_000,
+        status: "approved",
+        subcontract_payment_id: "pay-1",
+      },
+    ],
+  );
+  assert.equal(result.get("b-pay")?.linkedActual, 15_000, "invoice carries 15k of the payment");
+  assert.equal(result.get("b-pay")?.paid, 5_000, "only the unmatched 5k payment remains additive");
+  assert.equal(result.get("b-pay")?.open, 80_000, "total 20k incurred relieves Open once");
+}
+
 // ── Draft buyout does not commit cost ──
 {
   const subs = [{ id: "s2", contract_value: 80_000, status: "draft" }];
