@@ -25,6 +25,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { AppFooter } from "@/components/layout/AppFooter";
 import { closeProject } from "@/lib/projects.functions";
 import { type HeroStat, type WorklistJob } from "./portfolio-home-data";
 import { homeInitials, useHomeAccess, useHomeIdentity, type HomeIdentity } from "./home-identity";
@@ -394,7 +395,7 @@ export function PortfolioHome() {
           <PmView identity={identity} metrics={metrics} />
         )}
 
-        <HomeFooter />
+        <AppFooter context={`${identity.companyName} · Portfolio`} />
       </div>
     </div>
   );
@@ -755,27 +756,5 @@ function PmView({ identity, metrics }: { identity: HomeIdentity; metrics: HomeMe
         </div>
       </section>
     </>
-  );
-}
-
-function HomeFooter() {
-  return (
-    <footer>
-      <div className="ow-footer-brand">
-        <div className="ow-footer-kicker">Run every job through the money.</div>
-        <div className="ow-wordmark">
-          OverWatch
-          <span className="ow-wordmark__dot" />
-        </div>
-      </div>
-      <div className="ow-footer-bar">
-        <span>© 2026 ALP · OVERWATCH — AN ALP PRODUCT</span>
-        <span className="ow-footer-bar__links">
-          <a href="/support">SUPPORT</a>
-          <a href="/support">DOCS</a>
-          <a href="/auth">SIGN OUT</a>
-        </span>
-      </div>
-    </footer>
   );
 }

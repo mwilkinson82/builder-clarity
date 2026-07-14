@@ -1063,64 +1063,6 @@
   color: var(--muted);
 }
 
-/* ---------- footer ---------- */
-.ow-footer-brand {
-  background: var(--surface);
-  border-top: 1px solid var(--edge);
-  padding: 26px 40px 0;
-  overflow: hidden;
-}
-.ow-footer-kicker {
-  font-family: "Archivo", var(--sans);
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.ow-wordmark {
-  font-family: "Archivo", var(--sans);
-  font-weight: 900;
-  font-size: clamp(64px, 13.9vw, 172px);
-  line-height: 0.82;
-  letter-spacing: -0.045em;
-  color: var(--ink);
-  white-space: nowrap;
-  margin: 8px 0 -0.09em -10px;
-}
-.ow-wordmark__dot {
-  display: inline-block;
-  width: 0.15em;
-  height: 0.15em;
-  background: var(--signal);
-  margin-left: 0.035em;
-  vertical-align: baseline;
-}
-.ow-footer-bar {
-  background: var(--dark);
-  color: #9a9184;
-  padding: 15px 40px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.ow-footer-bar__links {
-  display: flex;
-  gap: 26px;
-}
-.ow-footer-bar__links a {
-  color: #b7ae9e;
-  text-decoration: none;
-}
-.ow-footer-bar__links a:hover {
-  color: #fbf6ec;
-}
-
 /* ---------- responsive: keep it usable down to 375 ---------- */
 @media (max-width: 1000px) {
   .ow-tiles {
@@ -1202,11 +1144,6 @@
   }
   .ow-tiles {
     grid-template-columns: repeat(2, 1fr);
-  }
-  .ow-footer-brand,
-  .ow-footer-bar {
-    padding-left: 18px;
-    padding-right: 18px;
   }
   .ow-brief__greet {
     font-size: 26px;
