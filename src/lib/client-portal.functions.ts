@@ -40,6 +40,7 @@ export interface ProjectClientAccessRow {
   can_view_change_orders: boolean;
   can_view_daily_reports: boolean;
   can_view_billing: boolean;
+  can_view_selections: boolean;
   accepted_at: string | null;
   last_sent_at: string | null;
   created_at: string;
@@ -164,6 +165,7 @@ const accessPatchInput = z.object({
   can_view_change_orders: z.boolean().optional(),
   can_view_daily_reports: z.boolean().optional(),
   can_view_billing: z.boolean().optional(),
+  can_view_selections: z.boolean().optional(),
   last_sent_at: z.string().datetime().nullable().optional(),
 });
 
@@ -296,6 +298,7 @@ function normalizeAccess(row: Record<string, unknown>): ProjectClientAccessRow {
     can_view_change_orders: bool(row.can_view_change_orders, true),
     can_view_daily_reports: bool(row.can_view_daily_reports),
     can_view_billing: bool(row.can_view_billing),
+    can_view_selections: bool(row.can_view_selections, true),
     accepted_at: (row.accepted_at as string | null) ?? null,
     last_sent_at: (row.last_sent_at as string | null) ?? null,
     created_at: str(row.created_at),

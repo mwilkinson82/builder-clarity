@@ -197,6 +197,10 @@ await expectFile("src/lib/estimate-import.ts", "estimating import parser");
 await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
 await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
 await expectFile("src/lib/email-templates/invoice-notification.tsx", "invoice email template");
+await expectFile("src/lib/email-templates/selection-notification.tsx", "selection email template");
+await expectFile("src/components/outcome/SelectionsWorkspace.tsx", "selections workspace");
+await expectFile("src/components/outcome/ClientSelectionsPanel.tsx", "client selections panel");
+await expectFile("src/lib/selections.functions.ts", "selection server functions");
 await expectFile(
   "src/lib/email-templates/ior-report-notification.tsx",
   "IOR report email template",
@@ -676,16 +680,18 @@ await expectContains(
     /const PROJECT_NAV_GROUPS: ProjectNavGroup\[\] = \[/,
     /label: "IOR"[\s\S]*label: "Plan & Procurement"[\s\S]*label: "Commercial"[\s\S]*label: "Field"[\s\S]*label: "Client & Records"/,
     /"dashboard", "risk-tally", "todos", "claims", "ior-report"/,
-    /"schedule", "rfi-submittals"/,
+    /"schedule", "selections", "rfi-submittals"/,
     /"sov", "subcontractors", "change-orders", "billing"/,
     /"daily-reports", "daily-wip", "inspections"/,
     /"client-portal", "file-room"/,
     /const companyName = project\.organization_name \|\| "Overwatch company"/,
     // v2 shell: mobile slim top bar; on desktop the rail head carries company +
-    // project switcher and the rail foot carries Portfolio/Sign out.
+    // project switcher and a visible Portfolio link before the nav groups.
     /border-hairline bg-wash px-4 py-2 lg:hidden/,
     /aria-label="Switch project"/,
-    /← Portfolio/,
+    /<ArrowLeft className="h-4 w-4" \/>/,
+    /<ChevronRight[\s\S]*className="h-5 w-5/,
+    /<ChevronDown[\s\S]*className="h-5 w-5/,
     // Close/Archive/Delete live behind the "···" overflow; one controlled state
     // drives the three confirm dialogs (they must all remain reachable).
     /aria-label="More project actions"/,
@@ -2564,6 +2570,32 @@ expectSql(
     /can_view_client_billing/i,
   ],
   "client portal tables, approval RPCs, and module permissions exist",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.project_selections/i,
+    /create table if not exists public\.project_selection_options/i,
+    /create table if not exists public\.project_selection_decisions/i,
+    /can_view_client_selections/i,
+    /record_client_selection_decision/i,
+    /grant select, insert, update, delete on public\.project_selections to authenticated/i,
+    /enable row level security/i,
+  ],
+  "selections migration ships CPM-linked packages, client audit decisions, grants, and RLS",
+);
+
+await expectContains(
+  "src/components/outcome/SelectionsWorkspace.tsx",
+  [/listProjectSelections/, /sendSelectionForClientDecision/, /selection-notification/],
+  "internal selections board loads, sends, and advances procurement",
+);
+
+await expectContains(
+  "src/components/outcome/ClientSelectionsPanel.tsx",
+  [/listClientSelections/, /recordClientSelectionDecision/, /Approve selected option/],
+  "client portal renders immutable selection decisions",
 );
 
 expectSql(

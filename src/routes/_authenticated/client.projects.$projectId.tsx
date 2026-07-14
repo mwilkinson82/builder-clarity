@@ -45,6 +45,7 @@ import {
 } from "@/lib/payments-domain";
 import { expireInvoiceCheckout } from "@/lib/payments.functions";
 import { useInvoiceViewSignal } from "@/lib/portal-view-signal";
+import { ClientSelectionsPanel } from "@/components/outcome/ClientSelectionsPanel";
 
 const DAILY_REPORT_BUCKET = "daily-reports";
 
@@ -414,6 +415,7 @@ function ClientProjectPage() {
       </header>
 
       <main className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-8">
+        <ClientSelectionsPanel projectId={projectId} />
         <section className="order-1 space-y-6">
           <div>
             <div className="eyebrow">For your review</div>
