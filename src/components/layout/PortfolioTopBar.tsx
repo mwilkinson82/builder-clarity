@@ -8,17 +8,18 @@ import { cn } from "@/lib/utils";
 
 /**
  * v2 business-layer shell: the shared top bar for every portfolio/business
- * page (Portfolio · CRM · Estimates · Team · Billing) with the company
+ * page (Portfolio · Projects · CRM · Estimates · Team · Billing) with the company
  * switcher. NOT for project-detail pages — those keep the floating rail.
  *
  * Self-fetches the company context off the shared query key so a page only
  * needs `<PortfolioTopBar active="…" />`; the `actions` slot carries any
  * page-specific CTA (e.g. "+ New estimate").
  */
-type NavKey = "portfolio" | "crm" | "estimates" | "team" | "billing";
+type NavKey = "portfolio" | "projects" | "crm" | "estimates" | "team" | "billing";
 
 const NAV: { key: NavKey; label: string }[] = [
   { key: "portfolio", label: "Portfolio" },
+  { key: "projects", label: "Projects" },
   { key: "crm", label: "CRM" },
   { key: "estimates", label: "Estimates" },
   { key: "team", label: "Team" },
@@ -76,6 +77,9 @@ export function PortfolioTopBar({ active, actions }: { active: NavKey; actions?:
       <nav className="flex items-center gap-5">
         <Link to="/" className={navItemClass("portfolio")}>
           Portfolio
+        </Link>
+        <Link to="/" search={{ tab: "projects" }} className={navItemClass("projects")}>
+          Projects
         </Link>
         <Link to="/" search={{ tab: "crm" }} className={navItemClass("crm")}>
           CRM

@@ -447,7 +447,10 @@ function PortfolioPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <PortfolioTopBar active="crm" actions={topBarActions} />
+      <PortfolioTopBar
+        active={portfolioTab === "pipeline" ? "crm" : "projects"}
+        actions={topBarActions}
+      />
 
       <main
         className={`mx-auto w-full flex-1 px-4 py-6 sm:px-6 lg:px-8 ${
