@@ -229,53 +229,9 @@ export function ProjectDashboard({
       {/* 2 · Forecast bridge */}
       <div className="eyebrow mt-9">How the forecast is built</div>
       <div className="mt-3.5 grid items-stretch gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-hairline bg-card p-4 lg:px-5">
-          <div className={bridgeLabelClass}>01 · Revenue forecast</div>
-          <div className="mt-2">
-            <BridgeRow label="Original contract" value={fmtUSD(rollup.originalContract)} />
-            <BridgeRow label="+ Approved COs" value={fmtUSD(rollup.approvedCOContract)} />
-            <BridgeRow
-              label="Current signed contract"
-              value={fmtUSD(rollup.currentSignedContract)}
-              strong
-            />
-            <BridgeRow
-              label="+ Pending COs · weighted"
-              value={fmtUSD(rollup.weightedPendingCOContract)}
-            />
-            <BridgeRow
-              label="Risk-adjusted forecast contract"
-              value={fmtUSD(rollup.forecastedFinalContract)}
-              strong
-            />
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-hairline bg-card p-4 lg:px-5">
-          <div className={bridgeLabelClass}>02 · Cost forecast</div>
-          <div className="mt-2">
-            <BridgeRow label="Original build cost" value={fmtUSD(project.original_cost_budget)} />
-            <BridgeRow
-              label={baseCostVariance >= 0 ? "+ Forecast cost growth" : "− Forecast cost savings"}
-              value={fmtUSD(Math.abs(baseCostVariance))}
-            />
-            <BridgeRow label="Base projected cost" value={fmtUSD(rollup.baseProjectedCost)} />
-            <BridgeRow label="+ Approved CO costs" value={fmtUSD(rollup.approvedCOCost)} />
-            <BridgeRow
-              label="+ Pending CO costs · weighted"
-              value={fmtUSD(rollup.weightedPendingCOCost)}
-            />
-            <BridgeRow
-              label="Risk-adjusted forecast cost"
-              value={fmtUSD(rollup.forecastedFinalCost)}
-              strong
-            />
-          </div>
-        </div>
-
         <div className="rounded-xl bg-dark-panel p-4 text-dark-panel-foreground md:col-span-2 lg:px-5 lg:py-[18px]">
           <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-dark-panel-foreground/60">
-            03 · GP recovery bridge
+            GP recovery bridge
           </div>
           <p className="mt-1.5 max-w-[78ch] text-[12.5px] leading-relaxed text-dark-panel-foreground/60">
             Start with the gross profit committed in the IOR, then track forecast movement and holds
@@ -380,6 +336,50 @@ export function ProjectDashboard({
                 </span>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-hairline bg-card p-4 lg:px-5">
+          <div className={bridgeLabelClass}>01 · Revenue forecast</div>
+          <div className="mt-2">
+            <BridgeRow label="Original contract" value={fmtUSD(rollup.originalContract)} />
+            <BridgeRow label="+ Approved COs" value={fmtUSD(rollup.approvedCOContract)} />
+            <BridgeRow
+              label="Current signed contract"
+              value={fmtUSD(rollup.currentSignedContract)}
+              strong
+            />
+            <BridgeRow
+              label="+ Pending COs · weighted"
+              value={fmtUSD(rollup.weightedPendingCOContract)}
+            />
+            <BridgeRow
+              label="Risk-adjusted forecast contract"
+              value={fmtUSD(rollup.forecastedFinalContract)}
+              strong
+            />
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-hairline bg-card p-4 lg:px-5">
+          <div className={bridgeLabelClass}>02 · Cost forecast</div>
+          <div className="mt-2">
+            <BridgeRow label="Original build cost" value={fmtUSD(project.original_cost_budget)} />
+            <BridgeRow
+              label={baseCostVariance >= 0 ? "+ Forecast cost growth" : "− Forecast cost savings"}
+              value={fmtUSD(Math.abs(baseCostVariance))}
+            />
+            <BridgeRow label="Base projected cost" value={fmtUSD(rollup.baseProjectedCost)} />
+            <BridgeRow label="+ Approved CO costs" value={fmtUSD(rollup.approvedCOCost)} />
+            <BridgeRow
+              label="+ Pending CO costs · weighted"
+              value={fmtUSD(rollup.weightedPendingCOCost)}
+            />
+            <BridgeRow
+              label="Risk-adjusted forecast cost"
+              value={fmtUSD(rollup.forecastedFinalCost)}
+              strong
+            />
           </div>
         </div>
       </div>
