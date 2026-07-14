@@ -8,6 +8,8 @@ import {
   type CostActualInvoiceAttachment,
 } from "@/components/billing/CostActualInvoiceAttachment";
 import { CostActualInvoiceAttachmentLink } from "@/components/billing/CostActualInvoiceAttachmentLink";
+import { CostCodeBreakdownManager } from "@/components/billing/CostCodeBreakdownManager";
+import { summarizeCostSettlement } from "@/lib/cost-settlement";
 import { findOrCreateVendor, listVendors, saveVendor } from "@/lib/vendors.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { Button } from "@/components/ui/button";
@@ -47,6 +49,7 @@ import type {
   CostActualImportRow,
   CostActualRow,
 } from "@/lib/billing.functions";
+import { getCostLedgerDetails, recordCostActualPayment } from "@/lib/billing.functions";
 import type {
   BillingApplicationRow,
   BillingOutputFormat,
@@ -84,6 +87,7 @@ type CostActualDraft = {
   invoice_attachment_name: string;
   invoice_attachment_type: string;
   invoice_attachment_size: number;
+  credit_applies_to_id: string | null;
 };
 
 // A per-cost-code line for the multi-line "Add cost actual" path — only the
@@ -104,6 +108,11 @@ export type CostPaymentDetails = {
   payment_method: string; // wire | check | card | ach | other
   payment_reference: string; // check #, wire confirmation, ACH trace
   paid_date: string; // the real-world date money went out (YYYY-MM-DD)
+};
+
+type CostPaymentDraft = CostPaymentDetails & {
+  amount: number;
+  notes: string;
 };
 
 // The payment methods a cost can be marked paid with — mirrors the receivables
@@ -1123,20 +1132,13 @@ export function ProjectCostTrackingPanel({
   // Mark-paid capture (field request 2026-07-10): the cost being marked paid,
   // plus the "how was this paid" draft. Both mark-paid entry points open this.
   const [payingCost, setPayingCost] = useState<CostActualRow | null>(null);
-  const [payDraft, setPayDraft] = useState<CostPaymentDetails>({
+  const [payDraft, setPayDraft] = useState<CostPaymentDraft>({
+    amount: 0,
     payment_method: "check",
     payment_reference: "",
     paid_date: today(),
+    notes: "",
   });
-  const openPayDialog = (actual: CostActualRow) => {
-    setPayDraft({ payment_method: "check", payment_reference: "", paid_date: today() });
-    setPayingCost(actual);
-  };
-  const confirmPaid = () => {
-    if (!payingCost) return;
-    onSetCostActualStatus(payingCost.id, "paid", payDraft);
-    setPayingCost(null);
-  };
   // Read-at-a-glance controls for the backup list (field request 2026-07-10):
   // filter by stage, search by name/vendor/reference.
   const [costStatusFilter, setCostStatusFilter] = useState<"all" | CostActualRow["status"]>("all");
@@ -1158,6 +1160,8 @@ export function ProjectCostTrackingPanel({
   // subs) — a cost's payee is one or the other. Self-contained queries, like
   // DailyWipWorkspace; both degrade to empty before their migrations.
   const queryClient = useQueryClient();
+  const getCostLedgerDetailsFn = useServerFn(getCostLedgerDetails);
+  const recordCostPaymentFn = useServerFn(recordCostActualPayment);
   const listVendorsFn = useServerFn(listVendors);
   const listSubsFn = useServerFn(listSubcontractors);
   const findOrCreateVendorFn = useServerFn(findOrCreateVendor);
@@ -1172,6 +1176,96 @@ export function ProjectCostTrackingPanel({
     queryFn: () => listSubsFn(),
     staleTime: 30_000,
   });
+  const costLedgerDetailsQuery = useQuery({
+    queryKey: ["cost-ledger-details", projectId],
+    queryFn: () => getCostLedgerDetailsFn({ data: { projectId } }),
+  });
+  const costPayments = costLedgerDetailsQuery.data?.payments ?? [];
+  const cashPaidCentsByCost = costPayments.reduce((totals, payment) => {
+    totals.set(
+      payment.cost_actual_id,
+      (totals.get(payment.cost_actual_id) ?? 0) + payment.amount_cents,
+    );
+    return totals;
+  }, new Map<string, number>());
+  const creditCentsByCost = costActuals.reduce((totals, actual) => {
+    if (
+      !actual.credit_applies_to_id ||
+      actual.amount >= 0 ||
+      actual.status === "draft" ||
+      actual.status === "void"
+    ) {
+      return totals;
+    }
+    totals.set(
+      actual.credit_applies_to_id,
+      (totals.get(actual.credit_applies_to_id) ?? 0) + Math.abs(dollarsToCents(actual.amount)),
+    );
+    return totals;
+  }, new Map<string, number>());
+  const settlementFor = (actual: CostActualRow) => {
+    const invoiceCents = Math.max(0, dollarsToCents(actual.amount));
+    const recordedCashCents = cashPaidCentsByCost.get(actual.id) ?? 0;
+    // Paid rows created before the settlement ledger have no child payments.
+    // Preserve their historical meaning as fully cash-paid; every new partial
+    // or full payment has an explicit child row.
+    const creditCents = creditCentsByCost.get(actual.id) ?? 0;
+    return summarizeCostSettlement({
+      invoiceCents,
+      cashPaidCents: recordedCashCents,
+      creditCents,
+      legacyPaid: actual.status === "paid",
+    });
+  };
+  const recordPaymentMutation = useMutation({
+    mutationFn: (input: {
+      cost_actual_id: string;
+      amount: number;
+      payment_date: string;
+      payment_method: string;
+      payment_reference: string;
+      notes: string;
+    }) => recordCostPaymentFn({ data: input }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["cost-ledger-details", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["billing-workspace", projectId] });
+      setPayingCost(null);
+      toast.success(
+        Number(result.remaining_cents ?? 0) > 0 ? "Partial payment recorded" : "Cost settled",
+      );
+    },
+    onError: (error) =>
+      toast.error("Payment did not save", {
+        description: error instanceof Error ? error.message : "Try again.",
+      }),
+  });
+  const openPayDialog = (actual: CostActualRow) => {
+    const settlement = settlementFor(actual);
+    setPayDraft({
+      amount: centsToDollars(settlement.remainingCents),
+      payment_method: "check",
+      payment_reference: "",
+      paid_date: today(),
+      notes: "",
+    });
+    setPayingCost(actual);
+  };
+  const confirmPaid = () => {
+    if (!payingCost) return;
+    if (!costLedgerDetailsQuery.data?.settlementReady) {
+      onSetCostActualStatus(payingCost.id, "paid", payDraft);
+      setPayingCost(null);
+      return;
+    }
+    recordPaymentMutation.mutate({
+      cost_actual_id: payingCost.id,
+      amount: payDraft.amount,
+      payment_date: payDraft.paid_date,
+      payment_method: payDraft.payment_method,
+      payment_reference: payDraft.payment_reference,
+      notes: payDraft.notes,
+    });
+  };
   const vendorNames = (vendorsQuery.data ?? []).map((vendor) => vendor.name);
   const subNames = (subsQuery.data ?? []).map((sub) => sub.name);
   // Enrolling a new name in the vendor directory is best-effort: the cost row
@@ -1200,6 +1294,7 @@ export function ProjectCostTrackingPanel({
     invoice_attachment_name: "",
     invoice_attachment_type: "",
     invoice_attachment_size: 0,
+    credit_applies_to_id: null,
   }));
   // Once the user hand-edits the PRIMARY line's offset, stop auto-suggesting it.
   const [primaryOffsetTouched, setPrimaryOffsetTouched] = useState(false);
@@ -1333,21 +1428,22 @@ export function ProjectCostTrackingPanel({
     }
   };
   const activeActuals = costActuals.filter((actual) => actual.status !== "void");
+  const creditTargets = activeActuals.filter(
+    (actual) =>
+      actual.amount > 0 &&
+      (actual.status === "approved" || actual.status === "committed") &&
+      actual.id !== editingCostId,
+  );
+  const selectedCreditTarget = draft.credit_applies_to_id
+    ? (creditTargets.find((actual) => actual.id === draft.credit_applies_to_id) ?? null)
+    : null;
   // Drafts are logged but unvetted — they sit in the approval queue, not in any
   // cost number. Everything else non-void is incurred cost.
   const draftActuals = activeActuals.filter((actual) => actual.status === "draft");
   const approvedActuals = activeActuals.filter((actual) => actual.status === "approved");
-  const costedActuals = activeActuals.filter((actual) => actual.status !== "draft");
   const totalDraft = centsToDollars(sumDollarsToCents(draftActuals.map((actual) => actual.amount)));
   const totalApproved = centsToDollars(
     sumDollarsToCents(approvedActuals.map((actual) => actual.amount)),
-  );
-  const totalCommitted = centsToDollars(
-    sumDollarsToCents(
-      activeActuals
-        .filter((actual) => actual.status === "committed" || actual.status === "approved")
-        .map((actual) => actual.amount),
-    ),
   );
   const totalPaid = centsToDollars(
     sumDollarsToCents(
@@ -1365,20 +1461,25 @@ export function ProjectCostTrackingPanel({
   const budgetVariance = centsToDollars(
     dollarsToCents(totalBudget) - dollarsToCents(projectedCost),
   );
-  // Ledger backup compares against bucket actual_to_date, which excludes
-  // drafts — so drafts stay out of the backup sums too.
-  const costBackupTotal = centsToDollars(
-    sumDollarsToCents(costedActuals.map((actual) => actual.amount)),
+  const cashPaid = costLedgerDetailsQuery.data?.settlementReady
+    ? centsToDollars(
+        activeActuals
+          .filter((actual) => actual.amount > 0)
+          .reduce((total, actual) => total + settlementFor(actual).cashPaidCents, 0),
+      )
+    : totalPaid;
+  const openToPay = centsToDollars(
+    activeActuals
+      .filter(
+        (actual) =>
+          actual.amount > 0 &&
+          (actual.status === "approved" ||
+            actual.status === "committed" ||
+            actual.status === "paid"),
+      )
+      .reduce((total, actual) => total + settlementFor(actual).remainingCents, 0),
   );
-  const unmatchedActualCount = activeActuals.filter((actual) => !actual.cost_bucket_id).length;
-  const backupCentsByBucket = costedActuals.reduce((map, actual) => {
-    if (!actual.cost_bucket_id) return map;
-    map.set(
-      actual.cost_bucket_id,
-      (map.get(actual.cost_bucket_id) ?? 0) + dollarsToCents(actual.amount),
-    );
-    return map;
-  }, new Map<string, number>());
+  const payingSettlement = payingCost ? settlementFor(payingCost) : null;
 
   const chooseBucket = (bucketId: string) => {
     const bucket = buckets.find((item) => item.id === bucketId);
@@ -1410,6 +1511,7 @@ export function ProjectCostTrackingPanel({
       invoice_attachment_name: actual.invoice_attachment_name,
       invoice_attachment_type: actual.invoice_attachment_type,
       invoice_attachment_size: actual.invoice_attachment_size,
+      credit_applies_to_id: actual.credit_applies_to_id,
     });
     setEditingCostId(actual.id);
     setOpen(true);
@@ -1437,6 +1539,7 @@ export function ProjectCostTrackingPanel({
       invoice_attachment_name: "",
       invoice_attachment_type: "",
       invoice_attachment_size: 0,
+      credit_applies_to_id: null,
     });
   };
 
@@ -1725,7 +1828,13 @@ export function ProjectCostTrackingPanel({
                     <Label>Amount</Label>
                     <MoneyInput
                       value={draft.amount}
-                      onValueChange={(amount) => setDraft({ ...draft, amount })}
+                      onValueChange={(amount) =>
+                        setDraft({
+                          ...draft,
+                          amount,
+                          credit_applies_to_id: amount < 0 ? draft.credit_applies_to_id : null,
+                        })
+                      }
                       align="right"
                       // Credits & refunds (field feedback 2026-07-13): a negative
                       // amount records a supplier credit and reduces this code's
@@ -1744,9 +1853,60 @@ export function ProjectCostTrackingPanel({
                 </div>
                 <p className="-mt-1 text-[11px] text-muted-foreground">
                   Got money back? Enter a{" "}
-                  <span className="font-medium text-foreground">negative amount</span> to record a
-                  supplier credit or refund against this cost code.
+                  <span className="font-medium text-foreground">negative amount</span>. You&apos;ll
+                  link the credit to the invoice it reduces.
                 </p>
+                {draft.amount < 0 ? (
+                  <div className="grid gap-3 rounded-md border border-warning/30 bg-warning/5 p-3 md:grid-cols-[1fr_280px] md:items-end">
+                    <div>
+                      <div className="text-sm font-medium text-foreground">
+                        Apply this credit to a cost
+                      </div>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        The linked invoice will show the credit beside cash payments and reduce its
+                        remaining balance.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Invoice / cost</Label>
+                      <Select
+                        value={draft.credit_applies_to_id ?? ""}
+                        onValueChange={(id) => {
+                          const target = creditTargets.find((actual) => actual.id === id);
+                          if (!target) return;
+                          setDraft({
+                            ...draft,
+                            credit_applies_to_id: target.id,
+                            cost_bucket_id: target.cost_bucket_id,
+                            cost_code: target.cost_code,
+                            vendor: draft.vendor || target.vendor,
+                          });
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Pick the invoice this reduces" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {creditTargets.map((actual) => (
+                            <SelectItem key={actual.id} value={actual.id}>
+                              {actual.reference_number || actual.description} ·{" "}
+                              {fmtUSD(actual.amount)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {selectedCreditTarget ? (
+                      <p className="text-[11px] text-muted-foreground md:col-span-2">
+                        Applying to{" "}
+                        <span className="font-medium text-foreground">
+                          {selectedCreditTarget.description}
+                        </span>
+                        {selectedCreditTarget.vendor ? ` · ${selectedCreditTarget.vendor}` : ""}.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 {/* Settles daily WIP (field feedback 2026-07-13): if this cost
                     code already carries self-perform daily WIP folded into its
                     actual, settle the portion this invoice covers so the same
@@ -1782,7 +1942,7 @@ export function ProjectCostTrackingPanel({
                     each shares the vendor, reference #, date, category, and stage
                     below — instead of re-keying the whole form per code. Create
                     only; editing an existing cost stays single-line. */}
-                {!editingCostId ? (
+                {!editingCostId && draft.amount >= 0 ? (
                   <div className="space-y-2.5 rounded-md border border-hairline bg-surface/60 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
@@ -1851,7 +2011,6 @@ export function ProjectCostTrackingPanel({
                                 value={line.amount}
                                 onValueChange={(amount) => updateExtraLine(index, { amount })}
                                 align="right"
-                                allowNegative
                               />
                             </div>
                             <Button
@@ -1976,7 +2135,7 @@ export function ProjectCostTrackingPanel({
                       disabled={costSaveBusy || Boolean(invoiceFile)}
                       onClick={() => advanceDraft("paid")}
                     >
-                      Mark paid
+                      Record payment
                     </Button>
                   </div>
                 ) : (
@@ -1992,7 +2151,12 @@ export function ProjectCostTrackingPanel({
                   </Button>
                   <Button
                     onClick={save}
-                    disabled={costSaveBusy || !draft.description.trim() || !extraLinesValid}
+                    disabled={
+                      costSaveBusy ||
+                      !draft.description.trim() ||
+                      !extraLinesValid ||
+                      (draft.amount < 0 && !draft.credit_applies_to_id)
+                    }
                   >
                     {uploadingInvoice
                       ? "Uploading invoice…"
@@ -2114,149 +2278,30 @@ export function ProjectCostTrackingPanel({
         </div>
       ) : null}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <BillingMetric label="Cost to date" value={fmtUSD(totalActual)} sub="Recognized job cost" />
         <BillingMetric
-          label="Open commitments"
-          value={fmtUSD(totalCommitted)}
-          sub="Committed or approved, not paid"
+          label="Open to pay"
+          value={fmtUSD(openToPay)}
+          sub="Remaining approved balance"
         />
-        <BillingMetric label="Paid costs" value={fmtUSD(totalPaid)} sub="Paid cost rows" />
+        <BillingMetric label="Cash paid" value={fmtUSD(cashPaid)} sub="Payments recorded" />
         <BillingMetric
-          label="Cost to date"
-          value={fmtUSD(totalActual)}
-          sub="Bucket actuals used by WIP"
-        />
-        <BillingMetric label="FTC" value={fmtUSD(totalFtc)} sub="Forecast to complete" />
-        <BillingMetric
-          label="Projected cost"
-          value={fmtUSD(projectedCost)}
-          sub="Cost to date + FTC"
-        />
-        <BillingMetric
-          label="Budget variance"
-          value={fmtUSD(budgetVariance)}
-          sub="Positive means under projected cost"
+          label="Projected vs budget"
+          value={fmtUSD(Math.abs(budgetVariance))}
+          sub={budgetVariance < 0 ? "Projected over budget" : "Projected under budget"}
           tone={budgetVariance < 0 ? "danger" : "success"}
         />
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-3">
-        <CostFlowStep
-          step="1"
-          title="Match the cost code"
-          body="Every cost row should point to the same cost code used in the SOV/application."
-        />
-        <CostFlowStep
-          step="2"
-          title="Draft, approve, then pay"
-          body="Log an invoice as a draft, approve it for payment, and mark it paid when money goes out. Drafts never count as job cost."
-        />
-        <CostFlowStep
-          step="3"
-          title="WIP uses the forecast"
-          body="WIP compares contract value against cost to date plus forecast to complete."
-        />
-      </div>
+      <CostCodeBreakdownManager
+        projectId={projectId}
+        buckets={buckets}
+        items={costLedgerDetailsQuery.data?.budgetItems ?? []}
+        ready={Boolean(costLedgerDetailsQuery.data?.breakdownReady)}
+      />
 
-      <div className="mt-4 rounded-md border border-hairline bg-surface p-4">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              Cost code health
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              This is the job-cost view by SOV cost code. It shows whether each code has cost backup
-              and whether the current cost forecast is above or below the contract value.
-            </p>
-          </div>
-          <div className="text-xs tabular text-muted-foreground">
-            Cost backup rows {fmtUSD(costBackupTotal)}
-            {unmatchedActualCount > 0 ? ` · ${unmatchedActualCount} unmatched` : ""}
-          </div>
-        </div>
-        <div className="mt-4 grid gap-3">
-          {buckets.map((bucket) => {
-            // BUDGETVSCONTRACT1: cost-code health is contract value vs projected
-            // cost (the margin the code realizes). The basis is the line's
-            // contract_value — the owner-facing SOV value — falling back to the
-            // cost budget only for unpriced legacy lines (mirrors the costBasis in
-            // billing.functions). Reading original_budget here made "Contract
-            // value" mirror projected cost and pinned every variance to $0.
-            const contractBasis =
-              bucket.contract_value > 0 ? bucket.contract_value : bucket.original_budget;
-            const forecast = centsToDollars(
-              dollarsToCents(bucket.actual_to_date) + dollarsToCents(bucket.ftc),
-            );
-            const variance = centsToDollars(
-              dollarsToCents(contractBasis) - dollarsToCents(forecast),
-            );
-            const spentPct =
-              bucket.original_budget > 0
-                ? (bucket.actual_to_date / bucket.original_budget) * 100
-                : 0;
-            const backupTotal = centsToDollars(backupCentsByBucket.get(bucket.id) ?? 0);
-            const tone = variance < 0 ? "danger" : spentPct >= 80 ? "warning" : "success";
-            return (
-              <div key={bucket.id} className="rounded-md border border-hairline bg-card p-4">
-                <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      {bucket.cost_code || "No code"}
-                    </div>
-                    <div className="mt-1 font-medium text-foreground">{bucket.bucket}</div>
-                  </div>
-                  <div
-                    className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${
-                      variance < 0
-                        ? "border-danger/30 bg-danger/10 text-danger"
-                        : "border-success/30 bg-success/10 text-success"
-                    }`}
-                  >
-                    {variance < 0
-                      ? `Projected over by ${fmtUSD(Math.abs(variance))}`
-                      : `Projected under by ${fmtUSD(variance)}`}
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
-                  <BillingDetail
-                    label="Contract value"
-                    value={fmtUSD(contractBasis)}
-                    sub="Owner-facing SOV value"
-                  />
-                  <BillingDetail
-                    label="Cost to date"
-                    value={fmtUSD(bucket.actual_to_date)}
-                    sub="Actual cost carried in bucket"
-                  />
-                  <BillingDetail
-                    label="FTC"
-                    value={fmtUSD(bucket.ftc)}
-                    sub="Forecast to complete"
-                  />
-                  <BillingDetail
-                    label="Projected cost"
-                    value={fmtUSD(forecast)}
-                    sub="Cost to date + FTC"
-                  />
-                  <BillingDetail
-                    label="Projected margin"
-                    value={fmtUSD(variance)}
-                    tone={tone}
-                    sub="Contract less projected cost"
-                  />
-                  <BillingDetail
-                    label="Ledger backup"
-                    value={fmtUSD(backupTotal)}
-                    sub="Committed/paid rows attached"
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-md border border-hairline bg-surface p-4">
+      <div className="mt-6 border-t border-hairline pt-4">
         <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           Cost transaction backup
         </div>
@@ -2330,150 +2375,204 @@ export function ProjectCostTrackingPanel({
             </button>
           </div>
         ) : (
-          <div className="mt-3 grid gap-3 lg:grid-cols-2">
-            {visibleCostActuals.map((actual) => (
-              <div
-                key={actual.id}
-                className={`rounded-md border border-hairline border-l-4 bg-card p-4 ${
-                  COST_STATUS_TONE[actual.status]?.edge ?? "border-l-transparent"
-                } ${actual.status === "void" ? "opacity-50" : ""}`}
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      <span>
-                        {actual.cost_date} · {actual.cost_code || "No code"}
-                      </span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 ${COST_STATUS_TONE[actual.status]?.chip ?? ""}`}
-                      >
-                        {COST_STATUS_LABEL[actual.status] ?? actual.status}
-                      </span>
-                      {/* Provenance: imports carry an import_batch_id; manual entries don't. */}
-                      <span>{actual.import_batch_id ? "Imported" : "Manual"}</span>
-                    </div>
-                    <div className="mt-1 font-medium text-foreground">{actual.description}</div>
-                    <div className="mt-1 text-xs capitalize text-muted-foreground">
-                      {actual.category}
-                      {actual.vendor ? ` · ${actual.vendor}` : ""}
-                    </div>
-                    {actual.status === "draft" ||
-                    actual.status === "approved" ||
-                    actual.status === "committed" ? (
-                      <div className="mt-2.5 flex items-center gap-2">
-                        {actual.status === "draft" ? (
+          <div className="mt-3 divide-y divide-hairline border-y border-hairline">
+            {visibleCostActuals.map((actual) => {
+              const settlement = settlementFor(actual);
+              const appliedTo = actual.credit_applies_to_id
+                ? costActuals.find((candidate) => candidate.id === actual.credit_applies_to_id)
+                : null;
+              return (
+                <div
+                  key={actual.id}
+                  className={`border-l-4 bg-card px-3 py-3 ${
+                    COST_STATUS_TONE[actual.status]?.edge ?? "border-l-transparent"
+                  } ${actual.status === "void" ? "opacity-50" : ""}`}
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        <span>
+                          {actual.cost_date} · {actual.cost_code || "No code"}
+                        </span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 ${COST_STATUS_TONE[actual.status]?.chip ?? ""}`}
+                        >
+                          {COST_STATUS_LABEL[actual.status] ?? actual.status}
+                        </span>
+                        {/* Provenance: imports carry an import_batch_id; manual entries don't. */}
+                        <span>{actual.import_batch_id ? "Imported" : "Manual"}</span>
+                      </div>
+                      <div className="mt-1 font-medium text-foreground">{actual.description}</div>
+                      <div className="mt-1 text-xs capitalize text-muted-foreground">
+                        {actual.category}
+                        {actual.vendor ? ` · ${actual.vendor}` : ""}
+                      </div>
+                      {actual.status === "draft" ||
+                      actual.status === "approved" ||
+                      actual.status === "committed" ? (
+                        <div className="mt-2.5 flex items-center gap-2">
+                          {actual.status === "draft" ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs"
+                              onClick={() => onSetCostActualStatus(actual.id, "approved")}
+                            >
+                              Approve for payment
+                            </Button>
+                          ) : null}
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
                             className="h-7 px-2.5 text-xs"
-                            onClick={() => onSetCostActualStatus(actual.id, "approved")}
+                            onClick={() => openPayDialog(actual)}
                           >
-                            Approve for payment
+                            Record payment
                           </Button>
-                        ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center justify-between gap-3 sm:justify-end">
+                      <div className="text-right text-sm tabular font-medium">
+                        {fmtUSD(actual.amount)}
+                      </div>
+                      {(actual.status === "draft" ||
+                        actual.status === "approved" ||
+                        actual.status === "committed") && (
                         <Button
                           type="button"
-                          variant="outline"
+                          variant="ghost"
                           size="sm"
-                          className="h-7 px-2.5 text-xs"
-                          onClick={() => openPayDialog(actual)}
-                        >
-                          Mark paid
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center justify-between gap-3 sm:justify-end">
-                    <div className="text-right text-sm tabular font-medium">
-                      {fmtUSD(actual.amount)}
-                    </div>
-                    {(actual.status === "draft" ||
-                      actual.status === "approved" ||
-                      actual.status === "committed") && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                        title={
-                          actual.status === "draft"
-                            ? "Edit this draft"
-                            : "Edit this cost — changes update job cost"
-                        }
-                        onClick={() => startEditCost(actual)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    {actual.status !== "void" && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
-                        onClick={() => {
-                          if (
-                            !window.confirm(
-                              "Void this cost actual? The linked bucket actuals will update.",
-                            )
-                          ) {
-                            return;
+                          className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                          title={
+                            actual.status === "draft"
+                              ? "Edit this draft"
+                              : "Edit this cost — changes update job cost"
                           }
-                          onVoidCostActual(actual.id, "Voided from cost tracking.");
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
+                          onClick={() => startEditCost(actual)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {actual.status !== "void" && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
+                          onClick={() => {
+                            if (
+                              !window.confirm(
+                                "Void this cost actual? The linked bucket actuals will update.",
+                              )
+                            ) {
+                              return;
+                            }
+                            onVoidCostActual(actual.id, "Voided from cost tracking.");
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  <BillingDetail label="Vendor" value={actual.vendor || "-"} />
-                  <BillingDetail label="Reference" value={actual.reference_number || "-"} />
-                </div>
-                {actual.invoice_attachment_path ? (
-                  <div className="mt-2">
-                    <CostActualInvoiceAttachmentLink
-                      attachment={{
-                        path: actual.invoice_attachment_path,
-                        name: actual.invoice_attachment_name,
-                        type: actual.invoice_attachment_type,
-                        size: actual.invoice_attachment_size,
-                      }}
-                    />
-                  </div>
-                ) : null}
-                {actual.status === "paid" &&
-                (actual.payment_method || actual.payment_reference || actual.paid_date) ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-success">
-                    <span className="font-semibold">Paid</span>
-                    {actual.payment_method ? (
-                      <span>by {paymentMethodLabel(actual.payment_method)}</span>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    {actual.vendor ? <span>Vendor: {actual.vendor}</span> : null}
+                    {actual.reference_number ? <span>Ref: {actual.reference_number}</span> : null}
+                    {appliedTo ? (
+                      <span className="text-warning">
+                        Applied to {appliedTo.reference_number || appliedTo.description}
+                      </span>
                     ) : null}
-                    {actual.payment_reference ? <span>· {actual.payment_reference}</span> : null}
-                    {actual.paid_date ? <span>· {actual.paid_date}</span> : null}
                   </div>
-                ) : null}
-              </div>
-            ))}
+                  {actual.amount > 0 && actual.status !== "draft" && actual.status !== "void" ? (
+                    <div className="mt-2 text-xs tabular text-muted-foreground">
+                      <span className="font-semibold text-foreground">
+                        {fmtUSD(centsToDollars(settlement.settledCents))} of {fmtUSD(actual.amount)}{" "}
+                        settled
+                      </span>
+                      {settlement.creditCents > 0
+                        ? ` · includes ${fmtUSD(centsToDollars(settlement.creditCents))} credit`
+                        : ""}
+                      {settlement.remainingCents > 0
+                        ? ` · ${fmtUSD(centsToDollars(settlement.remainingCents))} remaining`
+                        : ""}
+                    </div>
+                  ) : null}
+                  {actual.invoice_attachment_path ? (
+                    <div className="mt-2">
+                      <CostActualInvoiceAttachmentLink
+                        attachment={{
+                          path: actual.invoice_attachment_path,
+                          name: actual.invoice_attachment_name,
+                          type: actual.invoice_attachment_type,
+                          size: actual.invoice_attachment_size,
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  {actual.status === "paid" &&
+                  (actual.payment_method || actual.payment_reference || actual.paid_date) ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-success">
+                      <span className="font-semibold">Paid</span>
+                      {actual.payment_method ? (
+                        <span>by {paymentMethodLabel(actual.payment_method)}</span>
+                      ) : null}
+                      {actual.payment_reference ? <span>· {actual.payment_reference}</span> : null}
+                      {actual.paid_date ? <span>· {actual.paid_date}</span> : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Mark-paid: capture HOW it was paid (field request 2026-07-10) */}
+      {/* Payments are append-only settlement rows. A cost becomes paid only when
+          cash plus linked credits reaches the full invoice amount. */}
       <Dialog open={payingCost !== null} onOpenChange={(open) => !open && setPayingCost(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeaderV2
             eyebrow="Payment"
-            title="Mark cost paid"
+            title="Record payment"
             description={
               payingCost
-                ? `${fmtUSD(payingCost.amount)}${payingCost.vendor ? ` to ${payingCost.vendor}` : ""} — record how it was paid.`
+                ? `${payingCost.description}${payingCost.vendor ? ` · ${payingCost.vendor}` : ""}`
                 : ""
             }
           />
-          <div className="grid gap-3 py-2 sm:grid-cols-3">
+          {payingCost && payingSettlement ? (
+            <div className="grid gap-2 rounded-md border border-hairline bg-surface p-3 sm:grid-cols-4">
+              <BillingDetail label="Invoice" value={fmtUSD(payingCost.amount)} />
+              <BillingDetail
+                label="Cash paid"
+                value={fmtUSD(centsToDollars(payingSettlement.cashPaidCents))}
+              />
+              <BillingDetail
+                label="Credits"
+                value={fmtUSD(centsToDollars(payingSettlement.creditCents))}
+              />
+              <BillingDetail
+                label="Remaining"
+                value={fmtUSD(centsToDollars(payingSettlement.remainingCents))}
+              />
+            </div>
+          ) : null}
+          <div className="grid gap-3 py-2 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Payment amount</Label>
+              <MoneyInput
+                value={payDraft.amount}
+                onValueChange={(amount) => setPayDraft({ ...payDraft, amount })}
+                align="right"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Record a partial amount or the full remaining balance.
+              </p>
+            </div>
             <div className="space-y-1.5">
               <Label>Date paid</Label>
               <Input
@@ -2512,30 +2611,37 @@ export function ProjectCostTrackingPanel({
                 }
               />
             </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Notes</Label>
+              <Textarea
+                rows={2}
+                value={payDraft.notes}
+                placeholder="Optional payment note"
+                onChange={(event) => setPayDraft({ ...payDraft, notes: event.target.value })}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPayingCost(null)}>
               Cancel
             </Button>
-            <Button onClick={confirmPaid}>Mark paid</Button>
+            <Button
+              onClick={confirmPaid}
+              disabled={
+                recordPaymentMutation.isPending ||
+                payDraft.amount <= 0 ||
+                Boolean(
+                  payingSettlement &&
+                  dollarsToCents(payDraft.amount) > payingSettlement.remainingCents,
+                )
+              }
+            >
+              {recordPaymentMutation.isPending ? "Recording…" : "Record payment"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </section>
-  );
-}
-
-function CostFlowStep({ step, title, body }: { step: string; title: string; body: string }) {
-  return (
-    <div className="flex min-w-0 gap-3 rounded-md border border-hairline bg-surface px-3 py-3">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">
-        {step}
-      </div>
-      <div className="min-w-0">
-        <div className="text-sm font-semibold text-foreground">{title}</div>
-        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{body}</p>
-      </div>
-    </div>
   );
 }
 
