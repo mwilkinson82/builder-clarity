@@ -5,9 +5,11 @@ import {
   approvalGateDecisionStatus,
   calculateSelectionDates,
   procurementReleaseAllowed,
+  rfiProcurementDecisionStatus,
   selectionInstallDate,
   type SelectionDecisionStatus,
   type SelectionProcurementStatus,
+  type SelectionRfiOutcome,
 } from "@/lib/selections-domain";
 
 export interface ProjectSelectionOptionRow {
@@ -34,6 +36,13 @@ export interface ProjectSelectionRow {
   description: string;
   approval_gate_type: SelectionApprovalGateType;
   approval_gate_entry_id: string | null;
+  rfi_outcome: SelectionRfiOutcome | null;
+  follow_on_approval_gate_entry_id: string | null;
+  approving_party: string;
+  spec_section: string;
+  responsible_party: string;
+  rfi_response_days: number;
+  follow_on_approval_due_date: string | null;
   approval_gate_override_acknowledged: boolean;
   approval_gate_override_reason: string;
   approval_gate_overridden_by: string | null;
@@ -121,6 +130,15 @@ const saveSelectionInput = z.object({
   description: z.string().max(4000).default(""),
   approval_gate_type: z.enum(["owner_selection", "submittal", "rfi"]).default("owner_selection"),
   approval_gate_entry_id: z.string().uuid().nullable().default(null),
+  rfi_outcome: z
+    .enum(["direct_release", "requires_submittal", "requires_client_selection", "no_procurement"])
+    .nullable()
+    .default(null),
+  follow_on_approval_gate_entry_id: z.string().uuid().nullable().default(null),
+  approving_party: z.string().trim().max(200).default(""),
+  spec_section: z.string().trim().max(100).default(""),
+  responsible_party: z.string().trim().max(200).default(""),
+  rfi_response_days: z.number().int().min(0).max(365).default(7),
   approval_gate_override_acknowledged: z.boolean().default(false),
   approval_gate_override_reason: z.string().trim().max(1000).default(""),
   schedule_activity_id: z.string().uuid().nullable().default(null),
@@ -131,7 +149,7 @@ const saveSelectionInput = z.object({
   client_review_days: z.number().int().min(0).max(365).default(7),
   assigned_client_contact_id: z.string().uuid().nullable().default(null),
   allowance_cents: z.number().int().min(0).default(0),
-  options: z.array(optionInput).min(1).max(20),
+  options: z.array(optionInput).max(20),
 });
 
 type DbResult = { data: unknown; error: { message?: string; code?: string } | null };
@@ -207,6 +225,13 @@ function normalizeSelection(
     description: str(row.description),
     approval_gate_type: str(row.approval_gate_type, "owner_selection") as SelectionApprovalGateType,
     approval_gate_entry_id: str(row.approval_gate_entry_id) || null,
+    rfi_outcome: (str(row.rfi_outcome) || null) as SelectionRfiOutcome | null,
+    follow_on_approval_gate_entry_id: str(row.follow_on_approval_gate_entry_id) || null,
+    approving_party: str(row.approving_party),
+    spec_section: str(row.spec_section),
+    responsible_party: str(row.responsible_party),
+    rfi_response_days: row.rfi_response_days == null ? 7 : num(row.rfi_response_days),
+    follow_on_approval_due_date: str(row.follow_on_approval_due_date) || null,
     approval_gate_override_acknowledged: bool(row.approval_gate_override_acknowledged),
     approval_gate_override_reason: str(row.approval_gate_override_reason),
     approval_gate_overridden_by: str(row.approval_gate_overridden_by) || null,
@@ -263,10 +288,7 @@ async function selectionBundle(context: ServerContext, projectId: string, client
     .eq("project_id", projectId);
   const [selectionsRes, optionsRes, decisionsRes] = await Promise.all([
     clientOnly
-      ? selectionQuery
-          .eq("client_visible", true)
-          .eq("approval_gate_type", "owner_selection")
-          .order("client_decision_due_date")
+      ? selectionQuery.eq("client_visible", true).order("client_decision_due_date")
       : selectionQuery.order("client_decision_due_date"),
     context.supabase
       .from("project_selection_options")
@@ -384,6 +406,15 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
       if (currentRes.error) throw new Error(currentRes.error.message);
       current = currentRes.data as Record<string, unknown>;
     }
+    const needsProductDefinition = !(
+      data.approval_gate_type === "rfi" && data.rfi_outcome === "no_procurement"
+    );
+    if (needsProductDefinition && data.options.length === 0) {
+      throw new Error("Add the product, material, or client option this package controls.");
+    }
+    if (data.approval_gate_type === "rfi" && !data.rfi_outcome) {
+      throw new Error("Choose what the RFI response will authorize.");
+    }
     let needOnSiteDate = data.need_on_site_date;
     let approvalGateStatus: SelectionDecisionStatus = "draft";
     if (data.approval_gate_override_acknowledged) {
@@ -410,7 +441,34 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
       if (str(gate.kind) !== data.approval_gate_type) {
         throw new Error("The linked approval record does not match the selected gate type.");
       }
-      approvalGateStatus = approvalGateDecisionStatus(str(gate.status));
+      if (data.approval_gate_type === "submittal") {
+        approvalGateStatus = approvalGateDecisionStatus(str(gate.status));
+      } else {
+        let followOnSubmittalStatus: string | null = null;
+        if (data.rfi_outcome === "requires_submittal") {
+          if (!data.follow_on_approval_gate_entry_id) {
+            throw new Error("Choose the follow-on submittal required by the RFI response.");
+          }
+          const followOnRes = await ctx.supabase
+            .from("submittal_log_entries")
+            .select("id,kind,status")
+            .eq("id", data.follow_on_approval_gate_entry_id)
+            .eq("project_id", data.projectId)
+            .single();
+          if (followOnRes.error) throw new Error(followOnRes.error.message);
+          const followOn = followOnRes.data as Record<string, unknown>;
+          if (str(followOn.kind) !== "submittal") {
+            throw new Error("The follow-on approval record must be a submittal.");
+          }
+          followOnSubmittalStatus = str(followOn.status);
+        }
+        approvalGateStatus = rfiProcurementDecisionStatus({
+          rfiStatus: str(gate.status),
+          outcome: data.rfi_outcome ?? "direct_release",
+          followOnSubmittalStatus,
+          clientDecisionStatus: "draft",
+        });
+      }
     }
     if (data.schedule_activity_id) {
       const activityRes = await ctx.supabase
@@ -437,7 +495,24 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
       procurementLeadDays: data.procurement_lead_days,
       deliveryBufferDays: data.delivery_buffer_days,
       clientReviewDays: data.client_review_days,
+      upstreamReviewDays:
+        data.approval_gate_type === "rfi" &&
+        ["requires_submittal", "requires_client_selection"].includes(data.rfi_outcome ?? "")
+          ? data.rfi_response_days
+          : 0,
     });
+    const currentProcurementStatus = str(
+      current?.procurement_status,
+      "not_released",
+    ) as SelectionProcurementStatus;
+    const procurementStatus: SelectionProcurementStatus =
+      data.approval_gate_type === "rfi" &&
+      data.rfi_outcome === "no_procurement" &&
+      approvalGateStatus === "approved"
+        ? "not_required"
+        : currentProcurementStatus === "not_required"
+          ? "not_released"
+          : currentProcurementStatus;
     const shared = {
       title: data.title,
       category: data.category,
@@ -446,6 +521,15 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
       approval_gate_type: data.approval_gate_type,
       approval_gate_entry_id:
         data.approval_gate_type === "owner_selection" ? null : data.approval_gate_entry_id,
+      rfi_outcome: data.approval_gate_type === "rfi" ? data.rfi_outcome : null,
+      follow_on_approval_gate_entry_id:
+        data.approval_gate_type === "rfi" && data.rfi_outcome === "requires_submittal"
+          ? data.follow_on_approval_gate_entry_id
+          : null,
+      approving_party: data.approving_party,
+      spec_section: data.spec_section,
+      responsible_party: data.responsible_party,
+      rfi_response_days: data.rfi_response_days,
       approval_gate_override_acknowledged: data.approval_gate_override_acknowledged,
       approval_gate_override_reason: data.approval_gate_override_acknowledged
         ? data.approval_gate_override_reason
@@ -462,9 +546,15 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
       client_review_days: data.client_review_days,
       order_by_date: dates.orderByDate,
       client_decision_due_date: dates.clientDecisionDueDate,
-      assigned_client_contact_id: data.assigned_client_contact_id,
+      follow_on_approval_due_date: dates.followOnApprovalDueDate,
+      assigned_client_contact_id:
+        data.approval_gate_type === "owner_selection" ||
+        (data.approval_gate_type === "rfi" && data.rfi_outcome === "requires_client_selection")
+          ? data.assigned_client_contact_id
+          : null,
       allowance_cents: data.allowance_cents,
       decision_status: approvalGateStatus,
+      procurement_status: procurementStatus,
       approved_at: approvalGateStatus === "approved" ? new Date().toISOString() : null,
       updated_by: ctx.userId,
     };
@@ -521,8 +611,10 @@ export const saveProjectSelection = createServerFn({ method: "POST" })
       is_recommended: option.is_recommended,
       sort_order: index,
     }));
-    const optionsRes = await ctx.supabase.from("project_selection_options").insert(optionRows);
-    if (optionsRes.error) throw new Error(optionsRes.error.message);
+    if (optionRows.length > 0) {
+      const optionsRes = await ctx.supabase.from("project_selection_options").insert(optionRows);
+      if (optionsRes.error) throw new Error(optionsRes.error.message);
+    }
     return { ok: true, selectionId };
   });
 
@@ -532,7 +624,14 @@ export const updateSelectionProcurementStatus = createServerFn({ method: "POST" 
     z
       .object({
         selectionId: z.string().uuid(),
-        status: z.enum(["not_released", "ordered", "shipped", "received", "installed"]),
+        status: z.enum([
+          "not_released",
+          "ordered",
+          "shipped",
+          "received",
+          "installed",
+          "not_required",
+        ]),
       })
       .parse(input),
   )
@@ -581,10 +680,28 @@ export const sendSelectionForClientDecision = createServerFn({ method: "POST" })
     const selection = selectionRes.data as Record<string, unknown>;
     const projectId = str(selection.project_id);
     await canManage(ctx, projectId);
-    if (str(selection.approval_gate_type, "owner_selection") !== "owner_selection") {
-      throw new Error(
-        "This material package clears through its linked submittal or RFI, not the client portal.",
-      );
+    const gateType = str(selection.approval_gate_type, "owner_selection");
+    const rfiOutcome = str(selection.rfi_outcome);
+    const requiresClientDecision =
+      gateType === "owner_selection" ||
+      (gateType === "rfi" && rfiOutcome === "requires_client_selection");
+    if (!requiresClientDecision) {
+      throw new Error("This material package is not waiting on a client selection.");
+    }
+    if (gateType === "rfi") {
+      const rfiId = str(selection.approval_gate_entry_id);
+      if (!rfiId) throw new Error("Link the controlling RFI before sending this package.");
+      const rfiRes = await ctx.supabase
+        .from("submittal_log_entries")
+        .select("kind,status")
+        .eq("id", rfiId)
+        .eq("project_id", projectId)
+        .single();
+      if (rfiRes.error) throw new Error(rfiRes.error.message);
+      const rfi = rfiRes.data as Record<string, unknown>;
+      if (str(rfi.kind) !== "rfi" || approvalGateDecisionStatus(str(rfi.status)) !== "approved") {
+        throw new Error("The RFI must be answered before this package can be sent to the client.");
+      }
     }
     const contactId = str(selection.assigned_client_contact_id);
     if (!contactId) throw new Error("Choose a client contact before sending this selection.");
@@ -640,7 +757,10 @@ export const sendSelectionForClientDecision = createServerFn({ method: "POST" })
       selectionNumber: str(selection.selection_number),
       selectionVersion: num(selection.version),
       clientSentAt: sentAt,
-      decisionDueDate: str(selection.client_decision_due_date) || null,
+      decisionDueDate:
+        gateType === "rfi" && rfiOutcome === "requires_client_selection"
+          ? str(selection.follow_on_approval_due_date) || null
+          : str(selection.client_decision_due_date) || null,
       needOnSiteDate: str(selection.need_on_site_date) || null,
     };
   });

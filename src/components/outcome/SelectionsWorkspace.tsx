@@ -13,7 +13,11 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { sendTransactionalEmail } from "@/lib/email/send";
-import { selectionDateHealth, type SelectionProcurementStatus } from "@/lib/selections-domain";
+import {
+  approvalGateDecisionStatus,
+  selectionDateHealth,
+  type SelectionProcurementStatus,
+} from "@/lib/selections-domain";
 import {
   deleteProjectSelection,
   listProjectSelections,
@@ -36,14 +40,15 @@ type BoardColumn = "draft" | "owner" | "approved" | "ordered" | "complete";
 
 const boardColumns: Array<{ key: BoardColumn; label: string; sub: string }> = [
   { key: "draft", label: "Build package", sub: "Link CPM and define the gate" },
-  { key: "owner", label: "Approval gate", sub: "Owner, submittal, or RFI" },
+  { key: "owner", label: "Approval gate", sub: "Client, submittal, or RFI" },
   { key: "approved", label: "Ready to order", sub: "Gate cleared, not released" },
   { key: "ordered", label: "In procurement", sub: "Ordered or shipped" },
-  { key: "complete", label: "Received", sub: "Received or installed" },
+  { key: "complete", label: "Complete", sub: "Received, installed, or not required" },
 ];
 
 function columnFor(selection: ProjectSelectionRow): BoardColumn {
-  if (["received", "installed"].includes(selection.procurement_status)) return "complete";
+  if (["received", "installed", "not_required"].includes(selection.procurement_status))
+    return "complete";
   if (["ordered", "shipped"].includes(selection.procurement_status)) return "ordered";
   if (selection.decision_status === "approved") return "approved";
   if (["sent", "revision_requested"].includes(selection.decision_status)) return "owner";
@@ -55,8 +60,13 @@ function decisionLabel(selection: ProjectSelectionRow) {
   if (selection.decision_status === "revision_requested") return "Revision requested";
   if (selection.decision_status === "approved") {
     if (selection.approval_gate_type === "submittal") return "Submittal approved";
-    if (selection.approval_gate_type === "rfi") return "RFI answered";
-    return "Owner approved";
+    if (selection.approval_gate_type === "rfi") {
+      if (selection.rfi_outcome === "requires_submittal") return "Follow-on submittal approved";
+      if (selection.rfi_outcome === "requires_client_selection") return "Client approved";
+      if (selection.rfi_outcome === "no_procurement") return "No procurement required";
+      return "RFI authorizes release";
+    }
+    return "Client approved";
   }
   if (selection.decision_status === "sent") return "Awaiting approval";
   return "Draft";
@@ -64,8 +74,27 @@ function decisionLabel(selection: ProjectSelectionRow) {
 
 function approvalGateLabel(selection: ProjectSelectionRow) {
   if (selection.approval_gate_type === "submittal") return "Submittal gate";
-  if (selection.approval_gate_type === "rfi") return "RFI gate";
-  return "Owner gate";
+  if (selection.approval_gate_type === "rfi") {
+    if (selection.rfi_outcome === "requires_submittal") return "RFI → Submittal";
+    if (selection.rfi_outcome === "requires_client_selection") return "RFI → Client";
+    if (selection.rfi_outcome === "no_procurement") return "RFI → Close";
+    return "RFI → Direct release";
+  }
+  return "Client selection";
+}
+
+function requiresClientSelection(selection: ProjectSelectionRow) {
+  return (
+    selection.approval_gate_type === "owner_selection" ||
+    (selection.approval_gate_type === "rfi" &&
+      selection.rfi_outcome === "requires_client_selection")
+  );
+}
+
+function approvalDateLabel(selection: ProjectSelectionRow) {
+  if (selection.approval_gate_type === "submittal") return "Submittal due";
+  if (selection.approval_gate_type === "rfi") return "RFI / approval due";
+  return "Client decision due";
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -111,7 +140,7 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
       setEditorOpen(false);
       setEditingSelection(null);
       await invalidate();
-      toast.success("Selection package saved");
+      toast.success("Material package saved");
     },
     onError: (error) =>
       toast.error("Selection did not save", {
@@ -158,7 +187,7 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
     },
     onSuccess: async (payload) => {
       await invalidate();
-      toast.success("Selection sent for owner approval", {
+      toast.success("Selection sent for client approval", {
         description: payload.recipientEmail,
       });
     },
@@ -223,12 +252,12 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
           </h2>
           <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
             The CPM install activity sets the need-on-site date. Overwatch works backward through
-            lead time and review time, then holds procurement until the required owner decision,
+            lead time and review time, then holds procurement until the required client decision,
             submittal approval, or RFI response clears the package for release.
           </p>
         </div>
         <Button variant="signal" onClick={openNew}>
-          <Plus className="h-4 w-4" /> Add selection
+          <Plus className="h-4 w-4" /> Add material package
         </Button>
       </header>
 
@@ -242,7 +271,7 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
       <section className="grid overflow-hidden rounded-xl border border-hairline bg-hairline sm:grid-cols-2">
         <div className="bg-card p-4">
           <p className="eyebrow">Residential approval gate</p>
-          <p className="mt-2 text-sm font-semibold">Owner selects and approves an option</p>
+          <p className="mt-2 text-sm font-semibold">Client selects and approves an option</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             The client portal records the exact approved option and package version before the
             material moves to Ready to order.
@@ -252,8 +281,8 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
           <p className="eyebrow">Commercial & public works gate</p>
           <p className="mt-2 text-sm font-semibold">Submittal or RFI response authorizes release</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Approved or approved-as-noted submittals—and answered RFIs when applicable—become the
-            procurement release record tied to the material package.
+            An RFI answer can release directly, require a follow-on submittal, require a client
+            selection, or close the package when no procurement remains.
           </p>
         </div>
       </section>
@@ -262,7 +291,9 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
         <Metric
           label="Open packages"
           value={String(
-            selections.filter((item) => item.procurement_status !== "installed").length,
+            selections.filter(
+              (item) => !["installed", "not_required"].includes(item.procurement_status),
+            ).length,
           )}
         />
         <Metric label="Waiting on approval" value={String(grouped.owner.length)} />
@@ -309,6 +340,9 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
                     approvalGateEntry={(data?.approvalGateEntries ?? []).find(
                       (entry) => entry.id === selection.approval_gate_entry_id,
                     )}
+                    followOnApprovalGateEntry={(data?.approvalGateEntries ?? []).find(
+                      (entry) => entry.id === selection.follow_on_approval_gate_entry_id,
+                    )}
                     sending={sendMutation.isPending && sendMutation.variables === selection.id}
                     updating={
                       procurementMutation.isPending &&
@@ -354,6 +388,7 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
 function SelectionCard({
   selection,
   approvalGateEntry,
+  followOnApprovalGateEntry,
   sending,
   updating,
   onEdit,
@@ -363,6 +398,7 @@ function SelectionCard({
 }: {
   selection: ProjectSelectionRow;
   approvalGateEntry?: SelectionApprovalGateEntry;
+  followOnApprovalGateEntry?: SelectionApprovalGateEntry;
   sending: boolean;
   updating: boolean;
   onEdit: () => void;
@@ -371,6 +407,11 @@ function SelectionCard({
   onProcurementStatus: (status: SelectionProcurementStatus) => void;
 }) {
   const health = selectionDateHealth(selection.client_decision_due_date);
+  const clientSelectionReady =
+    selection.approval_gate_type === "owner_selection" ||
+    (selection.approval_gate_type === "rfi" &&
+      approvalGateEntry &&
+      approvalGateDecisionStatus(approvalGateEntry.status) === "approved");
   return (
     <article className="rounded-lg border border-hairline bg-background p-3 shadow-sm">
       <div className="flex items-start justify-between gap-2">
@@ -415,9 +456,19 @@ function SelectionCard({
               : "text-muted-foreground",
           )}
         >
-          <span>Approval due</span>
+          <span>{approvalDateLabel(selection)}</span>
           <span>{formatDate(selection.client_decision_due_date)}</span>
         </p>
+        {selection.follow_on_approval_due_date ? (
+          <p className="flex justify-between gap-2 text-muted-foreground">
+            <span>
+              {selection.rfi_outcome === "requires_submittal"
+                ? "Submittal approval due"
+                : "Client decision due"}
+            </span>
+            <span>{formatDate(selection.follow_on_approval_due_date)}</span>
+          </p>
+        ) : null}
         <p className="flex justify-between gap-2 text-muted-foreground">
           <span>Order by</span>
           <span>{formatDate(selection.order_by_date)}</span>
@@ -444,14 +495,18 @@ function SelectionCard({
         >
           {decisionLabel(selection)}
         </span>
-        <span className="rounded-full border border-hairline px-2 py-0.5 text-[10px] text-muted-foreground">
-          {selection.options.length} option{selection.options.length === 1 ? "" : "s"}
-        </span>
+        {selection.rfi_outcome === "no_procurement" ? null : (
+          <span className="rounded-full border border-hairline px-2 py-0.5 text-[10px] text-muted-foreground">
+            {selection.options.length}{" "}
+            {selection.approval_gate_type === "owner_selection" ? "option" : "product"}
+            {selection.options.length === 1 ? "" : "s"}
+          </span>
+        )}
       </div>
 
       {approvalGateEntry ? (
         <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
-          Release record: {approvalGateEntry.number || approvalGateLabel(selection)} ·{" "}
+          Primary record: {approvalGateEntry.number || approvalGateLabel(selection)} ·{" "}
           {approvalGateEntry.item || approvalGateEntry.description || "Untitled"}
         </p>
       ) : selection.approval_gate_override_acknowledged ? (
@@ -460,7 +515,21 @@ function SelectionCard({
         </p>
       ) : null}
 
-      {selection.approval_gate_type === "owner_selection" &&
+      {followOnApprovalGateEntry ? (
+        <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+          Follow-on gate: {followOnApprovalGateEntry.number || "Submittal"} ·{" "}
+          {followOnApprovalGateEntry.item || followOnApprovalGateEntry.description || "Untitled"}
+        </p>
+      ) : null}
+
+      {selection.approving_party || selection.responsible_party ? (
+        <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
+          {[selection.approving_party, selection.responsible_party].filter(Boolean).join(" · ")}
+        </p>
+      ) : null}
+
+      {requiresClientSelection(selection) &&
+      clientSelectionReady &&
       selection.decision_status !== "approved" ? (
         <Button
           className="mt-3 w-full"
@@ -475,9 +544,15 @@ function SelectionCard({
             : selection.decision_status === "revision_requested"
               ? "Resend revision"
               : selection.decision_status === "sent"
-                ? "Resend to owner"
-                : "Send to owner"}
+                ? "Resend to client"
+                : "Send to client"}
         </Button>
+      ) : null}
+
+      {requiresClientSelection(selection) && !clientSelectionReady ? (
+        <p className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-warning">
+          Answer the linked RFI before sending this package to the client.
+        </p>
       ) : null}
 
       {selection.decision_status === "approved" ||
@@ -485,7 +560,7 @@ function SelectionCard({
         <div className="mt-3">
           <Select
             value={selection.procurement_status}
-            disabled={updating}
+            disabled={updating || selection.procurement_status === "not_required"}
             onValueChange={(value) => onProcurementStatus(value as SelectionProcurementStatus)}
           >
             <SelectTrigger className="h-8 text-xs">
@@ -497,6 +572,7 @@ function SelectionCard({
               <SelectItem value="shipped">Shipped</SelectItem>
               <SelectItem value="received">Received</SelectItem>
               <SelectItem value="installed">Installed</SelectItem>
+              <SelectItem value="not_required">No procurement required</SelectItem>
             </SelectContent>
           </Select>
         </div>
