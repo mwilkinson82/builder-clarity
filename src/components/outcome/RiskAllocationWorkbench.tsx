@@ -2,7 +2,9 @@ import { useState } from "react";
 import { CircleDollarSign, ListChecks, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExposuresTable, type ExposureDraft } from "@/components/outcome/ExposuresTable";
+import { recognizedRiskActuals } from "@/lib/cost-documents";
 import { fmtPct, fmtUSD } from "@/lib/format";
+import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
 import {
   releasedExposureValue,
   remainingExposureValue,
@@ -11,6 +13,7 @@ import {
   type Rollup,
 } from "@/lib/ior";
 import type { ExposureRow } from "@/lib/projects.functions";
+import type { CostActualRow } from "@/lib/billing.functions";
 
 const RESPONSE_LABELS: Record<ResponsePath, string> = {
   eliminate: "Eliminate",
@@ -42,6 +45,7 @@ function carriesRemainingRisk(e: ExposureRow) {
 
 export function RiskAllocationWorkbench({
   exposures,
+  costActuals,
   rollup,
   guidance,
   focusedExposureId,
@@ -54,6 +58,7 @@ export function RiskAllocationWorkbench({
   onCreateClaim,
 }: {
   exposures: ExposureRow[];
+  costActuals: CostActualRow[];
   rollup: Rollup;
   guidance: { ePct: number; cPct: number; eTarget: number; cTarget: number };
   focusedExposureId?: string | null;
@@ -67,6 +72,20 @@ export function RiskAllocationWorkbench({
 }) {
   // Bump to open the create-risk dialog inside ExposuresTable from the header button.
   const [createSignal, setCreateSignal] = useState(0);
+  const actualIncurredByExposure = recognizedRiskActuals(costActuals).reduce((totals, actual) => {
+    if (!actual.exposure_id) return totals;
+    totals.set(
+      actual.exposure_id,
+      (totals.get(actual.exposure_id) ?? 0) + dollarsToCents(actual.amount),
+    );
+    return totals;
+  }, new Map<string, number>());
+  const actualIncurred = centsToDollars(
+    [...actualIncurredByExposure.values()].reduce((sum, cents) => sum + cents, 0),
+  );
+  const actualIncurredDollarsByExposure = new Map(
+    [...actualIncurredByExposure].map(([id, cents]) => [id, centsToDollars(cents)]),
+  );
   const carrying = exposures.filter(carriesRemainingRisk);
   const releasedRows = exposures.filter((e) => released(e) > 0);
   const activeRisk = carrying.reduce((s, e) => s + remaining(e), 0);
@@ -130,6 +149,7 @@ export function RiskAllocationWorkbench({
             </p>
             <div className="mt-5 grid w-full max-w-md grid-cols-1 gap-2.5 sm:grid-cols-2">
               <MetricTile label="Live remaining risk" value={fmtUSD(activeRisk)} tone="danger" />
+              <MetricTile label="Actual incurred on risk" value={fmtUSD(actualIncurred)} />
               <MetricTile label="Released / closed" value={fmtUSD(releasedRisk)} tone="success" />
               <MetricTile label="Exposure Hold (E)" value={fmtUSD(rollup.exposureHolds)} />
               <MetricTile label="Contingency Hold (C)" value={fmtUSD(rollup.contingencyHold)} />
@@ -226,6 +246,7 @@ export function RiskAllocationWorkbench({
           </div>
           <ExposuresTable
             exposures={exposures}
+            actualIncurredByExposure={actualIncurredDollarsByExposure}
             focusedExposureId={focusedExposureId}
             onFocusExposureHandled={onFocusExposureHandled}
             openCreateSignal={createSignal}

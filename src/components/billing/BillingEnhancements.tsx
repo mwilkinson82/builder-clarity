@@ -10,6 +10,7 @@ import {
 import { CostActualInvoiceAttachmentLink } from "@/components/billing/CostActualInvoiceAttachmentLink";
 import { CostCodeBreakdownManager } from "@/components/billing/CostCodeBreakdownManager";
 import { summarizeCostSettlement } from "@/lib/cost-settlement";
+import { groupCostActualsByDocument } from "@/lib/cost-documents";
 import { findOrCreateVendor, listVendors, saveVendor } from "@/lib/vendors.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,7 @@ import type {
   BillingApplicationRow,
   BillingOutputFormat,
   BucketRow,
+  ExposureRow,
   ProjectRow,
 } from "@/lib/projects.functions";
 import { AlertTriangle, Check, Plus, Save, Trash2, Upload, Pencil } from "lucide-react";
@@ -66,6 +68,10 @@ type LinePatch = {
 };
 
 type CostActualDraft = {
+  /** Shared by every allocation line on the same supplier invoice. */
+  cost_document_id?: string;
+  /** Optional risk-tally attribution; cost code remains required accounting context. */
+  exposure_id: string | null;
   cost_bucket_id: string | null;
   cost_code: string;
   description: string;
@@ -1099,6 +1105,7 @@ function BillingLineItemEditor({
 export function ProjectCostTrackingPanel({
   projectId,
   buckets,
+  exposures = [],
   costActuals,
   onCreateCostActual,
   onImportCostActuals,
@@ -1110,6 +1117,7 @@ export function ProjectCostTrackingPanel({
 }: {
   projectId: string;
   buckets: BucketRow[];
+  exposures?: ExposureRow[];
   costActuals: CostActualRow[];
   onCreateCostActual: (input: CostActualDraft) => Promise<unknown>;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
@@ -1227,11 +1235,12 @@ export function ProjectCostTrackingPanel({
       notes: string;
     }) => recordCostPaymentFn({ data: input }),
     onSuccess: (result) => {
+      const saved = result as { remaining_cents?: number };
       queryClient.invalidateQueries({ queryKey: ["cost-ledger-details", projectId] });
       queryClient.invalidateQueries({ queryKey: ["billing-workspace", projectId] });
       setPayingCost(null);
       toast.success(
-        Number(result.remaining_cents ?? 0) > 0 ? "Partial payment recorded" : "Cost settled",
+        Number(saved.remaining_cents ?? 0) > 0 ? "Partial payment recorded" : "Cost settled",
       );
     },
     onError: (error) =>
@@ -1279,6 +1288,7 @@ export function ProjectCostTrackingPanel({
   // New invoices land as a draft (field request 2026-07-09) — nothing hits job
   // cost until someone approves the spend or marks it paid.
   const [draft, setDraft] = useState<CostActualDraft>(() => ({
+    exposure_id: null,
     cost_bucket_id: buckets[0]?.id ?? null,
     cost_code: buckets[0]?.cost_code ?? "",
     description: "",
@@ -1401,18 +1411,19 @@ export function ProjectCostTrackingPanel({
     primaryOffsetAddBack,
   );
   const showPrimaryOffset = draft.amount >= 0 && primaryUnsettled > 0;
-  // The backup list after the stage filter + search — used by the grid AND the
-  // "nothing matches" empty state so they can never disagree.
-  const visibleCostActuals = costActuals
-    .filter((actual) => costStatusFilter === "all" || actual.status === costStatusFilter)
-    .filter((actual) => {
+  // Filter at the document level: when one allocation matches, show the whole
+  // invoice so its line count and document total never become partial/misleading.
+  const visibleCostDocuments = groupCostActualsByDocument(costActuals).filter((document) =>
+    document.lines.some((actual) => {
+      if (costStatusFilter !== "all" && actual.status !== costStatusFilter) return false;
       const query = costSearch.trim().toLowerCase();
       if (!query) return true;
       return [actual.description, actual.vendor, actual.reference_number, actual.cost_code]
         .join(" ")
         .toLowerCase()
         .includes(query);
-    });
+    }),
+  );
   const saveVendorDetails = async () => {
     if (!vendorDraft || !vendorDraft.name.trim()) return;
     setSavingVendor(true);
@@ -1496,6 +1507,8 @@ export function ProjectCostTrackingPanel({
     // auto-suggest over what the PM already chose on this row.
     setPrimaryOffsetTouched(true);
     setDraft({
+      cost_document_id: actual.cost_document_id || actual.id,
+      exposure_id: actual.exposure_id,
       cost_bucket_id: actual.cost_bucket_id,
       cost_code: actual.cost_code,
       description: actual.description,
@@ -1524,6 +1537,7 @@ export function ProjectCostTrackingPanel({
     setPrimaryOffsetTouched(false);
     setInvoiceFile(null);
     setDraft({
+      exposure_id: null,
       cost_bucket_id: buckets[0]?.id ?? null,
       cost_code: buckets[0]?.cost_code ?? "",
       description: "",
@@ -1559,7 +1573,13 @@ export function ProjectCostTrackingPanel({
   const save = async () => {
     let uploadedPath = "";
     let savedRows = 0;
-    let nextDraft = { ...draft, daily_wip_offset: primaryOffsetValue };
+    const costDocumentId =
+      draft.cost_document_id || editingCost?.cost_document_id || crypto.randomUUID();
+    let nextDraft = {
+      ...draft,
+      cost_document_id: costDocumentId,
+      daily_wip_offset: primaryOffsetValue,
+    };
 
     if (invoiceFile) {
       setUploadingInvoice(true);
@@ -2099,6 +2119,32 @@ export function ProjectCostTrackingPanel({
                     />
                   </div>
                 </div>
+                <div className="space-y-1.5 rounded-md border border-hairline bg-surface p-3">
+                  <Label>Risk tally attribution (optional)</Label>
+                  <Select
+                    value={draft.exposure_id ?? "unlinked"}
+                    onValueChange={(value) =>
+                      setDraft({ ...draft, exposure_id: value === "unlinked" ? null : value })
+                    }
+                  >
+                    <SelectTrigger aria-label="Link this cost to a risk tally item">
+                      <SelectValue placeholder="Not linked to a risk" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="unlinked">Not linked to a risk</SelectItem>
+                      {exposures.map((exposure) => (
+                        <SelectItem key={exposure.id} value={exposure.id}>
+                          {exposure.title} · {exposure.status}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    The invoice still posts to its cost code. This link also shows the recognized
+                    amount as actual incurred on the selected risk—even before a change order is
+                    approved.
+                  </p>
+                </div>
                 <div className="space-y-1.5">
                   <Label>Notes</Label>
                   <Textarea
@@ -2163,7 +2209,7 @@ export function ProjectCostTrackingPanel({
                       : editingCostId
                         ? "Save changes"
                         : activeExtraLines.length > 0
-                          ? `Save ${activeExtraLines.length + 1} costs`
+                          ? `Save invoice · ${activeExtraLines.length + 1} lines`
                           : "Save cost"}
                   </Button>
                 </div>
@@ -2360,7 +2406,7 @@ export function ProjectCostTrackingPanel({
               ? "No cost ledger rows are attached yet. The bucket actuals above still feed WIP, but there is no transaction-level backup to audit."
               : "No cost ledger rows recorded yet."}
           </div>
-        ) : visibleCostActuals.length === 0 ? (
+        ) : visibleCostDocuments.length === 0 ? (
           <div className="mt-3 rounded-md border border-dashed border-hairline bg-card py-8 text-center text-sm text-muted-foreground">
             No costs match the current filter{costSearch.trim() ? " and search" : ""}.{" "}
             <button
@@ -2375,155 +2421,217 @@ export function ProjectCostTrackingPanel({
             </button>
           </div>
         ) : (
-          <div className="mt-3 divide-y divide-hairline border-y border-hairline">
-            {visibleCostActuals.map((actual) => {
-              const settlement = settlementFor(actual);
-              const appliedTo = actual.credit_applies_to_id
-                ? costActuals.find((candidate) => candidate.id === actual.credit_applies_to_id)
-                : null;
+          <div className="mt-3 space-y-3">
+            {visibleCostDocuments.map((document) => {
+              const primary = document.lines[0];
+              if (!primary) return null;
+              const total = centsToDollars(
+                sumDollarsToCents(document.lines.map((line) => line.amount)),
+              );
+              const attachment = document.lines.find((line) => line.invoice_attachment_path);
+              const riskIds = [
+                ...new Set(
+                  document.lines
+                    .map((line) => line.exposure_id)
+                    .filter((id): id is string => Boolean(id)),
+                ),
+              ];
+              const linkedRisks = riskIds
+                .map((id) => exposures.find((exposure) => exposure.id === id)?.title)
+                .filter((title): title is string => Boolean(title));
               return (
                 <div
-                  key={actual.id}
-                  className={`border-l-4 bg-card px-3 py-3 ${
-                    COST_STATUS_TONE[actual.status]?.edge ?? "border-l-transparent"
-                  } ${actual.status === "void" ? "opacity-50" : ""}`}
+                  key={document.id}
+                  className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card"
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex flex-col gap-3 border-b border-hairline bg-surface px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        <span>{primary.cost_date}</span>
+                        <span>{primary.import_batch_id ? "Imported" : "Manual"}</span>
                         <span>
-                          {actual.cost_date} · {actual.cost_code || "No code"}
+                          {document.lines.length} allocation{" "}
+                          {document.lines.length === 1 ? "line" : "lines"}
                         </span>
-                        <span
-                          className={`rounded-full px-2 py-0.5 ${COST_STATUS_TONE[actual.status]?.chip ?? ""}`}
-                        >
-                          {COST_STATUS_LABEL[actual.status] ?? actual.status}
-                        </span>
-                        {/* Provenance: imports carry an import_batch_id; manual entries don't. */}
-                        <span>{actual.import_batch_id ? "Imported" : "Manual"}</span>
                       </div>
-                      <div className="mt-1 font-medium text-foreground">{actual.description}</div>
-                      <div className="mt-1 text-xs capitalize text-muted-foreground">
-                        {actual.category}
-                        {actual.vendor ? ` · ${actual.vendor}` : ""}
+                      <div className="mt-1 font-medium text-foreground">
+                        {primary.reference_number
+                          ? `Invoice ${primary.reference_number}`
+                          : primary.vendor
+                            ? `${primary.vendor} cost`
+                            : primary.description}
                       </div>
-                      {actual.status === "draft" ||
-                      actual.status === "approved" ||
-                      actual.status === "committed" ? (
-                        <div className="mt-2.5 flex items-center gap-2">
-                          {actual.status === "draft" ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 px-2.5 text-xs"
-                              onClick={() => onSetCostActualStatus(actual.id, "approved")}
-                            >
-                              Approve for payment
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 px-2.5 text-xs"
-                            onClick={() => openPayDialog(actual)}
-                          >
-                            Record payment
-                          </Button>
-                        </div>
-                      ) : null}
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        {primary.vendor ? <span>Vendor: {primary.vendor}</span> : null}
+                        {primary.reference_number ? (
+                          <span>Ref: {primary.reference_number}</span>
+                        ) : null}
+                        {linkedRisks.length > 0 ? (
+                          <span className="font-medium text-warning">
+                            Actual incurred → {linkedRisks.join(", ")}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between gap-3 sm:justify-end">
-                      <div className="text-right text-sm tabular font-medium">
-                        {fmtUSD(actual.amount)}
+                    <div className="shrink-0 text-left sm:text-right">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                        Document total
                       </div>
-                      {(actual.status === "draft" ||
-                        actual.status === "approved" ||
-                        actual.status === "committed") && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                          title={
-                            actual.status === "draft"
-                              ? "Edit this draft"
-                              : "Edit this cost — changes update job cost"
-                          }
-                          onClick={() => startEditCost(actual)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      {actual.status !== "void" && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
-                          onClick={() => {
-                            if (
-                              !window.confirm(
-                                "Void this cost actual? The linked bucket actuals will update.",
-                              )
-                            ) {
-                              return;
-                            }
-                            onVoidCostActual(actual.id, "Voided from cost tracking.");
-                          }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
+                      <div className="mt-0.5 font-serif text-2xl tabular text-foreground">
+                        {fmtUSD(total)}
+                      </div>
                     </div>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                    {actual.vendor ? <span>Vendor: {actual.vendor}</span> : null}
-                    {actual.reference_number ? <span>Ref: {actual.reference_number}</span> : null}
-                    {appliedTo ? (
-                      <span className="text-warning">
-                        Applied to {appliedTo.reference_number || appliedTo.description}
-                      </span>
-                    ) : null}
-                  </div>
-                  {actual.amount > 0 && actual.status !== "draft" && actual.status !== "void" ? (
-                    <div className="mt-2 text-xs tabular text-muted-foreground">
-                      <span className="font-semibold text-foreground">
-                        {fmtUSD(centsToDollars(settlement.settledCents))} of {fmtUSD(actual.amount)}{" "}
-                        settled
-                      </span>
-                      {settlement.creditCents > 0
-                        ? ` · includes ${fmtUSD(centsToDollars(settlement.creditCents))} credit`
-                        : ""}
-                      {settlement.remainingCents > 0
-                        ? ` · ${fmtUSD(centsToDollars(settlement.remainingCents))} remaining`
-                        : ""}
-                    </div>
-                  ) : null}
-                  {actual.invoice_attachment_path ? (
-                    <div className="mt-2">
+                  {attachment ? (
+                    <div className="border-b border-hairline px-4 py-2.5">
                       <CostActualInvoiceAttachmentLink
                         attachment={{
-                          path: actual.invoice_attachment_path,
-                          name: actual.invoice_attachment_name,
-                          type: actual.invoice_attachment_type,
-                          size: actual.invoice_attachment_size,
+                          path: attachment.invoice_attachment_path,
+                          name: attachment.invoice_attachment_name,
+                          type: attachment.invoice_attachment_type,
+                          size: attachment.invoice_attachment_size,
                         }}
                       />
                     </div>
                   ) : null}
-                  {actual.status === "paid" &&
-                  (actual.payment_method || actual.payment_reference || actual.paid_date) ? (
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-success">
-                      <span className="font-semibold">Paid</span>
-                      {actual.payment_method ? (
-                        <span>by {paymentMethodLabel(actual.payment_method)}</span>
-                      ) : null}
-                      {actual.payment_reference ? <span>· {actual.payment_reference}</span> : null}
-                      {actual.paid_date ? <span>· {actual.paid_date}</span> : null}
-                    </div>
-                  ) : null}
+                  <div className="divide-y divide-hairline">
+                    {document.lines.map((actual) => {
+                      const settlement = settlementFor(actual);
+                      const appliedTo = actual.credit_applies_to_id
+                        ? costActuals.find(
+                            (candidate) => candidate.id === actual.credit_applies_to_id,
+                          )
+                        : null;
+                      return (
+                        <div
+                          key={actual.id}
+                          className={`border-l-4 px-4 py-3 ${
+                            COST_STATUS_TONE[actual.status]?.edge ?? "border-l-transparent"
+                          } ${actual.status === "void" ? "opacity-50" : ""}`}
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                                  {actual.cost_code || "No cost code"}
+                                </span>
+                                <span
+                                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${COST_STATUS_TONE[actual.status]?.chip ?? ""}`}
+                                >
+                                  {COST_STATUS_LABEL[actual.status] ?? actual.status}
+                                </span>
+                              </div>
+                              <div className="mt-1 font-medium text-foreground">
+                                {actual.description}
+                              </div>
+                              <div className="mt-1 text-xs capitalize text-muted-foreground">
+                                {actual.category}
+                                {appliedTo
+                                  ? ` · credit applied to ${appliedTo.reference_number || appliedTo.description}`
+                                  : ""}
+                              </div>
+                              {actual.status === "draft" ||
+                              actual.status === "approved" ||
+                              actual.status === "committed" ? (
+                                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                                  {actual.status === "draft" ? (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 px-2.5 text-xs"
+                                      onClick={() => onSetCostActualStatus(actual.id, "approved")}
+                                    >
+                                      Approve line
+                                    </Button>
+                                  ) : null}
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs"
+                                    onClick={() => openPayDialog(actual)}
+                                  >
+                                    Record payment
+                                  </Button>
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
+                              <div className="mr-1 text-right text-sm tabular font-medium">
+                                {fmtUSD(actual.amount)}
+                              </div>
+                              {(actual.status === "draft" ||
+                                actual.status === "approved" ||
+                                actual.status === "committed") && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                  title="Edit this allocation line"
+                                  onClick={() => startEditCost(actual)}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {actual.status !== "void" && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
+                                  aria-label={`Void ${actual.description}`}
+                                  onClick={() => {
+                                    if (
+                                      window.confirm(
+                                        "Void this allocation line? The linked cost-code actual will update.",
+                                      )
+                                    ) {
+                                      onVoidCostActual(actual.id, "Voided from cost tracking.");
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          {actual.amount > 0 &&
+                          actual.status !== "draft" &&
+                          actual.status !== "void" ? (
+                            <div className="mt-2 text-xs tabular text-muted-foreground">
+                              <span className="font-semibold text-foreground">
+                                {fmtUSD(centsToDollars(settlement.settledCents))} of{" "}
+                                {fmtUSD(actual.amount)} settled
+                              </span>
+                              {settlement.creditCents > 0
+                                ? ` · includes ${fmtUSD(centsToDollars(settlement.creditCents))} credit`
+                                : ""}
+                              {settlement.remainingCents > 0
+                                ? ` · ${fmtUSD(centsToDollars(settlement.remainingCents))} remaining`
+                                : ""}
+                            </div>
+                          ) : null}
+                          {actual.status === "paid" &&
+                          (actual.payment_method ||
+                            actual.payment_reference ||
+                            actual.paid_date) ? (
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-success">
+                              <span className="font-semibold">Paid</span>
+                              {actual.payment_method ? (
+                                <span>by {paymentMethodLabel(actual.payment_method)}</span>
+                              ) : null}
+                              {actual.payment_reference ? (
+                                <span>· {actual.payment_reference}</span>
+                              ) : null}
+                              {actual.paid_date ? <span>· {actual.paid_date}</span> : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}

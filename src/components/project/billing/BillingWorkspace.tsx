@@ -72,6 +72,7 @@ import type {
   BillingOutputFormat,
   BucketRow,
   ChangeOrderRow,
+  ExposureRow,
   ProjectRow,
 } from "@/lib/projects.functions";
 import type { Rollup } from "@/lib/ior";
@@ -85,6 +86,7 @@ export function BillingWorkspace({
   project,
   rollup,
   changeOrders,
+  exposures,
   buckets,
   selfPerformByBucket,
   billingApplications,
@@ -128,6 +130,7 @@ export function BillingWorkspace({
   project: ProjectRow;
   rollup: Rollup;
   changeOrders: ChangeOrderRow[];
+  exposures: ExposureRow[];
   buckets: BucketRow[];
   selfPerformByBucket?: ReadonlyMap<string, number>;
   billingApplications: BillingApplicationRow[];
@@ -1231,6 +1234,7 @@ export function BillingWorkspace({
                 <ProjectCostTrackingPanel
                   projectId={project.id}
                   buckets={buckets}
+                  exposures={exposures}
                   costActuals={workspace.costActuals}
                   onCreateCostActual={onCreateCostActual}
                   onImportCostActuals={onImportCostActuals}

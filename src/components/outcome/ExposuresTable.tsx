@@ -134,6 +134,7 @@ function TreatmentBadge({ path }: { path: ResponsePath }) {
 
 export function ExposuresTable({
   exposures,
+  actualIncurredByExposure,
   focusedExposureId,
   onFocusExposureHandled,
   openCreateSignal,
@@ -145,6 +146,7 @@ export function ExposuresTable({
   onCreateClaim,
 }: {
   exposures: ExposureRow[];
+  actualIncurredByExposure?: ReadonlyMap<string, number>;
   focusedExposureId?: string | null;
   onFocusExposureHandled?: () => void;
   /** Increment to open the create-risk dialog from outside (workbench header "+ Log risk"). */
@@ -276,6 +278,7 @@ export function ExposuresTable({
             <RiskRow
               key={e.id}
               exposure={e}
+              actualIncurred={actualIncurredByExposure?.get(e.id) ?? 0}
               highlightLabel={e.id === topEHoldId ? "Top E-Hold" : undefined}
               spotlighted={spotlightExposureId === e.id}
               onEdit={openEdit}
@@ -304,6 +307,7 @@ export function ExposuresTable({
             <RiskRow
               key={e.id}
               exposure={e}
+              actualIncurred={actualIncurredByExposure?.get(e.id) ?? 0}
               highlightLabel={e.id === topCHoldId ? "Top C-Hold" : undefined}
               spotlighted={spotlightExposureId === e.id}
               onEdit={openEdit}
@@ -324,6 +328,7 @@ export function ExposuresTable({
             <RiskRow
               key={e.id}
               exposure={e}
+              actualIncurred={actualIncurredByExposure?.get(e.id) ?? 0}
               highlightLabel={e.id === topUnclassifiedId ? "Top risk" : undefined}
               spotlighted={spotlightExposureId === e.id}
               onEdit={openEdit}
@@ -344,6 +349,7 @@ export function ExposuresTable({
             <RiskRow
               key={e.id}
               exposure={e}
+              actualIncurred={actualIncurredByExposure?.get(e.id) ?? 0}
               spotlighted={spotlightExposureId === e.id}
               onEdit={openEdit}
               onDelete={onDelete}
@@ -685,6 +691,7 @@ function RiskGroupRow({ label, detail, count }: { label: string; detail: string;
 
 function RiskRow({
   exposure,
+  actualIncurred,
   highlightLabel,
   spotlighted,
   onEdit,
@@ -694,6 +701,7 @@ function RiskRow({
   onCreateClaim,
 }: {
   exposure: ExposureRow;
+  actualIncurred: number;
   highlightLabel?: string;
   spotlighted?: boolean;
   onEdit: (exposure: ExposureRow) => void;
@@ -782,7 +790,7 @@ function RiskRow({
       </div>
 
       <div className="min-w-0 tabular lg:text-right">
-        <div className="grid grid-cols-3 gap-2 lg:block">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:block">
           <div className="min-w-0 rounded-md border border-hairline bg-surface px-2 py-1.5 lg:border-0 lg:bg-transparent lg:px-0 lg:py-0">
             <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
               Likely
@@ -809,6 +817,15 @@ function RiskRow({
             <div className="mt-0.5 font-serif text-base leading-tight text-danger">
               {fmtUSD(remainingValue(exposure))}
             </div>
+          </div>
+          <div className="min-w-0 rounded-md border border-warning/30 bg-warning/5 px-2 py-1.5 lg:mt-2.5 lg:px-0 lg:py-1.5">
+            <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+              Actual incurred
+            </div>
+            <div className="mt-0.5 font-serif text-base leading-tight text-warning">
+              {fmtUSD(actualIncurred)}
+            </div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground">Linked cost actuals</div>
           </div>
         </div>
         <div className="mt-3 text-xs">
