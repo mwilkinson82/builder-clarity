@@ -166,9 +166,43 @@ export interface CostActualRow {
   // out of the self-perform rollup so the invoice doesn't double-count the lump.
   // 0 pre-migration (column absent → read defensively).
   daily_wip_offset: number;
+  // A negative supplier credit can point to the positive invoice it reduces.
+  // The settlement view combines approved credits with cash-payment rows.
+  credit_applies_to_id: string | null;
   voided_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CostActualPaymentRow {
+  id: string;
+  project_id: string;
+  cost_actual_id: string;
+  amount_cents: number;
+  payment_date: string;
+  payment_method: string;
+  payment_reference: string;
+  notes: string;
+  created_at: string;
+}
+
+export interface CostBudgetItemRow {
+  id: string;
+  project_id: string;
+  cost_bucket_id: string;
+  description: string;
+  category: "labor" | "material" | "equipment" | "subcontract" | "other";
+  planned_amount_cents: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CostLedgerDetails {
+  settlementReady: boolean;
+  breakdownReady: boolean;
+  payments: CostActualPaymentRow[];
+  budgetItems: CostBudgetItemRow[];
 }
 
 export interface CostActualImportRow {
@@ -420,7 +454,32 @@ const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => ({
   invoice_attachment_size: num(row.invoice_attachment_size),
   // Read defensively: pre-migration the column is absent → 0 (no settlement).
   daily_wip_offset: num(row.daily_wip_offset ?? 0),
+  credit_applies_to_id: (row.credit_applies_to_id as string | null) ?? null,
   voided_at: (row.voided_at as string | null) ?? null,
+  created_at: str(row.created_at),
+  updated_at: str(row.updated_at),
+});
+
+const normalizeCostActualPayment = (row: Record<string, unknown>): CostActualPaymentRow => ({
+  id: row.id as string,
+  project_id: row.project_id as string,
+  cost_actual_id: row.cost_actual_id as string,
+  amount_cents: num(row.amount_cents),
+  payment_date: str(row.payment_date),
+  payment_method: str(row.payment_method),
+  payment_reference: str(row.payment_reference),
+  notes: str(row.notes),
+  created_at: str(row.created_at),
+});
+
+const normalizeCostBudgetItem = (row: Record<string, unknown>): CostBudgetItemRow => ({
+  id: row.id as string,
+  project_id: row.project_id as string,
+  cost_bucket_id: row.cost_bucket_id as string,
+  description: str(row.description),
+  category: str(row.category, "other") as CostBudgetItemRow["category"],
+  planned_amount_cents: num(row.planned_amount_cents),
+  sort_order: num(row.sort_order),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
 });
@@ -746,6 +805,157 @@ export const getBillingWorkspace = createServerFn({ method: "GET" })
       changeOrderAllocations: loaded.allocations,
       wip,
     } satisfies BillingWorkspaceData;
+  });
+
+// Optional second slice for the contractor-facing cost ledger. Keeping it
+// separate lets the existing billing workspace stay usable while Lovable
+// applies the additive settlement/breakdown migrations.
+export const getCostLedgerDetails = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    await requireCanReadProject(ctx, data.projectId);
+    const [paymentRes, budgetItemRes] = await Promise.all([
+      dynamicTable(ctx.supabase, "cost_actual_payments")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("payment_date", { ascending: false }),
+      dynamicTable(ctx.supabase, "cost_budget_items")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("sort_order")
+        .order("created_at"),
+    ]);
+
+    const settlementReady = !isMissingRestRelation(paymentRes.error, "cost_actual_payments");
+    const breakdownReady = !isMissingRestRelation(budgetItemRes.error, "cost_budget_items");
+    if (paymentRes.error && settlementReady) throw new Error(paymentRes.error.message);
+    if (budgetItemRes.error && breakdownReady) throw new Error(budgetItemRes.error.message);
+
+    return {
+      settlementReady,
+      breakdownReady,
+      payments: settlementReady
+        ? ((paymentRes.data ?? []) as Record<string, unknown>[]).map(normalizeCostActualPayment)
+        : [],
+      budgetItems: breakdownReady
+        ? ((budgetItemRes.data ?? []) as Record<string, unknown>[]).map(normalizeCostBudgetItem)
+        : [],
+    } satisfies CostLedgerDetails;
+  });
+
+const recordCostActualPaymentInput = z.object({
+  cost_actual_id: z.string().uuid(),
+  amount: z.number().positive(),
+  payment_date: z.string().min(1),
+  payment_method: z.string().max(40).default(""),
+  payment_reference: z.string().max(200).default(""),
+  notes: z.string().max(2000).default(""),
+});
+
+export const recordCostActualPayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof recordCostActualPaymentInput>) =>
+    recordCostActualPaymentInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    const result = await ctx.supabase.rpc("record_cost_actual_payment", {
+      p_cost_actual_id: data.cost_actual_id,
+      p_amount_cents: dollarsToCents(data.amount),
+      p_payment_date: data.payment_date,
+      p_payment_method: data.payment_method,
+      p_payment_reference: data.payment_reference,
+      p_notes: data.notes,
+    });
+    if (result.error) {
+      if (/record_cost_actual_payment|schema cache|function/i.test(result.error.message)) {
+        throw new Error(
+          "Partial payments are not enabled yet (database update pending). Apply the billing settlement migration, then try again.",
+        );
+      }
+      throw new Error(result.error.message);
+    }
+    return result.data as Record<string, unknown>;
+  });
+
+const saveCostBudgetItemInput = z.object({
+  id: z.string().uuid().optional(),
+  projectId: z.string().uuid(),
+  cost_bucket_id: z.string().uuid(),
+  description: z.string().trim().min(1).max(300),
+  category: z.enum(["labor", "material", "equipment", "subcontract", "other"]),
+  planned_amount: z.number().min(0),
+  sort_order: z.number().int().min(0).default(0),
+});
+
+export const saveCostBudgetItem = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof saveCostBudgetItemInput>) =>
+    saveCostBudgetItemInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    await requireCanManageProject(ctx, data.projectId);
+
+    const bucketRes = await dynamicTable(ctx.supabase, "cost_buckets")
+      .select("id,project_id")
+      .eq("id", data.cost_bucket_id)
+      .single();
+    if (bucketRes.error) throw new Error(bucketRes.error.message);
+    if ((bucketRes.data as Record<string, unknown>).project_id !== data.projectId) {
+      throw new Error("That budget code does not belong to this project.");
+    }
+
+    const payload = {
+      project_id: data.projectId,
+      cost_bucket_id: data.cost_bucket_id,
+      description: data.description,
+      category: data.category,
+      planned_amount_cents: dollarsToCents(data.planned_amount),
+      sort_order: data.sort_order,
+    };
+    const saveRes = data.id
+      ? await dynamicTable(ctx.supabase, "cost_budget_items")
+          .update(payload)
+          .eq("id", data.id)
+          .eq("project_id", data.projectId)
+          .select("*")
+          .single()
+      : await dynamicTable(ctx.supabase, "cost_budget_items").insert(payload).select("*").single();
+    if (saveRes.error) {
+      if (isMissingRestRelation(saveRes.error, "cost_budget_items")) {
+        throw new Error(
+          "Budget breakdowns are not enabled yet (database update pending). Apply the billing breakdown migration, then try again.",
+        );
+      }
+      throw new Error(saveRes.error.message);
+    }
+    return normalizeCostBudgetItem(saveRes.data as Record<string, unknown>);
+  });
+
+const deleteCostBudgetItemInput = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+});
+
+export const deleteCostBudgetItem = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof deleteCostBudgetItemInput>) =>
+    deleteCostBudgetItemInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    await requireCanManageProject(ctx, data.projectId);
+    const deleteRes = await dynamicTable(ctx.supabase, "cost_budget_items")
+      .delete()
+      .eq("id", data.id)
+      .eq("project_id", data.projectId);
+    if (deleteRes.error) throw new Error(deleteRes.error.message);
+    return { ok: true };
   });
 
 const generateLineItemsInput = z.object({
@@ -1128,6 +1338,7 @@ const costActualInput = z.object({
   invoice_attachment_name: z.string().max(500).default(""),
   invoice_attachment_type: z.string().max(200).default(""),
   invoice_attachment_size: z.number().int().min(0).default(0),
+  credit_applies_to_id: z.string().uuid().nullable().default(null),
 });
 
 // The draft/approved stages need the payables-approval migration, and credits
@@ -1135,6 +1346,9 @@ const costActualInput = z.object({
 // applied yet the DB CHECK rejects the write — translate that into plain English
 // instead of surfacing a constraint name.
 const mapCostStatusError = (message: string) => {
+  if (/credit_applies_to_id|credit link/i.test(message)) {
+    return "Linked credits are not enabled yet (database update pending). Apply the billing settlement migration, then try again.";
+  }
   if (/invoice_attachment_(path|name|type|size)/i.test(message)) {
     return "Invoice uploads are not enabled yet (database update pending). Apply the cost invoice attachment migration, then try again.";
   }
@@ -1189,6 +1403,7 @@ export const createCostActual = createServerFn({ method: "POST" })
       invoice_attachment_name: data.invoice_attachment_name,
       invoice_attachment_type: data.invoice_attachment_type,
       invoice_attachment_size: data.invoice_attachment_size,
+      credit_applies_to_id: data.amount < 0 ? data.credit_applies_to_id : null,
       ...(data.status === "approved"
         ? { approved_at: new Date().toISOString(), approved_by: ctx.userId }
         : {}),
@@ -1238,6 +1453,7 @@ const updateCostActualInput = z.object({
   invoice_attachment_name: z.string().max(500).optional(),
   invoice_attachment_type: z.string().max(200).optional(),
   invoice_attachment_size: z.number().int().min(0).optional(),
+  credit_applies_to_id: z.string().uuid().nullable().optional(),
 });
 
 export const updateCostActual = createServerFn({ method: "POST" })
@@ -1289,6 +1505,8 @@ export const updateCostActual = createServerFn({ method: "POST" })
     if (fields.daily_wip_offset !== undefined && data.amount < 0) {
       updatePayload.daily_wip_offset = 0;
     }
+    updatePayload.credit_applies_to_id =
+      data.amount < 0 ? (fields.credit_applies_to_id ?? null) : null;
     // Re-assert the stage IN the update itself: between the check above and
     // this write, someone else may have marked the row paid (or voided it) —
     // the predicate makes that race land as "0 rows", never as an edit to

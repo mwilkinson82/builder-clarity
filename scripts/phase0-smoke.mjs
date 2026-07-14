@@ -814,13 +814,15 @@ await expectContains(
     /Carried forward from/,
     /Overwatch remembers the rest/,
     /Cost ledger: job-cost backup/,
-    /Cost code health/,
-    // BUDGETVSCONTRACT1: the cost-code health card compares CONTRACT VALUE
-    // against projected cost — it reads contract_value (owner-facing SOV),
-    // falling back to budget only for unpriced legacy lines. Reading
-    // original_budget made "Contract value" mirror projected cost (variance $0).
-    /bucket\.contract_value > 0 \? bucket\.contract_value : bucket\.original_budget/,
+    // The compact cost view replaces the six-card health matrix with the four
+    // operational numbers and an expandable planned sub-cost breakdown.
+    /CostCodeBreakdownManager/,
+    /Open to pay/,
+    /Cash paid/,
     /Cost transaction backup/,
+    /Record payment/,
+    /settlement\.settledCents/,
+    /credit_applies_to_id/,
     /WIP review \(Work in Progress\)/,
     /Revenue timing/,
     /Profit forecast/,
@@ -829,6 +831,35 @@ await expectContains(
     /export function WipAnalysisPanel/,
   ],
   "billing enhancement panels expose application progress, project cost tracking, and WIP sections with production wording",
+);
+
+await expectContains(
+  "src/components/billing/CostCodeBreakdownManager.tsx",
+  [/What makes up each budget code\?/, /planned_amount/, /left to plan/, /saveCostBudgetItem/],
+  "billing cost plan expands each code into editable planned sub-costs",
+);
+
+await expectContains(
+  "supabase/migrations/20260714023911_billing_cost_settlements.sql",
+  [
+    /credit_applies_to_id/,
+    /CREATE TABLE IF NOT EXISTS public\.cost_actual_payments/,
+    /CREATE OR REPLACE FUNCTION public\.record_cost_actual_payment/,
+    /FOR UPDATE/,
+    /can_manage_project/,
+  ],
+  "cost settlement migration links credits and records concurrency-safe partial payments",
+);
+
+await expectContains(
+  "supabase/migrations/20260714023925_billing_cost_breakdowns.sql",
+  [
+    /CREATE TABLE IF NOT EXISTS public\.cost_budget_items/,
+    /planned_amount_cents bigint/,
+    /ENABLE ROW LEVEL SECURITY/,
+    /can_manage_project/,
+  ],
+  "cost plan migration stores RLS-protected budget sub-costs in integer cents",
 );
 
 await expectContains(

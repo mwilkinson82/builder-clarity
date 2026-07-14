@@ -65,6 +65,34 @@ import {
   daysUntilDue,
   receivableAgingBucket,
 } from "../src/lib/receivables.ts";
+import { summarizeCostSettlement } from "../src/lib/cost-settlement.ts";
+
+// --- Cost settlement: partial cash + linked supplier credits ---------------
+
+const partialCost = summarizeCostSettlement({
+  invoiceCents: 20000,
+  cashPaidCents: 5000,
+  creditCents: 5000,
+});
+assert.equal(partialCost.settledCents, 10000);
+assert.equal(partialCost.remainingCents, 10000);
+assert.equal(partialCost.state, "partial");
+
+const creditedCost = summarizeCostSettlement({
+  invoiceCents: 20000,
+  cashPaidCents: 15000,
+  creditCents: 5000,
+});
+assert.equal(creditedCost.remainingCents, 0);
+assert.equal(creditedCost.state, "settled");
+
+const legacyPaidCost = summarizeCostSettlement({
+  invoiceCents: 20000,
+  cashPaidCents: 0,
+  creditCents: 0,
+  legacyPaid: true,
+});
+assert.equal(legacyPaidCost.cashPaidCents, 20000, "legacy paid rows remain fully settled");
 
 // --- Payment state machine -------------------------------------------------
 
