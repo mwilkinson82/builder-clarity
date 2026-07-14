@@ -252,11 +252,11 @@ const PROJECT_TAB_VALUES = [
 
 type ProjectTabValue = (typeof PROJECT_TAB_VALUES)[number];
 
-// NAVLABELS: the rail leads with the text label, not the icon — 13 icon-only
-// destinations were indistinguishable ("where am I?"). All 13 tabs stay on the
-// rail, grouped into four clusters under mono `.eyebrow` group headers so the
-// rail reads as a status board. Grouping is display-only: deep links (?tab=…)
-// resolve unchanged, and every tab keeps its existing `value`.
+// NAVLABELS: the rail leads with the text label, not the icon. The destinations
+// are grouped around the IOR operating loop: establish the GP target, plan the
+// work, control commercial commitments, capture field truth, and share the
+// client record. Grouping is display-only: deep links (?tab=…) resolve
+// unchanged, and every tab keeps its existing `value`.
 type ProjectNavGroup = { key: string; label: string; values: ProjectTabValue[] };
 
 type ProjectNavItem = {
@@ -269,16 +269,35 @@ type ProjectNavItem = {
 };
 
 const PROJECT_NAV_GROUPS: ProjectNavGroup[] = [
-  { key: "money", label: "Money", values: ["dashboard", "sov", "billing", "change-orders"] },
+  {
+    key: "ior",
+    label: "IOR",
+    values: ["dashboard", "risk-tally", "todos", "claims", "ior-report"],
+  },
+  {
+    key: "plan-procurement",
+    label: "Plan & Procurement",
+    values: ["schedule", "rfi-submittals"],
+  },
+  {
+    key: "commercial",
+    label: "Commercial",
+    values: ["sov", "subcontractors", "change-orders", "billing"],
+  },
   {
     key: "field",
     label: "Field",
-    values: ["schedule", "daily-reports", "daily-wip", "inspections"],
+    values: ["daily-reports", "daily-wip", "inspections"],
   },
-  { key: "risk", label: "Risk", values: ["risk-tally", "claims", "todos"] },
-  { key: "parties", label: "Parties", values: ["subcontractors", "client-portal", "ior-report"] },
-  { key: "docs", label: "Docs", values: ["file-room", "rfi-submittals"] },
+  {
+    key: "client-records",
+    label: "Client & Records",
+    values: ["client-portal", "file-room"],
+  },
 ];
+
+const projectNavGroupKeyForTab = (tab: ProjectTabValue) =>
+  PROJECT_NAV_GROUPS.find((group) => group.values.includes(tab))?.key;
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   ssr: false,
@@ -378,6 +397,13 @@ function ProjectPage() {
   const [activeProjectTab, setActiveProjectTab] = useState<ProjectTabValue>(
     search.tab ?? "dashboard",
   );
+  // Multi-expand navigation: the current destination opens its group, while
+  // every other group keeps the state the user chose. Opening one section must
+  // never collapse the section they are currently using.
+  const [expandedNavGroupKeys, setExpandedNavGroupKeys] = useState<Set<string>>(() => {
+    const initialGroupKey = projectNavGroupKeyForTab(search.tab ?? "dashboard");
+    return new Set(initialGroupKey ? [initialGroupKey] : []);
+  });
   const [focusedRiskExposureId, setFocusedRiskExposureId] = useState<string | null>(null);
   const handleRiskFocusHandled = useCallback(() => setFocusedRiskExposureId(null), []);
   // Budget-drawer drill-through: land the Daily WIP tab on a specific day.
@@ -410,6 +436,26 @@ function ProjectPage() {
   useEffect(() => {
     if (search.tab) setProjectTab(search.tab);
   }, [search.tab]);
+
+  useEffect(() => {
+    const activeGroupKey = projectNavGroupKeyForTab(activeProjectTab);
+    if (!activeGroupKey) return;
+    setExpandedNavGroupKeys((current) => {
+      if (current.has(activeGroupKey)) return current;
+      const next = new Set(current);
+      next.add(activeGroupKey);
+      return next;
+    });
+  }, [activeProjectTab]);
+
+  const toggleNavGroup = (groupKey: string) => {
+    setExpandedNavGroupKeys((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["project", projectId],
@@ -2214,7 +2260,12 @@ function ProjectPage() {
   });
 
   const projectNavItems: ProjectNavItem[] = [
-    { value: "dashboard", label: "Dashboard", detail: "Financial IOR", icon: LayoutDashboard },
+    {
+      value: "dashboard",
+      label: "Current IOR",
+      detail: "GP recovery",
+      icon: LayoutDashboard,
+    },
     {
       value: "schedule",
       label: "Schedule",
@@ -2244,7 +2295,7 @@ function ProjectPage() {
     },
     {
       value: "todos",
-      label: "To-Dos",
+      label: "Recovery Plan",
       detail: `${openTodoCount} open`,
       icon: ListChecks,
     },
@@ -2284,12 +2335,12 @@ function ProjectPage() {
     {
       value: "client-portal",
       label: "Client Portal",
-      detail: "CO approvals",
+      detail: "Approvals & access",
       icon: Users,
     },
     {
       value: "ior-report",
-      label: "IOR Reports",
+      label: "Reviews & Reports",
       detail: `${reviews.length} saved`,
       icon: Download,
     },
@@ -2321,16 +2372,14 @@ function ProjectPage() {
   ];
   const navItemByValue = new Map(projectNavItems.map((item) => [item.value, item] as const));
   // Persistent "you are here" title for the content stage: the active tab's
-  // group + label (e.g. "Money · Billing").
+  // group + label (e.g. "Commercial · Billing").
   const activeNavGroup = PROJECT_NAV_GROUPS.find((group) =>
     group.values.includes(activeProjectTab),
   );
   const activeNavItem = navItemByValue.get(activeProjectTab);
-  // ACCORDION: a collapsed group shows one status hint on the right. If any item
-  // in the group is alarming (live risk, slipped schedule) that item's detail
-  // wins in danger tone; otherwise a per-group summary — schedule status for
-  // Field, live count for Risk, a plain item count for Parties/Docs, the
-  // dashboard label for Money. All read off existing nav-item data — no new query.
+  // A collapsed group shows one status hint on the right. If any item in the
+  // group is alarming (live risk, slipped schedule), that item's detail wins in
+  // danger tone. All hints read existing nav data — no new query.
   const navGroupHint = (
     group: ProjectNavGroup,
   ): { text: string; tone: "good" | "crit" | "muted" } => {
@@ -2341,16 +2390,13 @@ function ProjectPage() {
     const alerting = items.find((i) => i.alert);
     if (alerting) return { text: alerting.detail, tone: "crit" };
     switch (group.key) {
-      case "field":
+      case "plan-procurement":
         // Schedule-health rule: on-plan / ahead reads good (green); a behind
         // schedule would have alerted above.
         return { text: navItemByValue.get("schedule")?.detail ?? "", tone: "good" };
-      case "risk":
+      case "ior":
         // No live exposures (else it would have alerted) — a calm count.
         return { text: navItemByValue.get("risk-tally")?.detail ?? "", tone: "muted" };
-      case "parties":
-      case "docs":
-        return { text: String(group.values.length), tone: "muted" };
       default:
         return { text: navItemByValue.get(group.values[0])?.detail ?? "", tone: "muted" };
     }
@@ -2474,11 +2520,10 @@ function ProjectPage() {
                   </div>
                 </div>
               </div>
-              {/* ACCORDION rail (mock): the active group's box is expanded with
-                  its items; every other group collapses to a single status-hint
-                  row. Clicking a collapsed group jumps to its first tab, which
-                  expands it. Deep links (?tab=…) and every tab value are
-                  unchanged — this is display/nav behavior only. */}
+              {/* Multi-expand rail: each group toggles independently. Navigating
+                  to a destination opens its group without closing any section
+                  the user already opened. Deep links (?tab=…) and every tab
+                  value remain unchanged. */}
               {/* CRM cross-link — a single collapsed row ("CRM ▸"). */}
               <button
                 type="button"
@@ -2492,63 +2537,83 @@ function ProjectPage() {
               </button>
               {PROJECT_NAV_GROUPS.map((group) => {
                 const isActiveGroup = group.key === activeNavGroup?.key;
-                if (isActiveGroup) {
+                const isExpanded = expandedNavGroupKeys.has(group.key);
+                const hint = navGroupHint(group);
+                const groupContentId = `project-nav-group-${group.key}`;
+                if (isExpanded) {
                   return (
                     <div
                       key={group.key}
                       className="w-[240px] shrink-0 rounded-xl border border-hairline bg-surface p-1.5 lg:w-full lg:shrink"
                     >
-                      <div className="flex items-center justify-between px-2 pb-1.5 pt-1 text-[13.5px] font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => toggleNavGroup(group.key)}
+                        aria-expanded="true"
+                        aria-controls={groupContentId}
+                        className={cn(
+                          "flex w-full items-center justify-between rounded-lg px-2 pb-1.5 pt-1 text-left text-[13.5px] font-semibold transition hover:bg-secondary/60",
+                          isActiveGroup ? "text-foreground" : "text-muted-foreground",
+                        )}
+                      >
                         {group.label}
-                        <span className="text-[11px] text-muted-foreground">▾</span>
+                        <span aria-hidden="true" className="text-[11px] text-muted-foreground">
+                          ▾
+                        </span>
+                      </button>
+                      <div id={groupContentId}>
+                        {group.values.map((value) => {
+                          const item = navItemByValue.get(value);
+                          if (!item) return null;
+                          const isActive = activeProjectTab === item.value;
+                          return (
+                            <TabsTrigger
+                              key={item.value}
+                              value={item.value}
+                              aria-label={`${item.label}: ${item.detail}`}
+                              title={`${item.label}: ${item.detail}`}
+                              className={cn(
+                                "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] transition",
+                                "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                                "data-[state=active]:bg-secondary data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:hover:bg-secondary",
+                              )}
+                            >
+                              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                              {isActive ? (
+                                <span
+                                  aria-hidden="true"
+                                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-clay"
+                                />
+                              ) : (
+                                <span
+                                  className={cn(
+                                    "max-w-[52%] shrink-0 truncate text-[11.5px]",
+                                    item.alert ? "text-danger" : "text-muted-foreground",
+                                  )}
+                                >
+                                  {item.detail}
+                                </span>
+                              )}
+                            </TabsTrigger>
+                          );
+                        })}
                       </div>
-                      {group.values.map((value) => {
-                        const item = navItemByValue.get(value);
-                        if (!item) return null;
-                        const isActive = activeProjectTab === item.value;
-                        return (
-                          <TabsTrigger
-                            key={item.value}
-                            value={item.value}
-                            aria-label={`${item.label}: ${item.detail}`}
-                            title={`${item.label}: ${item.detail}`}
-                            className={cn(
-                              "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] transition",
-                              "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
-                              "data-[state=active]:bg-secondary data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:hover:bg-secondary",
-                            )}
-                          >
-                            <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                            {isActive ? (
-                              <span
-                                aria-hidden="true"
-                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-clay"
-                              />
-                            ) : (
-                              <span
-                                className={cn(
-                                  "max-w-[52%] shrink-0 truncate text-[11.5px]",
-                                  item.alert ? "text-danger" : "text-muted-foreground",
-                                )}
-                              >
-                                {item.detail}
-                              </span>
-                            )}
-                          </TabsTrigger>
-                        );
-                      })}
                     </div>
                   );
                 }
-                const hint = navGroupHint(group);
                 return (
                   <button
                     key={group.key}
                     type="button"
-                    onClick={() => setProjectTab(group.values[0])}
+                    onClick={() => toggleNavGroup(group.key)}
+                    aria-expanded="false"
+                    aria-controls={groupContentId}
                     aria-label={`${group.label}: ${hint.text}`}
                     title={`${group.label}: ${hint.text}`}
-                    className="flex w-auto shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground lg:w-full lg:shrink"
+                    className={cn(
+                      "flex w-auto shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-secondary/60 hover:text-foreground lg:w-full lg:shrink",
+                      isActiveGroup ? "font-semibold text-foreground" : "text-muted-foreground",
+                    )}
                   >
                     <span className="font-medium">{group.label}</span>
                     <span className="flex min-w-0 shrink items-center gap-1.5">
