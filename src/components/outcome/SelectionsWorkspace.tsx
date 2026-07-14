@@ -21,6 +21,7 @@ import {
   sendSelectionForClientDecision,
   updateSelectionProcurementStatus,
   type ProjectSelectionRow,
+  type SelectionApprovalGateEntry,
 } from "@/lib/selections.functions";
 import {
   SelectionEditorDialog,
@@ -34,9 +35,9 @@ interface SelectionsWorkspaceProps {
 type BoardColumn = "draft" | "owner" | "approved" | "ordered" | "complete";
 
 const boardColumns: Array<{ key: BoardColumn; label: string; sub: string }> = [
-  { key: "draft", label: "Build package", sub: "Link CPM and add options" },
-  { key: "owner", label: "Owner decision", sub: "Sent or needs revision" },
-  { key: "approved", label: "Ready to order", sub: "Approved, not released" },
+  { key: "draft", label: "Build package", sub: "Link CPM and define the gate" },
+  { key: "owner", label: "Approval gate", sub: "Owner, submittal, or RFI" },
+  { key: "approved", label: "Ready to order", sub: "Gate cleared, not released" },
   { key: "ordered", label: "In procurement", sub: "Ordered or shipped" },
   { key: "complete", label: "Received", sub: "Received or installed" },
 ];
@@ -50,10 +51,21 @@ function columnFor(selection: ProjectSelectionRow): BoardColumn {
 }
 
 function decisionLabel(selection: ProjectSelectionRow) {
+  if (selection.approval_gate_override_acknowledged) return "Manual release";
   if (selection.decision_status === "revision_requested") return "Revision requested";
-  if (selection.decision_status === "approved") return "Owner approved";
-  if (selection.decision_status === "sent") return "Awaiting owner";
+  if (selection.decision_status === "approved") {
+    if (selection.approval_gate_type === "submittal") return "Submittal approved";
+    if (selection.approval_gate_type === "rfi") return "RFI answered";
+    return "Owner approved";
+  }
+  if (selection.decision_status === "sent") return "Awaiting approval";
   return "Draft";
+}
+
+function approvalGateLabel(selection: ProjectSelectionRow) {
+  if (selection.approval_gate_type === "submittal") return "Submittal gate";
+  if (selection.approval_gate_type === "rfi") return "RFI gate";
+  return "Owner gate";
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -205,11 +217,14 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
     <div className="space-y-6">
       <header className="flex flex-col gap-4 border-b border-hairline pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="eyebrow">Plan & Procurement · Selections</p>
-          <h2 className="font-serif text-3xl">Get owner decisions before they delay the work.</h2>
+          <p className="eyebrow">Plan & Procurement · Selections and Material Procurement</p>
+          <h2 className="font-serif text-3xl">
+            Clear the approval gate before materials delay the work.
+          </h2>
           <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
             The CPM install activity sets the need-on-site date. Overwatch works backward through
-            lead time and review time, then carries the approval into procurement.
+            lead time and review time, then holds procurement until the required owner decision,
+            submittal approval, or RFI response clears the package for release.
           </p>
         </div>
         <Button variant="signal" onClick={openNew}>
@@ -224,6 +239,25 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
         </div>
       ) : null}
 
+      <section className="grid overflow-hidden rounded-xl border border-hairline bg-hairline sm:grid-cols-2">
+        <div className="bg-card p-4">
+          <p className="eyebrow">Residential approval gate</p>
+          <p className="mt-2 text-sm font-semibold">Owner selects and approves an option</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            The client portal records the exact approved option and package version before the
+            material moves to Ready to order.
+          </p>
+        </div>
+        <div className="bg-card p-4">
+          <p className="eyebrow">Commercial & public works gate</p>
+          <p className="mt-2 text-sm font-semibold">Submittal or RFI response authorizes release</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Approved or approved-as-noted submittals—and answered RFIs when applicable—become the
+            procurement release record tied to the material package.
+          </p>
+        </div>
+      </section>
+
       <div className="grid gap-px overflow-hidden rounded-xl border border-hairline bg-hairline sm:grid-cols-3">
         <Metric
           label="Open packages"
@@ -231,7 +265,7 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
             selections.filter((item) => item.procurement_status !== "installed").length,
           )}
         />
-        <Metric label="Waiting on owner" value={String(grouped.owner.length)} />
+        <Metric label="Waiting on approval" value={String(grouped.owner.length)} />
         <Metric
           label="Overdue decisions"
           value={String(overdueCount)}
@@ -246,9 +280,9 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
           className="w-full rounded-xl border border-dashed border-hairline bg-card p-10 text-center transition hover:bg-secondary/40"
         >
           <CalendarClock className="mx-auto h-6 w-6 text-clay" />
-          <p className="mt-3 font-serif text-xl">No selections tracked yet</p>
+          <p className="mt-3 font-serif text-xl">No material packages tracked yet</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Add the first owner decision and connect it to the CPM schedule.
+            Add the first package, connect it to CPM, and define what approval releases it.
           </p>
         </button>
       ) : (
@@ -272,6 +306,9 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
                   <SelectionCard
                     key={selection.id}
                     selection={selection}
+                    approvalGateEntry={(data?.approvalGateEntries ?? []).find(
+                      (entry) => entry.id === selection.approval_gate_entry_id,
+                    )}
                     sending={sendMutation.isPending && sendMutation.variables === selection.id}
                     updating={
                       procurementMutation.isPending &&
@@ -302,6 +339,7 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
         selection={editingSelection}
         scheduleActivities={data?.scheduleActivities ?? []}
         clientSeats={data?.clientSeats ?? []}
+        approvalGateEntries={data?.approvalGateEntries ?? []}
         saving={saveMutation.isPending}
         onOpenChange={(open) => {
           setEditorOpen(open);
@@ -315,6 +353,7 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
 
 function SelectionCard({
   selection,
+  approvalGateEntry,
   sending,
   updating,
   onEdit,
@@ -323,6 +362,7 @@ function SelectionCard({
   onProcurementStatus,
 }: {
   selection: ProjectSelectionRow;
+  approvalGateEntry?: SelectionApprovalGateEntry;
   sending: boolean;
   updating: boolean;
   onEdit: () => void;
@@ -375,7 +415,7 @@ function SelectionCard({
               : "text-muted-foreground",
           )}
         >
-          <span>Owner decision</span>
+          <span>Approval due</span>
           <span>{formatDate(selection.client_decision_due_date)}</span>
         </p>
         <p className="flex justify-between gap-2 text-muted-foreground">
@@ -389,6 +429,9 @@ function SelectionCard({
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
+        <span className="rounded-full border border-hairline px-2 py-0.5 text-[10px] text-muted-foreground">
+          {approvalGateLabel(selection)}
+        </span>
         <span
           className={cn(
             "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
@@ -406,7 +449,19 @@ function SelectionCard({
         </span>
       </div>
 
-      {selection.decision_status !== "approved" ? (
+      {approvalGateEntry ? (
+        <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
+          Release record: {approvalGateEntry.number || approvalGateLabel(selection)} ·{" "}
+          {approvalGateEntry.item || approvalGateEntry.description || "Untitled"}
+        </p>
+      ) : selection.approval_gate_override_acknowledged ? (
+        <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+          Manual release: {selection.approval_gate_override_reason}
+        </p>
+      ) : null}
+
+      {selection.approval_gate_type === "owner_selection" &&
+      selection.decision_status !== "approved" ? (
         <Button
           className="mt-3 w-full"
           size="sm"

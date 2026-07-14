@@ -2286,8 +2286,8 @@ function ProjectPage() {
     },
     {
       value: "selections",
-      label: "Selections",
-      detail: "Owner decisions",
+      label: "Selections and Material Procurement",
+      detail: "Approval-gated release",
       icon: PackageCheck,
     },
     {

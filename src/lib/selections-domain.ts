@@ -70,3 +70,16 @@ export function selectionDateHealth(dueDate: string | null, now = new Date()) {
   if (days <= 7) return "due_soon" as const;
   return "on_track" as const;
 }
+
+export function procurementReleaseAllowed(
+  decisionStatus: SelectionDecisionStatus,
+  nextStatus: SelectionProcurementStatus,
+) {
+  return nextStatus === "not_released" || decisionStatus === "approved";
+}
+
+export function approvalGateDecisionStatus(status: string): SelectionDecisionStatus {
+  if (status === "a" || status === "aan") return "approved";
+  if (status === "rar") return "revision_requested";
+  return "sent";
+}

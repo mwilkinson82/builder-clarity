@@ -23,6 +23,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { calculateSelectionDates, selectionInstallDate } from "@/lib/selections-domain";
 import type {
   ProjectSelectionRow,
+  SelectionApprovalGateEntry,
+  SelectionApprovalGateType,
   SelectionClientSeat,
   SelectionScheduleActivity,
 } from "@/lib/selections.functions";
@@ -32,6 +34,10 @@ export interface SelectionEditorDraft {
   category: string;
   room_area: string;
   description: string;
+  approval_gate_type: SelectionApprovalGateType;
+  approval_gate_entry_id: string | null;
+  approval_gate_override_acknowledged: boolean;
+  approval_gate_override_reason: string;
   schedule_activity_id: string | null;
   schedule_override_acknowledged: boolean;
   need_on_site_date: string | null;
@@ -57,6 +63,7 @@ interface SelectionEditorDialogProps {
   selection: ProjectSelectionRow | null;
   scheduleActivities: SelectionScheduleActivity[];
   clientSeats: SelectionClientSeat[];
+  approvalGateEntries: SelectionApprovalGateEntry[];
   saving: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (draft: SelectionEditorDraft) => void;
@@ -80,6 +87,10 @@ function initialDraft(selection: ProjectSelectionRow | null): SelectionEditorDra
       category: "",
       room_area: "",
       description: "",
+      approval_gate_type: "owner_selection",
+      approval_gate_entry_id: null,
+      approval_gate_override_acknowledged: false,
+      approval_gate_override_reason: "",
       schedule_activity_id: null,
       schedule_override_acknowledged: false,
       need_on_site_date: null,
@@ -96,6 +107,10 @@ function initialDraft(selection: ProjectSelectionRow | null): SelectionEditorDra
     category: selection.category,
     room_area: selection.room_area,
     description: selection.description,
+    approval_gate_type: selection.approval_gate_type,
+    approval_gate_entry_id: selection.approval_gate_entry_id,
+    approval_gate_override_acknowledged: selection.approval_gate_override_acknowledged,
+    approval_gate_override_reason: selection.approval_gate_override_reason,
     schedule_activity_id: selection.schedule_activity_id,
     schedule_override_acknowledged: selection.schedule_override_acknowledged,
     need_on_site_date: selection.need_on_site_date,
@@ -125,6 +140,7 @@ export function SelectionEditorDialog({
   selection,
   scheduleActivities,
   clientSeats,
+  approvalGateEntries,
   saving,
   onOpenChange,
   onSave,
@@ -160,7 +176,15 @@ export function SelectionEditorDialog({
     draft.title.trim().length > 0 &&
     draft.options.some((option) => option.title.trim().length > 0) &&
     Boolean(needOnSiteDate) &&
-    Boolean(draft.schedule_activity_id || draft.schedule_override_acknowledged);
+    Boolean(draft.schedule_activity_id || draft.schedule_override_acknowledged) &&
+    (draft.approval_gate_type === "owner_selection" ||
+      Boolean(draft.approval_gate_entry_id) ||
+      draft.approval_gate_override_acknowledged) &&
+    (!draft.approval_gate_override_acknowledged ||
+      draft.approval_gate_override_reason.trim().length >= 10);
+  const matchingApprovalGates = approvalGateEntries.filter(
+    (entry) => entry.kind === draft.approval_gate_type,
+  );
 
   const patchOption = (index: number, patch: Partial<SelectionEditorDraft["options"][number]>) =>
     setDraft((current) => ({
@@ -179,8 +203,8 @@ export function SelectionEditorDialog({
             {selection ? "Edit selection" : "Add selection"}
           </DialogTitle>
           <DialogDescription>
-            Link the install activity, work the procurement dates backward, and give the owner clear
-            options to approve.
+            Link the install activity, work the procurement dates backward, and define the approval
+            record that must clear before materials can be released.
           </DialogDescription>
         </DialogHeader>
 
@@ -213,7 +237,7 @@ export function SelectionEditorDialog({
               placeholder="Main kitchen"
             />
           </Field>
-          <Field label="What the owner is deciding" className="md:col-span-2">
+          <Field label="Material package / decision scope" className="md:col-span-2">
             <Textarea
               value={draft.description}
               onChange={(event) => setDraft({ ...draft, description: event.target.value })}
@@ -221,6 +245,139 @@ export function SelectionEditorDialog({
             />
           </Field>
         </div>
+
+        <section className="space-y-4 border-t border-hairline pt-5">
+          <div>
+            <p className="eyebrow">Procurement approval gate</p>
+            <h3 className="font-serif text-xl">What must approve this package?</h3>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Approval source">
+              <Select
+                value={draft.approval_gate_type}
+                onValueChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    approval_gate_type: value as SelectionApprovalGateType,
+                    approval_gate_entry_id: null,
+                    assigned_client_contact_id:
+                      value === "owner_selection" ? draft.assigned_client_contact_id : null,
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="owner_selection">Owner / client selection</SelectItem>
+                  <SelectItem value="submittal">Submittal approval</SelectItem>
+                  <SelectItem value="rfi">RFI response</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+
+            {draft.approval_gate_type === "owner_selection" ? (
+              <Field label="Client approver">
+                <Select
+                  value={draft.assigned_client_contact_id ?? "unassigned"}
+                  onValueChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      assigned_client_contact_id: value === "unassigned" ? null : value,
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">Choose before sending</SelectItem>
+                    {clientSeats
+                      .filter((seat) => seat.contactId)
+                      .map((seat) => (
+                        <SelectItem key={seat.accessId} value={seat.contactId!}>
+                          {seat.name} · {seat.email}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                {clientSeats.length === 0 ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Add the owner in Client Portal first so Overwatch can send a secure approval
+                    link.
+                  </p>
+                ) : null}
+              </Field>
+            ) : (
+              <Field
+                label={draft.approval_gate_type === "submittal" ? "Linked submittal" : "Linked RFI"}
+              >
+                <Select
+                  value={draft.approval_gate_entry_id ?? "unassigned"}
+                  onValueChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      approval_gate_entry_id: value === "unassigned" ? null : value,
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">Choose the release record</SelectItem>
+                    {matchingApprovalGates.map((entry) => (
+                      <SelectItem key={entry.id} value={entry.id}>
+                        {entry.number || (entry.kind === "rfi" ? "RFI" : "Submittal")} ·{" "}
+                        {entry.item || entry.description || "Untitled"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Approved/AAN or Answered clears the package. Open, Under Review, and RAR keep it
+                  out of procurement.
+                </p>
+              </Field>
+            )}
+          </div>
+          <div className="rounded-lg border border-warning/40 bg-warning/10 p-4">
+            <label className="flex items-start gap-3 text-sm">
+              <Checkbox
+                className="mt-0.5"
+                checked={draft.approval_gate_override_acknowledged}
+                onCheckedChange={(checked) =>
+                  setDraft({
+                    ...draft,
+                    approval_gate_override_acknowledged: checked === true,
+                    approval_gate_override_reason:
+                      checked === true ? draft.approval_gate_override_reason : "",
+                  })
+                }
+              />
+              <span>
+                <span className="font-semibold">Manually clear the procurement gate</span>
+                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                  Use when the contract or specifications do not require a submittal, an answered
+                  RFI authorizes direct procurement, or another documented approval controls
+                  release. Overwatch records who cleared it and when.
+                </span>
+              </span>
+            </label>
+            {draft.approval_gate_override_acknowledged ? (
+              <div className="mt-3">
+                <Label className="mb-1.5 block">Reason for manual release</Label>
+                <Textarea
+                  value={draft.approval_gate_override_reason}
+                  onChange={(event) =>
+                    setDraft({ ...draft, approval_gate_override_reason: event.target.value })
+                  }
+                  placeholder="No submittal required per specification section 08 71 00; answered RFI-014 authorizes procurement."
+                />
+              </div>
+            ) : null}
+          </div>
+        </section>
 
         <section className="space-y-4 border-t border-hairline pt-5">
           <div>
@@ -299,14 +456,14 @@ export function SelectionEditorDialog({
               onChange={(value) => setDraft({ ...draft, delivery_buffer_days: value })}
             />
             <NumberField
-              label="Owner review (days)"
+              label="Approval review (days)"
               value={draft.client_review_days}
               onChange={(value) => setDraft({ ...draft, client_review_days: value })}
             />
           </div>
 
           <div className="grid gap-px overflow-hidden rounded-lg border border-hairline bg-hairline sm:grid-cols-3">
-            <DateResult label="Owner decision due" value={dates.clientDecisionDueDate} />
+            <DateResult label="Approval due" value={dates.clientDecisionDueDate} />
             <DateResult label="Order by" value={dates.orderByDate} />
             <DateResult label="Need on site" value={dates.needOnSiteDate} />
           </div>
@@ -314,36 +471,6 @@ export function SelectionEditorDialog({
 
         <section className="space-y-4 border-t border-hairline pt-5">
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Client approver">
-              <Select
-                value={draft.assigned_client_contact_id ?? "unassigned"}
-                onValueChange={(value) =>
-                  setDraft({
-                    ...draft,
-                    assigned_client_contact_id: value === "unassigned" ? null : value,
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unassigned">Choose before sending</SelectItem>
-                  {clientSeats
-                    .filter((seat) => seat.contactId)
-                    .map((seat) => (
-                      <SelectItem key={seat.accessId} value={seat.contactId!}>
-                        {seat.name} · {seat.email}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              {clientSeats.length === 0 ? (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Add the owner in Client Portal first so Overwatch can send a secure approval link.
-                </p>
-              ) : null}
-            </Field>
             <Field label="Allowance / budget">
               <div className="relative">
                 <span className="absolute left-3 top-2.5 text-sm text-muted-foreground">$</span>
@@ -361,8 +488,12 @@ export function SelectionEditorDialog({
 
           <div className="flex items-center justify-between">
             <div>
-              <p className="eyebrow">Owner options</p>
-              <h3 className="font-serif text-xl">What can they choose?</h3>
+              <p className="eyebrow">Material options</p>
+              <h3 className="font-serif text-xl">
+                {draft.approval_gate_type === "owner_selection"
+                  ? "What can the owner choose?"
+                  : "What material is being released?"}
+              </h3>
             </div>
             <Button
               type="button"
