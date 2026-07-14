@@ -3172,6 +3172,34 @@ await expectContains(
   "file-room tab is wired onto the project nav rail",
 );
 
+// COSTINVOICEATTACH1: a supplier invoice image/PDF can be attached at the
+// individual cost-entry front door, persists on the cost actual, and opens from
+// the ledger through a short-lived URL in the existing private project bucket.
+await expectContains(
+  "supabase/migrations/20260714014231_cost_actual_invoice_attachments.sql",
+  [
+    /invoice_attachment_path text NOT NULL DEFAULT ''/,
+    /invoice_attachment_name text NOT NULL DEFAULT ''/,
+    /invoice_attachment_size bigint NOT NULL DEFAULT 0/,
+  ],
+  "cost actual migration stores private invoice attachment metadata",
+);
+await expectContains(
+  "src/components/billing/BillingEnhancements.tsx",
+  [
+    /CostActualInvoiceAttachmentPicker/,
+    /project-docs/,
+    /cost-actuals/,
+    /CostActualInvoiceAttachmentLink/,
+  ],
+  "cost entry uploads invoice backup and exposes it from the ledger",
+);
+await expectContains(
+  "src/components/billing/CostActualInvoiceAttachmentLink.tsx",
+  [/createSignedUrl\(attachment\.path, 600\)/, /noopener,noreferrer/],
+  "cost invoice backup opens through a short-lived private signed URL",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");

@@ -189,20 +189,7 @@ export function BillingWorkspace({
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
   savingOutputFormat?: boolean;
-  onCreateCostActual: (input: {
-    cost_bucket_id: string | null;
-    cost_code: string;
-    description: string;
-    category: "direct" | "labor" | "material" | "equipment" | "subcontract" | "overhead";
-    amount: number;
-    vendor: string;
-    reference_number: string;
-    cost_date: string;
-    status: "draft" | "committed" | "approved" | "paid";
-    notes: string;
-    // Dollars of daily WIP this cost settles (netted out of the WIP rollup).
-    daily_wip_offset?: number;
-  }) => void;
+  onCreateCostActual: Parameters<typeof ProjectCostTrackingPanel>[0]["onCreateCostActual"];
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onSetCostActualStatus: (

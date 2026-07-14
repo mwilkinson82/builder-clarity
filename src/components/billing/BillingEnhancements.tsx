@@ -3,6 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { VendorPicker } from "@/components/billing/VendorPicker";
+import {
+  CostActualInvoiceAttachmentPicker,
+  type CostActualInvoiceAttachment,
+} from "@/components/billing/CostActualInvoiceAttachment";
+import { CostActualInvoiceAttachmentLink } from "@/components/billing/CostActualInvoiceAttachmentLink";
 import { findOrCreateVendor, listVendors, saveVendor } from "@/lib/vendors.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { Button } from "@/components/ui/button";
@@ -27,7 +32,9 @@ import { toast } from "sonner";
 import { overbilledLines } from "@/lib/aia-math";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { billingDocumentLabel } from "@/lib/billing-labels";
+import { prepareAttachmentForUpload } from "@/lib/daily-report-uploads";
 import { fmtPct } from "@/lib/format";
+import { supabase } from "@/integrations/supabase/client";
 import {
   dollarsToCents,
   lineWorkForPercentCents,
@@ -73,6 +80,10 @@ type CostActualDraft = {
   // bucket actual that this vendor invoice covers. Netted out of the WIP rollup so
   // it isn't double-counted. Credits (amount < 0) force 0.
   daily_wip_offset: number;
+  invoice_attachment_path: string;
+  invoice_attachment_name: string;
+  invoice_attachment_type: string;
+  invoice_attachment_size: number;
 };
 
 // A per-cost-code line for the multi-line "Add cost actual" path — only the
@@ -151,7 +162,7 @@ type BillingEnhancementProps = {
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
   savingOutputFormat?: boolean;
-  onCreateCostActual: (input: CostActualDraft) => void;
+  onCreateCostActual: (input: CostActualDraft) => Promise<unknown>;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onSetCostActualStatus: (
@@ -1091,7 +1102,7 @@ export function ProjectCostTrackingPanel({
   projectId: string;
   buckets: BucketRow[];
   costActuals: CostActualRow[];
-  onCreateCostActual: (input: CostActualDraft) => void;
+  onCreateCostActual: (input: CostActualDraft) => Promise<unknown>;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onSetCostActualStatus: (
@@ -1141,6 +1152,8 @@ export function ProjectCostTrackingPanel({
   } | null>(null);
   const [savingVendor, setSavingVendor] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  const [uploadingInvoice, setUploadingInvoice] = useState(false);
   // The Vendor field is a pick-or-add over BOTH org directories (vendors +
   // subs) — a cost's payee is one or the other. Self-contained queries, like
   // DailyWipWorkspace; both degrade to empty before their migrations.
@@ -1183,6 +1196,10 @@ export function ProjectCostTrackingPanel({
     status: "draft",
     notes: "",
     daily_wip_offset: 0,
+    invoice_attachment_path: "",
+    invoice_attachment_name: "",
+    invoice_attachment_type: "",
+    invoice_attachment_size: 0,
   }));
   // Once the user hand-edits the PRIMARY line's offset, stop auto-suggesting it.
   const [primaryOffsetTouched, setPrimaryOffsetTouched] = useState(false);
@@ -1226,6 +1243,15 @@ export function ProjectCostTrackingPanel({
   const editingCost = editingCostId
     ? (costActuals.find((actual) => actual.id === editingCostId) ?? null)
     : null;
+  const currentInvoiceAttachment: CostActualInvoiceAttachment | null = draft.invoice_attachment_path
+    ? {
+        path: draft.invoice_attachment_path,
+        name: draft.invoice_attachment_name,
+        type: draft.invoice_attachment_type,
+        size: draft.invoice_attachment_size,
+      }
+    : null;
+  const costSaveBusy = Boolean(savingCost || uploadingInvoice);
 
   // ── Daily-WIP settlement (field feedback 2026-07-13) ──────────────────────
   // A self-perform daily-WIP lump is folded into a bucket's actual at read time;
@@ -1380,6 +1406,10 @@ export function ProjectCostTrackingPanel({
       status: "draft",
       notes: actual.notes,
       daily_wip_offset: actual.daily_wip_offset ?? 0,
+      invoice_attachment_path: actual.invoice_attachment_path,
+      invoice_attachment_name: actual.invoice_attachment_name,
+      invoice_attachment_type: actual.invoice_attachment_type,
+      invoice_attachment_size: actual.invoice_attachment_size,
     });
     setEditingCostId(actual.id);
     setOpen(true);
@@ -1390,6 +1420,7 @@ export function ProjectCostTrackingPanel({
     setEditingCostId(null);
     setExtraLines([]);
     setPrimaryOffsetTouched(false);
+    setInvoiceFile(null);
     setDraft({
       cost_bucket_id: buckets[0]?.id ?? null,
       cost_code: buckets[0]?.cost_code ?? "",
@@ -1402,6 +1433,10 @@ export function ProjectCostTrackingPanel({
       status: "draft",
       notes: "",
       daily_wip_offset: 0,
+      invoice_attachment_path: "",
+      invoice_attachment_name: "",
+      invoice_attachment_type: "",
+      invoice_attachment_size: 0,
     });
   };
 
@@ -1419,37 +1454,81 @@ export function ProjectCostTrackingPanel({
   };
 
   const save = async () => {
-    if (editingCostId) {
-      // Await the edit: if the server refuses (row went paid under us, or the
-      // network dropped), the mutation's own toast explains why and the dialog
-      // stays open with the typed changes intact.
+    let uploadedPath = "";
+    let savedRows = 0;
+    let nextDraft = { ...draft, daily_wip_offset: primaryOffsetValue };
+
+    if (invoiceFile) {
+      setUploadingInvoice(true);
       try {
-        await onUpdateCostActual(editingCostId, { ...draft, daily_wip_offset: primaryOffsetValue });
-      } catch {
+        const prepared = await prepareAttachmentForUpload(invoiceFile);
+        const safeName = prepared.uploadName.replace(/[^a-zA-Z0-9._-]+/g, "-") || "invoice";
+        uploadedPath = `${projectId}/cost-actuals/${crypto.randomUUID()}-${safeName}`;
+        const { error } = await supabase.storage
+          .from("project-docs")
+          .upload(uploadedPath, prepared.blob, {
+            contentType: prepared.contentType,
+            upsert: false,
+          });
+        if (error) throw new Error(error.message);
+        nextDraft = {
+          ...nextDraft,
+          invoice_attachment_path: uploadedPath,
+          invoice_attachment_name: invoiceFile.name,
+          invoice_attachment_type: prepared.contentType,
+          invoice_attachment_size: prepared.bytes,
+        };
+      } catch (error) {
+        toast.error("Invoice did not upload", {
+          description: error instanceof Error ? error.message : "Try again.",
+        });
+        setUploadingInvoice(false);
         return;
       }
-    } else {
-      onCreateCostActual({ ...draft, daily_wip_offset: primaryOffsetValue });
-      // Extra cost-code lines on the same invoice inherit every shared field
-      // from the draft; only the code, description, amount, and WIP-settlement
-      // differ. Each line's offset is the clamped effective value (auto-suggested
-      // unless the user touched it) — a credit line forces 0 inside clampOffset.
-      for (const line of activeExtraLines) {
-        onCreateCostActual({
-          ...draft,
-          cost_bucket_id: line.cost_bucket_id,
-          cost_code: line.cost_code,
-          description: line.description,
-          amount: line.amount,
-          daily_wip_offset: effectiveOffset(
-            line.cost_bucket_id,
-            line.amount,
-            line.daily_wip_offset,
-            !!line.offsetTouched,
-          ),
-        });
-      }
     }
+
+    try {
+      if (editingCostId) {
+        // Await the edit: if the server refuses (row went paid under us, or the
+        // network dropped), the mutation's own toast explains why and the dialog
+        // stays open with the typed changes intact.
+        await onUpdateCostActual(editingCostId, nextDraft);
+        savedRows = 1;
+      } else {
+        await onCreateCostActual(nextDraft);
+        savedRows += 1;
+        // Extra cost-code lines on the same invoice inherit every shared field
+        // from the draft, including the same invoice attachment. Each line's
+        // offset is the clamped effective value.
+        for (const line of activeExtraLines) {
+          await onCreateCostActual({
+            ...nextDraft,
+            cost_bucket_id: line.cost_bucket_id,
+            cost_code: line.cost_code,
+            description: line.description,
+            amount: line.amount,
+            daily_wip_offset: effectiveOffset(
+              line.cost_bucket_id,
+              line.amount,
+              line.daily_wip_offset,
+              !!line.offsetTouched,
+            ),
+          });
+          savedRows += 1;
+        }
+      }
+    } catch {
+      // If no cost row accepted the uploaded object, remove it so a failed save
+      // does not leave invisible bytes behind. A multi-line partial save keeps
+      // the shared file because the first accepted row still references it.
+      if (uploadedPath && savedRows === 0) {
+        await supabase.storage.from("project-docs").remove([uploadedPath]);
+      }
+      setUploadingInvoice(false);
+      return;
+    }
+
+    setUploadingInvoice(false);
     enrollTypedVendor();
     resetCostForm();
   };
@@ -1541,8 +1620,8 @@ export function ProjectCostTrackingPanel({
           <Dialog
             open={open}
             onOpenChange={(next) => {
-              setOpen(next);
-              if (!next) setEditingCostId(null);
+              if (next) setOpen(true);
+              else resetCostForm();
             }}
           >
             <DialogTrigger asChild>
@@ -1869,6 +1948,12 @@ export function ProjectCostTrackingPanel({
                     onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
                   />
                 </div>
+                <CostActualInvoiceAttachmentPicker
+                  attachment={currentInvoiceAttachment}
+                  pendingFile={invoiceFile}
+                  onPendingFileChange={setInvoiceFile}
+                  disabled={costSaveBusy}
+                />
               </div>
               <DialogFooter className="gap-2 sm:items-center sm:justify-between">
                 {editingCostId ? (
@@ -1878,7 +1963,7 @@ export function ProjectCostTrackingPanel({
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={savingCost}
+                        disabled={costSaveBusy || Boolean(invoiceFile)}
                         onClick={() => advanceDraft("approved")}
                       >
                         Approve for payment
@@ -1888,7 +1973,7 @@ export function ProjectCostTrackingPanel({
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={savingCost}
+                      disabled={costSaveBusy || Boolean(invoiceFile)}
                       onClick={() => advanceDraft("paid")}
                     >
                       Mark paid
@@ -1907,13 +1992,15 @@ export function ProjectCostTrackingPanel({
                   </Button>
                   <Button
                     onClick={save}
-                    disabled={savingCost || !draft.description.trim() || !extraLinesValid}
+                    disabled={costSaveBusy || !draft.description.trim() || !extraLinesValid}
                   >
-                    {editingCostId
-                      ? "Save changes"
-                      : activeExtraLines.length > 0
-                        ? `Save ${activeExtraLines.length + 1} costs`
-                        : "Save cost"}
+                    {uploadingInvoice
+                      ? "Uploading invoice…"
+                      : editingCostId
+                        ? "Save changes"
+                        : activeExtraLines.length > 0
+                          ? `Save ${activeExtraLines.length + 1} costs`
+                          : "Save cost"}
                   </Button>
                 </div>
               </DialogFooter>
@@ -2345,6 +2432,18 @@ export function ProjectCostTrackingPanel({
                   <BillingDetail label="Vendor" value={actual.vendor || "-"} />
                   <BillingDetail label="Reference" value={actual.reference_number || "-"} />
                 </div>
+                {actual.invoice_attachment_path ? (
+                  <div className="mt-2">
+                    <CostActualInvoiceAttachmentLink
+                      attachment={{
+                        path: actual.invoice_attachment_path,
+                        name: actual.invoice_attachment_name,
+                        type: actual.invoice_attachment_type,
+                        size: actual.invoice_attachment_size,
+                      }}
+                    />
+                  </div>
+                ) : null}
                 {actual.status === "paid" &&
                 (actual.payment_method || actual.payment_reference || actual.paid_date) ? (
                   <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-success">

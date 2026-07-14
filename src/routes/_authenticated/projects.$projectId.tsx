@@ -3369,7 +3369,7 @@ function ProjectPage() {
                   }
                   savingOutputFormat={billingUpdate.isPending}
                   onCreateCostActual={(input) =>
-                    costActualCreate.mutate({
+                    costActualCreate.mutateAsync({
                       projectId,
                       ...input,
                     })
