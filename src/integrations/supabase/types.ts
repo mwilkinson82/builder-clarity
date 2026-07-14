@@ -1486,6 +1486,7 @@ export type Database = {
           material_cost: number
           material_items: Json
           notes: string
+          people_per_crew: number
           percent_basis: string
           percent_complete: number
           percent_overridden_at: string | null
@@ -1494,6 +1495,7 @@ export type Database = {
           quantity_items: Json
           schedule_activity_id: string | null
           subcontractor_id: string | null
+          target_production_rate: number | null
           unit: string
           unmatched_vendor_name: string
           updated_at: string
@@ -1514,6 +1516,7 @@ export type Database = {
           material_cost?: number
           material_items?: Json
           notes?: string
+          people_per_crew?: number
           percent_basis?: string
           percent_complete?: number
           percent_overridden_at?: string | null
@@ -1522,6 +1525,7 @@ export type Database = {
           quantity_items?: Json
           schedule_activity_id?: string | null
           subcontractor_id?: string | null
+          target_production_rate?: number | null
           unit?: string
           unmatched_vendor_name?: string
           updated_at?: string
@@ -1542,6 +1546,7 @@ export type Database = {
           material_cost?: number
           material_items?: Json
           notes?: string
+          people_per_crew?: number
           percent_basis?: string
           percent_complete?: number
           percent_overridden_at?: string | null
@@ -1550,6 +1555,7 @@ export type Database = {
           quantity_items?: Json
           schedule_activity_id?: string | null
           subcontractor_id?: string | null
+          target_production_rate?: number | null
           unit?: string
           unmatched_vendor_name?: string
           updated_at?: string
