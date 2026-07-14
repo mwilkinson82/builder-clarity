@@ -295,8 +295,19 @@ await expectContains(
 
 await expectContains(
   "src/components/home/PortfolioHome.tsx",
-  [/const PROJECTS_HREF = "\/\?tab=projects"/, /<a href=\{PROJECTS_HREF\}>Projects<\/a>/],
-  "portfolio home header links directly to the project catalog",
+  [
+    /const PROJECTS_HREF = "\/\?tab=projects"/,
+    /<a href=\{PROJECTS_HREF\}>Projects<\/a>/,
+    /import \{ AppFooter \} from "@\/components\/layout\/AppFooter"/,
+    /<AppFooter context=\{`\$\{identity\.companyName\} · Portfolio`\} \/>/,
+  ],
+  "portfolio home header links directly to the project catalog and uses the shared app footer",
+);
+
+await expectNotContains(
+  "src/components/home/PortfolioHome.tsx",
+  [/function HomeFooter\(/, /ow-footer-brand/, /ow-footer-bar/],
+  "portfolio home does not maintain a competing one-off footer",
 );
 
 await expectContains(
