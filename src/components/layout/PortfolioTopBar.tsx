@@ -8,22 +8,23 @@ import { cn } from "@/lib/utils";
 
 /**
  * v2 business-layer shell: the shared top bar for every portfolio/business
- * page (Portfolio · Projects · CRM · Estimates · Team · Billing) with the company
+ * page (Portfolio · Projects · CRM · Estimates · Billing · Reports · Team) with the company
  * switcher. NOT for project-detail pages — those keep the floating rail.
  *
  * Self-fetches the company context off the shared query key so a page only
  * needs `<PortfolioTopBar active="…" />`; the `actions` slot carries any
  * page-specific CTA (e.g. "+ New estimate").
  */
-type NavKey = "portfolio" | "projects" | "crm" | "estimates" | "team" | "billing";
+type NavKey = "portfolio" | "projects" | "crm" | "estimates" | "billing" | "reports" | "team";
 
 const NAV: { key: NavKey; label: string }[] = [
   { key: "portfolio", label: "Portfolio" },
   { key: "projects", label: "Projects" },
   { key: "crm", label: "CRM" },
   { key: "estimates", label: "Estimates" },
-  { key: "team", label: "Team" },
   { key: "billing", label: "Billing" },
+  { key: "reports", label: "Reports" },
+  { key: "team", label: "Team" },
 ];
 
 function initialsOf(name: string): string {
@@ -87,11 +88,14 @@ export function PortfolioTopBar({ active, actions }: { active: NavKey; actions?:
         <Link to="/estimates" className={navItemClass("estimates")}>
           Estimates
         </Link>
-        <Link to="/team" className={navItemClass("team")}>
-          Team
-        </Link>
         <Link to="/billing" className={navItemClass("billing")}>
           Billing
+        </Link>
+        <Link to="/reports" className={navItemClass("reports")}>
+          Reports
+        </Link>
+        <Link to="/team" className={navItemClass("team")}>
+          Team
         </Link>
       </nav>
 

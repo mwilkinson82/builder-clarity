@@ -313,7 +313,7 @@ await expectNotContains(
 await expectContains(
   "src/components/layout/PortfolioTopBar.tsx",
   [
-    /type NavKey = "portfolio" \| "projects"/,
+    /type NavKey[\s\S]*"portfolio"[\s\S]*"projects"/,
     /search=\{\{ tab: "projects" \}\} className=\{navItemClass\("projects"\)\}/,
   ],
   "shared portfolio header keeps the project catalog in its primary navigation",
@@ -349,8 +349,34 @@ await expectContains(
 
 await expectContains(
   "src/routes/_authenticated/billing.tsx",
-  [/getCompanyWorkspaceContext/, /company-workspace-context/, /\{companyName\}/],
-  "billing workspace header uses the user's company name",
+  [
+    /getCompanyWorkspaceContext/,
+    /company-workspace-context/,
+    /\{companyName\}/,
+    /<PortfolioTopBar active="billing" \/>/,
+  ],
+  "billing workspace header uses the user's company name and shared portfolio navigation",
+);
+
+await expectContains(
+  "src/routes/_authenticated/reports.tsx",
+  [/<PortfolioTopBar active="reports" \/>/, /<div data-print-hide>/],
+  "reports workspace uses the shared portfolio navigation and hides it when printing",
+);
+
+await expectContains(
+  "src/routes/_authenticated/team.tsx",
+  [/<PortfolioTopBar/, /active="team"/, /actions=\{/],
+  "company workspace uses the shared portfolio navigation and keeps admin actions in its action slot",
+);
+
+await expectContains(
+  "src/components/layout/PortfolioTopBar.tsx",
+  [
+    /\| "reports"/,
+    /<Link to="\/reports" className=\{navItemClass\("reports"\)\}>/,
+  ],
+  "shared portfolio navigation exposes Reports as a first-class destination",
 );
 
 await expectContains(

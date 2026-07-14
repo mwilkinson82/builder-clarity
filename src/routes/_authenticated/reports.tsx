@@ -1,9 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { BarChart3, ReceiptText } from "lucide-react";
+import { BarChart3 } from "lucide-react";
 
+import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import { Button } from "@/components/ui/button";
 import {
   listPortfolioBilling,
@@ -113,8 +114,11 @@ function ReportsPage() {
 
   return (
     <div className="constructline-reports-page min-h-screen bg-background text-foreground">
+      <div data-print-hide>
+        <PortfolioTopBar active="reports" />
+      </div>
       <header className="border-b border-hairline bg-surface-elevated" data-print-hide>
-        <div className="mx-auto flex max-w-[1500px] items-center justify-between px-6 py-6 lg:px-10">
+        <div className="mx-auto max-w-[1500px] px-6 py-6 lg:px-10">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               {companyName}
@@ -124,16 +128,6 @@ function ReportsPage() {
               Standard accounting reports across your portfolio — filterable, printable, and export
               to CSV.
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button asChild size="sm" variant="outline" className="gap-1.5">
-              <Link to="/billing">
-                <ReceiptText className="h-3.5 w-3.5" /> Billing
-              </Link>
-            </Button>
-            <Button asChild size="sm" variant="outline">
-              <Link to="/">Portfolio</Link>
-            </Button>
           </div>
         </div>
       </header>
