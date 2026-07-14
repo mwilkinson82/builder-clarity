@@ -298,10 +298,11 @@ await expectContains(
   [
     /const PROJECTS_HREF = "\/\?tab=projects"/,
     /<a href=\{PROJECTS_HREF\}>Projects<\/a>/,
+    /<Link to="\/team">Team<\/Link>/,
     /import \{ AppFooter \} from "@\/components\/layout\/AppFooter"/,
     /<AppFooter context=\{`\$\{identity\.companyName\} · Portfolio`\} \/>/,
   ],
-  "portfolio home header links directly to the project catalog and uses the shared app footer",
+  "portfolio home header links directly to the project catalog and team settings and uses the shared app footer",
 );
 
 await expectNotContains(
