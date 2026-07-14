@@ -1028,6 +1028,8 @@ export type Database = {
           source_external_id: string
           source_row_hash: string
           status: string
+          subcontract_change_order_id: string | null
+          subcontract_payment_id: string | null
           updated_at: string
           vendor: string
           voided_at: string | null
@@ -1064,6 +1066,8 @@ export type Database = {
           source_external_id?: string
           source_row_hash?: string
           status?: string
+          subcontract_change_order_id?: string | null
+          subcontract_payment_id?: string | null
           updated_at?: string
           vendor?: string
           voided_at?: string | null
@@ -1100,6 +1104,8 @@ export type Database = {
           source_external_id?: string
           source_row_hash?: string
           status?: string
+          subcontract_change_order_id?: string | null
+          subcontract_payment_id?: string | null
           updated_at?: string
           vendor?: string
           voided_at?: string | null
@@ -1139,6 +1145,20 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cost_actuals_subcontract_change_order_id_fkey"
+            columns: ["subcontract_change_order_id"]
+            isOneToOne: false
+            referencedRelation: "subcontract_change_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cost_actuals_subcontract_payment_id_fkey"
+            columns: ["subcontract_payment_id"]
+            isOneToOne: false
+            referencedRelation: "subcontract_payments"
             referencedColumns: ["id"]
           },
         ]
