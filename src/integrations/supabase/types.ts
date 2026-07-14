@@ -942,6 +942,60 @@ export type Database = {
           },
         ]
       }
+      cost_actual_payments: {
+        Row: {
+          amount_cents: number
+          cost_actual_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          notes: string
+          payment_date: string
+          payment_method: string
+          payment_reference: string
+          project_id: string
+        }
+        Insert: {
+          amount_cents: number
+          cost_actual_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string
+          payment_date?: string
+          payment_method?: string
+          payment_reference?: string
+          project_id: string
+        }
+        Update: {
+          amount_cents?: number
+          cost_actual_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string
+          payment_date?: string
+          payment_method?: string
+          payment_reference?: string
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cost_actual_payments_cost_actual_id_fkey"
+            columns: ["cost_actual_id"]
+            isOneToOne: false
+            referencedRelation: "cost_actuals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cost_actual_payments_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cost_actuals: {
         Row: {
           amount: number
@@ -953,10 +1007,15 @@ export type Database = {
           cost_date: string
           created_at: string
           created_by: string | null
+          credit_applies_to_id: string | null
           daily_wip_offset: number
           description: string
           id: string
           import_batch_id: string | null
+          invoice_attachment_name: string
+          invoice_attachment_path: string
+          invoice_attachment_size: number
+          invoice_attachment_type: string
           notes: string
           paid_at: string | null
           paid_date: string | null
@@ -982,10 +1041,15 @@ export type Database = {
           cost_date: string
           created_at?: string
           created_by?: string | null
+          credit_applies_to_id?: string | null
           daily_wip_offset?: number
           description: string
           id?: string
           import_batch_id?: string | null
+          invoice_attachment_name?: string
+          invoice_attachment_path?: string
+          invoice_attachment_size?: number
+          invoice_attachment_type?: string
           notes?: string
           paid_at?: string | null
           paid_date?: string | null
@@ -1011,10 +1075,15 @@ export type Database = {
           cost_date?: string
           created_at?: string
           created_by?: string | null
+          credit_applies_to_id?: string | null
           daily_wip_offset?: number
           description?: string
           id?: string
           import_batch_id?: string | null
+          invoice_attachment_name?: string
+          invoice_attachment_path?: string
+          invoice_attachment_size?: number
+          invoice_attachment_type?: string
           notes?: string
           paid_at?: string | null
           paid_date?: string | null
@@ -1036,6 +1105,13 @@ export type Database = {
             columns: ["cost_bucket_id"]
             isOneToOne: false
             referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cost_actuals_credit_applies_to_id_fkey"
+            columns: ["credit_applies_to_id"]
+            isOneToOne: false
+            referencedRelation: "cost_actuals"
             referencedColumns: ["id"]
           },
           {
@@ -1121,6 +1197,60 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "cost_buckets_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cost_budget_items: {
+        Row: {
+          category: string
+          cost_bucket_id: string
+          created_at: string
+          created_by: string | null
+          description: string
+          id: string
+          planned_amount_cents: number
+          project_id: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          category?: string
+          cost_bucket_id: string
+          created_at?: string
+          created_by?: string | null
+          description: string
+          id?: string
+          planned_amount_cents?: number
+          project_id: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          cost_bucket_id?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          planned_amount_cents?: number
+          project_id?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cost_budget_items_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cost_budget_items_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -3560,6 +3690,7 @@ export type Database = {
           can_view_billing: boolean
           can_view_change_orders: boolean
           can_view_daily_reports: boolean
+          can_view_selections: boolean
           client_user_id: string | null
           contact_id: string | null
           created_at: string
@@ -3578,6 +3709,7 @@ export type Database = {
           can_view_billing?: boolean
           can_view_change_orders?: boolean
           can_view_daily_reports?: boolean
+          can_view_selections?: boolean
           client_user_id?: string | null
           contact_id?: string | null
           created_at?: string
@@ -3596,6 +3728,7 @@ export type Database = {
           can_view_billing?: boolean
           can_view_change_orders?: boolean
           can_view_daily_reports?: boolean
+          can_view_selections?: boolean
           client_user_id?: string | null
           contact_id?: string | null
           created_at?: string
@@ -3818,6 +3951,299 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_selection_decisions: {
+        Row: {
+          client_email: string
+          client_user_id: string | null
+          contact_id: string | null
+          created_at: string
+          decision: string
+          id: string
+          notes: string
+          option_id: string | null
+          option_snapshot: Json | null
+          project_id: string
+          selection_id: string
+          selection_snapshot: Json
+          selection_version: number
+          user_agent: string
+        }
+        Insert: {
+          client_email?: string
+          client_user_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          decision: string
+          id?: string
+          notes?: string
+          option_id?: string | null
+          option_snapshot?: Json | null
+          project_id: string
+          selection_id: string
+          selection_snapshot?: Json
+          selection_version: number
+          user_agent?: string
+        }
+        Update: {
+          client_email?: string
+          client_user_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          decision?: string
+          id?: string
+          notes?: string
+          option_id?: string | null
+          option_snapshot?: Json | null
+          project_id?: string
+          selection_id?: string
+          selection_snapshot?: Json
+          selection_version?: number
+          user_agent?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_selection_decisions_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "client_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_selection_decisions_option_id_fkey"
+            columns: ["option_id"]
+            isOneToOne: false
+            referencedRelation: "project_selection_options"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_selection_decisions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_selection_decisions_selection_id_fkey"
+            columns: ["selection_id"]
+            isOneToOne: false
+            referencedRelation: "project_selections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_selection_options: {
+        Row: {
+          created_at: string
+          description: string
+          finish: string
+          id: string
+          is_recommended: boolean
+          manufacturer: string
+          model_number: string
+          price_cents: number
+          project_id: string
+          selection_id: string
+          sort_order: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string
+          finish?: string
+          id?: string
+          is_recommended?: boolean
+          manufacturer?: string
+          model_number?: string
+          price_cents?: number
+          project_id: string
+          selection_id: string
+          sort_order?: number
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          finish?: string
+          id?: string
+          is_recommended?: boolean
+          manufacturer?: string
+          model_number?: string
+          price_cents?: number
+          project_id?: string
+          selection_id?: string
+          sort_order?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_selection_options_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_selection_options_selection_id_fkey"
+            columns: ["selection_id"]
+            isOneToOne: false
+            referencedRelation: "project_selections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_selections: {
+        Row: {
+          allowance_cents: number
+          approval_gate_entry_id: string | null
+          approval_gate_overridden_at: string | null
+          approval_gate_overridden_by: string | null
+          approval_gate_override_acknowledged: boolean
+          approval_gate_override_reason: string
+          approval_gate_type: string
+          approved_at: string | null
+          assigned_client_contact_id: string | null
+          category: string
+          client_decided_at: string | null
+          client_decision_due_date: string | null
+          client_review_days: number
+          client_sent_at: string | null
+          client_visible: boolean
+          created_at: string
+          created_by: string | null
+          decision_status: string
+          delivery_buffer_days: number
+          description: string
+          id: string
+          need_on_site_date: string | null
+          order_by_date: string | null
+          procurement_lead_days: number
+          procurement_status: string
+          project_id: string
+          room_area: string
+          schedule_activity_id: string | null
+          schedule_override_acknowledged: boolean
+          selected_option_id: string | null
+          selection_number: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          allowance_cents?: number
+          approval_gate_entry_id?: string | null
+          approval_gate_overridden_at?: string | null
+          approval_gate_overridden_by?: string | null
+          approval_gate_override_acknowledged?: boolean
+          approval_gate_override_reason?: string
+          approval_gate_type?: string
+          approved_at?: string | null
+          assigned_client_contact_id?: string | null
+          category?: string
+          client_decided_at?: string | null
+          client_decision_due_date?: string | null
+          client_review_days?: number
+          client_sent_at?: string | null
+          client_visible?: boolean
+          created_at?: string
+          created_by?: string | null
+          decision_status?: string
+          delivery_buffer_days?: number
+          description?: string
+          id?: string
+          need_on_site_date?: string | null
+          order_by_date?: string | null
+          procurement_lead_days?: number
+          procurement_status?: string
+          project_id: string
+          room_area?: string
+          schedule_activity_id?: string | null
+          schedule_override_acknowledged?: boolean
+          selected_option_id?: string | null
+          selection_number?: string
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          allowance_cents?: number
+          approval_gate_entry_id?: string | null
+          approval_gate_overridden_at?: string | null
+          approval_gate_overridden_by?: string | null
+          approval_gate_override_acknowledged?: boolean
+          approval_gate_override_reason?: string
+          approval_gate_type?: string
+          approved_at?: string | null
+          assigned_client_contact_id?: string | null
+          category?: string
+          client_decided_at?: string | null
+          client_decision_due_date?: string | null
+          client_review_days?: number
+          client_sent_at?: string | null
+          client_visible?: boolean
+          created_at?: string
+          created_by?: string | null
+          decision_status?: string
+          delivery_buffer_days?: number
+          description?: string
+          id?: string
+          need_on_site_date?: string | null
+          order_by_date?: string | null
+          procurement_lead_days?: number
+          procurement_status?: string
+          project_id?: string
+          room_area?: string
+          schedule_activity_id?: string | null
+          schedule_override_acknowledged?: boolean
+          selected_option_id?: string | null
+          selection_number?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_selections_approval_gate_entry_id_fkey"
+            columns: ["approval_gate_entry_id"]
+            isOneToOne: false
+            referencedRelation: "submittal_log_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_selections_assigned_client_contact_id_fkey"
+            columns: ["assigned_client_contact_id"]
+            isOneToOne: false
+            referencedRelation: "client_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_selections_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_selections_schedule_activity_id_fkey"
+            columns: ["schedule_activity_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_selections_selected_option_id_fkey"
+            columns: ["selected_option_id"]
+            isOneToOne: false
+            referencedRelation: "project_selection_options"
             referencedColumns: ["id"]
           },
         ]
@@ -5635,6 +6061,14 @@ export type Database = {
         Args: { p_project_id: string }
         Returns: boolean
       }
+      can_view_client_selection: {
+        Args: { p_selection_id: string }
+        Returns: boolean
+      }
+      can_view_client_selections: {
+        Args: { p_project_id: string }
+        Returns: boolean
+      }
       can_view_financials: { Args: { p_project_id: string }; Returns: boolean }
       convert_pipeline_opportunity_to_project: {
         Args: { p_opportunity_id: string }
@@ -5709,6 +6143,27 @@ export type Database = {
           p_user_agent?: string
         }
         Returns: string
+      }
+      record_client_selection_decision: {
+        Args: {
+          p_decision: string
+          p_notes?: string
+          p_option_id: string
+          p_selection_id: string
+          p_user_agent?: string
+        }
+        Returns: string
+      }
+      record_cost_actual_payment: {
+        Args: {
+          p_amount_cents: number
+          p_cost_actual_id: string
+          p_notes?: string
+          p_payment_date?: string
+          p_payment_method?: string
+          p_payment_reference?: string
+        }
+        Returns: Json
       }
       reorder_schedule_wbs_sections: {
         Args: {
