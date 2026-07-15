@@ -75,7 +75,12 @@ import {
   type CostLineItem,
   type DailyWipRowLike,
 } from "@/lib/daily-wip";
-import type { ProductionAnalyticsRow } from "@/lib/production-analytics";
+import {
+  canonicalProductionUnit,
+  productionScopeKey,
+  type ProductionAnalyticsRow,
+} from "@/lib/production-analytics";
+import type { ProductionScopePlan } from "@/lib/production-forecast";
 
 interface BucketOption {
   id: string;
@@ -86,6 +91,7 @@ interface BucketOption {
   contract_value?: number;
   contract_quantity?: number;
   unit?: string;
+  earned_percent_complete?: number;
 }
 
 interface DailyWipWorkspaceProps {
@@ -836,11 +842,53 @@ export function DailyWipWorkspace({
       priorPercentFor,
     ],
   );
+  const productionPlans = useMemo<ProductionScopePlan[]>(() => {
+    const map = new Map<string, ProductionScopePlan>();
+    for (const row of productionRows) {
+      let plannedQuantity = 0;
+      let unit = "";
+      if (row.performerKey.startsWith("sub:")) {
+        const companyId = row.performerKey.slice(4);
+        const commitmentKey = subCommitmentKey(companyId, row.costBucketId || null);
+        const setting = commitmentKey ? productionBenchmarkSettings.get(commitmentKey) : undefined;
+        plannedQuantity = setting?.plannedQuantity ?? 0;
+        unit = setting?.unit ?? "";
+      } else {
+        const bucket = bucketById.get(row.costBucketId);
+        plannedQuantity = bucket?.contract_quantity ?? 0;
+        unit = bucket?.unit ?? "";
+      }
+      if (
+        plannedQuantity <= 0 ||
+        !unit.trim() ||
+        canonicalProductionUnit(unit) !== canonicalProductionUnit(row.unit)
+      ) {
+        continue;
+      }
+      const plan = {
+        performerKey: row.performerKey,
+        costBucketId: row.costBucketId,
+        plannedQuantity,
+        unit,
+      };
+      map.set(productionScopeKey(row), plan);
+    }
+    return [...map.values()];
+  }, [productionRows, productionBenchmarkSettings, bucketById]);
 
   if (workspaceMode === "production") {
     return (
       <ProductionControlView
+        projectId={projectId}
         rows={productionRows}
+        plans={productionPlans}
+        buckets={buckets.map((bucket) => ({
+          id: bucket.id,
+          cost_code: bucket.cost_code,
+          bucket: bucket.bucket,
+          earned_percent_complete: bucket.earned_percent_complete ?? 0,
+        }))}
+        entries={entriesQuery.data ?? []}
         loading={entriesQuery.isLoading}
         onShowDaily={() => setWorkspaceMode("daily")}
       />

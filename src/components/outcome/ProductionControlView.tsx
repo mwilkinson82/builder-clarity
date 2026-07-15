@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   ArrowDownRight,
@@ -7,14 +7,18 @@ import {
   BarChart3,
   Gauge,
   HardHat,
-  Minus,
-  TrendingDown,
-  TrendingUp,
   Users,
 } from "lucide-react";
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, XAxis, YAxis } from "recharts";
 
 import { Button } from "@/components/ui/button";
+import { PaceToForecastPanel } from "@/components/outcome/PaceToForecastPanel";
+import {
+  LegendSwatch,
+  PulseTile,
+  ScopeStatus,
+  TrendValue,
+} from "@/components/outcome/ProductionControlPresenters";
 import {
   ChartContainer,
   ChartTooltip,
@@ -23,6 +27,17 @@ import {
 } from "@/components/ui/chart";
 import { Input } from "@/components/ui/input";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
+import type { DailyWipEntryRow } from "@/lib/daily-wip.functions";
+import {
+  formatIndex,
+  formatLaborImpact,
+  formatNumber,
+  formatRate,
+  laborImpactClass,
+  signedPercent,
+  statusClass,
+  statusCopy,
+} from "@/lib/production-control-format";
 import {
   aggregateProductionSeries,
   inclusiveDateSpan,
@@ -33,13 +48,22 @@ import {
   type ProductionAnalyticsRow,
   type ProductionGrain,
   type ProductionScopeSummary,
-  type ProductionStatus,
 } from "@/lib/production-analytics";
+import type { ProductionScopePlan } from "@/lib/production-forecast";
 
 type RangePreset = "7" | "30" | "90" | "all" | "custom";
 
 interface ProductionControlViewProps {
+  projectId: string;
   rows: ProductionAnalyticsRow[];
+  plans: ProductionScopePlan[];
+  buckets: {
+    id: string;
+    cost_code: string;
+    bucket: string;
+    earned_percent_complete: number;
+  }[];
+  entries: DailyWipEntryRow[];
   loading?: boolean;
   onShowDaily: () => void;
 }
@@ -67,60 +91,6 @@ function shortDate(value: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function formatNumber(value: number, digits = 1): string {
-  return value.toLocaleString("en-US", { maximumFractionDigits: digits });
-}
-
-function formatRate(value: number | null, unit: string | null): string {
-  if (value == null || !unit) return "—";
-  return `${formatNumber(value, 2)} ${unit}/labor hr`;
-}
-
-function formatIndex(value: number | null): string {
-  return value == null ? "—" : value.toFixed(2);
-}
-
-function signedPercent(value: number | null, digits = 1): string {
-  if (value == null) return "—";
-  const percent = value * 100;
-  return `${percent >= 0 ? "+" : ""}${percent.toFixed(digits)}%`;
-}
-
-function formatLaborImpact(value: number | null): string {
-  if (value == null) return "—";
-  if (Math.abs(value) < 0.05) return "On plan";
-  return value > 0
-    ? `${formatNumber(value)} hrs lost`
-    : `${formatNumber(Math.abs(value))} hrs saved`;
-}
-
-function laborImpactClass(value: number | null): string {
-  if (value == null) return "text-muted-foreground";
-  if (Math.abs(value) < 0.05) return "text-warning";
-  return value > 0 ? "text-danger" : "text-success";
-}
-
-function statusCopy(status: ProductionStatus): string {
-  if (status === "ahead") return "Ahead of target";
-  if (status === "behind") return "Behind target";
-  if (status === "on-pace") return "On target";
-  return "Not fully measured";
-}
-
-function statusClass(status: ProductionStatus): string {
-  if (status === "ahead") return "text-success";
-  if (status === "behind") return "text-danger";
-  if (status === "on-pace") return "text-warning";
-  return "text-muted-foreground";
-}
-
-function statusDotClass(status: ProductionStatus): string {
-  if (status === "ahead") return "bg-success";
-  if (status === "behind") return "bg-danger";
-  if (status === "on-pace") return "bg-warning";
-  return "bg-muted-foreground";
-}
-
 function verdictHeadline(index: number | null, coverage: number): string {
   if (index == null) {
     return "Production is being recorded, but the selected work still needs comparable targets.";
@@ -139,19 +109,12 @@ function scopeLabel(scope: ProductionScopeSummary): string {
   return [scope.costCode, scope.scopeName, scope.unit].filter(Boolean).join(" · ");
 }
 
-function ScopeStatus({ status }: { status: ProductionStatus }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 text-xs font-semibold ${statusClass(status)}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${statusDotClass(status)}`} aria-hidden="true" />
-      {statusCopy(status)}
-    </span>
-  );
-}
-
 export function ProductionControlView({
+  projectId,
   rows,
+  plans,
+  buckets,
+  entries,
   loading = false,
   onShowDaily,
 }: ProductionControlViewProps) {
@@ -555,6 +518,16 @@ export function ProductionControlView({
             </div>
           </section>
 
+          <PaceToForecastPanel
+            projectId={projectId}
+            rows={selectedHistory}
+            plans={plans}
+            buckets={buckets}
+            entries={entries}
+            periodFrom={range.from}
+            periodTo={range.to}
+          />
+
           <section className="rounded-xl border border-hairline bg-surface">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-hairline px-5 py-4">
               <div>
@@ -759,69 +732,5 @@ export function ProductionControlView({
         </>
       )}
     </div>
-  );
-}
-
-function PulseTile({
-  icon,
-  label,
-  value,
-  note,
-  danger = false,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  note: string;
-  danger?: boolean;
-}) {
-  return (
-    <div className="rounded-xl border border-hairline bg-surface p-4">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        {icon}
-        <span className="font-mono text-[9px] font-bold uppercase tracking-[0.1em]">{label}</span>
-      </div>
-      <div
-        className={`mt-3 font-serif text-[22px] leading-tight tabular-nums ${danger ? "text-danger" : "text-foreground"}`}
-      >
-        {value}
-      </div>
-      <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{note}</div>
-    </div>
-  );
-}
-
-function LegendSwatch({ className, label }: { className: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={`h-1.5 w-5 rounded-full ${className}`} aria-hidden="true" />
-      {label}
-    </span>
-  );
-}
-
-function TrendValue({ value }: { value: number | null }) {
-  if (value == null) return <span className="text-muted-foreground">—</span>;
-  if (value > 0.001) {
-    return (
-      <span className="inline-flex items-center justify-end gap-1 font-semibold text-success">
-        <TrendingUp className="h-3.5 w-3.5" />
-        {signedPercent(value)}
-      </span>
-    );
-  }
-  if (value < -0.001) {
-    return (
-      <span className="inline-flex items-center justify-end gap-1 font-semibold text-danger">
-        <TrendingDown className="h-3.5 w-3.5" />
-        {signedPercent(value)}
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center justify-end gap-1 font-semibold text-warning">
-      <Minus className="h-3.5 w-3.5" />
-      0.0%
-    </span>
   );
 }
