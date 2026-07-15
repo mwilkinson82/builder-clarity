@@ -13,6 +13,7 @@ import {
   laborHours,
   PEOPLE_PER_CREW,
   priorSubPercent,
+  progressChronologyWarning,
   productionPace,
   productionRate,
   resolvePercentReview,
@@ -26,6 +27,7 @@ import {
   lineProfitToday,
   priorCodePercent,
 } from "../src/lib/daily-wip.ts";
+import { subcontractProductionBenchmarks } from "../src/lib/subcontract-production.ts";
 
 const row = (over: Partial<Parameters<typeof rowWorkInPlace>[0]> = {}) => ({
   crew_count: 0,
@@ -36,6 +38,260 @@ const row = (over: Partial<Parameters<typeof rowWorkInPlace>[0]> = {}) => ({
   quantity: 0,
   ...over,
 });
+
+// ── SUBCONTRACT PRODUCTION HISTORY (Contractor School, 2026-07-14) ────────
+//    The GC can learn its purchased $/unit and the sub's observed field pace
+//    without pretending to know the sub's internal labor cost.
+{
+  const buckets = [
+    {
+      id: "drywall",
+      cost_code: "09-2900",
+      bucket: "Drywall install",
+      contract_quantity: 24_000,
+      unit: "SF",
+    },
+    {
+      id: "flooring",
+      cost_code: "09-6500",
+      bucket: "LVT flooring install",
+      contract_quantity: 10_000,
+      unit: "SF",
+    },
+  ];
+  const entries = [
+    {
+      id: "d1",
+      subcontractor_id: "atlas",
+      cost_bucket_id: "drywall",
+      entry_date: "2026-07-12",
+      updated_at: "2026-07-12T17:00:00Z",
+      crew_count: 1,
+      people_per_crew: 4,
+      hours: 8,
+      labor_rate: 0,
+      material_cost: 0,
+      equipment_cost: 0,
+      quantity: 1_000,
+      unit: "SF",
+      percent_complete: 4,
+      target_production_rate: 30,
+    },
+    {
+      id: "d2",
+      subcontractor_id: "atlas",
+      cost_bucket_id: "drywall",
+      entry_date: "2026-07-13",
+      updated_at: "2026-07-13T17:00:00Z",
+      crew_count: 2,
+      people_per_crew: 4,
+      hours: 8,
+      labor_rate: 0,
+      material_cost: 0,
+      equipment_cost: 0,
+      quantity: 2_100,
+      unit: "SF",
+      percent_complete: 13,
+      target_production_rate: 30,
+    },
+    {
+      id: "d3",
+      subcontractor_id: "atlas",
+      cost_bucket_id: "drywall",
+      entry_date: "2026-07-14",
+      updated_at: "2026-07-14T17:00:00Z",
+      crew_count: 2,
+      people_per_crew: 4,
+      hours: 8,
+      labor_rate: 0,
+      material_cost: 0,
+      equipment_cost: 0,
+      quantity: 2_100,
+      unit: "SF",
+      percent_complete: 22,
+      target_production_rate: 30,
+    },
+    {
+      id: "f1",
+      subcontractor_id: "summit",
+      cost_bucket_id: "flooring",
+      entry_date: "2026-07-12",
+      updated_at: "2026-07-12T17:00:00Z",
+      crew_count: 1,
+      people_per_crew: 3,
+      hours: 8,
+      labor_rate: 0,
+      material_cost: 0,
+      equipment_cost: 0,
+      quantity: 420,
+      unit: "SF",
+      percent_complete: 4,
+      target_production_rate: 18,
+    },
+    {
+      id: "f2",
+      subcontractor_id: "summit",
+      cost_bucket_id: "flooring",
+      entry_date: "2026-07-13",
+      updated_at: "2026-07-13T17:00:00Z",
+      crew_count: 1,
+      people_per_crew: 3,
+      hours: 8,
+      labor_rate: 0,
+      material_cost: 0,
+      equipment_cost: 0,
+      quantity: 500,
+      unit: "SF",
+      percent_complete: 9,
+      target_production_rate: 18,
+    },
+    {
+      id: "f3",
+      subcontractor_id: "summit",
+      cost_bucket_id: "flooring",
+      entry_date: "2026-07-14",
+      updated_at: "2026-07-14T17:00:00Z",
+      crew_count: 1,
+      people_per_crew: 3,
+      hours: 8,
+      labor_rate: 0,
+      material_cost: 0,
+      equipment_cost: 0,
+      quantity: 250,
+      unit: "SF",
+      percent_complete: 13,
+      target_production_rate: 18,
+    },
+  ];
+  const commitments = new Map([
+    [subCommitmentKey("atlas", "drywall")!, 120_000],
+    [subCommitmentKey("summit", "flooring")!, 90_000],
+  ]);
+  const settings = new Map([
+    [
+      subCommitmentKey("atlas", "drywall")!,
+      { plannedQuantity: 24_000, unit: "SF", benchmarkLaborRate: 110 },
+    ],
+    [
+      subCommitmentKey("summit", "flooring")!,
+      { plannedQuantity: 10_000, unit: "SF", benchmarkLaborRate: 162 },
+    ],
+  ]);
+  const result = subcontractProductionBenchmarks(entries, buckets, commitments, settings);
+  const drywall = result.find((benchmark) => benchmark.subcontractorId === "atlas")!;
+  const flooring = result.find((benchmark) => benchmark.subcontractorId === "summit")!;
+
+  assert.equal(drywall.buyoutUnitCost, 5, "drywall buyout = $120k / 24k SF = $5/SF");
+  assert.equal(drywall.installedQuantity, 5_200, "drywall aggregates daily installed quantity");
+  assert.equal(drywall.laborHours, 160, "drywall uses each day's recorded crew size");
+  assert.equal(drywall.actualRate, 32.5, "drywall field pace = 5,200 / 160 = 32.5 SF/hr");
+  assert.equal(drywall.targetRate, 22, "$110/hr over a $5/SF buyout derives 22 SF/hr");
+  assert.equal(
+    drywall.laborEquivalentHours,
+    120_000 / 110,
+    "buyout derives labor-equivalent hours",
+  );
+  assert.equal(drywall.paceStatus, "ahead", "32.5 is ahead of the derived 22 SF/hr target");
+  assert.equal(
+    Number(drywall.benchmarkLaborCostPerActualUnit?.toFixed(2)),
+    3.38,
+    "$110 / 32.5 actual SF/hr = $3.38/SF benchmark labor cost",
+  );
+  assert.equal(drywall.allInCarryPerObservedHour, 162.5, "$5/SF × 32.5 SF/hr = $162.50/hr carry");
+  assert.equal(drywall.earnedSubcontractCost, 26_400, "22% of $120k = $26.4k earned cost");
+  assert.equal(
+    Number(drywall.earnedCostPerLoggedUnit?.toFixed(2)),
+    5.08,
+    "field $/logged unit exposes buyout/progress/quantity alignment",
+  );
+  assert.equal(drywall.alignmentStatus, "aligned", "5,200 SF aligns with 22% of 24,000 SF");
+
+  assert.equal(flooring.buyoutUnitCost, 9, "flooring buyout = $90k / 10k SF = $9/SF");
+  assert.equal(flooring.actualRate, 16.25, "flooring field pace = 1,170 / 72 = 16.25 SF/hr");
+  assert.equal(flooring.paceStatus, "behind", "16.25 trails the 18 SF/hr target");
+  assert.equal(flooring.earnedCostPerLoggedUnit, 10, "13% earned over 1,170 SF = $10/SF");
+  assert.equal(
+    flooring.alignmentStatus,
+    "below-progress",
+    "1,170 logged SF is materially below the 1,300 SF implied by certified progress",
+  );
+
+  const sharedLine = subcontractProductionBenchmarks(
+    [entries[0], { ...entries[0], id: "d4", subcontractor_id: "other-drywall" }],
+    buckets,
+    new Map([
+      [subCommitmentKey("atlas", "drywall")!, 120_000],
+      [subCommitmentKey("other-drywall", "drywall")!, 20_000],
+    ]),
+  );
+  assert.equal(
+    sharedLine.every((benchmark) => benchmark.buyoutUnitCost == null),
+    true,
+    "a shared SOV quantity is never attributed to multiple subs as if each owned all units",
+  );
+}
+
+// Backfilled cumulative progress is checked against both chronological neighbors.
+{
+  const history = [
+    {
+      id: "old",
+      subcontractor_id: "atlas",
+      cost_bucket_id: "drywall",
+      entry_date: "2026-07-12",
+      percent_complete: 22,
+    },
+    {
+      id: "new",
+      subcontractor_id: "atlas",
+      cost_bucket_id: "drywall",
+      entry_date: "2026-07-14",
+      percent_complete: 4,
+    },
+  ];
+  assert.equal(
+    progressChronologyWarning(
+      {
+        id: "middle",
+        subcontractor_id: "atlas",
+        cost_bucket_id: "drywall",
+        entry_date: "2026-07-13",
+        percent_complete: 13,
+      },
+      history,
+    )?.kind,
+    "decrease-from-prior",
+    "22% on the older report warns before a later 13% creates a negative correction",
+  );
+  assert.equal(
+    progressChronologyWarning(
+      {
+        id: "backfill",
+        subcontractor_id: "atlas",
+        cost_bucket_id: "drywall",
+        entry_date: "2026-07-13",
+        percent_complete: 13,
+      },
+      [history[1]],
+    )?.kind,
+    "higher-than-next",
+    "a backfill above an already-saved later percentage warns too",
+  );
+  assert.equal(
+    progressChronologyWarning(
+      {
+        id: "different-sub",
+        subcontractor_id: "another-sub",
+        cost_bucket_id: "drywall",
+        entry_date: "2026-07-13",
+        percent_complete: 80,
+      },
+      history,
+    ),
+    null,
+    "two subcontractors sharing a cost code keep independent cumulative progress",
+  );
+}
 
 // Legacy rows still use the historical two-person default.
 assert.equal(PEOPLE_PER_CREW, 2, "legacy field crews default to two people");

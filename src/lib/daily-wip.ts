@@ -331,6 +331,55 @@ export function priorSubPercent(
   return best ? best.pct : 0;
 }
 
+export interface ProgressChronologyWarning {
+  kind: "decrease-from-prior" | "higher-than-next";
+  neighboringDate: string;
+  neighboringPercent: number;
+  currentPercent: number;
+}
+
+// Cumulative SOV progress normally moves upward as dates move forward. A lower
+// later value can be a legitimate field correction, so this does not clamp or
+// rewrite it; it gives the UI enough context to require an intentional confirm.
+// The future-neighbor check catches the common backfill mistake: entering 22%
+// on an older date when a newer date already says 4%.
+export function progressChronologyWarning(
+  target: WipPercentRowLike & { id?: string | null },
+  entries: readonly (WipPercentRowLike & { id?: string | null })[],
+): ProgressChronologyWarning | null {
+  const key = subCommitmentKey(target.subcontractor_id, target.cost_bucket_id);
+  if (!key || numeric(target.percent_complete) <= 0) return null;
+  const sameCode = entries.filter(
+    (entry) =>
+      subCommitmentKey(entry.subcontractor_id, entry.cost_bucket_id) === key &&
+      !(target.id != null && entry.id != null && entry.id === target.id) &&
+      numeric(entry.percent_complete) > 0,
+  );
+  const prior = sameCode
+    .filter((entry) => entry.entry_date < target.entry_date)
+    .sort((a, b) => b.entry_date.localeCompare(a.entry_date))[0];
+  if (prior && numeric(target.percent_complete) < numeric(prior.percent_complete)) {
+    return {
+      kind: "decrease-from-prior",
+      neighboringDate: prior.entry_date,
+      neighboringPercent: numeric(prior.percent_complete),
+      currentPercent: numeric(target.percent_complete),
+    };
+  }
+  const next = sameCode
+    .filter((entry) => entry.entry_date > target.entry_date)
+    .sort((a, b) => a.entry_date.localeCompare(b.entry_date))[0];
+  if (next && numeric(target.percent_complete) > numeric(next.percent_complete)) {
+    return {
+      kind: "higher-than-next",
+      neighboringDate: next.entry_date,
+      neighboringPercent: numeric(next.percent_complete),
+      currentPercent: numeric(target.percent_complete),
+    };
+  }
+  return null;
+}
+
 // Self-perform work-in-place cost per cost code, summed across ALL daily WIP
 // entries. Self-perform cost (crew×hours×rate + materials + equipment) is
 // incurred as-worked, so it SUMS day over day — no cumulative-% telescoping. A

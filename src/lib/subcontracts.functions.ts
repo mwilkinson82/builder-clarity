@@ -71,6 +71,9 @@ export interface SubcontractAllocationRow {
   cost_code: string;
   description: string;
   amount: number;
+  planned_quantity: number;
+  unit: string;
+  benchmark_labor_rate: number;
 }
 // A pay app's lifecycle (field request 2026-07-09): the sub submits it and it's
 // logged as a DRAFT, the PM marks it APPROVED for payment, then PAID when the
@@ -172,6 +175,9 @@ const normalizeAllocation = (row: Record<string, unknown>): SubcontractAllocatio
   cost_code: str(row.cost_code),
   description: str(row.description),
   amount: num(row.amount),
+  planned_quantity: num(row.planned_quantity),
+  unit: str(row.unit),
+  benchmark_labor_rate: num(row.benchmark_labor_rate),
 });
 const normalizePayment = (row: Record<string, unknown>): SubcontractPaymentRow => ({
   id: str(row.id),
@@ -478,6 +484,35 @@ export const updateSubcontractAllocation = createServerFn({ method: "POST" })
     const { data: row, error } = await dynamicTable(context.supabase, "subcontract_allocations")
       .update({ amount: data.amount })
       .eq("id", data.id)
+      .select("*")
+      .single();
+    if (error) {
+      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
+      throw new Error(error.message);
+    }
+    return normalizeAllocation(row as Record<string, unknown>);
+  });
+
+// Persist the GC's production assumptions on the exact bought-out allocation.
+// The hourly figure is deliberately a labor-equivalent benchmark selected by
+// the GC, not a claim about the subcontractor's private payroll or burden.
+export const updateSubcontractProductionBenchmark = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        planned_quantity: z.number().min(0),
+        unit: z.string().trim().max(40),
+        benchmark_labor_rate: z.number().min(0),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SubcontractAllocationRow> => {
+    const { id, ...fields } = data;
+    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_allocations")
+      .update(fields)
+      .eq("id", id)
       .select("*")
       .single();
     if (error) {

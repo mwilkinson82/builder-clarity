@@ -3264,8 +3264,18 @@ await expectContains(
 );
 await expectContains(
   "src/components/outcome/DailyWipWorkspace.tsx",
-  [/Target rate/, /productionPace\(entry\)/, /No target set/],
-  "daily WIP compares actual production with an explicit PM target",
+  [/Target rate/, /effectiveProductionTargetFor/, /productionPace\(/, /No target set/],
+  "daily WIP compares actual production with the derived subcontract or explicit PM target",
+);
+await expectContains(
+  "supabase/migrations/20260715001656_subcontract_production_benchmarks.sql",
+  [/planned_quantity/, /benchmark_labor_rate/, /subcontract_allocations/],
+  "subcontract allocations persist the physical scope and GC labor-equivalent benchmark",
+);
+await expectContains(
+  "src/components/project/SubcontractCard.tsx",
+  [/Set production benchmark/, /Planned scope quantity/, /GC loaded benchmark/],
+  "subcontract buyout allocations expose the production benchmark setup",
 );
 
 // SUB CO → BUDGET FOLD (field feedback 2026-07-09: "change orders didnt roll up
