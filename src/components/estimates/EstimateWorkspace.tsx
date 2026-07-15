@@ -14,6 +14,8 @@ import {
   FileSpreadsheet,
   GripVertical,
   Library,
+  Maximize2,
+  Minimize2,
   PencilRuler,
   Plus,
   Save,
@@ -300,6 +302,8 @@ export function EstimateWorkspace({
   const [nameDraft, setNameDraft] = useState(estimate.name);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [importStep, setImportStep] = useState<"choose" | "import">("choose");
+  const [isSheetExpanded, setIsSheetExpanded] = useState(false);
   const [importMode, setImportMode] = useState<"append" | "replace">("append");
   const [pasteText, setPasteText] = useState("");
   const [importRows, setImportRows] = useState<EstimateLineImportRow[]>([]);
@@ -312,6 +316,15 @@ export function EstimateWorkspace({
   const titleRows = Math.min(3, Math.max(1, Math.ceil(Math.max(nameDraft.length, 1) / 42)));
 
   useEffect(() => setNameDraft(estimate.name), [estimate.name]);
+
+  useEffect(() => {
+    if (!isSheetExpanded) return;
+    const exitExpandedSheet = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && !importOpen) setIsSheetExpanded(false);
+    };
+    document.addEventListener("keydown", exitExpandedSheet);
+    return () => document.removeEventListener("keydown", exitExpandedSheet);
+  }, [importOpen, isSheetExpanded]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["estimate", estimate.id] });
 
@@ -625,167 +638,190 @@ export function EstimateWorkspace({
     downloadPdfBytes(bytes, safeFileName(estimate.name, "pdf"));
   };
 
+  const estimateGridClass = isSheetExpanded
+    ? "min-w-[1180px] table-fixed"
+    : "min-w-[1450px] table-fixed";
+
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-5 py-4 lg:px-8">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-            <div className="flex min-w-0 flex-1 items-start gap-3">
-              <Button
-                asChild
-                variant="outline"
-                size="icon"
-                className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground"
-                title={isMasterSheet ? "Back to master sheets" : "Back to estimates"}
-              >
-                <Link to={isMasterSheet ? "/estimate-masters" : "/estimates"}>
-                  <ArrowLeft className="h-4 w-4" />
-                </Link>
-              </Button>
-              <div className="min-w-0 flex-1">
-                <p className="mb-1 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-                  {companyName} · {isMasterSheet ? "Master Sheet" : "Estimate"}
-                </p>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-                  <Textarea
-                    rows={titleRows}
-                    value={nameDraft}
-                    onChange={(event) => setNameDraft(event.target.value)}
-                    onBlur={() => {
-                      if (nameDraft.trim() && nameDraft !== estimate.name) {
-                        updateEstimateMutation.mutate({
-                          id: estimate.id,
-                          patch: { name: nameDraft },
-                        });
-                      }
-                    }}
-                    className="min-h-[2rem] w-full max-w-[560px] resize-none overflow-hidden border-0 bg-transparent p-0 font-serif text-[26px] leading-tight shadow-none focus-visible:ring-0"
-                  />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Select
-                      value={estimate.status}
-                      onValueChange={(status) =>
-                        updateEstimatePatch({ status: status as EstimateStatus })
-                      }
-                    >
-                      <SelectTrigger
-                        className="h-7 w-auto gap-1.5 rounded-full border-hairline px-3 text-xs capitalize"
-                        aria-label="Estimate status"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="draft">Draft</SelectItem>
-                        <SelectItem value="final">Final</SelectItem>
-                        <SelectItem value="awarded">Awarded</SelectItem>
-                        <SelectItem value="lost">Lost</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {!isMasterSheet && (
+    <div
+      className={
+        isSheetExpanded
+          ? "fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-background"
+          : "flex min-h-screen flex-col bg-background"
+      }
+      data-testid="estimate-workspace"
+    >
+      {!isSheetExpanded && (
+        <header className="border-b border-hairline bg-surface-elevated">
+          <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-5 py-4 lg:px-8">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <Button
+                  asChild
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground"
+                  title={isMasterSheet ? "Back to master sheets" : "Back to estimates"}
+                >
+                  <Link to={isMasterSheet ? "/estimate-masters" : "/estimates"}>
+                    <ArrowLeft className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <div className="min-w-0 flex-1">
+                  <p className="mb-1 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                    {companyName} · {isMasterSheet ? "Master Sheet" : "Estimate"}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                    <Textarea
+                      rows={titleRows}
+                      value={nameDraft}
+                      onChange={(event) => setNameDraft(event.target.value)}
+                      onBlur={() => {
+                        if (nameDraft.trim() && nameDraft !== estimate.name) {
+                          updateEstimateMutation.mutate({
+                            id: estimate.id,
+                            patch: { name: nameDraft },
+                          });
+                        }
+                      }}
+                      className="min-h-[2rem] w-full max-w-[560px] resize-none overflow-hidden border-0 bg-transparent p-0 font-serif text-[26px] leading-tight shadow-none focus-visible:ring-0"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
                       <Select
-                        value={estimate.folder}
-                        onValueChange={(folder) =>
-                          updateEstimatePatch({ folder: folder as EstimateFolder })
+                        value={estimate.status}
+                        onValueChange={(status) =>
+                          updateEstimatePatch({ status: status as EstimateStatus })
                         }
                       >
                         <SelectTrigger
-                          className="h-7 w-auto gap-1.5 rounded-full border-hairline px-3 text-xs text-clay"
-                          aria-label="Estimate folder"
+                          className="h-7 w-auto gap-1.5 rounded-full border-hairline px-3 text-xs capitalize"
+                          aria-label="Estimate status"
                         >
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {ESTIMATE_FOLDERS.map((folder) => (
-                            <SelectItem key={folder.value} value={folder.value}>
-                              {folder.label}
-                            </SelectItem>
-                          ))}
+                          <SelectItem value="draft">Draft</SelectItem>
+                          <SelectItem value="final">Final</SelectItem>
+                          <SelectItem value="awarded">Awarded</SelectItem>
+                          <SelectItem value="lost">Lost</SelectItem>
                         </SelectContent>
                       </Select>
-                    )}
-                    {estimate.project_name && (
-                      <span className="text-xs text-muted-foreground">
-                        Project: {estimate.project_name}
-                      </span>
-                    )}
+                      {!isMasterSheet && (
+                        <Select
+                          value={estimate.folder}
+                          onValueChange={(folder) =>
+                            updateEstimatePatch({ folder: folder as EstimateFolder })
+                          }
+                        >
+                          <SelectTrigger
+                            className="h-7 w-auto gap-1.5 rounded-full border-hairline px-3 text-xs text-clay"
+                            aria-label="Estimate folder"
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ESTIMATE_FOLDERS.map((folder) => (
+                              <SelectItem key={folder.value} value={folder.value}>
+                                {folder.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                      {estimate.project_name && (
+                        <span className="text-xs text-muted-foreground">
+                          Project: {estimate.project_name}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-              <div className="flex items-center gap-1">
-                <FlagIssueButton
-                  getContext={() => ({
-                    estimate_id: estimate.id,
-                    estimate_status: estimate.status,
-                    is_master_sheet: isMasterSheet,
-                  })}
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => duplicateMutation.mutate(false)}
-                  disabled={duplicateMutation.isPending}
-                >
-                  <Copy className="h-3.5 w-3.5" /> {isMasterSheet ? "Copy Master" : "Duplicate"}
+              <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                <div className="flex items-center gap-1">
+                  <FlagIssueButton
+                    getContext={() => ({
+                      estimate_id: estimate.id,
+                      estimate_status: estimate.status,
+                      is_master_sheet: isMasterSheet,
+                    })}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => duplicateMutation.mutate(false)}
+                    disabled={duplicateMutation.isPending}
+                  >
+                    <Copy className="h-3.5 w-3.5" /> {isMasterSheet ? "Copy Master" : "Duplicate"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1.5 text-danger hover:text-danger"
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {isMasterSheet ? "Delete Master" : "Delete"}
+                  </Button>
+                </div>
+                <Separator orientation="vertical" className="hidden h-6 xl:block" />
+                <Button variant="outline" size="sm" className="gap-1.5" asChild>
+                  <Link to="/estimates/$estimateId/plan-room" params={{ estimateId: estimate.id }}>
+                    <PencilRuler className="h-3.5 w-3.5" /> Plan Room
+                  </Link>
                 </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1.5">
+                      <Download className="h-3.5 w-3.5" /> Export
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={exportCsv}>
+                      <FileDown className="h-4 w-4" /> CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={exportPdf}>
+                      <FileDown className="h-4 w-4" /> PDF
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
-                  variant="ghost"
                   size="sm"
-                  className="gap-1.5 text-danger hover:text-danger"
-                  onClick={() => setDeleteOpen(true)}
+                  className="gap-1.5 bg-accent text-accent-foreground shadow-sm hover:bg-accent/90 focus-visible:ring-accent"
+                  title={
+                    isMasterSheet ? "Create a project estimate from this master sheet" : undefined
+                  }
+                  onClick={() =>
+                    isMasterSheet ? duplicateMutation.mutate(true) : pushMutation.mutate()
+                  }
+                  disabled={
+                    isMasterSheet
+                      ? duplicateMutation.isPending
+                      : pushMutation.isPending || orderedLines.length === 0
+                  }
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {isMasterSheet ? "Delete Master" : "Delete"}
+                  <Send className="h-3.5 w-3.5" />
+                  {isMasterSheet ? "Create Estimate From Master" : "Push to Project"}
                 </Button>
               </div>
-              <Separator orientation="vertical" className="hidden h-6 xl:block" />
-              <Button variant="outline" size="sm" className="gap-1.5" asChild>
-                <Link to="/estimates/$estimateId/plan-room" params={{ estimateId: estimate.id }}>
-                  <PencilRuler className="h-3.5 w-3.5" /> Plan Room
-                </Link>
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1.5">
-                    <Download className="h-3.5 w-3.5" /> Export
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={exportCsv}>
-                    <FileDown className="h-4 w-4" /> CSV
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={exportPdf}>
-                    <FileDown className="h-4 w-4" /> PDF
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button
-                size="sm"
-                className="gap-1.5"
-                title={
-                  isMasterSheet ? "Create a project estimate from this master sheet" : undefined
-                }
-                onClick={() =>
-                  isMasterSheet ? duplicateMutation.mutate(true) : pushMutation.mutate()
-                }
-                disabled={
-                  isMasterSheet
-                    ? duplicateMutation.isPending
-                    : pushMutation.isPending || orderedLines.length === 0
-                }
-              >
-                <Send className="h-3.5 w-3.5" />
-                {isMasterSheet ? "Create Estimate From Master" : "Push to Project"}
-              </Button>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
+      )}
 
-      <main className="mx-auto grid max-w-[1800px] gap-5 px-5 py-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-8">
-        <section className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
+      <main
+        className={
+          isSheetExpanded
+            ? "grid min-h-0 flex-1 grid-cols-1 p-3"
+            : "mx-auto grid max-w-[1800px] gap-5 px-5 py-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-8"
+        }
+      >
+        <section
+          className={`min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card ${
+            isSheetExpanded ? "flex min-h-0 flex-col" : ""
+          }`}
+        >
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline bg-surface px-4 py-3">
             <div>
               <h2 className="font-serif text-2xl">
@@ -798,36 +834,33 @@ export function EstimateWorkspace({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="outline" className="gap-1.5">
-                    <Download className="h-3.5 w-3.5" /> Download Import Format
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={downloadMasterEstimateWorkbook}>
-                    <FileSpreadsheet className="h-4 w-4" /> Excel example + instructions
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() =>
-                      downloadText(
-                        "overwatch-master-sheet-import-format.csv",
-                        estimateLineTemplateCsv,
-                        "text/csv",
-                      )
-                    }
-                  >
-                    <FileDown className="h-4 w-4" /> CSV format
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
               <Button
                 size="sm"
                 variant="outline"
                 className="gap-1.5"
-                onClick={() => setImportOpen(true)}
+                onClick={() => {
+                  setImportStep("choose");
+                  setImportOpen(true);
+                }}
               >
                 <Upload className="h-3.5 w-3.5" /> Import Master Sheet
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                aria-pressed={isSheetExpanded}
+                onClick={() => setIsSheetExpanded((expanded) => !expanded)}
+                title={isSheetExpanded ? "Exit the full-screen worksheet" : "Expand the worksheet"}
+                data-testid="estimate-sheet-expand"
+              >
+                {isSheetExpanded ? (
+                  <Minimize2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Maximize2 className="h-3.5 w-3.5" />
+                )}
+                {isSheetExpanded ? "Exit Full Screen" : "Expand Sheet"}
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -859,23 +892,45 @@ export function EstimateWorkspace({
               disabled={createLinesMutation.isPending}
             />
           ) : (
-            <div className="overflow-x-auto">
-              <Table data-estimate-grid className="min-w-[1450px] table-fixed">
+            <div className={isSheetExpanded ? "min-h-0 flex-1 overflow-auto" : "overflow-x-auto"}>
+              <Table data-estimate-grid className={estimateGridClass}>
                 <TableHeader>
                   <TableRow className="bg-surface [&>th]:whitespace-nowrap">
-                    <TableHead className="w-[44px]" />
-                    <TableHead className="w-[56px]">#</TableHead>
-                    <TableHead className="w-[120px]">Cost Code</TableHead>
-                    <TableHead className="w-[150px]">Group</TableHead>
-                    <TableHead className="w-[340px]">Description</TableHead>
-                    <TableHead className="w-[86px]">Unit</TableHead>
-                    <TableHead className="w-[128px] text-right">Qty</TableHead>
-                    <TableHead className="w-[150px] text-right">Mat $/Unit</TableHead>
-                    <TableHead className="w-[150px] text-right">Labor $/Unit</TableHead>
-                    <TableHead className="w-[170px] border-l border-hairline text-right">
+                    <TableHead className={isSheetExpanded ? "w-[36px]" : "w-[44px]"} />
+                    <TableHead className={isSheetExpanded ? "w-[44px]" : "w-[56px]"}>#</TableHead>
+                    <TableHead className={isSheetExpanded ? "w-[105px]" : "w-[120px]"}>
+                      Cost Code
+                    </TableHead>
+                    <TableHead className={isSheetExpanded ? "w-[130px]" : "w-[150px]"}>
+                      Group
+                    </TableHead>
+                    <TableHead className={isSheetExpanded ? undefined : "w-[340px]"}>
+                      Description
+                    </TableHead>
+                    <TableHead className={isSheetExpanded ? "w-[70px]" : "w-[86px]"}>
+                      Unit
+                    </TableHead>
+                    <TableHead
+                      className={`${isSheetExpanded ? "w-[105px]" : "w-[128px]"} text-right`}
+                    >
+                      Qty
+                    </TableHead>
+                    <TableHead
+                      className={`${isSheetExpanded ? "w-[126px]" : "w-[150px]"} text-right`}
+                    >
+                      Mat $/Unit
+                    </TableHead>
+                    <TableHead
+                      className={`${isSheetExpanded ? "w-[126px]" : "w-[150px]"} text-right`}
+                    >
+                      Labor $/Unit
+                    </TableHead>
+                    <TableHead
+                      className={`${isSheetExpanded ? "w-[150px]" : "w-[170px]"} border-l border-hairline text-right`}
+                    >
                       Extended
                     </TableHead>
-                    <TableHead className="w-[56px]" />
+                    <TableHead className={isSheetExpanded ? "w-[44px]" : "w-[56px]"} />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -921,7 +976,9 @@ export function EstimateWorkspace({
                             onUpdate={(patch) => updateLineMutation.mutate({ id: line.id, patch })}
                             onDelete={() => deleteLineMutation.mutate(line.id)}
                             onDragStart={() => setDraggingId(line.id)}
+                            onDragEnd={() => setDraggingId(null)}
                             onDrop={() => onDropRow(line.id)}
+                            isDragging={draggingId === line.id}
                             onCreateNextRow={(colIndex) => {
                               addBlankRows(1, colIndex);
                             }}
@@ -951,21 +1008,25 @@ export function EstimateWorkspace({
           )}
         </section>
 
-        <EstimateSummaryPanel
-          estimate={estimate}
-          totals={liveTotals}
-          regions={regions}
-          onPatch={updateEstimatePatch}
-          onSaveDefaults={() => saveDefaultsMutation.mutate()}
-          savingDefaults={saveDefaultsMutation.isPending}
-        />
+        {!isSheetExpanded && (
+          <EstimateSummaryPanel
+            estimate={estimate}
+            totals={liveTotals}
+            regions={regions}
+            onPatch={updateEstimatePatch}
+            onSaveDefaults={() => saveDefaultsMutation.mutate()}
+            savingDefaults={saveDefaultsMutation.isPending}
+          />
+        )}
       </main>
 
-      <AppFooter
-        context={`${isMasterSheet ? "Master sheet" : "Estimate"} · ${fmtUSD(
-          liveTotals.total_cents / 100,
-        )} · ${liveTotals.indicated_gp_pct.toFixed(1)}% GP`}
-      />
+      {!isSheetExpanded && (
+        <AppFooter
+          context={`${isMasterSheet ? "Master sheet" : "Estimate"} · ${fmtUSD(
+            liveTotals.total_cents / 100,
+          )} · ${liveTotals.indicated_gp_pct.toFixed(1)}% GP`}
+        />
+      )}
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
@@ -1000,10 +1061,23 @@ export function EstimateWorkspace({
         mode={importMode}
         saving={importMutation.isPending}
         existingRowCount={orderedLines.length}
+        step={importStep}
         onOpenChange={(open) => {
           setImportOpen(open);
-          if (!open) resetImport();
+          if (!open) {
+            resetImport();
+            setImportStep("choose");
+          }
         }}
+        onStepChange={setImportStep}
+        onDownloadExcel={downloadMasterEstimateWorkbook}
+        onDownloadCsv={() =>
+          downloadText(
+            "overwatch-master-sheet-import-format.csv",
+            estimateLineTemplateCsv,
+            "text/csv",
+          )
+        }
         onPasteTextChange={setPasteText}
         onModeChange={setImportMode}
         onPaste={handleImportPaste}
@@ -1022,7 +1096,9 @@ function EstimateLineRow({
   onUpdate,
   onDelete,
   onDragStart,
+  onDragEnd,
   onDrop,
+  isDragging,
   onCreateNextRow,
 }: {
   estimate: EstimateRow;
@@ -1031,7 +1107,9 @@ function EstimateLineRow({
   onUpdate: (patch: UpdateLinePayload["patch"]) => void;
   onDelete: () => void;
   onDragStart: () => void;
+  onDragEnd: () => void;
   onDrop: () => void;
+  isDragging: boolean;
   onCreateNextRow: (colIndex: number) => void;
 }) {
   const [draft, setDraft] = useState(line);
@@ -1143,19 +1221,28 @@ function EstimateLineRow({
 
   return (
     <TableRow
-      draggable
-      onDragStart={onDragStart}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
         onDrop();
       }}
-      className="[&>td]:px-2 [&>td]:py-2"
+      className={`[&>td]:px-2 [&>td]:py-2 ${
+        isDragging ? "bg-accent/5 [&>td]:border-y [&>td]:border-accent/40" : "transition-colors"
+      }`}
+      data-dragging={isDragging || undefined}
     >
       <TableCell>
-        <Button variant="ghost" size="icon" className="h-8 w-8 cursor-grab" title="Drag row">
-          <GripVertical className="h-4 w-4 text-muted-foreground" />
-        </Button>
+        <button
+          type="button"
+          draggable
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          className="mx-auto flex h-8 w-6 cursor-grab items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent active:cursor-grabbing"
+          title="Drag row"
+          aria-label={`Drag row ${index + 1}`}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">{index + 1}</TableCell>
       <TableCell>
@@ -1423,7 +1510,11 @@ function EstimateLineImportDialog({
   mode,
   saving,
   existingRowCount,
+  step,
   onOpenChange,
+  onStepChange,
+  onDownloadExcel,
+  onDownloadCsv,
   onPasteTextChange,
   onModeChange,
   onPaste,
@@ -1438,7 +1529,11 @@ function EstimateLineImportDialog({
   mode: "append" | "replace";
   saving: boolean;
   existingRowCount: number;
+  step: "choose" | "import";
   onOpenChange: (open: boolean) => void;
+  onStepChange: (step: "choose" | "import") => void;
+  onDownloadExcel: () => void;
+  onDownloadCsv: () => void;
   onPasteTextChange: (value: string) => void;
   onModeChange: (mode: "append" | "replace") => void;
   onPaste: () => void;
@@ -1470,62 +1565,117 @@ function EstimateLineImportDialog({
         <DialogHeaderV2
           eyebrow="Estimating"
           title="Import Master Sheet"
-          description="Paste or upload a spreadsheet into this worksheet. The download is only the import format/example file; your saved master sheet is the worksheet inside Overwatch. Accepted columns include Cost Code, CSI Division, Description, Group, Unit, Qty, Material $/Unit, Labor $/Unit, and Notes."
+          description={
+            step === "choose"
+              ? "Bring in your estimating workbook, or download Overwatch's clean format before you begin."
+              : "Paste or upload a spreadsheet into this worksheet. Accepted columns include Cost Code, CSI Division, Description, Group, Unit, Qty, Material $/Unit, Labor $/Unit, and Notes."
+          }
         />
 
-        {rows.length === 0 ? (
-          <Tabs defaultValue="paste" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="paste">Copy / Paste</TabsTrigger>
-              <TabsTrigger value="csv">Upload CSV</TabsTrigger>
-              <TabsTrigger value="xlsx">Upload Excel</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="paste" className="space-y-3">
-              <Label>Paste from Excel, Google Sheets, or your estimating workbook</Label>
-              <Textarea
-                rows={12}
-                value={pasteText}
-                onChange={(event) => onPasteTextChange(event.target.value)}
-                placeholder={
-                  "Cost Code\tCSI Division\tDescription\tGroup\tUnit\tQty\tMaterial $/Unit\tLabor $/Unit\tNotes\n06-100\t06\tRough framing package\tStructure\tLS\t1\t185000\t62000\t\n09-510\t09\tInterior paint\tFinishes\tSF\t18500\t0.58\t1.35\t"
-                }
-                className="font-mono text-xs"
-              />
-              <Button
-                variant="outline"
-                className="gap-1.5"
-                onClick={onPaste}
-                disabled={!pasteText.trim()}
-              >
-                <FileSpreadsheet className="h-3.5 w-3.5" /> Preview Master Sheet
+        {step === "choose" ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="flex min-h-48 flex-col rounded-lg border border-hairline bg-surface p-5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-md border border-accent/20 bg-accent/10 text-accent">
+                <Upload className="h-4 w-4" />
+              </span>
+              <h3 className="mt-4 font-serif text-xl">Import the Master Sheet</h3>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                Upload Excel or CSV, or paste directly from your current estimating workbook.
+              </p>
+              <Button className="mt-auto gap-1.5 self-start" onClick={() => onStepChange("import")}>
+                <Upload className="h-3.5 w-3.5" /> Import Master Sheet
               </Button>
-            </TabsContent>
+            </div>
 
-            <TabsContent value="csv" className="space-y-3">
-              <Label>CSV master estimate file</Label>
-              <Input
-                type="file"
-                accept=".csv,text/csv"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) onFile(file);
-                }}
-              />
-            </TabsContent>
+            <div className="flex min-h-48 flex-col rounded-lg border border-hairline bg-surface p-5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-md border border-hairline bg-background text-muted-foreground">
+                <FileSpreadsheet className="h-4 w-4" />
+              </span>
+              <h3 className="mt-4 font-serif text-xl">Download the Import Format</h3>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                Start with the example columns and instructions Overwatch expects.
+              </p>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="mt-auto gap-1.5 self-start">
+                    <Download className="h-3.5 w-3.5" /> Download Import Format
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={onDownloadExcel}>
+                    <FileSpreadsheet className="h-4 w-4" /> Excel example + instructions
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onDownloadCsv}>
+                    <FileDown className="h-4 w-4" /> CSV format
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="space-y-4">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="-ml-2 gap-1.5 text-muted-foreground"
+              onClick={() => onStepChange("choose")}
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to import options
+            </Button>
+            <Tabs defaultValue="paste" className="space-y-4">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="paste">Copy / Paste</TabsTrigger>
+                <TabsTrigger value="csv">Upload CSV</TabsTrigger>
+                <TabsTrigger value="xlsx">Upload Excel</TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="xlsx" className="space-y-3">
-              <Label>Excel master estimate file</Label>
-              <Input
-                type="file"
-                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) onFile(file);
-                }}
-              />
-            </TabsContent>
-          </Tabs>
+              <TabsContent value="paste" className="space-y-3">
+                <Label>Paste from Excel, Google Sheets, or your estimating workbook</Label>
+                <Textarea
+                  rows={12}
+                  value={pasteText}
+                  onChange={(event) => onPasteTextChange(event.target.value)}
+                  placeholder={
+                    "Cost Code\tCSI Division\tDescription\tGroup\tUnit\tQty\tMaterial $/Unit\tLabor $/Unit\tNotes\n06-100\t06\tRough framing package\tStructure\tLS\t1\t185000\t62000\t\n09-510\t09\tInterior paint\tFinishes\tSF\t18500\t0.58\t1.35\t"
+                  }
+                  className="font-mono text-xs"
+                />
+                <Button
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={onPaste}
+                  disabled={!pasteText.trim()}
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> Preview Master Sheet
+                </Button>
+              </TabsContent>
+
+              <TabsContent value="csv" className="space-y-3">
+                <Label>CSV master estimate file</Label>
+                <Input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) onFile(file);
+                  }}
+                />
+              </TabsContent>
+
+              <TabsContent value="xlsx" className="space-y-3">
+                <Label>Excel master estimate file</Label>
+                <Input
+                  type="file"
+                  accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) onFile(file);
+                  }}
+                />
+              </TabsContent>
+            </Tabs>
+          </div>
         ) : (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-hairline bg-surface px-3 py-2 text-sm">
@@ -1623,11 +1773,13 @@ function EstimateLineImportDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {step === "choose" ? "Close" : "Cancel"}
           </Button>
-          <Button onClick={onImport} disabled={validRows.length === 0 || saving}>
-            {saving ? "Importing..." : `Import ${validRows.length} Lines`}
-          </Button>
+          {step === "import" && (
+            <Button onClick={onImport} disabled={validRows.length === 0 || saving}>
+              {saving ? "Importing..." : `Import ${validRows.length} Lines`}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
