@@ -213,6 +213,46 @@ Initial enterprise slice:
 8. Confirm the comparison never changes geometry, scales, takeoffs, line quantities, or Harbor's
    `$1,606,137` total.
 
+## Stage 7 — Cited plan-set Scope Coverage Matrix
+
+- Aggregate the latest completed `ai_measurement_plan` operation for every sheet in the active plan
+  set into one estimator-facing matrix.
+- Treat the matrix as review coverage, never estimate completeness. An unreviewed row means the
+  notes have not been reviewed; a reviewed empty row means no supported LF/SF note candidate
+  survived the evidence gate. Neither state means the sheet has no estimating scope.
+- Review one selected sheet at a time through the existing metered operation. Do not add a bulk
+  “take off this set” action, hidden parallel spend, or a second quantity path.
+- Rebuild summaries and rationales deterministically from the retained cited suggestions when
+  loading historical operations. Stored model prose is not authoritative UI copy.
+- Show the exact sheet, source line, excerpt, proposed LF/SF tool, and any durable estimator queue
+  decision. Opening a historical review re-extracts drawing anchors so Note navigation remains
+  tied to the retained PDF.
+- Keep every accept, reject, defer, measurement completion, and estimate-row link in the existing
+  least-privilege measurement scope queue. The matrix is an index over that evidence and history;
+  it does not create a new mutable shadow workflow.
+
+### Stage 7 release gate
+
+1. On Crystal Carwash, confirm the matrix is scoped to the active 24-sheet plan set and separates
+   Architectural and Structural sheets from their sheet-number prefixes.
+2. Confirm the matrix starts with explicit Reviewed / Needs review / Cited candidates / Estimator
+   decisions counts and never labels an unreviewed sheet “missing scope.”
+3. Review one previously unreviewed vector-PDF sheet from the matrix and confirm exactly one normal
+   sheet-review operation runs, the admin remains unmetered, and the new result appears after the
+   operation completes.
+4. Reopen a prior cited review without another AI call or credit charge; select Note and confirm the
+   correct sheet opens with the cited line highlighted.
+5. Queue, defer, or reject a candidate in the existing review panel, reopen the matrix, and confirm
+   the durable estimator disposition is shown beside the same candidate.
+6. Confirm code-limit fragments, directional material fragments, dimensions, location-only
+   callouts, and detail captions are omitted even when the model proposes them.
+7. Confirm no matrix action creates geometry, changes scale, links a takeoff, edits an estimate row,
+   or changes Harbor's `$1,606,137` total.
+
+This stage needs no new database migration. It reads the existing `ai_operations` audit log and
+`estimate_measurement_scope_items` decision queue, both already constrained and RLS-protected by
+the earlier releases.
+
 ## Kill criteria
 
 Stop expansion if the live Harbor review shows uncited suggestions, repeated irrelevant title-block

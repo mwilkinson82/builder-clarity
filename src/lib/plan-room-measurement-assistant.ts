@@ -123,10 +123,16 @@ const LOCATION_ONLY_SCOPE_PATTERN =
 const SPAN_LANGUAGE_PATTERN =
   /\b(?:along|continuous|entire|full[-\s]?height|length|perimeter|run|trace|wall[-\s]?to[-\s]?wall)\b/i;
 const DIMENSION_FRAGMENT_PATTERN = /(?:℄|\bC\/?L\b)[\s\S]*(?:\d+['"-]|\b\d+\s+\d+\b)/i;
+const CODE_LIMIT_FRAGMENT_PATTERN =
+  /\b(?:floor|wall|ceiling|roof|attic)\s+area\s+(?:permitted|allowed|allowable)\b|\bpermitted\s+in\s+clear\b/i;
+const DIRECTION_ONLY_MATERIAL_FRAGMENT_PATTERN =
+  /^(?:roofing\s+)?(?:membrane|flashing|waterproofing)\s+(?:up|down|over|around)(?:\s+and\s+(?:up|down|over|around))*$/i;
 
 function excerptSupportsMeasurableScope(excerpt: string) {
   if (DETAIL_CAPTION_PATTERN.test(excerpt)) return false;
   if (DIMENSION_FRAGMENT_PATTERN.test(excerpt)) return false;
+  if (CODE_LIMIT_FRAGMENT_PATTERN.test(excerpt)) return false;
+  if (DIRECTION_ONLY_MATERIAL_FRAGMENT_PATTERN.test(excerpt.trim())) return false;
   if (LOCATION_ONLY_SCOPE_PATTERN.test(excerpt) && !SPAN_LANGUAGE_PATTERN.test(excerpt)) {
     return false;
   }
@@ -164,13 +170,13 @@ function toolIsSupportedByLine(tool: MeasurementAssistantTool, line: string) {
   return AREA_SCOPE_PATTERN.test(line) && !COUNT_LIKE_SCOPE_PATTERN.test(line);
 }
 
-function groundedSuggestionRationale(tool: MeasurementAssistantTool) {
+export function measurementSuggestionRationale(tool: MeasurementAssistantTool) {
   return tool === "linear"
     ? "Review the cited note, then trace only the supported scope as a linear takeoff."
     : "Review the cited note, then trace only the supported surface as an area takeoff.";
 }
 
-function groundedPlanSummary(suggestions: MeasurementAssistantSuggestion[]) {
+export function measurementAssistantPlanSummary(suggestions: MeasurementAssistantSuggestion[]) {
   if (suggestions.length === 0) {
     return "No reliable linear or area measurement scope was found in the extracted notes.";
   }
@@ -365,7 +371,7 @@ export function parseMeasurementAssistantPlan(
       unit: tool === "linear" ? "LF" : "SF",
       source_line: sourceLine,
       source_excerpt: excerpt,
-      rationale: groundedSuggestionRationale(tool),
+      rationale: measurementSuggestionRationale(tool),
       evidence_strength: "review",
     });
     if (suggestions.length >= 12) break;
@@ -379,7 +385,7 @@ export function parseMeasurementAssistantPlan(
     : [];
 
   return {
-    summary: groundedPlanSummary(suggestions),
+    summary: measurementAssistantPlanSummary(suggestions),
     suggestions,
     warnings,
   };

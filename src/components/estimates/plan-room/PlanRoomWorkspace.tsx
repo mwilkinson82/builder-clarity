@@ -217,9 +217,11 @@ import { ReadinessPanel } from "./ReadinessPanel";
 import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
 import { MeasurementAssistantPanel } from "./MeasurementAssistantPanel";
 import { MeasurementScopeQueuePanel } from "./MeasurementScopeQueuePanel";
+import { PlanScopeCoverageMatrix } from "./PlanScopeCoverageMatrix";
 import { TakeoffAssemblyWorkbench } from "./TakeoffAssemblyWorkbench";
 import { extractPdfMeasurementEvidence } from "./pdfMeasurementText";
 import { FlagIssueButton } from "../FlagIssueButton";
+import type { PlanScopeCoverageRecord } from "@/lib/plan-scope-coverage";
 
 interface PlanRoomWorkspaceProps {
   estimate: EstimateRow;
@@ -1948,15 +1950,21 @@ export function PlanRoomWorkspace({
   };
 
   const measurementAssistantMutation = useMutation({
-    mutationFn: async () => {
-      if (!currentSheet || !currentPlanSet) throw new Error("Choose a drawing sheet first.");
-      if (currentPlanSet.file_mime_type !== "application/pdf" || !currentPlanSet.file_path) {
+    mutationFn: async (input?: { sheetId: string }) => {
+      const reviewSheet = input?.sheetId
+        ? sheets.find((sheet) => sheet.id === input.sheetId)
+        : currentSheet;
+      const reviewPlanSet = reviewSheet
+        ? planSets.find((planSet) => planSet.id === reviewSheet.plan_set_id)
+        : null;
+      if (!reviewSheet || !reviewPlanSet) throw new Error("Choose a drawing sheet first.");
+      if (reviewPlanSet.file_mime_type !== "application/pdf" || !reviewPlanSet.file_path) {
         throw new Error("Measurement note review needs an uploaded vector PDF.");
       }
-      const fileUrl = await planSetSignedUrl(currentPlanSet);
+      const fileUrl = await planSetSignedUrl(reviewPlanSet);
       const evidence = await extractPdfMeasurementEvidence({
         fileUrl,
-        pageNumber: currentSheet.page_number,
+        pageNumber: reviewSheet.page_number,
       });
       if (evidence.sourceLines.length === 0) {
         throw new Error(
@@ -1966,9 +1974,9 @@ export function PlanRoomWorkspace({
       const plan = await analyzeMeasurementNotesFn({
         data: {
           estimate_id: estimate.id,
-          plan_sheet_id: currentSheet.id,
-          sheet_number: currentSheet.sheet_number,
-          sheet_name: currentSheet.sheet_name,
+          plan_sheet_id: reviewSheet.id,
+          sheet_number: reviewSheet.sheet_number,
+          sheet_name: reviewSheet.sheet_name,
           source_lines: evidence.sourceLines,
         },
       });
@@ -1986,9 +1994,44 @@ export function PlanRoomWorkspace({
           ? `${plan.suggestions.length} cited measurement suggestion${plan.suggestions.length === 1 ? "" : "s"} ready for review.`
           : "AI found no sufficiently cited measurement scope and left the checklist empty.",
       );
+      qc.invalidateQueries({ queryKey: ["plan-scope-coverage", estimate.id] });
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Drawing notes could not be reviewed"),
+  });
+
+  const openScopeCoverageRecordMutation = useMutation({
+    mutationFn: async (record: PlanScopeCoverageRecord) => {
+      const sheet = sheets.find((item) => item.id === record.sheet_id);
+      const planSet = planSets.find((item) => item.id === sheet?.plan_set_id);
+      if (!sheet || !planSet) throw new Error("The cited drawing sheet is no longer available.");
+      if (planSet.file_mime_type !== "application/pdf" || !planSet.file_path) {
+        throw new Error("The cited review needs its retained vector PDF.");
+      }
+      const fileUrl = await planSetSignedUrl(planSet);
+      const evidence = await extractPdfMeasurementEvidence({
+        fileUrl,
+        pageNumber: sheet.page_number,
+      });
+      return { record, anchors: evidence.anchors };
+    },
+    onSuccess: ({ record, anchors }) => {
+      setMeasurementAssistantPlan({
+        ...record.plan,
+        operation_id: record.operation_id,
+        credits_charged: record.credits_charged,
+        model: record.model,
+        provider: "recorded",
+        source_line_count: record.source_line_count,
+      });
+      setMeasurementEvidenceAnchors(anchors);
+      setPreparedMeasurementSuggestionId("");
+      setPreparedMeasurementScopeItemId("");
+      setCompletedMeasurementSuggestionIds([]);
+      setMeasurementSourceNote("");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "The cited review could not open"),
   });
 
   const measurementScopeDecisionMutation = useMutation({
@@ -3341,6 +3384,26 @@ export function PlanRoomWorkspace({
                 : undefined
             }
             detectingNames={detectNamesMutation.isPending}
+          />
+
+          <PlanScopeCoverageMatrix
+            estimateId={estimate.id}
+            planSet={currentPlanSet}
+            sheets={sheets}
+            queueItems={measurementScopeItems}
+            reviewingSheetId={
+              measurementAssistantMutation.isPending
+                ? (measurementAssistantMutation.variables?.sheetId ?? currentSheet?.id ?? "")
+                : ""
+            }
+            onReviewSheet={(sheetId) => {
+              setSelectedSheetId(sheetId);
+              measurementAssistantMutation.mutate({ sheetId });
+            }}
+            onOpenRecord={(record) => {
+              setSelectedSheetId(record.sheet_id);
+              openScopeCoverageRecordMutation.mutate(record);
+            }}
           />
 
           <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">

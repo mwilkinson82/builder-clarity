@@ -19,6 +19,7 @@ import {
   parseMeasurementAssistantPlan,
   type MeasurementSourceLine,
 } from "@/lib/plan-room-measurement-assistant";
+import { latestPlanScopeCoverageRecords } from "@/lib/plan-scope-coverage";
 
 const sourceLineSchema = z.object({
   line_number: z.string().regex(/^L\d{3}$/),
@@ -323,4 +324,31 @@ export const analyzePlanSheetMeasurementNotes = createServerFn({ method: "POST" 
       });
       throw new Error(message);
     }
+  });
+
+export const getPlanScopeCoverage = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { estimate_id: string }) =>
+    z.object({ estimate_id: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { data: rows, error } = (await dynamicTable(context.supabase, "ai_operations")
+      .select(
+        "id,sheet_ids,result,request_context,model_used,credits_charged,created_at,updated_at",
+      )
+      .eq("estimate_id", data.estimate_id)
+      .eq("operation_type", "ai_measurement_plan")
+      .eq("status", "succeeded")
+      .order("updated_at", { ascending: false })
+      .limit(500)) as DynamicSupabaseResult<Record<string, unknown>[]>;
+    if (error) {
+      if (isMissingCreditsSchema(error) || isMissingMeasurementAssistantSchema(error)) {
+        return { records: [], ready: false };
+      }
+      throw new Error(error.message);
+    }
+    return {
+      records: latestPlanScopeCoverageRecords(rows ?? []),
+      ready: true,
+    };
   });

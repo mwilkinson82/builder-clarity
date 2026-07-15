@@ -18,6 +18,10 @@ import {
   type MeasurementScopeQueueItem,
 } from "@/lib/plan-room-measurement-scope";
 import {
+  latestPlanScopeCoverageRecords,
+  planScopeCoverageDiscipline,
+} from "@/lib/plan-scope-coverage";
+import {
   resolveScaleAssessmentForSheet,
   type ScaleAssessmentRow,
 } from "@/lib/plan-room-scale-assurance";
@@ -292,6 +296,136 @@ describe("guided measurement planning", () => {
     ]);
     expect(plan.warnings).toEqual([
       "3 AI suggestions were omitted because the cited note did not support the proposed scope or measurement tool.",
+    ]);
+  });
+
+  it("rejects code-limit and direction-only material fragments from live A-600 QA", () => {
+    const sourceLines = [
+      { line_number: "L025", text: "ROOFING MEMBRANE UP AND OVER" },
+      { line_number: "L069", text: "FLOOR AREA PERMITTED IN CLEAR" },
+      { line_number: "L070", text: "EPOXY FLOOR FINISH IN MECHANICAL ROOM" },
+    ];
+    const plan = parseMeasurementAssistantPlan(
+      JSON.stringify({
+        suggestions: [
+          {
+            label: "roofing membrane",
+            tool: "area",
+            source_line: "L025",
+            source_excerpt: "ROOFING MEMBRANE UP AND OVER",
+          },
+          {
+            label: "floor area",
+            tool: "area",
+            source_line: "L069",
+            source_excerpt: "FLOOR AREA PERMITTED IN CLEAR",
+          },
+          {
+            label: "epoxy floor finish",
+            tool: "area",
+            source_line: "L070",
+            source_excerpt: "EPOXY FLOOR FINISH IN MECHANICAL ROOM",
+          },
+        ],
+      }),
+      sourceLines,
+    );
+
+    expect(plan.suggestions.map((suggestion) => suggestion.label)).toEqual(["epoxy floor finish"]);
+    expect(plan.warnings).toEqual([
+      "2 AI suggestions were omitted because the cited note did not support the proposed scope or measurement tool.",
+    ]);
+  });
+
+  it("builds one deterministic latest cited review per sheet for the coverage matrix", () => {
+    const rows = [
+      {
+        id: "new-operation",
+        sheet_ids: ["sheet-a"],
+        updated_at: "2026-07-15T20:00:00.000Z",
+        model_used: "gpt-5-mini",
+        credits_charged: 1,
+        request_context: { source_line_count: 113 },
+        result: {
+          summary: "Ignore this model-authored summary.",
+          suggestions: [
+            {
+              id: "candidate-1",
+              label: "epoxy floor finish",
+              tool: "area",
+              source_line: "L070",
+              source_excerpt: "EPOXY FLOOR FINISH IN MECHANICAL ROOM",
+            },
+          ],
+          warnings: ["1 unsupported candidate was omitted."],
+        },
+      },
+      {
+        id: "old-operation",
+        sheet_ids: ["sheet-a"],
+        updated_at: "2026-07-15T19:00:00.000Z",
+        result: { suggestions: [] },
+      },
+      {
+        id: "sheet-b-operation",
+        sheet_ids: ["sheet-b"],
+        updated_at: "2026-07-15T18:00:00.000Z",
+        request_context: { source_line_count: 20 },
+        result: { suggestions: [] },
+      },
+    ];
+
+    const records = latestPlanScopeCoverageRecords(rows);
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({
+      operation_id: "new-operation",
+      sheet_id: "sheet-a",
+      source_line_count: 113,
+    });
+    expect(records[0].plan.summary).toBe("Cited measurement scope found for epoxy floor finish.");
+    expect(records.some((record) => record.operation_id === "old-operation")).toBe(false);
+    expect(planScopeCoverageDiscipline({ sheet_number: "S-205", discipline: "Other" })).toBe(
+      "Structural",
+    );
+  });
+
+  it("revalidates historical matrix candidates against the current evidence gate", () => {
+    const [record] = latestPlanScopeCoverageRecords([
+      {
+        id: "historical-operation",
+        sheet_ids: ["sheet-a-600"],
+        updated_at: "2026-07-15T20:00:00.000Z",
+        request_context: {
+          source_line_count: 2,
+          source_lines: [
+            { line_number: "L025", text: "ROOFING MEMBRANE UP AND OVER" },
+            { line_number: "L069", text: "FLOOR AREA PERMITTED IN CLEAR" },
+          ],
+        },
+        result: {
+          suggestions: [
+            {
+              id: "candidate-1",
+              label: "roofing membrane",
+              tool: "area",
+              source_line: "L025",
+              source_excerpt: "ROOFING MEMBRANE UP AND OVER",
+            },
+            {
+              id: "candidate-2",
+              label: "floor area",
+              tool: "area",
+              source_line: "L069",
+              source_excerpt: "FLOOR AREA PERMITTED IN CLEAR",
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(record.plan.suggestions).toEqual([]);
+    expect(record.plan.warnings).toEqual([
+      "2 AI suggestions were omitted because the cited note did not support the proposed scope or measurement tool.",
     ]);
   });
 
