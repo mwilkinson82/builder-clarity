@@ -1,4 +1,11 @@
 import { describe, expect, it } from "vitest";
+import {
+  creditPackLineItemFields,
+  creditPackStripeMode,
+  DEFAULT_LIVE_CREDIT_PACK_PRICE_IDS,
+  liveCreditPackPriceId,
+} from "@/lib/credits/credit-pack-checkout";
+import { DEFAULT_CREDIT_PACKS } from "@/lib/credits/credits-domain";
 import { DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS, methodAvailability } from "@/lib/payments-domain";
 import { stripeConnectionForMode, stripeModePersistencePatch } from "@/lib/stripe-mode";
 import { stripeConnectDetails } from "@/lib/stripe-connect-status";
@@ -100,6 +107,45 @@ describe("Stripe live/test account isolation", () => {
       stripe_connect_account_id_live: "acct_live",
       stripe_connect_status_live: "active",
     });
+  });
+});
+
+describe("OverWatch AI credit-pack checkout", () => {
+  const pack = DEFAULT_CREDIT_PACKS[0];
+
+  it("defaults platform revenue to live mode but supports explicit sandbox QA", () => {
+    expect(creditPackStripeMode(undefined)).toBe("live");
+    expect(creditPackStripeMode("live")).toBe("live");
+    expect(creditPackStripeMode("test")).toBe("test");
+  });
+
+  it("binds the launch pack to the reusable OverWatch live Price", () => {
+    const priceId = liveCreditPackPriceId({ packId: pack.id });
+    expect(priceId).toBe(DEFAULT_LIVE_CREDIT_PACK_PRICE_IDS.pack_100);
+    expect(priceId).toBe("price_1TtJmrJGLltOYaiieUrp4fSn");
+
+    const fields = creditPackLineItemFields({ pack, mode: "live", livePriceId: priceId });
+    expect(fields).toEqual({
+      "line_items[0][price]": "price_1TtJmrJGLltOYaiieUrp4fSn",
+      "line_items[0][quantity]": 1,
+    });
+    expect(Object.keys(fields).some((key) => key.includes("price_data"))).toBe(false);
+  });
+
+  it("keeps inline pricing only for explicit test-mode checkout", () => {
+    expect(creditPackLineItemFields({ pack, mode: "test" })).toMatchObject({
+      "line_items[0][price_data][currency]": "usd",
+      "line_items[0][price_data][unit_amount]": 2500,
+      "line_items[0][quantity]": 1,
+    });
+  });
+
+  it("accepts a valid rotation override and rejects malformed Price IDs", () => {
+    expect(liveCreditPackPriceId({ packId: pack.id, override: "price_rotated123" })).toBe(
+      "price_rotated123",
+    );
+    expect(liveCreditPackPriceId({ packId: pack.id, override: "prod_wrong_kind" })).toBe("");
+    expect(liveCreditPackPriceId({ packId: "unknown" })).toBe("");
   });
 });
 

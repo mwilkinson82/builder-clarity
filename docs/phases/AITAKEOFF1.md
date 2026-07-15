@@ -28,7 +28,9 @@ Sheet Names. Provenance always visible. Credits always transparent.
   founder's margin dashboard: credits_charged vs api_cost_cents.
 - Signup grant: 50 credits on organization creation (and a one-time backfill
   grant for existing orgs, in the seed). Balance surfaced by a server fn.
-- Credit packs: config-driven (default: 100 credits / $25). Purchase runs
+- Credit packs: config-driven (default: 100 credits / $25). Live purchase uses
+  the reusable OverWatch Stripe Price `price_1TtJmrJGLltOYaiieUrp4fSn`; explicit
+  sandbox mode retains inline test pricing. Purchase runs
   through the EXISTING platform Stripe checkout path (charge on the PLATFORM
   account — this is Overwatch revenue, not a connected-account charge), with
   webhook crediting the ledger idempotently. If the existing subscription
