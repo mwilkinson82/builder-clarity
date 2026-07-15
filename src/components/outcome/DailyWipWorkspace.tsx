@@ -91,6 +91,7 @@ interface BucketOption {
 interface DailyWipWorkspaceProps {
   projectId: string;
   buckets: BucketOption[];
+  initialMode?: WipWorkspaceMode;
   // Drill-through landing (e.g. the Budget drawer's "from the daily log" rows):
   // when set, the workspace jumps to that day and reports back so the route can
   // clear it — the same handoff pattern as the risk register focus.
@@ -249,6 +250,7 @@ type WipWorkspaceMode = "daily" | "production";
 export function DailyWipWorkspace({
   projectId,
   buckets,
+  initialMode = "daily",
   focusDate,
   onFocusDateHandled,
 }: DailyWipWorkspaceProps) {
@@ -280,7 +282,7 @@ export function DailyWipWorkspace({
   const [formOpen, setFormOpen] = useState(false);
   // The dark stat panel's Day / Week / Month lens — presentation-only.
   const [statScope, setStatScope] = useState<StatScope>("day");
-  const [workspaceMode, setWorkspaceMode] = useState<WipWorkspaceMode>("daily");
+  const [workspaceMode, setWorkspaceMode] = useState<WipWorkspaceMode>(initialMode);
   const closeForm = () => {
     setFormOpen(false);
     setEditingId(null);

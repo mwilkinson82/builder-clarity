@@ -313,12 +313,17 @@ const projectNavGroupKeyForTab = (tab: ProjectTabValue) =>
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   ssr: false,
   head: () => ({ meta: [{ title: "Project IOR — Overwatch" }] }),
-  validateSearch: (search: Record<string, unknown>): { tab?: ProjectTabValue } => {
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { tab?: ProjectTabValue; wipView?: "daily" | "production" } => {
     const tab = typeof search.tab === "string" ? search.tab : "";
+    const wipView =
+      search.wipView === "production" || search.wipView === "daily" ? search.wipView : undefined;
     return {
       tab: PROJECT_TAB_VALUES.includes(tab as ProjectTabValue)
         ? (tab as ProjectTabValue)
         : undefined,
+      wipView,
     };
   },
   component: ProjectRoute,
@@ -2956,6 +2961,7 @@ function ProjectPage() {
               <DailyWipWorkspace
                 projectId={projectId}
                 buckets={wipProfitBuckets}
+                initialMode={search.wipView ?? "daily"}
                 focusDate={focusedWipDate}
                 onFocusDateHandled={handleWipFocusHandled}
               />

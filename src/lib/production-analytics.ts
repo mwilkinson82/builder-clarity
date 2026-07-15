@@ -19,6 +19,20 @@ export interface ProductionAnalyticsRow {
   fieldValue: number;
 }
 
+export interface PortfolioProductionAnalyticsRow extends ProductionAnalyticsRow {
+  projectId: string;
+  projectName: string;
+  jobNumber: string;
+  projectManager: string;
+}
+
+export interface ProductionProjectMeta {
+  id: string;
+  name: string;
+  jobNumber: string;
+  projectManager: string;
+}
+
 export interface ProductionAggregate {
   quantity: number;
   unit: string | null;
@@ -48,6 +62,14 @@ export interface ProductionScopeSummary extends ProductionAggregate {
   scopeName: string;
   loggedDays: number;
   rowCount: number;
+}
+
+export interface ProductionProjectSummary extends ProductionAggregate, ProductionProjectMeta {
+  loggedDays: number;
+  rowCount: number;
+  performerCount: number;
+  scopesBehind: number;
+  lastFieldDate: string | null;
 }
 
 export interface ProductionPeriodPoint extends ProductionAggregate {
@@ -213,6 +235,46 @@ export function summarizeProductionScopes(
       return `${a.costCode}|${a.scopeName}|${a.performerName}`.localeCompare(
         `${b.costCode}|${b.scopeName}|${b.performerName}`,
       );
+    });
+}
+
+export function summarizeProductionProjects(
+  rows: readonly PortfolioProductionAnalyticsRow[],
+  projects: readonly ProductionProjectMeta[],
+): ProductionProjectSummary[] {
+  const rowsByProject = new Map<string, PortfolioProductionAnalyticsRow[]>();
+  for (const row of rows) {
+    const current = rowsByProject.get(row.projectId) ?? [];
+    current.push(row);
+    rowsByProject.set(row.projectId, current);
+  }
+
+  return projects
+    .map((project) => {
+      const projectRows = rowsByProject.get(project.id) ?? [];
+      const scopeSummaries = summarizeProductionScopes(projectRows);
+      const dates = projectRows
+        .map((row) => row.date)
+        .filter(Boolean)
+        .sort();
+      return {
+        ...project,
+        ...aggregateRows(projectRows),
+        loggedDays: new Set(dates).size,
+        rowCount: projectRows.length,
+        performerCount: new Set(projectRows.map((row) => row.performerKey)).size,
+        scopesBehind: scopeSummaries.filter((scope) => scope.status === "behind").length,
+        lastFieldDate: dates.at(-1) ?? null,
+      };
+    })
+    .sort((a, b) => {
+      if (a.rowCount === 0 || b.rowCount === 0) {
+        if (a.rowCount !== b.rowCount) return a.rowCount === 0 ? 1 : -1;
+      }
+      const aIndex = a.performanceIndex ?? Number.POSITIVE_INFINITY;
+      const bIndex = b.performanceIndex ?? Number.POSITIVE_INFINITY;
+      if (aIndex !== bIndex) return aIndex - bIndex;
+      return a.name.localeCompare(b.name);
     });
 }
 
