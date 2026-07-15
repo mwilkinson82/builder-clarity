@@ -59,7 +59,7 @@ export function PortfolioTopBar({ active, actions }: { active: NavKey; actions?:
     );
 
   return (
-    <header className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-hairline bg-surface px-5 py-3 sm:px-10">
+    <header className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 overflow-hidden border-b border-hairline bg-surface px-5 py-3 sm:px-10">
       {/* Company switcher — routes to Team (the settings console) as today;
           real multi-company switching would be new behavior. */}
       <Link to="/team" className="flex shrink-0 items-center gap-2" aria-label={`${name} settings`}>
@@ -76,7 +76,7 @@ export function PortfolioTopBar({ active, actions }: { active: NavKey; actions?:
         <span className="text-[11px] text-muted-foreground">▾</span>
       </Link>
 
-      <nav className="flex items-center gap-5">
+      <nav className="order-3 flex w-full min-w-0 items-center gap-5 overflow-x-auto pb-0.5 sm:order-none sm:w-auto sm:pb-0">
         <Link to="/" className={navItemClass("portfolio")}>
           Portfolio
         </Link>

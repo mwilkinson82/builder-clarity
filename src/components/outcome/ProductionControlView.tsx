@@ -51,6 +51,9 @@ const chartConfig = {
   volume: { label: "Field volume", color: "var(--muted)" },
 } satisfies ChartConfig;
 
+const chartMargin = { top: 10, right: 8, left: 0, bottom: 4 };
+const actualPoint = { r: 3, fill: "var(--surface)", strokeWidth: 1.5 };
+
 function localToday(): string {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
@@ -81,6 +84,20 @@ function signedPercent(value: number | null, digits = 1): string {
   if (value == null) return "—";
   const percent = value * 100;
   return `${percent >= 0 ? "+" : ""}${percent.toFixed(digits)}%`;
+}
+
+function formatLaborImpact(value: number | null): string {
+  if (value == null) return "—";
+  if (Math.abs(value) < 0.05) return "On plan";
+  return value > 0
+    ? `${formatNumber(value)} hrs lost`
+    : `${formatNumber(Math.abs(value))} hrs saved`;
+}
+
+function laborImpactClass(value: number | null): string {
+  if (value == null) return "text-muted-foreground";
+  if (Math.abs(value) < 0.05) return "text-warning";
+  return value > 0 ? "text-danger" : "text-success";
 }
 
 function statusCopy(status: ProductionStatus): string {
@@ -485,19 +502,11 @@ export function ProductionControlView({
                     </div>
                   </div>
                   <div>
-                    <div className="text-dark-panel-foreground/45">Hours gained / lost</div>
+                    <div className="text-dark-panel-foreground/45">Labor impact</div>
                     <div
-                      className={`mt-0.5 font-serif text-xl tabular-nums ${
-                        summary.hoursVariance == null
-                          ? ""
-                          : summary.hoursVariance > 0
-                            ? "text-danger"
-                            : "text-success"
-                      }`}
+                      className={`mt-0.5 font-serif text-xl tabular-nums ${laborImpactClass(summary.hoursVariance)}`}
                     >
-                      {summary.hoursVariance == null
-                        ? "—"
-                        : `${summary.hoursVariance > 0 ? "+" : ""}${formatNumber(summary.hoursVariance)} hrs`}
+                      {formatLaborImpact(summary.hoursVariance)}
                     </div>
                   </div>
                 </div>
@@ -568,10 +577,7 @@ export function ProductionControlView({
             <div className="p-4 sm:p-5">
               {chartData.some((point) => point.actual != null || point.trend != null) ? (
                 <ChartContainer config={chartConfig} className="h-[330px] w-full aspect-auto">
-                  <ComposedChart
-                    data={chartData}
-                    margin={{ top: 10, right: 8, left: 0, bottom: 4 }}
-                  >
+                  <ComposedChart data={chartData} margin={chartMargin}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" />
                     <XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={28} />
                     <YAxis
@@ -617,7 +623,7 @@ export function ProductionControlView({
                       dataKey="actual"
                       stroke="var(--color-actual)"
                       strokeWidth={1.25}
-                      dot={{ r: 3, fill: "var(--surface)", strokeWidth: 1.5 }}
+                      dot={actualPoint}
                       connectNulls={false}
                     />
                     <Line
@@ -663,7 +669,7 @@ export function ProductionControlView({
                     <th className="px-4 py-2.5 text-right">Actual / target</th>
                     <th className="px-4 py-2.5 text-right">Production index</th>
                     <th className="px-4 py-2.5 text-right">Period trend</th>
-                    <th className="px-4 py-2.5 text-right">Hours gained / lost</th>
+                    <th className="px-4 py-2.5 text-right">Labor impact</th>
                     <th className="px-5 py-2.5 text-right">Observed $ / unit</th>
                   </tr>
                 </thead>
@@ -727,17 +733,9 @@ export function ProductionControlView({
                           </div>
                         </td>
                         <td
-                          className={`px-4 py-4 text-right align-top font-serif text-[18px] tabular-nums ${
-                            scope.hoursVariance == null
-                              ? "text-muted-foreground"
-                              : scope.hoursVariance > 0
-                                ? "text-danger"
-                                : "text-success"
-                          }`}
+                          className={`px-4 py-4 text-right align-top font-serif text-[18px] tabular-nums ${laborImpactClass(scope.hoursVariance)}`}
                         >
-                          {scope.hoursVariance == null
-                            ? "—"
-                            : `${scope.hoursVariance > 0 ? "+" : ""}${formatNumber(scope.hoursVariance)} hrs`}
+                          {formatLaborImpact(scope.hoursVariance)}
                         </td>
                         <td className="px-5 py-4 text-right align-top tabular-nums">
                           <div className="font-serif text-[18px] text-foreground">
