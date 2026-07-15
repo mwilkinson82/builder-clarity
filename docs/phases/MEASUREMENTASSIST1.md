@@ -113,6 +113,41 @@ Initial enterprise slice:
 - Draft and confirmed assemblies never write estimate quantities automatically. A takeoff quantity,
   scale revision, or trust-status change marks the assembly stale and retains its prior audit event.
 
+## Stage 4 — AI-assisted revision-set matching
+
+- After upload post-processing reads title-block identity, exact normalized sheet numbers and titles
+  are paired deterministically when there is one clear prior-sheet match.
+- Ambiguous pages may use the existing Lovable-managed OpenAI or Anthropic provider to rank only a
+  short list of supplied metadata candidates. Drawing images and geometry are not sent or compared.
+- The model cannot invent a sheet identifier, reuse a prior sheet in the same response, or raise its
+  confidence above the deterministic evidence score.
+- The estimator reviews every revision page and must accept, reject, manually correct, or mark the
+  proposal as having no prior match before decisions save.
+- Accepted pairs become shortcuts into the existing visual Revision Overlay. They do not archive
+  either set, copy a takeoff, retain a scale, or alter an estimate quantity.
+- Reviewed state is read-only through the Data API. A manager-only security-definer RPC validates
+  same-estimate and earlier-set membership, then appends an audit event for every decision.
+- AI is explicit and metered at no more than one credit per 100 ambiguous pages, capped at five
+  credits for a 500-page review. Exact-only sets consume no AI credit.
+
+### Stage 4 release gate
+
+1. Apply `20260715205000_plan_revision_matching.sql` only through the Lovable connector.
+2. Verify authenticated users have SELECT-only table access, anon has none, and the decision RPC
+   rejects non-managers, later-set candidates, cross-estimate sheets, incomplete AI operations, and
+   duplicate accepted prior sheets.
+3. Upload a renamed Harbor sample revision and confirm title-block processing finishes before the
+   match action enables.
+4. Confirm an exact sheet-number/title pair is labeled Exact identity and an ambiguous pair is
+   labeled AI metadata suggestion; neither may claim a visual comparison.
+5. Accept one pair, reject one, manually correct one, and mark one No prior match. Refresh and verify
+   all four decisions, reviewer, and timestamps persist.
+6. Use an accepted counterpart in Revision Overlay and confirm the correct retained sheet appears
+   without moving takeoffs or copying scale.
+7. Confirm Harbor remains exactly `$1,606,137` before and after analysis, review, and overlay use.
+8. Confirm AI failure creates no saved decision, refunds its credit, and leaves the manual overlay
+   selector usable.
+
 ## Kill criteria
 
 Stop expansion if the live Harbor review shows uncited suggestions, repeated irrelevant title-block

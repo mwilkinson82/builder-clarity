@@ -2336,6 +2336,47 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/estimates/plan-room/PlanRevisionReviewPanel.tsx",
+  [
+    /Estimator-controlled sheet matching/,
+    /metadata only/,
+    /No geometry comparison/,
+    /Accept pair/,
+    /Reject suggestion/,
+    /No prior match/,
+    /No takeoffs, scales, or estimate values changed/,
+  ],
+  "revision review keeps metadata evidence, estimator decisions, and no-impact authority visible",
+);
+
+await expectContains(
+  "src/lib/plan-revision-match.functions.ts",
+  [
+    /Match identity, not geometry/,
+    /operation_type: "ai_revision_match"/,
+    /Choose only an allowed base_sheet_id/,
+    /save_estimate_plan_revision_decisions/,
+    /failAndRefund/,
+  ],
+  "revision matching constrains, meters, audits, and refunds metadata-only AI review",
+);
+
+await expectContains(
+  "supabase/migrations/20260715205000_plan_revision_matching.sql",
+  [
+    /estimate_plan_revision_matches/,
+    /estimate_plan_revision_match_events/,
+    /save_estimate_plan_revision_decisions/,
+    /can_manage_estimate/,
+    /created_at < v_set\.created_at/,
+    /review_action = 'accepted'/,
+    /GRANT SELECT ON TABLE public\.estimate_plan_revision_matches TO authenticated/i,
+    /NOTIFY pgrst, 'reload schema'/i,
+  ],
+  "revision decisions are manager-validated, prior-set constrained, read-only, and append-only audited",
+);
+
+await expectContains(
   "src/components/estimates/plan-room/PdfSheetViewer.tsx",
   [/measurement-evidence-highlight/, /cited note/, /evidenceFocus/],
   "measurement evidence navigation highlights and centers the cited PDF note",
