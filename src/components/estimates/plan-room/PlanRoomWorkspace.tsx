@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
@@ -45,6 +46,12 @@ import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtUSD } from "@/lib/format";
+import {
+  addTakeoffToPlanRoomCache,
+  takeoffSyncBlockReason,
+  takeoffTrustLabel,
+  type PlanRoomMeasurementCache,
+} from "@/lib/plan-room-trust";
 import { cn } from "@/lib/utils";
 import {
   applyScaleToSheets,
@@ -821,6 +828,9 @@ export function PlanRoomWorkspace({
       return { ...result, joinedGroupLinked: Boolean(joinedGroup?.linkedLineId) };
     },
     onSuccess: (result, variables) => {
+      qc.setQueryData<PlanRoomMeasurementCache>(["plan-room", estimate.id], (current) =>
+        addTakeoffToPlanRoomCache(current, result.measurement),
+      );
       if (result.sync?.calculation_conflict) {
         toast.warning(
           "Takeoff saved, but its quantity needs review before it can update the estimate.",
@@ -2024,12 +2034,17 @@ export function PlanRoomWorkspace({
   };
 
   const lineTotals = useMemo(() => {
-    const totals = new Map<string, { quantity: number; count: number }>();
+    const totals = new Map<string, { quantity: number; count: number; untrustedCount: number }>();
     for (const measurement of measurements) {
       if (!measurement.estimate_line_item_id) continue;
-      const current = totals.get(measurement.estimate_line_item_id) ?? { quantity: 0, count: 0 };
+      const current = totals.get(measurement.estimate_line_item_id) ?? {
+        quantity: 0,
+        count: 0,
+        untrustedCount: 0,
+      };
       current.quantity += measurement.quantity;
       current.count += 1;
+      if (measurement.calculation_status !== "current") current.untrustedCount += 1;
       totals.set(measurement.estimate_line_item_id, current);
     }
     return totals;
@@ -3656,15 +3671,10 @@ export function PlanRoomWorkspace({
                     )}
                     data-testid="takeoff-inspector-trust-chip"
                   >
-                    {selectedMeasurement.calculation_status === "current"
-                      ? selectedMeasurement.calculation_method === "manual_override"
-                        ? "Approved override"
-                        : "Quantity current"
-                      : selectedMeasurement.calculation_status === "unverified_scale"
-                        ? "Verify sheet scale"
-                        : selectedMeasurement.calculation_status === "stale"
-                          ? "Scale changed"
-                          : "Review required"}
+                    {selectedMeasurement.calculation_status === "current" &&
+                    selectedMeasurement.calculation_method === "manual_override"
+                      ? "Approved override"
+                      : takeoffTrustLabel(selectedMeasurement.calculation_status)}
                   </Badge>
                   <Badge variant="secondary">
                     {toolLabel(selectedMeasurement.tool_type)} ·{" "}
@@ -3930,6 +3940,18 @@ export function PlanRoomWorkspace({
                       <Trash2 className="h-3.5 w-3.5 text-danger" /> Delete
                     </Button>
                   </div>
+                  {selectedMeasurement.calculation_status === "current" &&
+                    selectedMeasurementLine &&
+                    (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0 && (
+                      <p
+                        className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-foreground"
+                        data-testid="selected-takeoff-linked-trust-warning"
+                      >
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                        Another takeoff feeding this estimate row needs review before the row can
+                        sync.
+                      </p>
+                    )}
                   {selectedMeasurementLine ? (
                     <Button
                       size="sm"
@@ -3937,6 +3959,17 @@ export function PlanRoomWorkspace({
                       onClick={() =>
                         syncLineMutation.mutate({ lineId: selectedMeasurementLine.id })
                       }
+                      disabled={
+                        syncLineMutation.isPending ||
+                        (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
+                      }
+                      title={
+                        takeoffSyncBlockReason(selectedMeasurement.calculation_status) ||
+                        ((lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
+                          ? "Another takeoff feeding this estimate row must be reviewed before sending."
+                          : "Send this takeoff total to the estimate.")
+                      }
+                      data-testid="selected-takeoff-sync"
                     >
                       <Link2 className="h-3.5 w-3.5" />
                       Send This Takeoff Total to Estimate

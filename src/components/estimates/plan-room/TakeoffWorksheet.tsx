@@ -29,6 +29,7 @@ import {
 } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow } from "@/lib/estimates.functions";
 import type { PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
+import { takeoffSyncBlockReason, takeoffTrustLabel } from "@/lib/plan-room-trust";
 import { formatQty, toolLabel, unitLongName, type TakeoffFilterMode } from "./planRoomShared";
 import { LinkOrCreatePicker } from "./TakeoffClassify";
 import { TakeoffGroupCard } from "./TakeoffGroupCard";
@@ -187,7 +188,7 @@ export function TakeoffWorksheet({
     mutate: (variables: { id: string; patch: { estimate_line_item_id: string | null } }) => void;
   };
   syncLineMutation: { mutate: (variables: { lineId: string }) => void };
-  lineTotals: Map<string, { quantity: number; count: number }>;
+  lineTotals: Map<string, { quantity: number; count: number; untrustedCount: number }>;
   linkMeasurement: (measurementId: string, lineId: string) => void;
   classifyMeasurement: (
     measurementId: string,
@@ -245,6 +246,9 @@ export function TakeoffWorksheet({
       linkMeasurements={linkMeasurements}
       classifyMeasurements={classifyMeasurements}
       syncLine={(lineId) => syncLineMutation.mutate({ lineId })}
+      linkedLineUntrustedCount={
+        group.linkedLineId ? (lineTotals.get(group.linkedLineId)?.untrustedCount ?? 0) : 0
+      }
       classifyPending={classifyPending}
     />
   );
@@ -465,31 +469,22 @@ export function TakeoffWorksheet({
                 (sheet) => sheet.id === measurement.plan_sheet_id,
               );
               const isSelected = measurement.id === selectedMeasurementId;
+              const trustBlockReason = takeoffSyncBlockReason(measurement.calculation_status);
+              const linkedLineUntrustedCount = linkedLine
+                ? (lineTotals.get(linkedLine.id)?.untrustedCount ?? 0)
+                : 0;
               return (
                 <div
                   key={measurement.id}
-                  role="button"
-                  tabIndex={0}
                   data-testid="takeoff-navigator-row"
                   className={cn(
                     "rounded-md border border-hairline p-3 text-left transition",
                     isSelected && "border-primary bg-primary/5 shadow-sm",
                   )}
-                  onClick={(event) => {
-                    const target = event.target as HTMLElement;
-                    if (target.closest("button,[role='combobox'],input,textarea")) return;
-                    selectMeasurement(measurement);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      selectMeasurement(measurement);
-                    }
-                  }}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span
                           className="h-2.5 w-2.5 rounded-full"
                           style={{ backgroundColor: measurement.color }}
@@ -504,6 +499,17 @@ export function TakeoffWorksheet({
                           >
                             <Sparkles className="h-2.5 w-2.5" />
                             AI-assisted
+                          </Badge>
+                        )}
+                        {trustBlockReason && (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 gap-1 border-warning/40 bg-warning/10 text-[10px] text-warning"
+                            title={trustBlockReason}
+                            data-testid="takeoff-trust-chip"
+                          >
+                            <AlertTriangle className="h-2.5 w-2.5" />
+                            {takeoffTrustLabel(measurement.calculation_status)}
                           </Badge>
                         )}
                       </div>
@@ -524,10 +530,7 @@ export function TakeoffWorksheet({
                         size="sm"
                         className="h-8 px-2 text-xs"
                         title="Open this takeoff on the drawing"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          selectMeasurement(measurement);
-                        }}
+                        onClick={() => selectMeasurement(measurement)}
                         data-testid="takeoff-open-on-plan"
                       >
                         Open
@@ -538,10 +541,7 @@ export function TakeoffWorksheet({
                         size="sm"
                         className="h-8 gap-1 px-2 text-xs"
                         title="Delete this takeoff"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          deleteMeasurementMutation.mutate(measurement.id);
-                        }}
+                        onClick={() => deleteMeasurementMutation.mutate(measurement.id)}
                         data-testid="takeoff-row-delete"
                       >
                         <Trash2 className="h-3.5 w-3.5 text-danger" />
@@ -561,8 +561,7 @@ export function TakeoffWorksheet({
                           size="sm"
                           variant="ghost"
                           className="h-7 shrink-0 px-2 text-xs"
-                          onClick={(event) => {
-                            event.stopPropagation();
+                          onClick={() => {
                             updateMeasurementMutation.mutate({
                               id: measurement.id,
                               patch: { estimate_line_item_id: null },
@@ -614,12 +613,29 @@ export function TakeoffWorksheet({
                         </span>
                       </p>
                     )}
+                    {!trustBlockReason && linkedLineUntrustedCount > 0 && (
+                      <p
+                        className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-foreground"
+                        data-testid="takeoff-row-linked-trust-warning"
+                      >
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                        Another takeoff feeding this estimate row needs review before the row can
+                        sync.
+                      </p>
+                    )}
                     {linkedLine ? (
                       <Button
                         size="sm"
                         variant="outline"
                         className="w-full gap-1.5"
                         onClick={() => syncLineMutation.mutate({ lineId: linkedLine.id })}
+                        disabled={linkedLineUntrustedCount > 0}
+                        title={
+                          linkedLineUntrustedCount > 0
+                            ? `${linkedLineUntrustedCount} takeoff${linkedLineUntrustedCount === 1 ? "" : "s"} feeding this estimate row must be reviewed before sending.`
+                            : "Send this takeoff total to the estimate."
+                        }
+                        data-testid="takeoff-row-sync"
                       >
                         <Link2 className="h-3.5 w-3.5" />
                         Send Total Qty to Estimate
@@ -655,11 +671,24 @@ export function TakeoffWorksheet({
                     <p className="text-muted-foreground">
                       {total?.count ?? 0} takeoffs · {formatQty(total?.quantity ?? 0, line.unit)}
                     </p>
+                    {(total?.untrustedCount ?? 0) > 0 && (
+                      <p className="mt-1 flex items-center gap-1 text-warning">
+                        <AlertTriangle className="h-3 w-3" />
+                        {total?.untrustedCount} to review before sync
+                      </p>
+                    )}
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => syncLineMutation.mutate({ lineId: line.id })}
+                    disabled={(total?.untrustedCount ?? 0) > 0}
+                    title={
+                      (total?.untrustedCount ?? 0) > 0
+                        ? "Review every stale or unverified takeoff feeding this row before syncing."
+                        : "Send this takeoff total to the estimate."
+                    }
+                    data-testid="takeoff-line-sync"
                   >
                     Sync
                   </Button>
