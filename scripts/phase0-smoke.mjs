@@ -3268,7 +3268,7 @@ await expectContains(
   "daily WIP compares actual production with the derived subcontract or explicit PM target",
 );
 await expectContains(
-  "supabase/migrations/20260715001656_subcontract_production_benchmarks.sql",
+  "supabase/migrations/20260715010910_b080292c-8a1b-44b3-ad19-c16402ee2e23.sql",
   [/planned_quantity/, /benchmark_labor_rate/, /subcontract_allocations/],
   "subcontract allocations persist the physical scope and GC labor-equivalent benchmark",
 );
