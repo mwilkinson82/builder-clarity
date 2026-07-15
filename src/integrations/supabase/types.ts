@@ -1522,6 +1522,8 @@ export type Database = {
           unit: string
           unmatched_vendor_name: string
           updated_at: string
+          wip_reviewed_at: string | null
+          wip_reviewed_by: string | null
         }
         Insert: {
           activity?: string
@@ -1552,6 +1554,8 @@ export type Database = {
           unit?: string
           unmatched_vendor_name?: string
           updated_at?: string
+          wip_reviewed_at?: string | null
+          wip_reviewed_by?: string | null
         }
         Update: {
           activity?: string
@@ -1582,6 +1586,8 @@ export type Database = {
           unit?: string
           unmatched_vendor_name?: string
           updated_at?: string
+          wip_reviewed_at?: string | null
+          wip_reviewed_by?: string | null
         }
         Relationships: [
           {
@@ -3554,6 +3560,94 @@ export type Database = {
             columns: ["primary_contact_id"]
             isOneToOne: false
             referencedRelation: "pipeline_contacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      production_sov_certifications: {
+        Row: {
+          calculation_version: string
+          certification_note: string
+          certified_at: string
+          certified_by: string
+          certified_percent: number
+          cost_bucket_id: string
+          current_sov_percent: number
+          id: string
+          installed_quantity: number | null
+          planned_quantity: number | null
+          project_id: string
+          recent_daily_pace: number | null
+          recommended_percent: number
+          required_daily_pace: number | null
+          source_period_end: string
+          source_period_start: string
+          source_wip_entry_id: string | null
+          target_date: string | null
+          unit: string | null
+        }
+        Insert: {
+          calculation_version?: string
+          certification_note?: string
+          certified_at?: string
+          certified_by?: string
+          certified_percent: number
+          cost_bucket_id: string
+          current_sov_percent: number
+          id?: string
+          installed_quantity?: number | null
+          planned_quantity?: number | null
+          project_id: string
+          recent_daily_pace?: number | null
+          recommended_percent: number
+          required_daily_pace?: number | null
+          source_period_end: string
+          source_period_start: string
+          source_wip_entry_id?: string | null
+          target_date?: string | null
+          unit?: string | null
+        }
+        Update: {
+          calculation_version?: string
+          certification_note?: string
+          certified_at?: string
+          certified_by?: string
+          certified_percent?: number
+          cost_bucket_id?: string
+          current_sov_percent?: number
+          id?: string
+          installed_quantity?: number | null
+          planned_quantity?: number | null
+          project_id?: string
+          recent_daily_pace?: number | null
+          recommended_percent?: number
+          required_daily_pace?: number | null
+          source_period_end?: string
+          source_period_start?: string
+          source_wip_entry_id?: string | null
+          target_date?: string | null
+          unit?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_sov_certifications_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_sov_certifications_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_sov_certifications_source_wip_entry_id_fkey"
+            columns: ["source_wip_entry_id"]
+            isOneToOne: false
+            referencedRelation: "daily_wip_entries"
             referencedColumns: ["id"]
           },
         ]
