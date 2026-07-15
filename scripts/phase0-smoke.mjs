@@ -2294,6 +2294,28 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/estimates/plan-room/PlanScopeCoverageMatrix.tsx",
+  [
+    /Scope Coverage Matrix/,
+    /AI has not[\s\S]*taken off this set/,
+    /Unreviewed does not mean missing scope/,
+    /One selected sheet review = 1 credit/,
+    /Manual visual review is still required/,
+  ],
+  "plan-set scope coverage exposes cited review progress without claiming completeness or measurement",
+);
+
+await expectContains(
+  "src/lib/plan-room-measurement-assistant.functions.ts",
+  [
+    /getPlanScopeCoverage/,
+    /operation_type", "ai_measurement_plan"/,
+    /latestPlanScopeCoverageRecords/,
+  ],
+  "scope coverage reuses durable metered sheet reviews instead of creating an unbounded bulk AI path",
+);
+
+await expectContains(
   "src/components/estimates/plan-room/TakeoffAssemblyWorkbench.tsx",
   [
     /Assembly Workbench/,
