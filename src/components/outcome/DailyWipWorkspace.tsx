@@ -774,6 +774,13 @@ export function DailyWipWorkspace({
     ? productionMeasureLabel(draftProductionItem)
     : draft.unit.trim() || "units";
   const draftProductionUnit = draftProductionItem?.unit.trim() || draft.unit.trim() || "units";
+  const draftLaborHours =
+    crewPeople(draft.crew_count, draft.people_per_crew) * Math.max(0, draft.hours);
+  const draftActualProductionRate = productionRate({
+    ...draft,
+    material_cost: draftMaterial,
+    equipment_cost: draftEquipment,
+  });
 
   const unpricedCount = unpricedRows.length;
   // Sign-aware headline coloring: earned reads success; the cost figure turns
@@ -993,7 +1000,7 @@ export function DailyWipWorkspace({
               if (!next && !saveMutation.isPending) closeForm();
             }}
           >
-            <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+            <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] max-w-5xl overflow-y-auto">
               <DialogHeader>
                 <div className="flex items-center gap-2">
                   {editingNeedsPrice ? (
@@ -1161,9 +1168,9 @@ export function DailyWipWorkspace({
                   </span>
                 </label>
               </div>
-              <div className="mt-1 grid items-start gap-3.5 sm:grid-cols-4">
+              <div className="mt-1 grid items-start gap-4 lg:grid-cols-5">
                 {draft.quantity_items.length > 0 ? (
-                  <div className="sm:col-span-2">
+                  <div className="lg:col-span-2">
                     <InstalledQuantities items={draft.quantity_items} />
                   </div>
                 ) : (
@@ -1193,16 +1200,27 @@ export function DailyWipWorkspace({
                     </label>
                   </>
                 )}
-                <div className="grid items-start gap-3.5 sm:col-span-2 sm:grid-cols-2">
+                <div className="grid items-start gap-3.5 rounded-xl border border-hairline bg-muted/20 p-4 sm:grid-cols-2 lg:col-span-3">
+                  <div className="sm:col-span-2">
+                    <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-clay">
+                      Production rate setup
+                    </div>
+                    <p className="mt-1.5 max-w-[72ch] text-xs leading-relaxed text-muted-foreground">
+                      Production rate means installed output divided by total labor-hours. Choose
+                      the field quantity that best represents this scope — SF, LF, CY, EA, rooms,
+                      fixtures, junction boxes, or any other unit captured in the Daily Report.
+                      OverWatch then compares the actual rate with the target pace you set.
+                    </p>
+                  </div>
                   {draft.quantity_items.length > 1 ? (
                     <label className="flex flex-col gap-1 sm:col-span-2">
                       <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                        Production measure
+                        Choose production measure
                       </span>
                       <select
                         value="0"
                         onChange={(event) => selectProductionMeasure(Number(event.target.value))}
-                        className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="h-9 w-full rounded-md border border-input bg-surface px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         aria-label="Installed quantity used for the production rate"
                       >
                         {draft.quantity_items.map((item, index) => (
@@ -1212,21 +1230,21 @@ export function DailyWipWorkspace({
                           </option>
                         ))}
                       </select>
-                      <span className="text-[10px] text-muted-foreground">
-                        Choose which field quantity is divided by total labor-hours.
+                      <span className="text-[10px] leading-relaxed text-muted-foreground">
+                        Select the output that should be divided by the crew's total labor-hours.
                       </span>
                     </label>
                   ) : null}
                   <label className="flex flex-col gap-1">
                     <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                      Target production rate
+                      Target pace
                     </span>
                     <Input
                       type="number"
                       min={0}
                       step="0.01"
                       value={draftBenchmarkTarget ?? draft.target_production_rate ?? ""}
-                      placeholder={`${draftProductionUnit} / labor hr`}
+                      placeholder="Enter target"
                       disabled={draftBenchmarkTarget != null}
                       onChange={(event) =>
                         setDraftField(
@@ -1235,22 +1253,22 @@ export function DailyWipWorkspace({
                         )
                       }
                     />
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-[10px] leading-relaxed text-muted-foreground">
                       {draftBenchmarkTarget != null
-                        ? `Calculated benchmark in ${draftProductionUnit} per labor-hour.`
-                        : `Expected ${draftProductionMeasure} installed by one labor-hour.`}
+                        ? `Calculated benchmark for the selected ${draftProductionMeasure} measure.`
+                        : `Target is output per labor-hour for whichever measure you choose above. Current measure: ${draftProductionMeasure} / labor hr.`}
                     </span>
                   </label>
                   <label className="flex flex-col gap-1">
                     <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                      % complete
+                      Cumulative progress
                     </span>
                     <Input
                       type="number"
                       min={0}
                       max={100}
                       value={draft.percent_complete || ""}
-                      placeholder="from the field — adjust if needed"
+                      placeholder="0–100"
                       onChange={(event) =>
                         setDraftField(
                           "percent_complete",
@@ -1258,10 +1276,24 @@ export function DailyWipWorkspace({
                         )
                       }
                     />
-                    <span className="text-[10px] text-muted-foreground">
-                      Cumulative scope completion reported from the field.
+                    <span className="text-[10px] leading-relaxed text-muted-foreground">
+                      Percent of the full scope complete to date.
                     </span>
                   </label>
+                  <div className="rounded-md border border-hairline bg-surface px-3 py-2 text-[11px] leading-relaxed text-muted-foreground sm:col-span-2">
+                    <span className="font-semibold text-foreground">Current actual rate: </span>
+                    {draftActualProductionRate != null ? (
+                      <>
+                        {draft.quantity.toLocaleString("en-US")} {draftProductionMeasure} ÷{" "}
+                        {draftLaborHours.toLocaleString("en-US")} labor-hours ={" "}
+                        <span className="font-semibold text-foreground">
+                          {draftActualProductionRate.toFixed(2)} {draftProductionUnit}/labor hr
+                        </span>
+                      </>
+                    ) : (
+                      "Add both installed quantity and crew labor-hours to calculate the actual rate."
+                    )}
+                  </div>
                 </div>
               </div>
               {draftIsSub || editingEntry ? (

@@ -3315,8 +3315,11 @@ await expectContains(
 await expectContains(
   "src/components/outcome/DailyWipWorkspace.tsx",
   [
-    /Target production rate/,
-    /Production measure/,
+    /Production rate setup/,
+    /Choose production measure/,
+    /Target pace/,
+    /installed output divided by total labor-hours/,
+    /max-w-5xl/,
     /effectiveProductionTargetFor/,
     /productionPace\(/,
     /No target set/,
