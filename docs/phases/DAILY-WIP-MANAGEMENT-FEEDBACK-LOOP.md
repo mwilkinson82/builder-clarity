@@ -53,14 +53,16 @@ the application manually.
 
 ## Slice 3 — reviewable CPM progress
 
-- [ ] Define which quantity or percent basis controls each linked activity.
-- [ ] Present a recommended activity percent with source and variance.
-- [ ] Require an explicit PM action before changing CPM progress.
-- [ ] Record the recommendation, accepted value, actor, and timestamp.
+- [x] Define which quantity or percent basis controls each linked activity.
+- [x] Present a recommended activity percent with source and variance.
+- [x] Let the PM accept the recommendation, keep CPM unchanged without explanation, or apply a different value.
+- [x] Record the recommendation, accepted value, actor, and timestamp.
 
-Automatic schedule movement is intentionally excluded until these rules exist;
-different activities can use different physical bases, so a generic update
-would create false schedule certainty.
+Automatic schedule movement remains intentionally excluded. Different
+activities can use different physical bases, and the accepted value now reaches
+CPM only when the PM accepts the recommendation or applies a different value.
+Keeping CPM as-is records the review without changing schedule progress or
+requiring a reason.
 
 ## Slice 4 — portfolio operating view
 
