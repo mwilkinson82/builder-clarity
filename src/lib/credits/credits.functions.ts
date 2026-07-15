@@ -15,6 +15,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   eq(column: string, value: unknown): DynamicSupabaseQuery;
   order(column: string, options?: { ascending?: boolean }): DynamicSupabaseQuery;
   limit(count: number): DynamicSupabaseQuery;
+  maybeSingle(): Promise<DynamicSupabaseResult>;
 };
 
 const dynamicTable = (supabase: unknown, relation: string) =>
@@ -30,6 +31,25 @@ function isMissingCreditsSchema(error: DynamicSupabaseError | null | undefined) 
   );
 }
 
+function isMissingMonthlyGrantRpc(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return (
+    error?.code === "PGRST202" ||
+    error?.code === "42883" ||
+    (message.includes("ensure_monthly_ai_credit_grant") &&
+      (message.includes("does not exist") || message.includes("schema cache")))
+  );
+}
+
+async function ensureMonthlyAllowance(context: { supabase: unknown }, organizationId: string) {
+  const { error } = await (
+    context.supabase as {
+      rpc(fn: string, args: { p_organization_id: string }): Promise<DynamicSupabaseResult<number>>;
+    }
+  ).rpc("ensure_monthly_ai_credit_grant", { p_organization_id: organizationId });
+  if (error && !isMissingMonthlyGrantRpc(error)) throw new Error(error.message);
+}
+
 async function resolveOrganizationId(context: { supabase: unknown }) {
   const { data, error } = await (
     context.supabase as { rpc(fn: string): Promise<DynamicSupabaseResult<string>> }
@@ -42,6 +62,8 @@ async function resolveOrganizationId(context: { supabase: unknown }) {
 export interface CreditSummary {
   organizationId: string;
   balanceCredits: number;
+  monthlyAllowanceCredits: number;
+  planCode: string;
   packs: CreditPack[];
   aiAssistConfigured: boolean;
   aiModel: string;
@@ -59,6 +81,7 @@ export const getCreditSummary = createServerFn({ method: "GET" })
   .inputValidator((input: z.input<typeof creditSummaryInput>) => creditSummaryInput.parse(input))
   .handler(async ({ context }): Promise<CreditSummary> => {
     const organizationId = await resolveOrganizationId(context);
+    await ensureMonthlyAllowance(context, organizationId);
     const { isVisionConfigured, resolveVisionModel } =
       await import("@/lib/ai-takeoff/vision.server");
 
@@ -84,12 +107,40 @@ export const getCreditSummary = createServerFn({ method: "GET" })
       isSuperAdmin,
     };
 
+    let planCode = "free";
+    let monthlyAllowanceCredits = 0;
+    const organizationResult = await dynamicTable(context.supabase, "organizations")
+      .select("plan_code,contractor_circle_grant")
+      .eq("id", organizationId)
+      .maybeSingle();
+    if (!organizationResult.error && organizationResult.data) {
+      const organization = organizationResult.data as Record<string, unknown>;
+      planCode = organization.contractor_circle_grant
+        ? "contractor_circle_free"
+        : String(organization.plan_code || "free");
+      const planResult = await dynamicTable(context.supabase, "subscription_plans")
+        .select("monthly_ai_credits")
+        .eq("code", planCode)
+        .maybeSingle();
+      if (!planResult.error && planResult.data) {
+        monthlyAllowanceCredits = Number(
+          (planResult.data as Record<string, unknown>).monthly_ai_credits ?? 0,
+        );
+      }
+    }
+
     const ledgerResult = (await dynamicTable(context.supabase, "credit_ledger")
       .select("delta")
       .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
     if (ledgerResult.error) {
       if (isMissingCreditsSchema(ledgerResult.error)) {
-        return { ...base, balanceCredits: 0, schemaReady: false };
+        return {
+          ...base,
+          balanceCredits: 0,
+          monthlyAllowanceCredits,
+          planCode,
+          schemaReady: false,
+        };
       }
       throw new Error(ledgerResult.error.message);
     }
@@ -97,6 +148,8 @@ export const getCreditSummary = createServerFn({ method: "GET" })
     return {
       ...base,
       balanceCredits: creditBalance(ledgerResult.data ?? []),
+      monthlyAllowanceCredits,
+      planCode,
       schemaReady: true,
     };
   });

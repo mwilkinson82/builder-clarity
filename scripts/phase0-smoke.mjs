@@ -1358,7 +1358,9 @@ await expectContains(
     /stripe=return/,
     /Checkout Sessions/,
     /usageStatus/,
-    /Contractor Circle grant keeps this company working/,
+    /Contractor Circle includes the complete OverWatch Pro allowance/,
+    /Upgrade to Pro — \$399\/month/,
+    /Everything in OverWatch Pro/,
     /Invite company users/,
     /Company users and roles/,
     /Client project access/,
@@ -1431,9 +1433,10 @@ await expectContains(
 await expectContains(
   "src/lib/team.functions.ts",
   [
-    /CONTRACTOR_CIRCLE_GRANT_LIMITS/,
-    /seats:\s*10/,
     /ORGANIZATION_COMMERCIAL_COLUMNS/,
+    /entitlement_source/,
+    /meteredProjectIds/,
+    /\.select\("id, seat_limit"\)/,
     /billing_email/,
     /billing_contact_name/,
     /stripe_customer_id/,
@@ -2771,6 +2774,43 @@ expectSql(
     /storage_limit_mb/i,
   ],
   "company workspace and non-blocking Contractor Circle grant foundation exists",
+);
+
+await expectContains(
+  "supabase/migrations/20260714223256_commercial_entitlements.sql",
+  [
+    /\('free', 'OverWatch Free', 0, 1, 2, 1024, 50, 50/,
+    /\('pro', 'OverWatch Pro', 39900, 25, 10, 25600, 1000, 500/,
+    /prod_Ut3G95JuhW8x9i/,
+    /price_1TtHC6JGLltOYaii8jAmLwbx/,
+    /ensure_monthly_ai_credit_grant/,
+    /projects_enforce_organization_limit/,
+    /entitlement_source/,
+    /tg_organizations_signup_credits/,
+  ],
+  "commercial entitlements migration defines Free, Pro, Circle inclusion, monthly AI credits, and project enforcement",
+);
+
+await expectContains(
+  "src/lib/contractor-circle-entitlements.server.ts",
+  [
+    /CONTRACTOR_CIRCLE_SHARED_SECRET/,
+    /x-overwatch-signature/,
+    /status: "unavailable"/,
+    /existing rollout grant remains protected/i,
+    /entitlement_source: hasActiveProSubscription \? "stripe" : "free"/,
+  ],
+  "Contractor Circle membership sync is signed, fail-open, and restores Pro or Free safely",
+);
+
+await expectContains(
+  "src/lib/team.functions.ts",
+  [
+    /refreshContractorCircleEntitlement/,
+    /reconcileContractorCircleEntitlement/,
+    /automatic entitlement refresh failed open/i,
+  ],
+  "company settings automatically and manually reconcile Contractor Circle included access",
 );
 
 // CO-ALLOCATION: approved change orders become billable only once allocated

@@ -2340,10 +2340,26 @@ export const createProject = createServerFn({ method: "POST" })
 
     const { data: organization, error: orgError } = await context.supabase
       .from("organizations")
-      .select("id")
+      .select("id,project_limit")
       .eq("id", organizationId)
       .single();
     if (orgError) throw new Error(orgError.message);
+
+    const projectLimit = Number(organization.project_limit ?? 0);
+    if (projectLimit > 0) {
+      const { count: activeProjectCount, error: activeProjectError } = await context.supabase
+        .from("projects")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", organizationId)
+        .is("archived_at", null)
+        .neq("job_number", HARBOR_DEMO_JOB_NUMBER);
+      if (activeProjectError) throw new Error(activeProjectError.message);
+      if ((activeProjectCount ?? 0) >= projectLimit) {
+        throw new Error(
+          `This OverWatch company is at its ${projectLimit}-active-project limit. Archive a project or upgrade to continue.`,
+        );
+      }
+    }
 
     const baselineCompletion = cleanOptionalDate(data.baseline_completion_date);
     const forecastCompletion = cleanOptionalDate(data.forecast_completion_date);

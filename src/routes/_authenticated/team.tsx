@@ -16,6 +16,7 @@ import {
   MailPlus,
   MapPin,
   Phone,
+  RefreshCw,
   Send,
   Save,
   ShieldCheck,
@@ -45,6 +46,7 @@ import type { StripeConnectDetails } from "@/lib/stripe-connect-status";
 import { CapabilityPicker } from "@/components/team/CapabilityPicker";
 import { GettingPaidSection } from "@/components/billing/GettingPaidSection";
 import { StripeConnectingScreen } from "@/components/billing/StripeConnectingScreen";
+import { getCreditSummary } from "@/lib/credits/credits.functions";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ROLE_PRESETS, accessLabelForMember, type CapabilitySet } from "@/lib/capabilities";
 import {
@@ -58,6 +60,7 @@ import {
   assignProjectMember,
   createTeamInvite,
   getTeamWorkspace,
+  refreshContractorCircleEntitlement,
   removeProjectMember,
   revokeTeamInvite,
   updateMyProfile,
@@ -262,7 +265,7 @@ function formatPercent(value: number) {
   return `${Math.max(0, Math.round(value))}%`;
 }
 
-function usageStatus(used: number, limit: number, grantActive: boolean): UsageStatus {
+function usageStatus(used: number, limit: number): UsageStatus {
   if (limit <= 0) {
     return {
       tone: "default",
@@ -274,11 +277,9 @@ function usageStatus(used: number, limit: number, grantActive: boolean): UsageSt
   const pct = used / limit;
   if (pct >= 1) {
     return {
-      tone: grantActive ? "warning" : "danger",
-      label: grantActive ? "Over advisory limit" : "Limit reached",
-      detail: grantActive
-        ? "Contractor Circle grant keeps this company working while paid plan terms are finalized."
-        : "Upgrade or reduce usage before adding more work here.",
+      tone: "danger",
+      label: "Limit reached",
+      detail: "Upgrade or reduce usage before adding more work here.",
     };
   }
 
@@ -331,6 +332,8 @@ function stripeOpeningContext() {
 function TeamPage() {
   const queryClient = useQueryClient();
   const loadTeam = useServerFn(getTeamWorkspace);
+  const refreshCircleEntitlement = useServerFn(refreshContractorCircleEntitlement);
+  const loadCreditSummary = useServerFn(getCreditSummary);
   const saveProfile = useServerFn(updateMyProfile);
   const saveOrganization = useServerFn(updateOrganization);
   const createInvite = useServerFn(createTeamInvite);
@@ -347,6 +350,103 @@ function TeamPage() {
   const { data: team, isLoading } = useQuery({
     queryKey: ["team-workspace"],
     queryFn: () => loadTeam(),
+  });
+  const { data: creditSummary } = useQuery({
+    queryKey: ["credit-summary"],
+    queryFn: () => loadCreditSummary(),
+  });
+
+  const proCheckoutMutation = useMutation({
+    mutationFn: async () => {
+      const checkoutTab = window.open("", "_blank");
+      try {
+        const response = await fetch("/api/stripe/checkout/subscription", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            planCode: "pro",
+            successPath: "/team?section=plan&checkout=success",
+            cancelPath: "/team?section=plan&checkout=cancelled",
+          }),
+        });
+        const payload = (await response.json()) as {
+          checkoutUrl?: string;
+          error?: string | { message?: string };
+        };
+        if (!response.ok || !payload.checkoutUrl) {
+          const message =
+            typeof payload.error === "string"
+              ? payload.error
+              : payload.error?.message || "OverWatch Pro checkout could not start.";
+          throw new Error(message);
+        }
+        if (checkoutTab) checkoutTab.location.href = payload.checkoutUrl;
+        else window.location.assign(payload.checkoutUrl);
+      } catch (error) {
+        checkoutTab?.close();
+        throw error;
+      }
+    },
+    onError: (error) => {
+      toast.error("Pro checkout did not open", {
+        description: error instanceof Error ? error.message : "Try again in a moment.",
+      });
+    },
+  });
+
+  const billingPortalMutation = useMutation({
+    mutationFn: async () => {
+      const portalTab = window.open("", "_blank");
+      try {
+        const response = await fetch("/api/stripe/subscription/portal", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ returnPath: "/team?section=plan" }),
+        });
+        const payload = (await response.json()) as {
+          portalUrl?: string;
+          error?: string | { message?: string };
+        };
+        if (!response.ok || !payload.portalUrl) {
+          const message =
+            typeof payload.error === "string"
+              ? payload.error
+              : payload.error?.message || "Stripe's billing portal could not open.";
+          throw new Error(message);
+        }
+        if (portalTab) portalTab.location.href = payload.portalUrl;
+        else window.location.assign(payload.portalUrl);
+      } catch (error) {
+        portalTab?.close();
+        throw error;
+      }
+    },
+    onError: (error) => {
+      toast.error("Subscription management did not open", {
+        description: error instanceof Error ? error.message : "Try again in a moment.",
+      });
+    },
+  });
+
+  const circleEntitlementMutation = useMutation({
+    mutationFn: () => refreshCircleEntitlement(),
+    onSuccess: async (result) => {
+      toast.success("Contractor Circle membership checked", {
+        description: result.message,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["team-workspace"] }),
+        queryClient.invalidateQueries({ queryKey: ["credit-summary"] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error("Membership could not be refreshed", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "Existing access was left unchanged. Try again in a moment.",
+      });
+    },
   });
 
   const [profileForm, setProfileForm] = useState({
@@ -1014,7 +1114,7 @@ function TeamPage() {
           id: "plan",
           title: "Plan & usage",
           sub: team.organization.contractor_circle_grant
-            ? "Circle grant · usage"
+            ? "Circle · Pro included"
             : formatPlanCode(team.organization.plan_code),
           icon: <Gauge className="h-4 w-4" />,
         },
@@ -1823,6 +1923,17 @@ function TeamPage() {
                   subscriptionCancelAtPeriodEnd={
                     team.organization.subscription_cancel_at_period_end
                   }
+                  creditBalance={creditSummary?.balanceCredits ?? 0}
+                  monthlyCreditAllowance={creditSummary?.monthlyAllowanceCredits ?? 0}
+                  circleCheckedAt={team.organization.circle_entitlement_checked_at}
+                  circleMemberEmail={team.organization.circle_entitlement_member_email}
+                  circleTier={team.organization.circle_entitlement_tier}
+                  onRefreshCircle={() => circleEntitlementMutation.mutate()}
+                  refreshCirclePending={circleEntitlementMutation.isPending}
+                  onUpgradeToPro={() => proCheckoutMutation.mutate()}
+                  upgradePending={proCheckoutMutation.isPending}
+                  onManageSubscription={() => billingPortalMutation.mutate()}
+                  manageSubscriptionPending={billingPortalMutation.isPending}
                   showPaymentsLink={Boolean(team.canManageSettings || team.canManageBilling)}
                 />
               )}
@@ -2390,6 +2501,17 @@ function PlanReadinessPanel({
   usage,
   subscriptionCurrentPeriodEnd,
   subscriptionCancelAtPeriodEnd,
+  creditBalance,
+  monthlyCreditAllowance,
+  circleCheckedAt,
+  circleMemberEmail,
+  circleTier,
+  onRefreshCircle,
+  refreshCirclePending,
+  onUpgradeToPro,
+  upgradePending,
+  onManageSubscription,
+  manageSubscriptionPending,
   showPaymentsLink,
 }: {
   planCode: string;
@@ -2398,6 +2520,17 @@ function PlanReadinessPanel({
   usage: TeamUsageSnapshot;
   subscriptionCurrentPeriodEnd: string;
   subscriptionCancelAtPeriodEnd: boolean;
+  creditBalance: number;
+  monthlyCreditAllowance: number;
+  circleCheckedAt: string;
+  circleMemberEmail: string;
+  circleTier: string;
+  onRefreshCircle: () => void;
+  refreshCirclePending: boolean;
+  onUpgradeToPro: () => void;
+  upgradePending: boolean;
+  onManageSubscription: () => void;
+  manageSubscriptionPending: boolean;
   showPaymentsLink: boolean;
 }) {
   const planLabel = formatPlanCode(planCode);
@@ -2410,14 +2543,14 @@ function PlanReadinessPanel({
         usage.pendingInvites === 1 ? "" : "s"
       }`,
       percent: meterPercent(usage.seatsUsed, usage.seatLimit),
-      status: usageStatus(usage.seatsUsed, usage.seatLimit, grantActive),
+      status: usageStatus(usage.seatsUsed, usage.seatLimit),
     },
     {
       label: "Active projects",
       value: formatUsageValue(usage.projectsUsed, usage.projectLimit),
       detail: "Open jobs currently attached to this company workspace.",
       percent: meterPercent(usage.projectsUsed, usage.projectLimit),
-      status: usageStatus(usage.projectsUsed, usage.projectLimit, grantActive),
+      status: usageStatus(usage.projectsUsed, usage.projectLimit),
     },
     {
       label: "Daily reports this month",
@@ -2426,7 +2559,7 @@ function PlanReadinessPanel({
         usage.dailyReportsTotal === 1 ? "" : "s"
       }`,
       percent: meterPercent(usage.dailyReports, usage.dailyReportLimit),
-      status: usageStatus(usage.dailyReports, usage.dailyReportLimit, grantActive),
+      status: usageStatus(usage.dailyReports, usage.dailyReportLimit),
     },
     {
       label: "Storage and attachments",
@@ -2435,87 +2568,288 @@ function PlanReadinessPanel({
         usage.attachmentCount === 1 ? "" : "s"
       } from daily reports.`,
       percent: meterPercent(usage.storageBytes, usage.storageLimitBytes),
-      status: usageStatus(usage.storageBytes, usage.storageLimitBytes, grantActive),
+      status: usageStatus(usage.storageBytes, usage.storageLimitBytes),
     },
   ];
 
   const highestPressure = rows.reduce((highest, row) =>
     row.percent > highest.percent ? row : highest,
   );
+  const proActive = !grantActive && planCode === "pro" && billingStatus === "active";
+  const freeActive = !grantActive && !proActive;
 
   return (
-    <section className="rounded-lg border border-hairline bg-card shadow-card">
-      <div className="grid gap-0 lg:grid-cols-[0.85fr_1.15fr]">
-        <div className="border-b border-hairline p-5 lg:border-b-0 lg:border-r">
-          <SectionHeader
-            icon={<Gauge className="h-4 w-4" />}
-            eyebrow="Plan and payment readiness"
-            title="Commercial setup"
-            description="Where this company stands on plan limits and billing status."
-          />
-          <div className="mt-5 grid gap-3 text-sm">
-            <PlanFact label="Plan" value={planLabel} />
-            <PlanFact label="Billing status" value={billingLabel} />
-            <PlanFact
-              label="Current access"
-              value={grantActive ? "Contractor Circle grant" : "Plan enforcement"}
-            />
-            <PlanFact
-              label="Renewal posture"
-              value={
-                subscriptionCancelAtPeriodEnd
-                  ? "Cancels at period end"
-                  : subscriptionCurrentPeriodEnd
-                    ? `Current through ${shortDate(subscriptionCurrentPeriodEnd)}`
-                    : "No paid cycle"
-              }
-            />
-          </div>
-          <div
-            className={`mt-5 rounded-md border px-4 py-3 text-sm ${
-              grantActive
-                ? "border-success/25 bg-success/10 text-success"
-                : "border-warning/30 bg-warning/10 text-warning"
-            }`}
-          >
-            {grantActive
-              ? "Contractor Circle grant keeps this company working. Current trial assumptions are 10 projects, 10 seats, 10GB storage, and 1,000 monthly daily logs until paid plans are finalized."
-              : "Plan limits can enforce seats, jobs, reports, and storage once billing is active."}
-          </div>
-          {showPaymentsLink && (
-            <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
-              <a
-                href="#getting-paid"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-accent transition hover:text-accent/80"
-              >
-                <CreditCard className="h-3.5 w-3.5" />
-                Payments are managed in Getting Paid →
-              </a>
-            </div>
-          )}
-          <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              Highest pressure
-            </div>
-            <div className="mt-1 flex items-baseline justify-between gap-3">
-              <div className="font-medium text-foreground">{highestPressure.label}</div>
-              <div className="text-sm font-semibold tabular-nums text-foreground">
-                {formatPercent(highestPressure.percent)}
-              </div>
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {highestPressure.status.detail}
-            </div>
-          </div>
+    <div className="grid gap-5">
+      <section className="rounded-xl border border-hairline bg-card p-5 shadow-card">
+        <div className="max-w-3xl">
+          <div className="eyebrow">OverWatch plans</div>
+          <h2 className="mt-2 font-serif text-3xl text-foreground">
+            Start with one real job. Upgrade when OverWatch becomes the operating system.
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            The Harbor Residence sample never uses a project slot. AI estimating credits renew
+            monthly, and Free companies can buy additional credit packs without changing plans.
+          </p>
         </div>
 
-        <div className="divide-y divide-hairline">
-          {rows.map((row) => (
-            <UsageReadinessRow key={row.label} {...row} />
-          ))}
+        <div className="mt-6 grid gap-3 lg:grid-cols-3">
+          <PlanOffer
+            eyebrow="Free"
+            price="$0"
+            cadence="forever"
+            current={freeActive}
+            features={[
+              "1 active project",
+              "2 internal seats",
+              "1 GB daily-report storage",
+              "50 AI credits each month",
+            ]}
+            footer="For trying the complete workflow on a real project."
+          />
+          <PlanOffer
+            eyebrow="Pro"
+            price="$399"
+            cadence="per month"
+            current={proActive}
+            emphasized
+            features={[
+              "25 active projects",
+              "10 internal seats",
+              "25 GB daily-report storage",
+              "500 AI credits each month",
+            ]}
+            footer="For contractors running the company through OverWatch."
+            action={
+              freeActive && showPaymentsLink ? (
+                <Button
+                  variant="signal"
+                  className="w-full"
+                  disabled={upgradePending}
+                  onClick={onUpgradeToPro}
+                >
+                  {upgradePending ? "Opening secure checkout…" : "Upgrade to Pro — $399/month"}
+                </Button>
+              ) : proActive && showPaymentsLink ? (
+                <Button
+                  variant="outline"
+                  className="w-full border-dark-panel-foreground/30 bg-transparent text-dark-panel-foreground hover:bg-dark-panel-foreground/10 hover:text-dark-panel-foreground"
+                  disabled={manageSubscriptionPending}
+                  onClick={onManageSubscription}
+                >
+                  {manageSubscriptionPending ? "Opening Stripe…" : "Manage subscription"}
+                </Button>
+              ) : undefined
+            }
+          />
+          <PlanOffer
+            eyebrow="Contractor Circle"
+            price="$497"
+            cadence="per month"
+            current={grantActive}
+            features={[
+              "Everything in OverWatch Pro",
+              "Biweekly calls and direct guidance",
+              "Replays, templates, and tool library",
+              "Contractor community and Discord",
+            ]}
+            footer="A membership and operating community—not a second software tier."
+          />
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-hairline bg-muted/60 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <span className="font-medium text-foreground">
+              {formatNumber(creditBalance)} AI credits available
+            </span>
+            <span className="text-muted-foreground">
+              {` · ${formatNumber(monthlyCreditAllowance)} included each month on this plan`}
+            </span>
+          </div>
+          <Link
+            to="/estimates"
+            className="shrink-0 font-medium text-accent transition hover:text-accent/80"
+          >
+            Use AI estimating or buy a credit pack →
+          </Link>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-hairline bg-card shadow-card">
+        <div className="grid gap-0 lg:grid-cols-[0.85fr_1.15fr]">
+          <div className="border-b border-hairline p-5 lg:border-b-0 lg:border-r">
+            <SectionHeader
+              icon={<Gauge className="h-4 w-4" />}
+              eyebrow="Plan and payment readiness"
+              title="Commercial setup"
+              description="Where this company stands on plan limits and billing status."
+            />
+            <div className="mt-5 grid gap-3 text-sm">
+              <PlanFact label="Plan" value={planLabel} />
+              <PlanFact label="Billing status" value={billingLabel} />
+              <PlanFact
+                label="Current access"
+                value={grantActive ? "Contractor Circle grant" : "Plan enforcement"}
+              />
+              <PlanFact
+                label="Circle membership"
+                value={
+                  circleTier && circleMemberEmail
+                    ? `${titleizeCode(circleTier)} · ${circleMemberEmail}`
+                    : circleCheckedAt
+                      ? `Checked ${shortDate(circleCheckedAt)}`
+                      : "Ready to verify"
+                }
+              />
+              <PlanFact
+                label="Renewal posture"
+                value={
+                  subscriptionCancelAtPeriodEnd
+                    ? "Cancels at period end"
+                    : subscriptionCurrentPeriodEnd
+                      ? `Current through ${shortDate(subscriptionCurrentPeriodEnd)}`
+                      : "No paid cycle"
+                }
+              />
+            </div>
+            <div
+              className={`mt-5 rounded-md border px-4 py-3 text-sm ${
+                grantActive
+                  ? "border-success/25 bg-success/10 text-success"
+                  : "border-warning/30 bg-warning/10 text-warning"
+              }`}
+            >
+              {grantActive
+                ? "Contractor Circle includes the complete OverWatch Pro allowance while the membership remains active. Circle's additional value is the guidance, calls, community, templates, and methodology around the software."
+                : proActive
+                  ? "OverWatch Pro is active. Usage limits are enforced from the plan configuration and renew with the subscription."
+                  : "Free includes one real project and the full workflow. OverWatch will warn this company before a limit blocks new work."}
+            </div>
+            {showPaymentsLink && (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-4 w-full"
+                disabled={refreshCirclePending}
+                onClick={onRefreshCircle}
+              >
+                <RefreshCw
+                  className={`mr-2 h-3.5 w-3.5 ${refreshCirclePending ? "animate-spin" : ""}`}
+                />
+                {refreshCirclePending
+                  ? "Checking Contractor Circle…"
+                  : "Refresh Contractor Circle membership"}
+              </Button>
+            )}
+            {showPaymentsLink && (
+              <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
+                <a
+                  href="#getting-paid"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-accent transition hover:text-accent/80"
+                >
+                  <CreditCard className="h-3.5 w-3.5" />
+                  Payments are managed in Getting Paid →
+                </a>
+              </div>
+            )}
+            <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Highest pressure
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-3">
+                <div className="font-medium text-foreground">{highestPressure.label}</div>
+                <div className="text-sm font-semibold tabular-nums text-foreground">
+                  {formatPercent(highestPressure.percent)}
+                </div>
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {highestPressure.status.detail}
+              </div>
+            </div>
+          </div>
+
+          <div className="divide-y divide-hairline">
+            {rows.map((row) => (
+              <UsageReadinessRow key={row.label} {...row} />
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PlanOffer({
+  eyebrow,
+  price,
+  cadence,
+  current,
+  emphasized = false,
+  features,
+  footer,
+  action,
+}: {
+  eyebrow: string;
+  price: string;
+  cadence: string;
+  current: boolean;
+  emphasized?: boolean;
+  features: string[];
+  footer: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div
+      className={`flex min-h-80 flex-col rounded-xl border p-4 ${
+        emphasized
+          ? "border-foreground/20 bg-dark-panel text-dark-panel-foreground"
+          : "border-hairline bg-surface"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className={`eyebrow ${emphasized ? "text-clay" : ""}`}>{eyebrow}</div>
+        {current && (
+          <span className="rounded-full border border-success/30 bg-success/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-success">
+            Current
+          </span>
+        )}
+      </div>
+      <div className="mt-4 flex items-end gap-2">
+        <div
+          className={`font-serif text-4xl ${
+            emphasized ? "text-dark-panel-foreground" : "text-foreground"
+          }`}
+        >
+          {price}
+        </div>
+        <div
+          className={`pb-1 text-xs ${
+            emphasized ? "text-dark-panel-foreground/65" : "text-muted-foreground"
+          }`}
+        >
+          {cadence}
         </div>
       </div>
-    </section>
+      <ul
+        className={`mt-5 grid gap-2 text-sm ${
+          emphasized ? "text-dark-panel-foreground/85" : "text-foreground"
+        }`}
+      >
+        {features.map((feature) => (
+          <li key={feature} className="flex gap-2">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+            <span>{feature}</span>
+          </li>
+        ))}
+      </ul>
+      <div
+        className={`mt-auto pt-5 text-xs leading-relaxed ${
+          emphasized ? "text-dark-panel-foreground/60" : "text-muted-foreground"
+        }`}
+      >
+        {footer}
+      </div>
+      {action && <div className="mt-4">{action}</div>}
+    </div>
   );
 }
 

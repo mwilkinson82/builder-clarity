@@ -25,3 +25,19 @@ export function applicationFeeFromDollars(amountDollars: number, basisPoints: nu
   const safeAmount = Math.max(0, Number.isFinite(amountDollars) ? amountDollars : 0);
   return Math.round((safeAmount * normalizeApplicationFeeBps(basisPoints)) / 100) / 100;
 }
+
+export function normalizeApplicationFeeCapCents(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.round(parsed);
+}
+
+export function cappedApplicationFeeFromDollars(
+  amountDollars: number,
+  basisPoints: number,
+  capCents: number,
+) {
+  const fee = applicationFeeFromDollars(amountDollars, basisPoints);
+  const cap = normalizeApplicationFeeCapCents(capCents);
+  return cap > 0 ? Math.min(fee, cap / 100) : fee;
+}
