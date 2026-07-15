@@ -144,6 +144,39 @@ describe("guided measurement planning", () => {
     expect(plan.suggestions[0].rationale).toContain("only the supported scope");
   });
 
+  it("requires the displayed excerpt itself to support the proposed label and tool", () => {
+    const sourceLines = [
+      {
+        line_number: "L081",
+        text: '1/2" GYPSUM BOARD DRAFT STOPPING (AREA OF ATTIC SPACE NOT TO EXCEED 3,000 SF)',
+      },
+    ];
+    const plan = parseMeasurementAssistantPlan(
+      JSON.stringify({
+        suggestions: [
+          {
+            label: "draft board area",
+            tool: "area",
+            source_line: "L081",
+            source_excerpt: "STOPPING (AREA OF ATTIC SPACE NOT TO EXCEED 3,000 SF)",
+          },
+        ],
+      }),
+      sourceLines,
+    );
+
+    expect(sourceExcerptIsSupported(sourceLines[0].text, "STOPPING (AREA OF ATTIC SPACE")).toBe(
+      true,
+    );
+    expect(plan.suggestions).toEqual([]);
+    expect(plan.summary).toBe(
+      "No reliable linear or area measurement scope was found in the extracted notes.",
+    );
+    expect(plan.warnings).toEqual([
+      "1 AI suggestion was omitted because the cited note did not support the proposed scope or measurement tool.",
+    ]);
+  });
+
   it("prefers the just-saved assessment until refreshed server data catches up", () => {
     const persisted: ScaleAssessmentRow = {
       id: "persisted",

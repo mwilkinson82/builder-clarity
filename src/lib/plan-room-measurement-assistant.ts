@@ -220,10 +220,10 @@ export function sourceExcerptIsSupported(line: string, excerpt: string) {
 
 /**
  * Parse and constrain the model output. A citation alone is not enough: the
- * label must match the cited scope and the requested LF/SF tool must be
- * plausible from explicit note language. Model-authored explanations are
- * replaced with deterministic copy so uncited assembly inference never
- * reaches the estimator.
+ * label must match the visible cited excerpt and the requested LF/SF tool must
+ * be plausible from that same evidence. Model-authored explanations are
+ * replaced with deterministic copy so hidden line content or uncited assembly
+ * inference never reaches the estimator.
  */
 export function parseMeasurementAssistantPlan(
   raw: string,
@@ -246,7 +246,11 @@ export function parseMeasurementAssistantPlan(
     const excerpt = clean(item.source_excerpt, 260);
     if (!line || !sourceExcerptIsSupported(line, excerpt)) continue;
     const label = clean(item.label, 120);
-    if (!label || !labelIsSupportedByLine(label, line) || !toolIsSupportedByLine(tool, line)) {
+    if (
+      !label ||
+      !labelIsSupportedByLine(label, excerpt) ||
+      !toolIsSupportedByLine(tool, excerpt)
+    ) {
       continue;
     }
     const dedupeKey = `${tool}:${normalizedText(label)}:${sourceLine}`;

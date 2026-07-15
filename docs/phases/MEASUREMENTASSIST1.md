@@ -22,8 +22,8 @@ accuracy.
 - Send one sheet at a time through the existing Lovable-managed AI provider path.
 - Meter one AI credit per sheet review; platform-super-admin reviews remain unmetered.
 - Require strict structured output for linear (LF) and area (SF) suggestions.
-- Drop any suggestion whose excerpt, proposed label, or LF/SF tool is not supported by its cited
-  source line.
+- Drop any suggestion whose proposed label or LF/SF tool is not supported by the exact excerpt the
+  estimator can see; hidden words elsewhere in the extracted line cannot justify the proposal.
 - Reject count-like objects as area scope and reject bare room names as measurable scope.
 - Build the visible summary, rationale, and rejection warning deterministically from accepted
   evidence; do not display uncited model prose.
@@ -52,6 +52,11 @@ prevent an access panel from becoming SF scope or a bare RESTROOM label from bec
 ceiling work. Those outputs are regression fixtures now. The release cannot advance until the
 semantic evidence gate rejects both and replaces placeholder/model-authored explanations with
 grounded application copy.
+
+The follow-up A-100 review exposed a second boundary: the full extracted line contained gypsum-board
+language, but the displayed excerpt only showed an attic-area fire-code limit. The visible evidence
+gate now requires that exact excerpt—not hidden text on the same PDF row—to support both the label
+and measurement tool.
 
 ## Stage 2 — Evidence navigation and scope queue
 
