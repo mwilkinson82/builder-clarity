@@ -18,6 +18,7 @@ import { JobCostReport } from "@/components/reports/JobCostReport";
 import { BillingHistoryReport } from "@/components/reports/BillingHistoryReport";
 import { RetainageChangeOrderReport } from "@/components/reports/RetainageChangeOrderReport";
 import { PortfolioProductionReport } from "@/components/reports/PortfolioProductionReport";
+import { PortfolioProductionBenchmarks } from "@/components/reports/PortfolioProductionBenchmarks";
 import { listPortfolioProduction } from "@/lib/portfolio-production.functions";
 
 export const Route = createFileRoute("/_authenticated/reports")({
@@ -26,7 +27,8 @@ export const Route = createFileRoute("/_authenticated/reports")({
   component: ReportsPage,
 });
 
-type ReportKey = "production" | "wip" | "job-cost" | "billing-history" | "retainage-co";
+type ReportKey =
+  "production" | "production-benchmarks" | "wip" | "job-cost" | "billing-history" | "retainage-co";
 
 // The standard accounting reports a builder expects from Procore / Sage /
 // Buildertrend. WIP and job cost are live; the rest are listed so the surface
@@ -37,6 +39,12 @@ const REPORTS: { key: ReportKey; label: string; blurb: string; ready: boolean }[
     key: "production",
     label: "Production intelligence",
     blurb: "Portfolio pace, trends, and project ranking",
+    ready: true,
+  },
+  {
+    key: "production-benchmarks",
+    label: "Production benchmarks",
+    blurb: "Field evidence for estimating and buyout",
     ready: true,
   },
   { key: "wip", label: "WIP schedule", blurb: "Contract vs cost vs billing", ready: true },
@@ -89,7 +97,7 @@ function ReportsPage() {
   const productionQuery = useQuery({
     queryKey: ["portfolio-production"],
     queryFn: () => listProduction(),
-    enabled: activeReport === "production",
+    enabled: activeReport === "production" || activeReport === "production-benchmarks",
   });
   const { data: companyContext } = useQuery({
     queryKey: ["company-workspace-context"],
@@ -108,7 +116,7 @@ function ReportsPage() {
   );
 
   const activeQuery =
-    activeReport === "production"
+    activeReport === "production" || activeReport === "production-benchmarks"
       ? productionQuery
       : activeReport === "job-cost"
         ? jobCostQuery
@@ -226,6 +234,14 @@ function ReportsPage() {
           ) : activeReport === "production" ? (
             productionQuery.data ? (
               <PortfolioProductionReport
+                projects={productionQuery.data.projects}
+                rows={productionQuery.data.rows}
+                loading={productionQuery.isLoading}
+              />
+            ) : null
+          ) : activeReport === "production-benchmarks" ? (
+            productionQuery.data ? (
+              <PortfolioProductionBenchmarks
                 projects={productionQuery.data.projects}
                 rows={productionQuery.data.rows}
                 loading={productionQuery.isLoading}

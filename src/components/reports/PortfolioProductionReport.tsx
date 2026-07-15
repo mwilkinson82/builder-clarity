@@ -67,6 +67,28 @@ function signedPercent(value: number | null): string {
   return `${percent >= 0 ? "+" : ""}${percent.toFixed(1)}%`;
 }
 
+function formatLaborImpact(value: number | null): string {
+  if (value == null) return "—";
+  if (Math.abs(value) < 0.05) return "On plan";
+  return value > 0
+    ? `${formatNumber(value)} hrs lost`
+    : `${formatNumber(Math.abs(value))} hrs saved`;
+}
+
+function laborImpactClass(value: number | null): string {
+  if (value == null) return "text-muted-foreground";
+  if (Math.abs(value) < 0.05) return "text-warning";
+  return value > 0 ? "text-danger" : "text-success";
+}
+
+function projectOptionLabel(project: ProductionProjectMeta): string {
+  return [
+    project.name,
+    project.jobNumber || "No job #",
+    project.projectManager || "Unassigned",
+  ].join(" · ");
+}
+
 function shortDate(value: string | null): string {
   if (!value) return "—";
   const date = new Date(`${value}T00:00:00`);
@@ -90,6 +112,7 @@ function statusLabel(status: ProductionStatus): string {
 
 function portfolioVerdict(
   index: number | null,
+  coveragePercent: number,
   projectsWithEvidence: number,
   behindProjects: number,
 ): string {
@@ -99,10 +122,20 @@ function portfolioVerdict(
   if (index == null) {
     return `${projectsWithEvidence} project${projectsWithEvidence === 1 ? " is" : "s are"} recording production, but target coverage is not ready for a company pace.`;
   }
+  const variance = Math.abs((index - 1) * 100).toFixed(1);
+  const coverage = (coveragePercent * 100).toFixed(0);
+  if (coveragePercent < 0.5) {
+    if (index > 1.05) {
+      return `Measured production is ${variance}% ahead across ${coverage}% of logged labor-hours.`;
+    }
+    if (index < 0.95) {
+      return `Measured production is ${variance}% behind across ${coverage}% of logged labor-hours.`;
+    }
+    return `Measured production is on target across ${coverage}% of logged labor-hours.`;
+  }
   if (behindProjects > 0) {
     return `${behindProjects} project${behindProjects === 1 ? " is" : "s are"} behind production target and need attention.`;
   }
-  const variance = Math.abs((index - 1) * 100).toFixed(1);
   if (index > 1.05) return `Portfolio production is ${variance}% ahead of target.`;
   if (index < 0.95) return `Portfolio production is ${variance}% behind target.`;
   return "Portfolio production is holding its target pace.";
@@ -150,6 +183,14 @@ export function PortfolioProductionReport({
     () => [...new Set(projects.map((project) => project.projectManager).filter(Boolean))].sort(),
     [projects],
   );
+  const projectLabelCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    projects.forEach((project) => {
+      const label = projectOptionLabel(project);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    });
+    return counts;
+  }, [projects]);
   const units = useMemo(
     () =>
       [...new Set(rows.map((row) => canonicalProductionUnit(row.unit)))]
@@ -252,7 +293,12 @@ export function PortfolioProductionReport({
       <header>
         <div className="eyebrow">Portfolio · Production intelligence</div>
         <h2 className="mt-2 max-w-[40ch] font-serif text-[30px] font-normal leading-[1.15] text-foreground">
-          {portfolioVerdict(summary.performanceIndex, projectsWithEvidence, projectsBehind)}
+          {portfolioVerdict(
+            summary.performanceIndex,
+            summary.coveragePercent,
+            projectsWithEvidence,
+            projectsBehind,
+          )}
         </h2>
         <p className="mt-2 max-w-4xl text-sm leading-relaxed text-muted-foreground">
           Company pace is weighted by labor-hours and target coverage. Unlike units never get
@@ -313,11 +359,18 @@ export function PortfolioProductionReport({
                 className="h-9 min-w-0 rounded-md border border-input bg-surface px-3 text-sm"
               >
                 <option value="all">All projects</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
+                {projects.map((project) => {
+                  const label = projectOptionLabel(project);
+                  const uniqueLabel =
+                    (projectLabelCounts.get(label) ?? 0) > 1
+                      ? `${label} · ${project.id.slice(0, 6)}`
+                      : label;
+                  return (
+                    <option key={project.id} value={project.id}>
+                      {uniqueLabel}
+                    </option>
+                  );
+                })}
               </select>
             </label>
             <label className="grid gap-1">
@@ -476,19 +529,11 @@ export function PortfolioProductionReport({
                     </div>
                   </div>
                   <div>
-                    <div className="text-dark-panel-foreground/45">Hours gained / lost</div>
+                    <div className="text-dark-panel-foreground/45">Labor impact</div>
                     <div
-                      className={`mt-0.5 font-serif text-xl tabular-nums ${
-                        summary.hoursVariance == null
-                          ? ""
-                          : summary.hoursVariance > 0
-                            ? "text-danger"
-                            : "text-success"
-                      }`}
+                      className={`mt-0.5 font-serif text-xl tabular-nums ${laborImpactClass(summary.hoursVariance)}`}
                     >
-                      {summary.hoursVariance == null
-                        ? "—"
-                        : `${summary.hoursVariance > 0 ? "+" : ""}${formatNumber(summary.hoursVariance)} hrs`}
+                      {formatLaborImpact(summary.hoursVariance)}
                     </div>
                   </div>
                 </div>
@@ -656,7 +701,7 @@ export function PortfolioProductionReport({
                     <th className="px-5 py-2.5 text-left">Project</th>
                     <th className="px-4 py-2.5 text-right">Production index</th>
                     <th className="px-4 py-2.5 text-right">Target coverage</th>
-                    <th className="px-4 py-2.5 text-right">Hours gained / lost</th>
+                    <th className="px-4 py-2.5 text-right">Labor impact</th>
                     <th className="px-4 py-2.5 text-right">Scopes behind</th>
                     <th className="px-4 py-2.5 text-right">Last field date</th>
                     <th className="px-5 py-2.5 text-right">Drill down</th>
@@ -696,17 +741,9 @@ export function PortfolioProductionReport({
                         </div>
                       </td>
                       <td
-                        className={`px-4 py-4 text-right align-top font-serif text-[18px] tabular-nums ${
-                          project.hoursVariance == null
-                            ? "text-muted-foreground"
-                            : project.hoursVariance > 0
-                              ? "text-danger"
-                              : "text-success"
-                        }`}
+                        className={`px-4 py-4 text-right align-top font-serif text-[18px] tabular-nums ${laborImpactClass(project.hoursVariance)}`}
                       >
-                        {project.hoursVariance == null
-                          ? "—"
-                          : `${project.hoursVariance > 0 ? "+" : ""}${formatNumber(project.hoursVariance)} hrs`}
+                        {formatLaborImpact(project.hoursVariance)}
                       </td>
                       <td className="px-4 py-4 text-right align-top">
                         <div

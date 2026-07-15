@@ -235,6 +235,9 @@ export const listPortfolioProduction = createServerFn({ method: "GET" })
             laborHours: laborHours(dailyWipEntry),
             targetRate: benchmarkTarget ?? entry.target_production_rate,
             fieldValue: rowWorkInPlace(dailyWipEntry, commitment, priorPercent),
+            crewCount: entry.crew_count,
+            peoplePerCrew: entry.people_per_crew,
+            blendedLaborRate: entry.labor_rate,
           },
         ];
       }),

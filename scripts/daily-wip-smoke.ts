@@ -35,6 +35,7 @@ import {
   productionScopeKey,
   shiftIsoDate,
   summarizeProduction,
+  summarizeProductionBenchmarks,
   summarizeProductionProjects,
   summarizeProductionScopes,
   type PortfolioProductionAnalyticsRow,
@@ -1042,6 +1043,74 @@ assert.deepEqual(
   const company = summarizeProduction(portfolioRows);
   assert.equal(company.actualRate, null, "unlike units never fabricate a portfolio physical rate");
   assert.equal(company.performanceIndex, 1, "earned hours combine safely across project units");
+}
+
+// ── Company Production Benchmark Library (Phase 3, 2026-07-15) ──────────
+{
+  const benchmarkRows: PortfolioProductionAnalyticsRow[] = [
+    ["p1-d1", "p1", "Project One", "2026-07-01", 100, 10, 1, 4],
+    ["p1-d2", "p1", "Project One", "2026-07-02", 50, 10, 1, 4],
+    ["p2-d1", "p2", "Project Two", "2026-07-03", 80, 10, 2, 3],
+    ["p2-d2", "p2", "Project Two", "2026-07-04", 60, 10, 2, 3],
+    ["p2-d3", "p2", "Project Two", "2026-07-05", 90, 10, 2, 3],
+  ].map(([id, projectId, projectName, date, quantity, hours, crews, people]) => ({
+    id: String(id),
+    date: String(date),
+    projectId: String(projectId),
+    projectName: String(projectName),
+    jobNumber: String(projectId).toUpperCase(),
+    projectManager: "Morgan",
+    performerKey: "sub:atlas",
+    performerName: "Atlas Drywall",
+    performerType: "subcontractor" as const,
+    costBucketId: `${projectId}-drywall`,
+    costCode: "09-2900",
+    scopeName: "Drywall installation",
+    activity: "Hang board",
+    quantity: Number(quantity),
+    unit: "square feet",
+    laborHours: Number(hours),
+    targetRate: 8,
+    fieldValue: Number(quantity) * 10,
+    crewCount: Number(crews),
+    peoplePerCrew: Number(people),
+    blendedLaborRate: 110,
+  }));
+  benchmarkRows.push({
+    ...benchmarkRows[0],
+    id: "self-drywall",
+    performerKey: "self-perform",
+    performerName: "Self-perform",
+    performerType: "self-perform",
+  });
+
+  const benchmarks = summarizeProductionBenchmarks(benchmarkRows);
+  assert.equal(benchmarks.length, 2, "self-perform and subcontract evidence never mix");
+  const subcontractBenchmark = benchmarks.find(
+    (benchmark) => benchmark.performerType === "subcontractor",
+  );
+  assert.ok(subcontractBenchmark, "subcontract benchmark is retained");
+  assert.equal(subcontractBenchmark.projectCount, 2, "benchmark counts contributing projects");
+  assert.equal(subcontractBenchmark.fieldDays, 5, "benchmark counts project field days");
+  assert.equal(subcontractBenchmark.laborHours, 50, "benchmark retains actual evidence hours");
+  assert.equal(subcontractBenchmark.actualRate, 7.6, "observed rate is quantity divided by hours");
+  assert.equal(
+    subcontractBenchmark.planningRate,
+    6,
+    "planning rate uses the slower labor-weighted observed quartile",
+  );
+  assert.equal(subcontractBenchmark.targetRate, 8, "management target remains visible");
+  assert.equal(subcontractBenchmark.fieldValuePerUnit, 10, "buyout value per unit is explicit");
+  assert.equal(
+    subcontractBenchmark.modeledLaborCostPerUnit,
+    110 / 6,
+    "GC blended rate converts the planning rate into modeled labor cost per unit",
+  );
+  assert.equal(
+    subcontractBenchmark.confidence,
+    "building",
+    "two projects, five field days, and forty-plus hours build benchmark confidence",
+  );
 }
 
 console.log("daily WIP smoke: all assertions passed");

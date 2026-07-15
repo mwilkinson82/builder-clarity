@@ -17,6 +17,9 @@ export interface ProductionAnalyticsRow {
   laborHours: number;
   targetRate: number | null;
   fieldValue: number;
+  crewCount?: number;
+  peoplePerCrew?: number;
+  blendedLaborRate?: number;
 }
 
 export interface PortfolioProductionAnalyticsRow extends ProductionAnalyticsRow {
@@ -70,6 +73,38 @@ export interface ProductionProjectSummary extends ProductionAggregate, Productio
   performerCount: number;
   scopesBehind: number;
   lastFieldDate: string | null;
+}
+
+export type ProductionBenchmarkConfidence = "low" | "building" | "strong";
+
+export interface ProductionBenchmarkSummary {
+  key: string;
+  costCode: string;
+  scopeName: string;
+  unit: string;
+  performerType: ProductionPerformerType;
+  quantity: number;
+  laborHours: number;
+  actualRate: number;
+  planningRate: number;
+  targetRate: number | null;
+  targetCoveragePercent: number;
+  targetVariancePercent: number | null;
+  fieldValuePerUnit: number | null;
+  blendedLaborRate: number | null;
+  modeledLaborCostPerUnit: number | null;
+  typicalPeoplePerCrew: number | null;
+  typicalCrewCount: number | null;
+  projectCount: number;
+  projectIds: string[];
+  projectNames: string[];
+  performerCount: number;
+  performerNames: string[];
+  fieldDays: number;
+  rowCount: number;
+  confidence: ProductionBenchmarkConfidence;
+  lastFieldDate: string;
+  lastProjectId: string;
 }
 
 export interface ProductionPeriodPoint extends ProductionAggregate {
@@ -275,6 +310,172 @@ export function summarizeProductionProjects(
       const bIndex = b.performanceIndex ?? Number.POSITIVE_INFINITY;
       if (aIndex !== bIndex) return aIndex - bIndex;
       return a.name.localeCompare(b.name);
+    });
+}
+
+function weightedPercentile(
+  values: readonly { value: number; weight: number }[],
+  percentile: number,
+): number | null {
+  const valid = values
+    .filter((item) => item.value > 0 && item.weight > 0)
+    .sort((a, b) => a.value - b.value);
+  const totalWeight = valid.reduce((sum, item) => sum + item.weight, 0);
+  if (totalWeight <= 0) return null;
+  const threshold = totalWeight * Math.min(1, Math.max(0, percentile));
+  let cumulative = 0;
+  for (const item of valid) {
+    cumulative += item.weight;
+    if (cumulative >= threshold) return item.value;
+  }
+  return valid.at(-1)?.value ?? null;
+}
+
+function weightedAverage(
+  rows: readonly PortfolioProductionAnalyticsRow[],
+  value: (row: PortfolioProductionAnalyticsRow) => number,
+): number | null {
+  let weightedTotal = 0;
+  let totalWeight = 0;
+  for (const row of rows) {
+    const next = positive(value(row));
+    const weight = positive(row.laborHours);
+    if (next <= 0 || weight <= 0) continue;
+    weightedTotal += next * weight;
+    totalWeight += weight;
+  }
+  return totalWeight > 0 ? weightedTotal / totalWeight : null;
+}
+
+function mostObservedScopeName(rows: readonly PortfolioProductionAnalyticsRow[]): string {
+  const weights = new Map<string, number>();
+  for (const row of rows) {
+    const name = row.scopeName.trim() || "Uncoded scope";
+    weights.set(name, (weights.get(name) ?? 0) + positive(row.laborHours));
+  }
+  return (
+    [...weights.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ??
+    "Uncoded scope"
+  );
+}
+
+function benchmarkConfidence(
+  projectCount: number,
+  fieldDays: number,
+  laborHoursValue: number,
+): ProductionBenchmarkConfidence {
+  if (projectCount >= 3 && fieldDays >= 10 && laborHoursValue >= 160) return "strong";
+  if (projectCount >= 2 && fieldDays >= 5 && laborHoursValue >= 40) return "building";
+  return "low";
+}
+
+export function productionBenchmarkKey(
+  row: Pick<PortfolioProductionAnalyticsRow, "costCode" | "unit" | "performerType">,
+): string {
+  return [
+    row.costCode.trim().toUpperCase() || "UNCODED",
+    canonicalProductionUnit(row.unit),
+    row.performerType,
+  ].join("::");
+}
+
+export function summarizeProductionBenchmarks(
+  rows: readonly PortfolioProductionAnalyticsRow[],
+): ProductionBenchmarkSummary[] {
+  const grouped = new Map<string, PortfolioProductionAnalyticsRow[]>();
+  for (const row of rows) {
+    if (
+      positive(row.quantity) <= 0 ||
+      positive(row.laborHours) <= 0 ||
+      canonicalProductionUnit(row.unit) === "UNMEASURED"
+    ) {
+      continue;
+    }
+    const key = productionBenchmarkKey(row);
+    const current = grouped.get(key) ?? [];
+    current.push(row);
+    grouped.set(key, current);
+  }
+
+  const confidenceRank: Record<ProductionBenchmarkConfidence, number> = {
+    strong: 2,
+    building: 1,
+    low: 0,
+  };
+
+  return [...grouped.entries()]
+    .map(([key, group]) => {
+      const first = group[0];
+      const aggregate = aggregateRows(group);
+      const actualRate = aggregate.actualRate ?? 0;
+      const planningRate =
+        weightedPercentile(
+          group.map((row) => ({
+            value: positive(row.quantity) / positive(row.laborHours),
+            weight: positive(row.laborHours),
+          })),
+          0.25,
+        ) ?? actualRate;
+      const projectIds = [...new Set(group.map((row) => row.projectId))];
+      const projectNames = [...new Set(group.map((row) => row.projectName))].sort();
+      const performerNames = [...new Set(group.map((row) => row.performerName))].sort();
+      const fieldDays = new Set(group.map((row) => `${row.projectId}:${row.date}`)).size;
+      const dates = group
+        .map((row) => row.date)
+        .filter(Boolean)
+        .sort();
+      const lastFieldDate = dates.at(-1) ?? "";
+      const lastProjectId =
+        group
+          .filter((row) => row.date === lastFieldDate)
+          .sort((a, b) => a.projectName.localeCompare(b.projectName))[0]?.projectId ??
+        first.projectId;
+      const blendedLaborRate = weightedAverage(group, (row) => row.blendedLaborRate ?? 0);
+      const typicalPeoplePerCrew = weightedAverage(group, (row) => row.peoplePerCrew ?? 0);
+      const typicalCrewCount = weightedAverage(group, (row) => row.crewCount ?? 0);
+      const targetVariancePercent =
+        aggregate.targetRate != null && aggregate.targetRate > 0
+          ? actualRate / aggregate.targetRate - 1
+          : null;
+
+      return {
+        key,
+        costCode: first.costCode.trim() || "Uncoded",
+        scopeName: mostObservedScopeName(group),
+        unit: canonicalProductionUnit(first.unit),
+        performerType: first.performerType,
+        quantity: aggregate.quantity,
+        laborHours: aggregate.laborHours,
+        actualRate,
+        planningRate,
+        targetRate: aggregate.targetRate,
+        targetCoveragePercent: aggregate.coveragePercent,
+        targetVariancePercent,
+        fieldValuePerUnit: aggregate.fieldValuePerUnit,
+        blendedLaborRate,
+        modeledLaborCostPerUnit:
+          blendedLaborRate != null && planningRate > 0 ? blendedLaborRate / planningRate : null,
+        typicalPeoplePerCrew,
+        typicalCrewCount,
+        projectCount: projectIds.length,
+        projectIds,
+        projectNames,
+        performerCount: performerNames.length,
+        performerNames,
+        fieldDays,
+        rowCount: group.length,
+        confidence: benchmarkConfidence(projectIds.length, fieldDays, aggregate.laborHours),
+        lastFieldDate,
+        lastProjectId,
+      } satisfies ProductionBenchmarkSummary;
+    })
+    .sort((a, b) => {
+      const confidenceDifference = confidenceRank[b.confidence] - confidenceRank[a.confidence];
+      if (confidenceDifference !== 0) return confidenceDifference;
+      if (a.laborHours !== b.laborHours) return b.laborHours - a.laborHours;
+      return `${a.costCode}|${a.unit}|${a.performerType}`.localeCompare(
+        `${b.costCode}|${b.unit}|${b.performerType}`,
+      );
     });
 }
 
