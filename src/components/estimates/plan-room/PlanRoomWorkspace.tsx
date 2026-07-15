@@ -95,6 +95,10 @@ import {
 } from "@/lib/plan-room-scale-assurance";
 import { analyzePlanSheetMeasurementNotes } from "@/lib/plan-room-measurement-assistant.functions";
 import {
+  analyzeAcceptedPlanRevisionScope,
+  type PlanRevisionMatchRow,
+} from "@/lib/plan-revision-match.functions";
+import {
   measurementAssistantTakeoffNote,
   type MeasurementEvidenceAnchor,
   type MeasurementAssistantPlanResult,
@@ -268,6 +272,7 @@ export function PlanRoomWorkspace({
   const updatePlanSheetsFn = useServerFn(updatePlanSheets);
   const recordScaleAssessmentFn = useServerFn(recordScaleAssessment);
   const analyzeMeasurementNotesFn = useServerFn(analyzePlanSheetMeasurementNotes);
+  const analyzeRevisionScopeFn = useServerFn(analyzeAcceptedPlanRevisionScope);
   const getMeasurementScopeQueueFn = useServerFn(getMeasurementScopeQueue);
   const saveMeasurementScopeDecisionFn = useServerFn(saveMeasurementScopeDecision);
   const completeMeasurementScopeItemFn = useServerFn(completeMeasurementScopeItem);
@@ -1897,6 +1902,51 @@ export function PlanRoomWorkspace({
     return data.signedUrl;
   };
 
+  const reviewAcceptedRevisionNotes = async (match: PlanRevisionMatchRow) => {
+    const revisionSheet = sheets.find((sheet) => sheet.id === match.revision_sheet_id);
+    const baseSheet = sheets.find((sheet) => sheet.id === match.base_sheet_id);
+    const revisionSet = planSets.find((planSet) => planSet.id === revisionSheet?.plan_set_id);
+    const baseSet = planSets.find((planSet) => planSet.id === baseSheet?.plan_set_id);
+    if (!revisionSheet || !baseSheet || !revisionSet || !baseSet) {
+      throw new Error("Both accepted sheets must still be available in the Plan Room.");
+    }
+    if (
+      revisionSet.file_mime_type !== "application/pdf" ||
+      baseSet.file_mime_type !== "application/pdf" ||
+      !revisionSet.file_path ||
+      !baseSet.file_path
+    ) {
+      throw new Error("Revision note comparison needs two retained vector-PDF sheets.");
+    }
+    const [revisionFileUrl, baseFileUrl] = await Promise.all([
+      planSetSignedUrl(revisionSet),
+      planSetSignedUrl(baseSet),
+    ]);
+    const [revisionEvidence, baseEvidence] = await Promise.all([
+      extractPdfMeasurementEvidence({
+        fileUrl: revisionFileUrl,
+        pageNumber: revisionSheet.page_number,
+      }),
+      extractPdfMeasurementEvidence({
+        fileUrl: baseFileUrl,
+        pageNumber: baseSheet.page_number,
+      }),
+    ]);
+    if (revisionEvidence.sourceLines.length === 0 || baseEvidence.sourceLines.length === 0) {
+      throw new Error(
+        "Selectable note text is required on both accepted sheets. No AI credit was used.",
+      );
+    }
+    return analyzeRevisionScopeFn({
+      data: {
+        estimate_id: estimate.id,
+        revision_match_id: match.id,
+        revision_source_lines: revisionEvidence.sourceLines,
+        base_source_lines: baseEvidence.sourceLines,
+      },
+    });
+  };
+
   const measurementAssistantMutation = useMutation({
     mutationFn: async () => {
       if (!currentSheet || !currentPlanSet) throw new Error("Choose a drawing sheet first.");
@@ -3309,6 +3359,7 @@ export function PlanRoomWorkspace({
                 sheets={sheets}
                 processingIdentity={postProcessingPlanSetId === currentPlanSet?.id}
                 onUseOverlay={setOverlaySheetId}
+                onReviewRevisionNotes={reviewAcceptedRevisionNotes}
               />
 
               <Select

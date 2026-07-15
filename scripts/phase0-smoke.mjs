@@ -2380,9 +2380,9 @@ await expectContains(
   "src/components/estimates/plan-room/PlanRevisionImpactRegister.tsx",
   [
     /Revision impact register/,
-    /AI did not determine the delta/,
+    /AI may surface cited note differences, but it does not determine the delta/,
     /append-only review version/,
-    /does\s+not transfer takeoffs, retain scale, or change the estimate/,
+    /does\s+not transfer takeoffs, retain scale, or\s+change the estimate/,
     /revisionImpactActions/,
     /revisionImpactActionLabel/,
   ],
@@ -2401,6 +2401,34 @@ await expectContains(
     /NOTIFY pgrst, 'reload schema'/i,
   ],
   "revision impact reviews are append-only, accepted-pair-bound, manager-authored, and read-only through the Data API",
+);
+
+await expectContains(
+  "src/lib/plan-revision-scope-assistant.ts",
+  [
+    /sourceExcerptIsSupported/,
+    /CONSTRUCTION_SCOPE_PATTERN/,
+    /AI compared selectable note text only/,
+    /category: "unknown"/,
+    /required_action: "scope_review"/,
+    /ai_revision_scope_review/,
+  ],
+  "revision note AI is citation-gated and can only create an unclassified estimator review task",
+);
+
+await expectContains(
+  "supabase/migrations/20260715212100_revision_scope_assistant_provenance.sql",
+  [
+    /ai_revision_scope_review/,
+    /operation\.sheet_ids @> ARRAY\[v_match\.revision_sheet_id, v_match\.base_sheet_id\]/,
+    /candidate\.value ->> 'id' = v_ai_candidate_id/,
+    /review_action <> 'accepted'/,
+    /can_manage_estimate/,
+    /ai_provenance/,
+    /REVOKE ALL ON FUNCTION public\.save_estimate_plan_revision_impact_review[\s\S]*FROM PUBLIC/i,
+    /NOTIFY pgrst, 'reload schema'/i,
+  ],
+  "AI revision candidates retain completed-operation citations through the estimator-authored impact review",
 );
 
 await expectContains(
