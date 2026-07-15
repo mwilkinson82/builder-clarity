@@ -164,7 +164,7 @@ Initial enterprise slice:
 
 ### Stage 5 release gate
 
-1. Apply `20260715205113_revision_impact_register.sql` only through the Lovable connector.
+1. Apply `20260715210251_933f23c0-f9bd-40da-b4ca-8cc3c4b2580e.sql` only through the Lovable connector.
 2. Verify RLS is enabled, authenticated receives SELECT only, anon receives no table access, and
    the save RPC is revoked from PUBLIC and anon.
 3. Verify the RPC rejects unauthenticated callers, non-managers, rejected/unmatched pairs,

@@ -2390,7 +2390,7 @@ await expectContains(
 );
 
 await expectContains(
-  "supabase/migrations/20260715205113_revision_impact_register.sql",
+  "supabase/migrations/20260715210251_933f23c0-f9bd-40da-b4ca-8cc3c4b2580e.sql",
   [
     /estimate_plan_revision_impact_reviews/,
     /save_estimate_plan_revision_impact_review/,
