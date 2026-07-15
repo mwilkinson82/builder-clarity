@@ -29,6 +29,8 @@ export type Database = {
           operation_type: string
           organization_id: string
           output_tokens: number
+          request_context: Json
+          result: Json
           sheet_ids: string[]
           sheets_completed: number
           status: string
@@ -48,6 +50,8 @@ export type Database = {
           operation_type?: string
           organization_id: string
           output_tokens?: number
+          request_context?: Json
+          result?: Json
           sheet_ids?: string[]
           sheets_completed?: number
           status?: string
@@ -67,6 +71,8 @@ export type Database = {
           operation_type?: string
           organization_id?: string
           output_tokens?: number
+          request_context?: Json
+          result?: Json
           sheet_ids?: string[]
           sheets_completed?: number
           status?: string
