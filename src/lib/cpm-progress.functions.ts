@@ -175,7 +175,7 @@ async function readCpmProgressReviewContext(
 
 export const loadCpmProgressReviewContext = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .validator((input: { projectId: string }) =>
+  .inputValidator((input: { projectId: string }) =>
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) =>
@@ -201,7 +201,7 @@ const saveControlInput = z
 
 export const saveCpmProgressControl = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input) => saveControlInput.parse(input))
+  .inputValidator((input) => saveControlInput.parse(input))
   .handler(async ({ data, context }): Promise<CpmProgressControl> => {
     const payload = {
       project_id: data.projectId,
@@ -226,7 +226,7 @@ export const saveCpmProgressControl = createServerFn({ method: "POST" })
 
 export const applyCpmProgressReview = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input) =>
+  .inputValidator((input) =>
     z
       .object({
         projectId: z.string().uuid(),
