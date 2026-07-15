@@ -25,7 +25,6 @@ import { Route as AuthenticatedBillingRouteImport } from './routes/_authenticate
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as LovableEmailSuppressionRouteImport } from './routes/lovable/email/suppression'
 import { Route as ApiStripeWebhookRouteImport } from './routes/api/stripe/webhook'
-import { Route as ApiPublicWhoamiStripeRouteImport } from './routes/api/public/whoami-stripe'
 import { Route as ApiAuthMagicLinkRouteImport } from './routes/api/auth/magic-link'
 import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated/projects.$projectId'
 import { Route as AuthenticatedEstimatesEstimateIdRouteImport } from './routes/_authenticated/estimates.$estimateId'
@@ -123,11 +122,6 @@ const LovableEmailSuppressionRoute = LovableEmailSuppressionRouteImport.update({
 const ApiStripeWebhookRoute = ApiStripeWebhookRouteImport.update({
   id: '/api/stripe/webhook',
   path: '/api/stripe/webhook',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiPublicWhoamiStripeRoute = ApiPublicWhoamiStripeRouteImport.update({
-  id: '/api/public/whoami-stripe',
-  path: '/api/public/whoami-stripe',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthMagicLinkRoute = ApiAuthMagicLinkRouteImport.update({
@@ -240,7 +234,6 @@ export interface FileRoutesByFullPath {
   '/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRouteWithChildren
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
-  '/api/public/whoami-stripe': typeof ApiPublicWhoamiStripeRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
@@ -274,7 +267,6 @@ export interface FileRoutesByTo {
   '/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRouteWithChildren
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
-  '/api/public/whoami-stripe': typeof ApiPublicWhoamiStripeRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
@@ -310,7 +302,6 @@ export interface FileRoutesById {
   '/_authenticated/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRouteWithChildren
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
-  '/api/public/whoami-stripe': typeof ApiPublicWhoamiStripeRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/_authenticated/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
@@ -346,7 +337,6 @@ export interface FileRouteTypes {
     | '/estimates/$estimateId'
     | '/projects/$projectId'
     | '/api/auth/magic-link'
-    | '/api/public/whoami-stripe'
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
@@ -380,7 +370,6 @@ export interface FileRouteTypes {
     | '/estimates/$estimateId'
     | '/projects/$projectId'
     | '/api/auth/magic-link'
-    | '/api/public/whoami-stripe'
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
@@ -415,7 +404,6 @@ export interface FileRouteTypes {
     | '/_authenticated/estimates/$estimateId'
     | '/_authenticated/projects/$projectId'
     | '/api/auth/magic-link'
-    | '/api/public/whoami-stripe'
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/_authenticated/client/projects/$projectId'
@@ -438,7 +426,6 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRouteWithChildren
   EmailUnsubscribeRoute: typeof EmailUnsubscribeRoute
   ApiAuthMagicLinkRoute: typeof ApiAuthMagicLinkRoute
-  ApiPublicWhoamiStripeRoute: typeof ApiPublicWhoamiStripeRoute
   ApiStripeWebhookRoute: typeof ApiStripeWebhookRoute
   LovableEmailSuppressionRoute: typeof LovableEmailSuppressionRoute
   ApiCompanyAssetsLogoRoute: typeof ApiCompanyAssetsLogoRoute
@@ -565,13 +552,6 @@ declare module '@tanstack/react-router' {
       path: '/api/stripe/webhook'
       fullPath: '/api/stripe/webhook'
       preLoaderRoute: typeof ApiStripeWebhookRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/public/whoami-stripe': {
-      id: '/api/public/whoami-stripe'
-      path: '/api/public/whoami-stripe'
-      fullPath: '/api/public/whoami-stripe'
-      preLoaderRoute: typeof ApiPublicWhoamiStripeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/magic-link': {
@@ -784,7 +764,6 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRouteWithChildren,
   EmailUnsubscribeRoute: EmailUnsubscribeRoute,
   ApiAuthMagicLinkRoute: ApiAuthMagicLinkRoute,
-  ApiPublicWhoamiStripeRoute: ApiPublicWhoamiStripeRoute,
   ApiStripeWebhookRoute: ApiStripeWebhookRoute,
   LovableEmailSuppressionRoute: LovableEmailSuppressionRoute,
   ApiCompanyAssetsLogoRoute: ApiCompanyAssetsLogoRoute,
@@ -801,13 +780,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
