@@ -408,7 +408,7 @@ export function summarizeProductionBenchmarks(
       const first = group[0];
       const aggregate = aggregateRows(group);
       const actualRate = aggregate.actualRate ?? 0;
-      const planningRate =
+      const slowerQuartile =
         weightedPercentile(
           group.map((row) => ({
             value: positive(row.quantity) / positive(row.laborHours),
@@ -416,6 +416,7 @@ export function summarizeProductionBenchmarks(
           })),
           0.25,
         ) ?? actualRate;
+      const planningRate = Math.min(actualRate, slowerQuartile);
       const projectIds = [...new Set(group.map((row) => row.projectId))];
       const projectNames = [...new Set(group.map((row) => row.projectName))].sort();
       const performerNames = [...new Set(group.map((row) => row.performerName))].sort();

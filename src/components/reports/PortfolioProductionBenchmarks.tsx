@@ -69,6 +69,12 @@ function csvCell(value: string | number | null): string {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
+function csvNumber(value: number | null, digits: number): number | null {
+  if (value == null) return null;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
 function downloadBenchmarkCsv(
   benchmarks: ReturnType<typeof summarizeProductionBenchmarks>,
   periodLabel: string,
@@ -86,7 +92,7 @@ function downloadBenchmarkCsv(
     "Observed units per labor-hour",
     "Planning units per labor-hour",
     "Current target",
-    "Target coverage",
+    "Target coverage %",
     "Blended benchmark rate",
     "Modeled labor cost per unit",
     "Observed field or buyout value per unit",
@@ -104,17 +110,17 @@ function downloadBenchmarkCsv(
       confidenceLabel(benchmark.confidence),
       benchmark.projectCount,
       benchmark.fieldDays,
-      benchmark.laborHours,
-      benchmark.quantity,
-      benchmark.actualRate,
-      benchmark.planningRate,
-      benchmark.targetRate,
-      benchmark.targetCoveragePercent,
-      benchmark.blendedLaborRate,
-      benchmark.modeledLaborCostPerUnit,
-      benchmark.fieldValuePerUnit,
-      benchmark.typicalPeoplePerCrew,
-      benchmark.typicalCrewCount,
+      csvNumber(benchmark.laborHours, 2),
+      csvNumber(benchmark.quantity, 2),
+      csvNumber(benchmark.actualRate, 4),
+      csvNumber(benchmark.planningRate, 4),
+      csvNumber(benchmark.targetRate, 4),
+      csvNumber(benchmark.targetCoveragePercent * 100, 1),
+      csvNumber(benchmark.blendedLaborRate, 2),
+      csvNumber(benchmark.modeledLaborCostPerUnit, 2),
+      csvNumber(benchmark.fieldValuePerUnit, 2),
+      csvNumber(benchmark.typicalPeoplePerCrew, 2),
+      csvNumber(benchmark.typicalCrewCount, 2),
       benchmark.lastFieldDate,
       periodLabel,
     ]
@@ -208,6 +214,7 @@ export function PortfolioProductionBenchmarks({
   const buildingCount = benchmarks.filter(
     (benchmark) => benchmark.confidence === "building",
   ).length;
+  const earlyCount = benchmarks.filter((benchmark) => benchmark.confidence === "low").length;
   const targetReadyCount = benchmarks.filter((benchmark) => benchmark.targetRate != null).length;
 
   const verdict =
@@ -215,7 +222,9 @@ export function PortfolioProductionBenchmarks({
       ? "The company does not have reusable production evidence in this view yet."
       : strongCount > 0
         ? `${strongCount} production benchmark${strongCount === 1 ? " is" : "s are"} ready for planning decisions.`
-        : `${benchmarks.length} production benchmark${benchmarks.length === 1 ? " is" : "s are"} building from field evidence.`;
+        : buildingCount > 0
+          ? `${buildingCount} production benchmark${buildingCount === 1 ? " is" : "s are"} building from field evidence.`
+          : `${earlyCount} early production benchmark${earlyCount === 1 ? " is" : "s are"} accumulating field evidence.`;
 
   return (
     <div className="space-y-5">
