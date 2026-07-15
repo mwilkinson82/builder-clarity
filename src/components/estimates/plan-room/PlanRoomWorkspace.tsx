@@ -208,6 +208,7 @@ import { TakeoffTools } from "./TakeoffTools";
 import { SyncConflictDialog, TakeoffWorksheet, type SyncConflictState } from "./TakeoffWorksheet";
 import { LinkOrCreatePicker, TakeoffFinishPopover } from "./TakeoffClassify";
 import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
+import { PlanRevisionReviewPanel } from "./PlanRevisionReviewPanel";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
 import { MeasurementAssistantPanel } from "./MeasurementAssistantPanel";
@@ -364,6 +365,7 @@ export function PlanRoomWorkspace({
     canRecalibrate: boolean;
   } | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [postProcessingPlanSetId, setPostProcessingPlanSetId] = useState("");
   const [isCockpitMode, setIsCockpitMode] = useState(false);
   const [cockpitPanels, setCockpitPanels] = useState<Record<CockpitPanelKey, boolean>>({
     drawings: false,
@@ -943,8 +945,10 @@ export function PlanRoomWorkspace({
 
   const createSetMutation = useMutation({
     mutationFn: (file: File) => uploadDrawingSet(file),
-    onSuccess: () => {
-      toast.success("Drawing set uploaded");
+    onSuccess: (created) => {
+      const firstSheet = created.sheets[0];
+      if (firstSheet) setSelectedSheetId(firstSheet.id);
+      toast.success("Drawing set uploaded. Review title blocks before matching revisions.");
       invalidate();
     },
     onError: (error) =>
@@ -1803,10 +1807,13 @@ export function PlanRoomWorkspace({
           page_count: pageCount,
         },
       });
+      setPostProcessingPlanSetId(created.plan_set.id);
       void postProcessUploadedSet(
         file,
         created.plan_set.id,
         created.sheets.map((sheet) => ({ id: sheet.id, page_number: sheet.page_number })),
+      ).finally(() =>
+        setPostProcessingPlanSetId((current) => (current === created.plan_set.id ? "" : current)),
       );
       return created;
     } finally {
@@ -3294,6 +3301,16 @@ export function PlanRoomWorkspace({
               Compare another sheet over the current drawing before you trust or update quantities.
             </p>
             <div className="mt-3 space-y-3">
+              <PlanRevisionReviewPanel
+                estimateId={estimate.id}
+                currentPlanSet={currentPlanSet}
+                currentSheet={currentSheet}
+                planSets={planSets}
+                sheets={sheets}
+                processingIdentity={postProcessingPlanSetId === currentPlanSet?.id}
+                onUseOverlay={setOverlaySheetId}
+              />
+
               <Select
                 value={overlaySheetId || "none"}
                 onValueChange={(value) => setOverlaySheetId(value === "none" ? "" : value)}
