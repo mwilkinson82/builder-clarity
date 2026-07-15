@@ -3569,6 +3569,40 @@ await expectContains(
   [/ProductionControlView/, /productionRows/, /setWorkspaceMode\("production"\)/],
   "Daily WIP opens the project production-control workspace from the same field records",
 );
+await expectContains(
+  "src/lib/production-forecast.ts",
+  [
+    /remainingQuantity/,
+    /workingDaysRemaining/,
+    /requiredDailyPace/,
+    /buildSovCompletionRecommendations/,
+    /wip_reviewed_at/,
+  ],
+  "production forecast separates remaining scope, required field pace, and PM-reviewed SOV evidence",
+);
+await expectContains(
+  "src/components/outcome/PaceToForecastPanel.tsx",
+  [
+    /Pace to forecast/,
+    /Recent field pace/,
+    /Required by billing/,
+    /Reviewed WIP → SOV recommendation/,
+    /does not create a pay application or edit the billing SOV/,
+  ],
+  "project production control packages pace-to-billing and guarded SOV certification",
+);
+await expectContains(
+  "supabase/migrations/20260715143424_production_sov_certifications.sql",
+  [
+    /create table if not exists public\.production_sov_certifications/,
+    /source_wip_entry_id/,
+    /tg_validate_production_sov_certification_project/,
+    /for select[\s\S]*can_read_project/,
+    /for insert[\s\S]*can_manage_project/,
+    /grant select, insert/,
+  ],
+  "SOV certifications are append-only, project-scoped, and tied to reviewed WIP evidence",
+);
 
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");

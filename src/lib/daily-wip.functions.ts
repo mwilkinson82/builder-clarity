@@ -77,7 +77,7 @@ function isMissingDailyWipTable(error: DynamicSupabaseError | null) {
 // them errors on the unknown column. Strip both and retry so the line still
 // saves (without the new fields). Mirrors billing.functions' isMissingWipOffsetColumn.
 const isMissingDailyWipLineColumn = (message: string) =>
-  /percent_basis|quantity_items|unmatched_vendor_name|people_per_crew|target_production_rate/i.test(
+  /percent_basis|quantity_items|unmatched_vendor_name|people_per_crew|target_production_rate|wip_reviewed_at|wip_reviewed_by/i.test(
     message,
   );
 
@@ -118,6 +118,8 @@ export interface DailyWipEntryRow {
   percent_complete: number;
   field_percent_complete: number;
   percent_overridden_at: string | null;
+  wip_reviewed_at: string | null;
+  wip_reviewed_by: string | null;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -151,6 +153,8 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   percent_complete: num(row.percent_complete),
   field_percent_complete: num(row.field_percent_complete),
   percent_overridden_at: (row.percent_overridden_at as string | null) ?? null,
+  wip_reviewed_at: (row.wip_reviewed_at as string | null) ?? null,
+  wip_reviewed_by: (row.wip_reviewed_by as string | null) ?? null,
   notes: str(row.notes),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
@@ -279,6 +283,7 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
       existingReview,
       new Date().toISOString(),
     );
+    const reviewedAt = percent_source === "costing" ? new Date().toISOString() : null;
     const payload = {
       project_id: projectId,
       ...fields,
@@ -289,6 +294,7 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
       percent_complete: review.percent_complete,
       field_percent_complete: review.field_percent_complete,
       percent_overridden_at: review.percent_overridden_at,
+      ...(reviewedAt ? { wip_reviewed_at: reviewedAt, wip_reviewed_by: context.userId } : {}),
     };
     // Existing row → update; new row → insert. Not an upsert-on-conflict: a day
     // holds many activity rows, so (project, date) is not unique.
@@ -316,6 +322,8 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
         unmatched_vendor_name: _uv,
         people_per_crew: _pc,
         target_production_rate: _tr,
+        wip_reviewed_at: _wrAt,
+        wip_reviewed_by: _wrBy,
         ...withoutLineCols
       } = payload;
       saveRes = await runSave(withoutLineCols);
