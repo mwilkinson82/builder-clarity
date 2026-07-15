@@ -10,6 +10,29 @@ export const HARBOR_DEMO_JOB_NUMBER = "DEMO-HARBOR";
 export const HARBOR_DEMO_NAME = "Harbor Residence";
 export const HARBOR_DEMO_CLIENT = "Private Luxury Residence";
 
+// Harbor is the product walkthrough, not a decorative sample project. Every
+// operational workflow needs enough connected evidence to make its real
+// controls usable. This fixture gives Daily WIP -> CPM a stable, believable
+// decision: the active drywall activity is 40% in CPM while the PM-reviewed
+// field evidence recommends 52%.
+export const HARBOR_DEMO_CPM_WALKTHROUGH = {
+  scheduleActivityCode: "09-020",
+  costCode: "0900",
+  entryDate: "2026-06-11",
+  activity: "Drywall hang and finish — second floor",
+  fieldPercent: 50,
+  reviewedPercent: 52,
+  quantity: 2_600,
+  unit: "SF",
+  targetProductionRate: 25,
+  crewCount: 2,
+  peoplePerCrew: 4,
+  hoursPerPerson: 8,
+  blendedLaborRate: 110,
+  reviewedAt: "2026-06-11T20:30:00.000Z",
+  note: "Harbor onboarding walkthrough: PM reviewed the superintendent's drywall progress and linked it to the active CPM activity.",
+} as const;
+
 const normalizeDemoText = (value: unknown) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
 

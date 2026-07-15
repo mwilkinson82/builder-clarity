@@ -13,6 +13,7 @@ import {
 import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 import {
   HARBOR_DEMO_CLIENT,
+  HARBOR_DEMO_CPM_WALKTHROUGH,
   HARBOR_DEMO_JOB_NUMBER,
   HARBOR_DEMO_NAME,
   harborDemoSeedAction,
@@ -1834,6 +1835,7 @@ export const getProject = createServerFn({ method: "GET" })
       harborDemoSeedAction(pRes.data as { archived_at?: unknown }) !== "skip"
     ) {
       await seedHarborDemoCpmActivities(context.supabase, pid, []);
+      await seedHarborDemoCpmEvidence(context.supabase, pid, context.userId, []);
       await seedHarborDemoInspections(context.supabase, pid, []);
       await seedHarborDemoClaims(context.supabase, pid, []);
     }
@@ -6107,6 +6109,135 @@ const seedHarborDemoCpmActivities = async (
   };
 };
 
+const HARBOR_DEMO_CPM_EVIDENCE_COLUMNS = [
+  "schedule_activity_id",
+  "people_per_crew",
+  "target_production_rate",
+  "quantity_items",
+  "percent_basis",
+  "field_percent_complete",
+  "percent_overridden_at",
+  "wip_reviewed_at",
+  "wip_reviewed_by",
+  "unmatched_vendor_name",
+] as const;
+
+const isHarborDemoCpmEvidenceSchemaError = (error: DynamicSupabaseError | null) =>
+  isMissingRestRelation(error, "daily_wip_entries") ||
+  HARBOR_DEMO_CPM_EVIDENCE_COLUMNS.some((column) => isMissingRestColumn(error, column));
+
+// Complete the Harbor walkthrough with real reviewed evidence. The application
+// rules remain untouched: the CPM decision controls become available because
+// the demo has the same linked + PM-reviewed work line a live project needs.
+//
+// The Harbor project id is also the stable id for this one demo-only WIP row.
+// UUID uniqueness is table-local, so this gives every company's Harbor project
+// an idempotent backfill without adding a schema constraint or overwriting a
+// row after somebody edits it during onboarding.
+const seedHarborDemoCpmEvidence = async (
+  supabase: unknown,
+  projectId: string,
+  reviewerUserId: string,
+  seedWarnings: string[],
+) => {
+  const { data: existingRow, error: existingError } = await dynamicTable(
+    supabase,
+    "daily_wip_entries",
+  )
+    .select("id,project_id")
+    .eq("id", projectId)
+    .maybeSingle();
+
+  if (existingError) {
+    if (isHarborDemoCpmEvidenceSchemaError(existingError)) {
+      seedWarnings.push(`CPM evidence demo skipped: ${existingError.message}`);
+      return { insertedCount: 0 };
+    }
+    throw new Error(existingError.message);
+  }
+  if (existingRow) return { insertedCount: 0 };
+
+  const [activityResult, bucketResult] = await Promise.all([
+    dynamicTable(supabase, "schedule_activities")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("activity_id", HARBOR_DEMO_CPM_WALKTHROUGH.scheduleActivityCode)
+      .maybeSingle(),
+    dynamicTable(supabase, "cost_buckets")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("cost_code", HARBOR_DEMO_CPM_WALKTHROUGH.costCode)
+      .maybeSingle(),
+  ]);
+
+  if (activityResult.error) {
+    if (isScheduleActivitiesSchemaError(activityResult.error)) {
+      seedWarnings.push(`CPM evidence activity skipped: ${activityResult.error.message}`);
+      return { insertedCount: 0 };
+    }
+    throw new Error(activityResult.error.message);
+  }
+  if (bucketResult.error) throw new Error(bucketResult.error.message);
+
+  const scheduleActivityId = (activityResult.data as { id?: string } | null)?.id;
+  const costBucketId = (bucketResult.data as { id?: string } | null)?.id;
+  if (!scheduleActivityId || !costBucketId) {
+    seedWarnings.push(
+      "CPM evidence demo skipped: Harbor drywall schedule activity or Finishes cost code is missing.",
+    );
+    return { insertedCount: 0 };
+  }
+
+  const fixture = HARBOR_DEMO_CPM_WALKTHROUGH;
+  const { error: insertError } = await dynamicTable(supabase, "daily_wip_entries").insert({
+    id: projectId,
+    project_id: projectId,
+    cost_bucket_id: costBucketId,
+    schedule_activity_id: scheduleActivityId,
+    subcontractor_id: null,
+    unmatched_vendor_name: "Summit Drywall & Finishes",
+    entry_date: fixture.entryDate,
+    activity: fixture.activity,
+    crew_count: fixture.crewCount,
+    people_per_crew: fixture.peoplePerCrew,
+    hours: fixture.hoursPerPerson,
+    labor_rate: fixture.blendedLaborRate,
+    material_cost: 0,
+    equipment_cost: 0,
+    material_items: [],
+    equipment_items: [],
+    quantity: fixture.quantity,
+    unit: fixture.unit,
+    quantity_items: [
+      {
+        quantity: fixture.quantity,
+        unit: fixture.unit,
+        description: "Second-floor drywall installed",
+      },
+    ],
+    target_production_rate: fixture.targetProductionRate,
+    percent_basis: "cpm",
+    field_percent_complete: fixture.fieldPercent,
+    percent_complete: fixture.reviewedPercent,
+    percent_overridden_at: fixture.reviewedAt,
+    wip_reviewed_at: fixture.reviewedAt,
+    wip_reviewed_by: reviewerUserId,
+    notes: fixture.note,
+    created_by: reviewerUserId,
+  });
+
+  if (insertError) {
+    if (insertError.code === "23505") return { insertedCount: 0 };
+    if (isHarborDemoCpmEvidenceSchemaError(insertError)) {
+      seedWarnings.push(`CPM evidence demo insert skipped: ${insertError.message}`);
+      return { insertedCount: 0 };
+    }
+    throw new Error(insertError.message);
+  }
+
+  return { insertedCount: 1 };
+};
+
 export const getHarborDemoCpmActivityRows = (projectId: string) =>
   HARBOR_DEMO_CPM_ACTIVITIES.map((activity, index) => ({
     id: `harbor-demo-${activity.activity_id}`,
@@ -6221,6 +6352,12 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         seedWarnings,
       );
       await seedHarborDemoCpmActivities(context.supabase, existingDemo.id as string, seedWarnings);
+      await seedHarborDemoCpmEvidence(
+        context.supabase,
+        existingDemo.id as string,
+        context.userId,
+        seedWarnings,
+      );
       await seedHarborDemoInspections(context.supabase, existingDemo.id as string, seedWarnings);
       await seedHarborDemoClaims(context.supabase, existingDemo.id as string, seedWarnings);
       return {
@@ -6258,6 +6395,12 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       await seedHarborDemoCpmActivities(
         context.supabase,
         existingHarbor.id as string,
+        seedWarnings,
+      );
+      await seedHarborDemoCpmEvidence(
+        context.supabase,
+        existingHarbor.id as string,
+        context.userId,
         seedWarnings,
       );
       await seedHarborDemoInspections(context.supabase, existingHarbor.id as string, seedWarnings);
@@ -6308,6 +6451,12 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       if (retryDemo?.id) {
         if (harborDemoSeedAction(retryDemo) !== "skip") {
           await seedHarborDemoCpmActivities(context.supabase, retryDemo.id as string, seedWarnings);
+          await seedHarborDemoCpmEvidence(
+            context.supabase,
+            retryDemo.id as string,
+            context.userId,
+            seedWarnings,
+          );
           await seedHarborDemoInspections(context.supabase, retryDemo.id as string, seedWarnings);
           await seedHarborDemoClaims(context.supabase, retryDemo.id as string, seedWarnings);
         }
@@ -6513,6 +6662,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
     if (milestoneUpdateError) throw new Error(milestoneUpdateError.message);
 
     await seedHarborDemoCpmActivities(context.supabase, projectId, seedWarnings);
+    await seedHarborDemoCpmEvidence(context.supabase, projectId, context.userId, seedWarnings);
     await seedHarborDemoInspections(context.supabase, projectId, seedWarnings);
     await seedHarborDemoClaims(context.supabase, projectId, seedWarnings);
 
