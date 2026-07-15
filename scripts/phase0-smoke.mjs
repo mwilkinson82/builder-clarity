@@ -2377,6 +2377,33 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/estimates/plan-room/PlanRevisionImpactRegister.tsx",
+  [
+    /Revision impact register/,
+    /AI did not determine the delta/,
+    /append-only review version/,
+    /does\s+not transfer takeoffs, retain scale, or change the estimate/,
+    /revisionImpactActions/,
+    /revisionImpactActionLabel/,
+  ],
+  "revision delta triage keeps impact conclusions and follow-up actions under estimator control",
+);
+
+await expectContains(
+  "supabase/migrations/20260715205113_revision_impact_register.sql",
+  [
+    /estimate_plan_revision_impact_reviews/,
+    /save_estimate_plan_revision_impact_review/,
+    /review_action <> 'accepted'/,
+    /can_manage_estimate/,
+    /GRANT SELECT ON TABLE public\.estimate_plan_revision_impact_reviews TO authenticated/i,
+    /REVOKE ALL ON FUNCTION public\.save_estimate_plan_revision_impact_review[\s\S]*FROM PUBLIC/i,
+    /NOTIFY pgrst, 'reload schema'/i,
+  ],
+  "revision impact reviews are append-only, accepted-pair-bound, manager-authored, and read-only through the Data API",
+);
+
+await expectContains(
   "src/components/estimates/plan-room/PdfSheetViewer.tsx",
   [/measurement-evidence-highlight/, /cited note/, /evidenceFocus/],
   "measurement evidence navigation highlights and centers the cited PDF note",

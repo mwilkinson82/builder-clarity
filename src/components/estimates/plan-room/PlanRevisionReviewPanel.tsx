@@ -33,6 +33,7 @@ import {
 } from "@/lib/plan-revision-match";
 import type { PlanSetRow, PlanSheetRow } from "@/lib/plan-room.functions";
 import { cn } from "@/lib/utils";
+import { PlanRevisionImpactRegister } from "./PlanRevisionImpactRegister";
 
 type PendingReviewAction = PlanRevisionReviewAction | "pending";
 
@@ -241,26 +242,45 @@ export function PlanRevisionReviewPanel({
       </div>
 
       {currentAcceptedMatch && acceptedCounterpart ? (
-        <div className="mt-3 rounded-md border border-success/30 bg-success/10 p-2.5 text-xs">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="flex items-center gap-1.5 font-medium text-foreground">
-                <CheckCircle2 className="h-3.5 w-3.5 text-success" /> Accepted counterpart
-              </p>
-              <p className="mt-1 truncate text-muted-foreground">
-                {sheetLabel(acceptedCounterpart, acceptedCounterpartSet)}
-              </p>
+        <div className="mt-3">
+          <div className="rounded-md border border-success/30 bg-success/10 p-2.5 text-xs">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 font-medium text-foreground">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-success" /> Accepted counterpart
+                </p>
+                <p className="mt-1 truncate text-muted-foreground">
+                  {sheetLabel(acceptedCounterpart, acceptedCounterpartSet)}
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 px-2 text-[11px]"
+                onClick={() => onUseOverlay(acceptedCounterpart.id)}
+              >
+                <Link2 className="mr-1 h-3 w-3" /> Use overlay
+              </Button>
             </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 shrink-0 px-2 text-[11px]"
-              onClick={() => onUseOverlay(acceptedCounterpart.id)}
-            >
-              <Link2 className="mr-1 h-3 w-3" /> Use overlay
-            </Button>
           </div>
+
+          <PlanRevisionImpactRegister
+            estimateId={estimateId}
+            match={currentAcceptedMatch}
+            revisionSheetLabel={sheetLabel(
+              sheetById.get(currentAcceptedMatch.revision_sheet_id),
+              planSetById.get(
+                sheetById.get(currentAcceptedMatch.revision_sheet_id)?.plan_set_id ?? "",
+              ),
+            )}
+            baseSheetLabel={sheetLabel(
+              sheetById.get(currentAcceptedMatch.base_sheet_id ?? ""),
+              planSetById.get(
+                sheetById.get(currentAcceptedMatch.base_sheet_id ?? "")?.plan_set_id ?? "",
+              ),
+            )}
+          />
         </div>
       ) : null}
 
