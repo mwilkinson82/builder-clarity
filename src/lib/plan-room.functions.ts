@@ -823,6 +823,7 @@ export const recordScaleAssessment = createServerFn({ method: "POST" })
       created_at: raw.verified_at ?? new Date().toISOString(),
     });
     return {
+      assessment: normalized,
       assessment_id: normalized.id,
       outcome: normalized.outcome,
       max_variance_pct: normalized.max_variance_pct,
