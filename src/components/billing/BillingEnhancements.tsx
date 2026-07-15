@@ -38,6 +38,10 @@ import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import { prepareAttachmentForUpload } from "@/lib/daily-report-uploads";
 import { fmtPct } from "@/lib/format";
+import {
+  certifiedWipBillingBlockLabel,
+  previewCertifiedWipBillingHandoff,
+} from "@/lib/certified-wip-billing";
 import { supabase } from "@/integrations/supabase/client";
 import {
   dollarsToCents,
@@ -47,9 +51,11 @@ import {
 } from "@/lib/payments-domain";
 import type {
   BillingLineItemRow,
+  BillingSovCertificationRow,
   BillingWorkspaceData,
   CostActualImportRow,
   CostActualRow,
+  ProductionSovBillingHandoffRow,
 } from "@/lib/billing.functions";
 import { getCostLedgerDetails, recordCostActualPayment } from "@/lib/billing.functions";
 import type {
@@ -347,6 +353,11 @@ export function BillingLineItemsPanel({
   savingRetainageRate,
   savingOutputFormat,
   savingInvoice,
+  certifiedSovHandoffReady = false,
+  certifiedSovPositions = [],
+  certifiedSovHandoffs = [],
+  onApplyCertifiedSovPosition,
+  applyingCertifiedSovPosition = false,
 }: {
   project: ProjectRow;
   payApps: BillingApplicationRow[];
@@ -374,6 +385,11 @@ export function BillingLineItemsPanel({
   savingRetainageRate?: boolean;
   savingOutputFormat?: boolean;
   savingInvoice?: boolean;
+  certifiedSovHandoffReady?: boolean;
+  certifiedSovPositions?: BillingSovCertificationRow[];
+  certifiedSovHandoffs?: ProductionSovBillingHandoffRow[];
+  onApplyCertifiedSovPosition?: (certificationId: string, billingApplicationId: string) => void;
+  applyingCertifiedSovPosition?: boolean;
 }) {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
@@ -660,6 +676,18 @@ export function BillingLineItemsPanel({
         </div>
       ) : null}
 
+      {selectedPayApp ? (
+        <CertifiedSovBillingHandoffPanel
+          payApp={selectedPayApp}
+          lines={selectedLines}
+          handoffReady={certifiedSovHandoffReady}
+          certifications={certifiedSovPositions}
+          handoffs={certifiedSovHandoffs}
+          applying={applyingCertifiedSovPosition}
+          onApply={onApplyCertifiedSovPosition}
+        />
+      ) : null}
+
       {/* Always-visible progression: format, SOV import, entries, generate —
           each actionable or disabled-with-reason, never hidden (GP3 Task 0). */}
       {selectedPayApp ? (
@@ -812,6 +840,197 @@ export function BillingLineItemsPanel({
         )}
       </div>
     </section>
+  );
+}
+
+function CertifiedSovBillingHandoffPanel({
+  payApp,
+  lines,
+  handoffReady,
+  certifications,
+  handoffs,
+  applying,
+  onApply,
+}: {
+  payApp: BillingApplicationRow;
+  lines: BillingLineItemRow[];
+  handoffReady: boolean;
+  certifications: BillingSovCertificationRow[];
+  handoffs: ProductionSovBillingHandoffRow[];
+  applying: boolean;
+  onApply?: (certificationId: string, billingApplicationId: string) => void;
+}) {
+  const latest = certifications.filter((certification) => !certification.is_superseded);
+  const handoffByCertification = new Map(
+    handoffs.map((handoff) => [handoff.production_sov_certification_id, handoff]),
+  );
+
+  if (!handoffReady) {
+    return (
+      <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          PM billing handoff
+        </div>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          Certified WIP positions will appear here after the Lovable database migration. Billing can
+          continue manually in the meantime.
+        </p>
+      </div>
+    );
+  }
+
+  if (latest.length === 0) {
+    return (
+      <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              PM billing handoff
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              No PM-certified WIP positions are waiting. Continue entering this application
+              manually, or ask the PM to certify a position from Production Control.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full border border-hairline px-2 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            Optional input
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 rounded-md border border-hairline bg-card p-4 shadow-card">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            PM billing handoff
+          </div>
+          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+            The PM prepared these cumulative SOV positions from reviewed Daily WIP. Accounting
+            chooses what enters this draft; nothing is submitted, approved, or invoiced here.
+          </p>
+        </div>
+        <span className="shrink-0 rounded-full border border-hairline bg-surface px-2.5 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          {latest.length} PM {latest.length === 1 ? "decision" : "decisions"}
+        </span>
+      </div>
+
+      <div className="mt-3 divide-y divide-hairline border-y border-hairline">
+        {latest.map((certification) => {
+          const line =
+            lines.find((candidate) => candidate.cost_bucket_id === certification.cost_bucket_id) ??
+            null;
+          const handoff = handoffByCertification.get(certification.id);
+          const preview = previewCertifiedWipBillingHandoff({
+            certification,
+            line,
+            applicationStatus: payApp.status,
+            stale: certification.is_stale,
+            alreadyApplied: Boolean(handoff),
+          });
+          const appliedToThisDraft = handoff?.billing_application_id === payApp.id;
+          const certifier = certification.certified_by_name || "Project management";
+          const certifiedAt = new Date(certification.certified_at).toLocaleString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          });
+          const canApply = !preview.block && Boolean(onApply);
+          const apply = () => {
+            if (!canApply || !onApply) return;
+            const direction = preview.deltaCents >= 0 ? "increase" : "decrease";
+            const confirmed = window.confirm(
+              `Apply the PM-certified ${certification.certified_percent.toFixed(2)}% position to ${line?.cost_code || line?.description || "this SOV line"}? This will ${direction} current-period work by ${fmtUSD(Math.abs(preview.deltaCents))}. The application will remain a draft.`,
+            );
+            if (confirmed) onApply(certification.id, payApp.id);
+          };
+
+          return (
+            <div
+              key={certification.id}
+              className="grid gap-3 py-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-center"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-foreground">
+                  {line?.cost_code || "Unmapped SOV"} ·{" "}
+                  {line?.description || "SOV line not imported"}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Certified by {certifier} · {certifiedAt}
+                </div>
+                {certification.certification_note ? (
+                  <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                    “{certification.certification_note}”
+                  </div>
+                ) : null}
+              </div>
+
+              <div>
+                <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  PM decision
+                </div>
+                <div className="mt-1 font-serif text-xl text-foreground">
+                  {certification.certified_percent.toFixed(2)}%
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  WIP recommended {certification.recommended_percent.toFixed(2)}%
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  Draft result
+                </div>
+                <div className="mt-1 font-serif text-xl text-foreground">
+                  {fmtUSD(preview.proposedWorkThisPeriodCents)}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  current-period work · {fmtUSD(preview.targetTotalCents)} cumulative
+                </div>
+              </div>
+
+              <div className="flex min-w-[150px] flex-col items-stretch gap-1.5 lg:items-end">
+                {preview.block ? (
+                  <span
+                    className={`rounded-full border px-2 py-1 text-center font-mono text-[9px] font-semibold uppercase tracking-[0.08em] ${
+                      appliedToThisDraft
+                        ? "border-success/30 bg-success/10 text-success"
+                        : certification.is_stale
+                          ? "border-warning/30 bg-warning/10 text-warning"
+                          : "border-hairline bg-surface text-muted-foreground"
+                    }`}
+                  >
+                    {appliedToThisDraft
+                      ? "Applied to this draft"
+                      : certifiedWipBillingBlockLabel(preview.block)}
+                  </span>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={apply}
+                    disabled={applying}
+                    className="w-full lg:w-auto"
+                  >
+                    {applying ? "Applying…" : "Apply to draft"}
+                  </Button>
+                )}
+                {handoff ? (
+                  <span className="text-right text-[10px] text-muted-foreground">
+                    by {handoff.applied_by_name || "Billing"} ·{" "}
+                    {handoff.application_number_snapshot}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

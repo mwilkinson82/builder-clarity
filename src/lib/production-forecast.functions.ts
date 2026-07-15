@@ -63,7 +63,9 @@ export interface ProductionForecastContext {
   certificationEnabled: boolean;
 }
 
-function normalizeCertification(row: Record<string, unknown>): ProductionSovCertificationRow {
+export function normalizeProductionSovCertification(
+  row: Record<string, unknown>,
+): ProductionSovCertificationRow {
   return {
     id: str(row.id),
     project_id: str(row.project_id),
@@ -121,7 +123,7 @@ export const loadProductionForecastContext = createServerFn({ method: "GET" })
     }
 
     const certifications = ((certificationResult.data ?? []) as Record<string, unknown>[]).map(
-      normalizeCertification,
+      normalizeProductionSovCertification,
     );
     const certifierIds = Array.from(
       new Set(certifications.map((certification) => certification.certified_by).filter(Boolean)),
@@ -260,5 +262,5 @@ export const certifyProductionSovPosition = createServerFn({ method: "POST" })
       }
       throw new Error(result.error.message);
     }
-    return normalizeCertification(result.data as Record<string, unknown>);
+    return normalizeProductionSovCertification(result.data as Record<string, unknown>);
   });

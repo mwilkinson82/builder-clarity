@@ -100,6 +100,7 @@ export function BillingWorkspace({
   savingRetainageRate,
   savingCostActual,
   savingBucketBilling,
+  applyingCertifiedSovPosition,
   onCreate,
   onUpdate,
   onDelete,
@@ -116,6 +117,7 @@ export function BillingWorkspace({
   onSetCostActualStatus,
   onUpdateCostActual,
   onUpdateBucketBillingSettings,
+  onApplyCertifiedSovPosition,
   onCreateInvoice,
   onUpdateInvoice,
   onDeleteInvoice,
@@ -144,6 +146,7 @@ export function BillingWorkspace({
   savingRetainageRate?: boolean;
   savingCostActual?: boolean;
   savingBucketBilling?: boolean;
+  applyingCertifiedSovPosition?: boolean;
   onCreate: (input: BillingDraft) => void;
   onUpdate: (id: string, patch: Partial<BillingApplicationRow>) => void;
   onDelete: (id: string) => void;
@@ -194,6 +197,7 @@ export function BillingWorkspace({
       unit?: string;
     },
   ) => void;
+  onApplyCertifiedSovPosition?: (certificationId: string, billingApplicationId: string) => void;
   onCreateInvoice: (input: InvoiceDraft) => Promise<void>;
   onUpdateInvoice: (id: string, patch: Partial<BillingInvoiceRow>) => void;
   onDeleteInvoice: (id: string) => void;
@@ -1225,6 +1229,11 @@ export function BillingWorkspace({
                     savingRetainageRate={savingRetainageRate}
                     savingOutputFormat={savingOutputFormat}
                     savingInvoice={savingInvoice}
+                    certifiedSovHandoffReady={workspace.certifiedSovHandoffReady}
+                    certifiedSovPositions={workspace.certifiedSovPositions}
+                    certifiedSovHandoffs={workspace.certifiedSovHandoffs}
+                    onApplyCertifiedSovPosition={onApplyCertifiedSovPosition}
+                    applyingCertifiedSovPosition={applyingCertifiedSovPosition}
                   />
                 ))}
               </div>

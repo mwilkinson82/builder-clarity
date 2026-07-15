@@ -25,12 +25,31 @@ management loop so older teaching notes do not become the product truth.
 
 ## Slice 2 — project pace to forecast
 
-- [ ] Add a project production-target rollup by cost code and time window.
-- [ ] Compare recent production pace with the remaining quantity and working
+- [x] Add a project production-target rollup by cost code and time window.
+- [x] Compare recent production pace with the remaining quantity and working
       days required to hit the targeted billing date.
-- [ ] Separate “missing target” from “behind target”; do not infer a verdict.
-- [ ] Let the PM certify a recommended SOV completion position generated from
+- [x] Separate “missing target” from “behind target”; do not infer a verdict.
+- [x] Let the PM certify a recommended SOV completion position generated from
       reviewed WIP. Certification remains required before billing changes.
+
+## Slice 2b — PM-to-accounting billing handoff
+
+- [x] Show the latest PM-certified SOV decisions as an optional, compact
+      worksheet inside the selected billing application.
+- [x] Let accounting explicitly apply a decision only to an existing draft;
+      never create, submit, approve, or invoice automatically.
+- [x] Preserve carried-forward billing and current stored materials; block a
+      certified position below that immutable floor.
+- [x] Flag newer reviewed WIP and superseded certifications before accounting
+      can act.
+- [x] Record who certified the position, who applied it, the draft application,
+      the prior draft amount, and the exact applied result.
+
+This is deliberately a two-person bridge. The PM prepares the billing position
+from project evidence; accounting formats, reviews, and advances the AIA or
+invoice. Small companies may use the same person for both actions. A company
+that keeps PMs out of billing can ignore the worksheet and continue entering
+the application manually.
 
 ## Slice 3 — reviewable CPM progress
 
