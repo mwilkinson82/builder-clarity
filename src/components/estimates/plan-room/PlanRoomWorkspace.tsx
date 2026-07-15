@@ -212,6 +212,7 @@ import { ReadinessPanel } from "./ReadinessPanel";
 import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
 import { MeasurementAssistantPanel } from "./MeasurementAssistantPanel";
 import { MeasurementScopeQueuePanel } from "./MeasurementScopeQueuePanel";
+import { TakeoffAssemblyWorkbench } from "./TakeoffAssemblyWorkbench";
 import { extractPdfMeasurementEvidence } from "./pdfMeasurementText";
 import { FlagIssueButton } from "../FlagIssueButton";
 
@@ -4252,6 +4253,11 @@ export function PlanRoomWorkspace({
                     </div>
                   )}
                 </div>
+                <TakeoffAssemblyWorkbench
+                  estimateId={estimate.id}
+                  measurement={selectedMeasurement}
+                  scopeItems={measurementScopeItems}
+                />
                 <div className="space-y-1.5">
                   <Label>Takeoff label</Label>
                   <Input

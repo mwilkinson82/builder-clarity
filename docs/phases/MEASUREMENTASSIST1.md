@@ -100,6 +100,19 @@ and measurement tool.
 - Every derived quantity remains traceable to geometry, formula version, confirmed inputs, and
   source notes.
 
+Initial enterprise slice:
+
+- The selected trusted LF/SF takeoff opens an Assembly Workbench with interior wall, continuous
+  footing, MEP linear-run, and surface-finish templates.
+- Every input has its own estimator confirmation; applying an AI-cited proposal deliberately clears
+  that confirmation until the estimator reviews it.
+- `assembly-engine-v1` previews formulas in the client, while the save RPC independently recomputes
+  authoritative outputs in Postgres and writes normalized output rows plus an append-only snapshot.
+- AI review uses only completed scope-queue citations, returns no value instead of inventing a
+  default, consumes one credit for non-admin users, and retains operation cost/provenance.
+- Draft and confirmed assemblies never write estimate quantities automatically. A takeoff quantity,
+  scale revision, or trust-status change marks the assembly stale and retains its prior audit event.
+
 ## Kill criteria
 
 Stop expansion if the live Harbor review shows uncited suggestions, repeated irrelevant title-block

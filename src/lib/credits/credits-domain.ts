@@ -6,6 +6,7 @@
 export const SIGNUP_GRANT_CREDITS = 50;
 export const AI_COUNT_SCAN_CREDITS_PER_SHEET = 1;
 export const AI_MEASUREMENT_PLAN_CREDITS_PER_SHEET = 1;
+export const AI_ASSEMBLY_ASSIST_CREDITS_PER_REVIEW = 1;
 export const DEFAULT_MAX_SHEETS_PER_SCAN = 30;
 
 export type CreditLedgerReason =
@@ -14,6 +15,7 @@ export type CreditLedgerReason =
   | "purchase"
   | "ai_count_scan"
   | "ai_measurement_plan"
+  | "ai_assembly_assumptions"
   | "refund"
   | "admin_adjustment";
 

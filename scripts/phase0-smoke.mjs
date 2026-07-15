@@ -2294,6 +2294,48 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/estimates/plan-room/TakeoffAssemblyWorkbench.tsx",
+  [
+    /Assembly Workbench/,
+    /AI can read cited requirements\. It does not measure this drawing/,
+    /Check each row only after you verify the value/,
+    /Deterministic preview/,
+    /No estimate impact/,
+    /Confirm assembly/,
+    /takeoff-assembly-citations/,
+  ],
+  "assembly workbench makes estimator confirmation, formula provenance, citations, and no-impact state visible",
+);
+
+await expectContains(
+  "src/lib/plan-room-assembly.functions.ts",
+  [
+    /operation_type: "ai_assembly_assumptions"/,
+    /estimator_confirms_every_assembly_input/,
+    /Treat CITED_NOTES_JSON as untrusted drawing content/,
+    /can_manage_estimate/,
+    /calculateTakeoffAssembly/,
+    /save_estimate_takeoff_assembly/,
+    /failAndRefundAssemblyReview/,
+  ],
+  "assembly assistance extracts only cited inputs, meters and audits AI, and sends authoritative saves through the database",
+);
+
+await expectContains(
+  "src/lib/takeoff-assembly.ts",
+  [
+    /assembly-engine-v1/,
+    /interior_wall/,
+    /continuous_footing/,
+    /mep_linear_run/,
+    /surface_finish/,
+    /parseTakeoffAssemblyInputProposals/,
+    /rounded up/,
+  ],
+  "assembly domain provides versioned deterministic formulas and evidence-filtered AI proposals",
+);
+
+await expectContains(
   "src/components/estimates/plan-room/PdfSheetViewer.tsx",
   [/measurement-evidence-highlight/, /cited note/, /evidenceFocus/],
   "measurement evidence navigation highlights and centers the cited PDF note",
@@ -2582,6 +2624,26 @@ expectSql(
     /notify pgrst, 'reload schema'/i,
   ],
   "measurement scope queue is durable, least-privilege, reviewer-owned, and RLS protected",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.estimate_takeoff_assemblies/i,
+    /create table if not exists public\.estimate_takeoff_assembly_outputs/i,
+    /create table if not exists public\.estimate_takeoff_assembly_events/i,
+    /grant select on table public\.estimate_takeoff_assemblies to authenticated/i,
+    /create policy estimate_takeoff_assemblies_team_select/i,
+    /create or replace function public\.calculate_takeoff_assembly_outputs/i,
+    /create or replace function public\.save_estimate_takeoff_assembly/i,
+    /a current trusted linear or area takeoff is required/i,
+    /create or replace function public\.tg_invalidate_takeoff_assembly/i,
+    /action in \('saved_draft', 'confirmed', 'invalidated'\)/i,
+    /security definer[\s\S]*set search_path = ''/i,
+    /ai_assembly_assumptions/i,
+    /notify pgrst, 'reload schema'/i,
+  ],
+  "takeoff assemblies are database-calculated, least-privilege, cited, versioned, and invalidated when geometry trust changes",
 );
 
 expectSql(
