@@ -75,6 +75,75 @@ describe("guided measurement planning", () => {
     );
   });
 
+  it("rejects the semantically unsupported suggestions observed in live A-100 QA", () => {
+    const sourceLines = [
+      { line_number: "L036", text: "RESTROOM" },
+      { line_number: "L056", text: `ACCESS PANEL IN CEILING, 1'-8"` },
+      { line_number: "L064", text: `CEILING TILE 2' x 4' CEILING GRID` },
+      { line_number: "L095", text: "MASONRY OVERALL" },
+      { line_number: "L131", text: "INTERIOR WALL PARTITION" },
+    ];
+    const plan = parseMeasurementAssistantPlan(
+      JSON.stringify({
+        summary: "plain-language understanding of this sheet's measurable scope",
+        suggestions: [
+          {
+            label: "Access Panel Ceiling Locations",
+            tool: "area",
+            source_line: "L056",
+            source_excerpt: `ACCESS PANEL IN CEILING, 1'-8"`,
+            rationale: "Infer ceiling-grid labor and material.",
+          },
+          {
+            label: "Interior Wall Partition Types",
+            tool: "linear",
+            source_line: "L131",
+            source_excerpt: "INTERIOR WALL PARTITION",
+            rationale: "Infer framing and finishes.",
+          },
+          {
+            label: "Ceiling Grid",
+            tool: "area",
+            source_line: "L064",
+            source_excerpt: `CEILING TILE 2' x 4' CEILING GRID`,
+            rationale: "Infer tile supports.",
+          },
+          {
+            label: "Masonry Overall",
+            tool: "linear",
+            source_line: "L095",
+            source_excerpt: "MASONRY OVERALL",
+            rationale: "Infer perimeter scope.",
+          },
+          {
+            label: "Restroom Ceiling",
+            tool: "area",
+            source_line: "L036",
+            source_excerpt: "RESTROOM",
+            rationale: "Infer drywall or tile finishes.",
+          },
+        ],
+        warnings: ["Uncited model warning"],
+      }),
+      sourceLines,
+    );
+
+    expect(plan.suggestions.map((suggestion) => suggestion.label)).toEqual([
+      "Interior Wall Partition Types",
+      "Ceiling Grid",
+      "Masonry Overall",
+    ]);
+    expect(plan.summary).toBe(
+      "Cited measurement scope found for Interior Wall Partition Types, Ceiling Grid and Masonry Overall.",
+    );
+    expect(plan.summary).not.toContain("plain-language understanding");
+    expect(plan.warnings).toEqual([
+      "2 AI suggestions were omitted because the cited note did not support the proposed scope or measurement tool.",
+    ]);
+    expect(plan.suggestions[0].rationale).not.toContain("framing");
+    expect(plan.suggestions[0].rationale).toContain("only the supported scope");
+  });
+
   it("prefers the just-saved assessment until refreshed server data catches up", () => {
     const persisted: ScaleAssessmentRow = {
       id: "persisted",

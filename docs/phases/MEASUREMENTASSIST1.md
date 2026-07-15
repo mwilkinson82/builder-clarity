@@ -22,8 +22,11 @@ accuracy.
 - Send one sheet at a time through the existing Lovable-managed AI provider path.
 - Meter one AI credit per sheet review; platform-super-admin reviews remain unmetered.
 - Require strict structured output for linear (LF) and area (SF) suggestions.
-- Drop any suggestion whose source excerpt cannot be resolved to its cited source line.
-- Show summary, source evidence, rationale, and direct-vs-review evidence strength.
+- Drop any suggestion whose excerpt, proposed label, or LF/SF tool is not supported by its cited
+  source line.
+- Reject count-like objects as area scope and reject bare room names as measurable scope.
+- Build the visible summary, rationale, and rejection warning deterministically from accepted
+  evidence; do not display uncited model prose.
 - “Start” prepares the existing takeoff tool; it never creates geometry or a quantity.
 - If Scale Assurance is not verified, prepare the scope but keep drawing locked until the estimator
   completes the two checks.
@@ -43,6 +46,12 @@ accuracy.
    quantity.
 7. Confirm the takeoff still passes the existing quantity-trust and estimate-sync gates.
 8. Confirm an empty/no-text sheet produces no model guess and no saved quantity.
+
+The July 15 Harbor A-100 live review exercised the kill criteria: a valid citation was not enough to
+prevent an access panel from becoming SF scope or a bare RESTROOM label from becoming inferred
+ceiling work. Those outputs are regression fixtures now. The release cannot advance until the
+semantic evidence gate rejects both and replaces placeholder/model-authored explanations with
+grounded application copy.
 
 ## Stage 2 — Evidence navigation and scope queue
 

@@ -51,6 +51,84 @@ const normalizedText = (value: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const GENERIC_SCOPE_TOKENS = new Set([
+  "area",
+  "areas",
+  "existing",
+  "exterior",
+  "interior",
+  "location",
+  "locations",
+  "new",
+  "overall",
+  "plan",
+  "run",
+  "runs",
+  "scope",
+  "system",
+  "systems",
+  "type",
+  "types",
+  "work",
+]);
+
+const AREA_SCOPE_PATTERN =
+  /\b(?:ceiling grids?|ceiling tiles?|floors?|roofs?|slabs?|decks?|paving|pavements?|asphalt|concrete pads?|membranes?|coatings?|paints?|finishes?|wall coverings?|tiles?|gwb|gypsum boards?|insulation|waterproofing|stucco|siding|surfaces?)\b/i;
+const LINEAR_SCOPE_PATTERN =
+  /\b(?:walls?|partitions?|curbs?|pipes?|conduits?|ducts?|fences?|railings?|bases?|trim|moldings?|joints?|footings?|foundations?|masonry|perimeters?|edges?|gutters?|downspouts?|beams?|headers?|sills?|tracks?)\b/i;
+const COUNT_LIKE_SCOPE_PATTERN =
+  /\b(?:access panels?|doors?|windows?|fixtures?|equipment|diffusers?|receptacles?|fans?|bollards?|sinks?|toilets?|urinals?|lavatories|appliances?|devices?|units?|cabinets?|markers?)\b/i;
+
+const scopeToken = (token: string) => {
+  if (token.length > 4 && token.endsWith("ies")) return `${token.slice(0, -3)}y`;
+  if (token.length > 4 && /(?:ches|shes|sses|xes|zes)$/.test(token)) return token.slice(0, -2);
+  if (token.length > 3 && token.endsWith("s") && !token.endsWith("ss")) return token.slice(0, -1);
+  return token;
+};
+
+function meaningfulScopeTokens(value: string) {
+  return [
+    ...new Set(
+      normalizedText(value)
+        .split(" ")
+        .filter((token) => token.length > 2 && !GENERIC_SCOPE_TOKENS.has(token))
+        .map(scopeToken),
+    ),
+  ];
+}
+
+function labelIsSupportedByLine(label: string, line: string) {
+  const labelTokens = meaningfulScopeTokens(label);
+  if (labelTokens.length === 0) return false;
+  const lineTokens = new Set(meaningfulScopeTokens(line));
+  const supported = labelTokens.filter((token) => lineTokens.has(token)).length;
+  return supported === labelTokens.length;
+}
+
+function toolIsSupportedByLine(tool: MeasurementAssistantTool, line: string) {
+  if (tool === "linear") return LINEAR_SCOPE_PATTERN.test(line);
+  return AREA_SCOPE_PATTERN.test(line) && !COUNT_LIKE_SCOPE_PATTERN.test(line);
+}
+
+function groundedSuggestionRationale(tool: MeasurementAssistantTool) {
+  return tool === "linear"
+    ? "Review the cited note, then trace only the supported scope as a linear takeoff."
+    : "Review the cited note, then trace only the supported surface as an area takeoff.";
+}
+
+function groundedPlanSummary(suggestions: MeasurementAssistantSuggestion[]) {
+  if (suggestions.length === 0) {
+    return "No reliable linear or area measurement scope was found in the extracted notes.";
+  }
+  const visibleLabels = suggestions.slice(0, 3).map((suggestion) => suggestion.label);
+  const labels =
+    visibleLabels.length === 1
+      ? visibleLabels[0]
+      : `${visibleLabels.slice(0, -1).join(", ")} and ${visibleLabels.at(-1)}`;
+  const remaining = suggestions.length - visibleLabels.length;
+  return `Cited measurement scope found for ${labels}${remaining > 0 ? ` and ${remaining} more` : ""}.`;
+}
+
 export function measurementSourceLineNumber(index: number) {
   return `L${String(index + 1).padStart(3, "0")}`;
 }
@@ -141,8 +219,11 @@ export function sourceExcerptIsSupported(line: string, excerpt: string) {
 }
 
 /**
- * Parse and constrain the model output. Suggestions without a real source
- * line and a supported excerpt are dropped before they can reach the UI.
+ * Parse and constrain the model output. A citation alone is not enough: the
+ * label must match the cited scope and the requested LF/SF tool must be
+ * plausible from explicit note language. Model-authored explanations are
+ * replaced with deterministic copy so uncited assembly inference never
+ * reaches the estimator.
  */
 export function parseMeasurementAssistantPlan(
   raw: string,
@@ -165,8 +246,9 @@ export function parseMeasurementAssistantPlan(
     const excerpt = clean(item.source_excerpt, 260);
     if (!line || !sourceExcerptIsSupported(line, excerpt)) continue;
     const label = clean(item.label, 120);
-    const rationale = clean(item.rationale, 240);
-    if (!label || !rationale) continue;
+    if (!label || !labelIsSupportedByLine(label, line) || !toolIsSupportedByLine(tool, line)) {
+      continue;
+    }
     const dedupeKey = `${tool}:${normalizedText(label)}:${sourceLine}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
@@ -177,23 +259,21 @@ export function parseMeasurementAssistantPlan(
       unit: tool === "linear" ? "LF" : "SF",
       source_line: sourceLine,
       source_excerpt: excerpt,
-      rationale,
-      evidence_strength: item.evidence_strength === "direct" ? "direct" : "review",
+      rationale: groundedSuggestionRationale(tool),
+      evidence_strength: "review",
     });
     if (suggestions.length >= 12) break;
   }
 
-  const warnings = (Array.isArray(parsed.warnings) ? parsed.warnings : [])
-    .map((warning) => clean(warning, 240))
-    .filter(Boolean)
-    .slice(0, 6);
+  const rejectedCount = Math.max(0, rawSuggestions.length - suggestions.length);
+  const warnings = rejectedCount
+    ? [
+        `${rejectedCount} AI suggestion${rejectedCount === 1 ? " was" : "s were"} omitted because the cited note did not support the proposed scope or measurement tool.`,
+      ]
+    : [];
 
   return {
-    summary:
-      suggestions.length === 0
-        ? "No reliable linear or area measurement scope was found in the extracted notes."
-        : clean(parsed.summary, 500) ||
-          `${suggestions.length} estimator-guided measurement suggestions found.`,
+    summary: groundedPlanSummary(suggestions),
     suggestions,
     warnings,
   };
