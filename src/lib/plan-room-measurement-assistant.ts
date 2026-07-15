@@ -116,6 +116,22 @@ const LINEAR_SCOPE_PATTERN =
   /\b(?:walls?|partitions?|curbs?|pipes?|conduits?|ducts?|fences?|railings?|bases?|trim|moldings?|joints?|footings?|foundations?|masonry|perimeters?|edges?|gutters?|downspouts?|beams?|headers?|sills?|tracks?)\b/i;
 const COUNT_LIKE_SCOPE_PATTERN =
   /\b(?:access panels?|doors?|windows?|fixtures?|equipment|diffusers?|receptacles?|fans?|bollards?|sinks?|toilets?|urinals?|lavatories|appliances?|devices?|units?|cabinets?|markers?)\b/i;
+const DETAIL_CAPTION_PATTERN =
+  /^(?:typical\s+)?(?:door|window)\s+jamb\s+at\b|^(?:typical\s+)?(?:wall|roof|floor|ceiling|foundation)\s+(?:section|detail|elevation)\b/i;
+const LOCATION_ONLY_SCOPE_PATTERN =
+  /\blocations?\b[\s\S]*\b(?:access panels?|blocking|doors?|fixtures?|grab bars?|openings?|windows?)\b/i;
+const SPAN_LANGUAGE_PATTERN =
+  /\b(?:along|continuous|entire|full[-\s]?height|length|perimeter|run|trace|wall[-\s]?to[-\s]?wall)\b/i;
+const DIMENSION_FRAGMENT_PATTERN = /(?:℄|\bC\/?L\b)[\s\S]*(?:\d+['"-]|\b\d+\s+\d+\b)/i;
+
+function excerptSupportsMeasurableScope(excerpt: string) {
+  if (DETAIL_CAPTION_PATTERN.test(excerpt)) return false;
+  if (DIMENSION_FRAGMENT_PATTERN.test(excerpt)) return false;
+  if (LOCATION_ONLY_SCOPE_PATTERN.test(excerpt) && !SPAN_LANGUAGE_PATTERN.test(excerpt)) {
+    return false;
+  }
+  return true;
+}
 
 const scopeToken = (token: string) => {
   if (token.length > 4 && token.endsWith("ies")) return `${token.slice(0, -3)}y`;
@@ -334,7 +350,8 @@ export function parseMeasurementAssistantPlan(
     if (
       !label ||
       !labelIsSupportedByLine(label, excerpt) ||
-      !toolIsSupportedByLine(tool, excerpt)
+      !toolIsSupportedByLine(tool, excerpt) ||
+      !excerptSupportsMeasurableScope(excerpt)
     ) {
       continue;
     }

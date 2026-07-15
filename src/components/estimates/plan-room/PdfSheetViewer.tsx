@@ -56,6 +56,7 @@ import {
 } from "./planRoomShared";
 import {
   extractSheetIdentities,
+  normalizePdfTextItemForSheetIdentity,
   resolveTakeoffDrawPoint,
   statedScaleFeetPerPixel,
   type SheetIdentityPage,
@@ -318,20 +319,14 @@ export async function processPlanSetSheets({
         };
         const items = textContent.items
           .filter((item) => typeof item.str === "string" && Array.isArray(item.transform))
-          .map((item) => ({
-            text: item.str as string,
-            x: (item.transform as number[])[4] ?? 0,
-            y: (item.transform as number[])[5] ?? 0,
-            height: Math.hypot(
-              (item.transform as number[])[2] ?? 0,
-              (item.transform as number[])[3] ?? 0,
-            ),
-            // Vertical text (90° rotation) advances along y; the extractor
-            // clusters those runs by x instead of y.
-            rotated:
-              Math.abs((item.transform as number[])[1] ?? 0) >
-              Math.abs((item.transform as number[])[0] ?? 0),
-          }));
+          .map((item) =>
+            normalizePdfTextItemForSheetIdentity({
+              text: item.str as string,
+              textTransform: item.transform as number[],
+              viewportTransform: viewport.transform,
+              pageHeight: viewport.height,
+            }),
+          );
         identityPages.push({
           resultIndex: results.length,
           page: { items, pageWidth: viewport.width, pageHeight: viewport.height },

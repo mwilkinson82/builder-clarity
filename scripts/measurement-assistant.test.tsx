@@ -242,6 +242,59 @@ describe("guided measurement planning", () => {
     ]);
   });
 
+  it("rejects the dimension fragments and detail captions observed in live Crystal QA", () => {
+    const sourceLines = [
+      { line_number: "L077", text: `RESTROOM WALL ℄ 9 7 60" 8` },
+      {
+        line_number: "L098",
+        text: "WALL LOCATIONS FOR ALL GRAB BAR F.R.T. BLOCKING",
+      },
+      { line_number: "L103", text: "DOOR JAMB AT GWB PARTITION" },
+      {
+        line_number: "L104",
+        text: "PROVIDE CONTINUOUS GWB PARTITION ALONG RESTROOM WALL",
+      },
+    ];
+    const plan = parseMeasurementAssistantPlan(
+      JSON.stringify({
+        suggestions: [
+          {
+            label: "restroom wall",
+            tool: "linear",
+            source_line: "L077",
+            source_excerpt: `RESTROOM WALL ℄ 9 7 60" 8`,
+          },
+          {
+            label: "wall locations for all grab bar",
+            tool: "linear",
+            source_line: "L098",
+            source_excerpt: "WALL LOCATIONS FOR ALL GRAB BAR F.R.T. BLOCKING",
+          },
+          {
+            label: "door jamb at GWB partition",
+            tool: "linear",
+            source_line: "L103",
+            source_excerpt: "DOOR JAMB AT GWB PARTITION",
+          },
+          {
+            label: "continuous GWB partition",
+            tool: "linear",
+            source_line: "L104",
+            source_excerpt: "PROVIDE CONTINUOUS GWB PARTITION ALONG RESTROOM WALL",
+          },
+        ],
+      }),
+      sourceLines,
+    );
+
+    expect(plan.suggestions.map((suggestion) => suggestion.label)).toEqual([
+      "continuous GWB partition",
+    ]);
+    expect(plan.warnings).toEqual([
+      "3 AI suggestions were omitted because the cited note did not support the proposed scope or measurement tool.",
+    ]);
+  });
+
   it("prefers the just-saved assessment until refreshed server data catches up", () => {
     const persisted: ScaleAssessmentRow = {
       id: "persisted",

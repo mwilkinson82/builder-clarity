@@ -26,6 +26,7 @@ import {
   extractSheetIdentity,
   formatFeetInches,
   matchSheetNumber,
+  normalizePdfTextItemForSheetIdentity,
   normalizeTakeoffUnit,
   parseFeetInches,
   resolveTakeoffDrawPoint,
@@ -1346,6 +1347,29 @@ const rotatedStripIdentity = extractSheetIdentity({
 assert.equal(rotatedStripIdentity.sheetNumber, "S-201");
 assert.equal(rotatedStripIdentity.sheetName, "FOUNDATION PLAN");
 
+// (f) Real Crystal consultant pages carry a PDF Rotate entry. pdfjs text
+// transforms remain in the unrotated portrait user space, so they must be
+// mapped through the rendered viewport before title-region scoring.
+const crystalStructuralViewport = [0, 1, 1, 0, 0, 0];
+const crystalStructuralItems = [
+  { text: "S-100", transform: [0, 20.1, -20.1, 0, 1673.8, 2414.6] },
+  { text: "PLAN", transform: [0, 20.1, -20.1, 0, 1594.2, 2413.6] },
+  { text: "FOUNDATION", transform: [0, 20.1, -20.1, 0, 1570.2, 2376.8] },
+].map((item) =>
+  normalizePdfTextItemForSheetIdentity({
+    text: item.text,
+    textTransform: item.transform,
+    viewportTransform: crystalStructuralViewport,
+    pageHeight: CARWASH_PAGE.pageHeight,
+  }),
+);
+const crystalStructuralIdentity = extractSheetIdentity({
+  items: crystalStructuralItems,
+  ...CARWASH_PAGE,
+});
+assert.equal(crystalStructuralIdentity.sheetNumber, "S-100");
+assert.equal(crystalStructuralIdentity.sheetName, "FOUNDATION PLAN");
+
 // --- Extraction v3: consultant layouts (Phase 4 Task 1) ---
 // Consultant title blocks run a wider full-right-edge strip than the
 // architectural sheets. The number sits in a boxed cell mid-strip (outside
@@ -1444,6 +1468,20 @@ assert.equal(projectFields.has("NBS 365M LLC"), true);
 assert.equal(projectFields.has("MIAMI GARDENS, FL"), true);
 assert.equal(projectFields.has("ROOF DETAILS"), false);
 assert.equal(projectFields.has("FOUNDATION PLAN"), false);
+
+// Repeated construction-title fragments are not project fields. Real Crystal
+// sheets S-200 through S-205 all repeat ROOF FRAMING above PLAN/SECTIONS/DETAILS.
+const repeatedTitleSet = [
+  consultantPage("S-200", "ROOF FRAMING", [{ text: "PLAN", x: 2390, y: 675, height: 13 }]),
+  consultantPage("S-201", "ROOF FRAMING", [{ text: "SECTIONS", x: 2390, y: 675, height: 13 }]),
+  consultantPage("S-205", "ROOF FRAMING", [{ text: "DETAILS", x: 2390, y: 675, height: 13 }]),
+];
+const repeatedTitleIdentities = extractSheetIdentities(repeatedTitleSet);
+assert.deepEqual(
+  repeatedTitleIdentities.map((identity) => identity.sheetName),
+  ["ROOF FRAMING PLAN", "ROOF FRAMING SECTIONS", "ROOF FRAMING DETAILS"],
+);
+assert.equal(buildProjectFieldTexts(repeatedTitleSet).has("ROOF FRAMING"), false);
 
 console.log(
   [
