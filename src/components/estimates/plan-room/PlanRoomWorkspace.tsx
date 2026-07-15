@@ -62,6 +62,7 @@ import {
   deleteTakeoffMeasurement,
   planRoomBucket,
   recalculateSheetTakeoffs,
+  recordScaleAssessment,
   syncTakeoffToEstimateLine,
   updatePlanSheet,
   updateTakeoffMeasurement,
@@ -84,6 +85,13 @@ import {
   takeoffUnitsCompatible,
   type TakeoffGroup,
 } from "@/lib/plan-room-math";
+import {
+  previewScaleAssuranceCheck,
+  SCALE_ASSURANCE_TOLERANCE_PCT,
+  summarizeScaleAssuranceChecks,
+  type ScaleAssessmentRow,
+  type ScaleAssuranceCheckPreview,
+} from "@/lib/plan-room-scale-assurance";
 import {
   commitRedo,
   commitUndo,
@@ -125,7 +133,6 @@ import {
   ARCHITECTURAL_SCALE_PRESETS,
   ENGINEERING_SCALE_PRESETS,
   STATED_SCALE_PRESETS,
-  VERIFY_SCALE_TOLERANCE_PCT,
   TAKEOFF_COLORS,
   TAKEOFF_LAYER_COPY,
   TAKEOFF_LAYER_KEYS,
@@ -182,6 +189,7 @@ import { SyncConflictDialog, TakeoffWorksheet, type SyncConflictState } from "./
 import { LinkOrCreatePicker, TakeoffFinishPopover } from "./TakeoffClassify";
 import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
 import { ReadinessPanel } from "./ReadinessPanel";
+import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
 import { FlagIssueButton } from "../FlagIssueButton";
 
 interface PlanRoomWorkspaceProps {
@@ -190,6 +198,8 @@ interface PlanRoomWorkspaceProps {
   planSets: PlanSetRow[];
   sheets: PlanSheetRow[];
   measurements: TakeoffMeasurementRow[];
+  scaleAssessments: ScaleAssessmentRow[];
+  scaleAssuranceReady?: boolean;
   companyName?: string;
   schemaReady?: boolean;
   schemaMessage?: string;
@@ -207,6 +217,8 @@ export function PlanRoomWorkspace({
   planSets,
   sheets,
   measurements,
+  scaleAssessments,
+  scaleAssuranceReady = false,
   companyName = "Company",
   schemaReady = true,
   schemaMessage = "",
@@ -229,6 +241,7 @@ export function PlanRoomWorkspace({
   const syncLineFn = useServerFn(syncTakeoffToEstimateLine);
   const applyScaleToSheetsFn = useServerFn(applyScaleToSheets);
   const updatePlanSheetsFn = useServerFn(updatePlanSheets);
+  const recordScaleAssessmentFn = useServerFn(recordScaleAssessment);
   const createLineForTakeoffsFn = useServerFn(createLineItemForTakeoffs);
   const recalculateSheetTakeoffsFn = useServerFn(recalculateSheetTakeoffs);
 
@@ -242,6 +255,7 @@ export function PlanRoomWorkspace({
   const [calibrationFeet, setCalibrationFeet] = useState("10");
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const [verifyFeet, setVerifyFeet] = useState("");
+  const [scaleCheckDrafts, setScaleCheckDrafts] = useState<ScaleAssuranceCheckPreview[]>([]);
   const [pdfPageMetrics, setPdfPageMetrics] = useState<{
     widthPoints: number;
     heightPoints: number;
@@ -290,6 +304,9 @@ export function PlanRoomWorkspace({
     expectedFeet: number;
     offPct: number;
     correctedScale: number;
+    maxVariancePct: number;
+    scaleSpreadPct: number;
+    canRecalibrate: boolean;
   } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [isCockpitMode, setIsCockpitMode] = useState(false);
@@ -333,6 +350,14 @@ export function PlanRoomWorkspace({
     () => sheets.find((sheet) => sheet.id === selectedSheetId) ?? sheets[0] ?? null,
     [selectedSheetId, sheets],
   );
+  const latestScaleAssessment = useMemo(
+    () =>
+      currentSheet
+        ? (scaleAssessments.find((assessment) => assessment.plan_sheet_id === currentSheet.id) ??
+          null)
+        : null,
+    [currentSheet, scaleAssessments],
+  );
   const currentPlanSet = currentSheet
     ? (planSets.find((planSet) => planSet.id === currentSheet.plan_set_id) ?? null)
     : null;
@@ -342,6 +367,13 @@ export function PlanRoomWorkspace({
   const overlayPlanSet = overlaySheet
     ? (planSets.find((planSet) => planSet.id === overlaySheet.plan_set_id) ?? null)
     : null;
+
+  useEffect(() => {
+    setScaleCheckDrafts([]);
+    setCalibrationPoints([]);
+    setVerifyFeet("");
+    setVerifyOutcome(null);
+  }, [currentSheet?.id, currentSheet?.scale_revision]);
   const revisionSheetOptions = useMemo(
     () =>
       sheets
@@ -876,25 +908,81 @@ export function PlanRoomWorkspace({
     onError: (error) => toast.error(error instanceof Error ? error.message : "Sheet did not save"),
   });
 
-  const verifySheetMutation = useMutation({
-    mutationFn: ({
-      patch,
-    }: {
-      patch: Parameters<typeof updateSheetFn>[0]["data"]["patch"];
-      message: string;
-    }) => {
+  const scaleAssessmentMutation = useMutation({
+    mutationFn: (checks: ScaleAssuranceCheckPreview[]) => {
       if (!currentSheet) throw new Error("Choose a plan sheet first.");
-      return updateSheetFn({ data: { sheet_id: currentSheet.id, patch } });
+      return recordScaleAssessmentFn({
+        data: {
+          estimate_id: estimate.id,
+          plan_sheet_id: currentSheet.id,
+          scale_revision: currentSheet.scale_revision,
+          checks: checks.map((check) => ({
+            points: check.points,
+            labeled_distance_feet: check.labeled_distance_feet,
+          })),
+          notes: "Two-check Scale Assurance review from the Plan Room.",
+        },
+      });
     },
-    onSuccess: (_result, variables) => {
-      toast.success(variables.message);
+    onSuccess: (result) => {
+      const summary = summarizeScaleAssuranceChecks(result.evidence);
+      if (result.outcome === "verified") {
+        toast.success(
+          `Scale verified with two checks. Maximum variance ${result.max_variance_pct.toFixed(2)}%.`,
+        );
+      } else if (summary) {
+        const worst = result.evidence.reduce((current, check) =>
+          Math.abs(check.variance_pct) > Math.abs(current.variance_pct) ? check : current,
+        );
+        setVerifyOutcome({
+          measuredFeet: worst.measured_distance_feet,
+          expectedFeet: worst.labeled_distance_feet,
+          offPct: worst.variance_pct,
+          correctedScale: summary.correctedScaleFeetPerPixel,
+          maxVariancePct: result.max_variance_pct,
+          scaleSpreadPct: result.scale_spread_pct,
+          canRecalibrate: result.scale_spread_pct <= SCALE_ASSURANCE_TOLERANCE_PCT,
+        });
+        toast.warning("The two scale checks did not pass. This sheet remains unverified.");
+      }
+      setScaleCheckDrafts([]);
       setCalibrationPoints([]);
       setVerifyFeet("");
       setTool("select");
       invalidate();
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Scale check did not save"),
+      toast.error(error instanceof Error ? error.message : "Scale evidence did not save"),
+  });
+
+  const scaleCorrectionMutation = useMutation({
+    mutationFn: (correctedScale: number) => {
+      if (!currentSheet) throw new Error("Choose a plan sheet first.");
+      return updateSheetFn({
+        data: {
+          sheet_id: currentSheet.id,
+          patch: {
+            scale_feet_per_pixel: correctedScale,
+            scale_label: "Two-check assurance recalibration",
+            scale_source: "calibrated",
+            scale_verified_at: null,
+            width_px: Math.round(viewSize.width),
+            height_px: Math.round(viewSize.height),
+          },
+        },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Scale recalibrated. Run two new checks before trusting quantities.");
+      setScaleCheckDrafts([]);
+      setCalibrationPoints([]);
+      setVerifyFeet("");
+      setVerifyOutcome(null);
+      setTool("select");
+      invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Scale correction did not save"),
   });
 
   const applyToSetMutation = useMutation({
@@ -931,7 +1019,7 @@ export function PlanRoomWorkspace({
     onSuccess: ({ count }) => {
       if (count > 0) {
         toast.success(
-          `Stated scale applied to ${count} more sheet${count === 1 ? "" : "s"}. Verify one against a known dimension.`,
+          `Stated scale applied to ${count} more sheet${count === 1 ? "" : "s"}. Complete two Scale Assurance checks before measuring.`,
         );
       }
       setApplyToSetOffer(null);
@@ -1774,10 +1862,8 @@ export function PlanRoomWorkspace({
     });
   };
 
-  // Verify scale: measure a dimension the user can read on the drawing and
-  // compare it against the active scale. A pass marks the sheet verified;
-  // a miss offers the implied correction (half-size prints are the classic
-  // trap: every stated scale reads wrong by exactly 2x).
+  // Scale Assurance: capture two independent labeled dimensions, then let the
+  // server calculate the evidence and decide whether the scale is trustworthy.
   const checkScale = () => {
     if (!currentSheet || calibrationPoints.length !== 2) {
       toast.warning("Click both ends of a labeled dimension first.");
@@ -1792,42 +1878,39 @@ export function PlanRoomWorkspace({
       toast.warning("Enter the labeled dimension, like 12' 6\".");
       return;
     }
-    const px = distancePx(calibrationPoints, viewSize);
-    if (px <= 0) {
+    const preview = previewScaleAssuranceCheck({
+      points: calibrationPoints as [Point, Point],
+      labeledDistanceFeet: expected,
+      scaleFeetPerPixel: currentSheet.scale_feet_per_pixel,
+      viewSize,
+      checkNumber: scaleCheckDrafts.length + 1,
+    });
+    if (!preview) {
       toast.warning("The check line is too short.");
       return;
     }
-    const measured = px * currentSheet.scale_feet_per_pixel;
-    const offPct = ((measured - expected) / expected) * 100;
-    if (Math.abs(offPct) <= VERIFY_SCALE_TOLERANCE_PCT) {
-      verifySheetMutation.mutate({
-        patch: { scale_verified_at: new Date().toISOString() },
-        message: "Scale verified. Takeoffs on this sheet can be trusted.",
-      });
+    const checks = [...scaleCheckDrafts, preview];
+    if (checks.length < 2) {
+      setScaleCheckDrafts(checks);
+      setCalibrationPoints([]);
+      setVerifyFeet("");
+      toast.info("First dimension recorded. Check a different labeled dimension next.");
       return;
     }
-    setVerifyOutcome({
-      measuredFeet: measured,
-      expectedFeet: expected,
-      offPct,
-      correctedScale: expected / px,
-    });
+    scaleAssessmentMutation.mutate(checks);
   };
 
   const applyVerifyCorrection = () => {
-    if (!verifyOutcome) return;
-    verifySheetMutation.mutate({
-      patch: {
-        scale_feet_per_pixel: verifyOutcome.correctedScale,
-        scale_label: `${formatQty(verifyOutcome.expectedFeet, "ft")} verification calibration`,
-        scale_source: "calibrated",
-        scale_verified_at: new Date().toISOString(),
-        width_px: Math.round(viewSize.width),
-        height_px: Math.round(viewSize.height),
-      },
-      message: "Scale corrected to match the labeled dimension and marked verified.",
-    });
+    if (!verifyOutcome || !verifyOutcome.canRecalibrate) return;
+    scaleCorrectionMutation.mutate(verifyOutcome.correctedScale);
+  };
+
+  const resetScaleChecks = () => {
+    setScaleCheckDrafts([]);
+    setCalibrationPoints([]);
+    setVerifyFeet("");
     setVerifyOutcome(null);
+    if (tool === "verify") setTool("select");
   };
 
   // Stated-scale presets (vector PDFs only): the page's physical size is
@@ -3052,7 +3135,7 @@ export function PlanRoomWorkspace({
                         currentSheet.scale_verified_at
                           ? " — verified"
                           : currentSheet.scale_source === "stated"
-                            ? " — from stated scale, verify with a known dimension"
+                            ? " — from stated scale, complete two assurance checks"
                             : " — not verified yet"
                       }`
                     : "Set scale before linear or area takeoff."}
@@ -3417,44 +3500,24 @@ export function PlanRoomWorkspace({
                 </div>
                 <FeetInchesHint value={calibrationFeet} onAccept={setCalibrationFeet} />
                 {Boolean(currentSheet?.scale_feet_per_pixel) && (
-                  <div className="space-y-2" data-testid="verify-scale-controls">
-                    <Separator />
-                    <div className="flex items-center justify-between gap-2">
-                      <Label>Verify the scale</Label>
-                      {currentSheet?.scale_verified_at && (
-                        <Badge variant="secondary">Verified</Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Use the Verify Scale tool: click both ends of a dimension you can read on the
-                      drawing, type its labeled value, then check it.
-                    </p>
-                    <div className="grid grid-cols-[1fr_auto] gap-2">
-                      <Input
-                        value={verifyFeet}
-                        onChange={(event) => setVerifyFeet(event.target.value)}
-                        placeholder={`Labeled dimension, e.g. 12' 6"`}
-                        aria-label="Labeled dimension in feet and inches"
-                        data-testid="verify-scale-input"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="gap-1.5"
-                        onClick={checkScale}
-                        disabled={
-                          !backendReady ||
-                          verifySheetMutation.isPending ||
-                          tool !== "verify" ||
-                          calibrationPoints.length !== 2
-                        }
-                        data-testid="verify-scale-check"
-                      >
-                        Check
-                      </Button>
-                    </div>
-                    <FeetInchesHint value={verifyFeet} onAccept={setVerifyFeet} />
-                  </div>
+                  <ScaleAssurancePanel
+                    sheet={currentSheet}
+                    latestAssessment={latestScaleAssessment}
+                    drafts={scaleCheckDrafts}
+                    tool={tool}
+                    selectedPointCount={calibrationPoints.length}
+                    verifyFeet={verifyFeet}
+                    backendReady={backendReady}
+                    scaleAssuranceReady={scaleAssuranceReady}
+                    pending={scaleAssessmentMutation.isPending || scaleCorrectionMutation.isPending}
+                    onVerifyFeetChange={setVerifyFeet}
+                    onStartCheck={() => {
+                      setCalibrationPoints([]);
+                      setTool("verify");
+                    }}
+                    onRecordCheck={checkScale}
+                    onResetChecks={resetScaleChecks}
+                  />
                 )}
                 <div className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
                   {tool === "calibrate" ? (
@@ -3466,7 +3529,7 @@ export function PlanRoomWorkspace({
                       Scale locked at {currentSheet.scale_feet_per_pixel.toFixed(4)} feet per
                       drawing pixel.
                       {currentSheet.scale_source === "stated" && !currentSheet.scale_verified_at
-                        ? " From stated scale — verify with a known dimension."
+                        ? " From stated scale — complete two assurance checks."
                         : ""}
                     </span>
                   ) : (
@@ -3708,7 +3771,7 @@ export function PlanRoomWorkspace({
                     <div className="mt-3 flex items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-2 text-foreground">
                       <span>
                         {selectedMeasurement.calculation_status === "unverified_scale"
-                          ? "Verify this sheet against a known dimension before sending its length or area to the estimate."
+                          ? "Complete two Scale Assurance checks before sending its length or area to the estimate."
                           : "Recalculate this sheet from its saved geometry before sending quantities to the estimate."}
                       </span>
                       <Button
@@ -4299,31 +4362,35 @@ export function PlanRoomWorkspace({
                 The scale is off
               </DialogTitle>
               <DialogDescription>
-                Measured {formatQty(verifyOutcome.measuredFeet, "ft")} where you expected{" "}
-                {formatQty(verifyOutcome.expectedFeet, "ft")} — off by{" "}
-                {Math.abs(verifyOutcome.offPct).toFixed(1)}%. Recalibrate?
+                The worst check measured {formatQty(verifyOutcome.measuredFeet, "ft")} where you
+                expected {formatQty(verifyOutcome.expectedFeet, "ft")} — off by{" "}
+                {Math.abs(verifyOutcome.offPct).toFixed(2)}%.
               </DialogDescription>
             </DialogHeader>
             <p className="text-sm text-muted-foreground">
-              Recalibrating uses the dimension you just measured as the new scale and marks this
-              sheet verified. Half-size prints are the usual cause when everything reads off by
-              about 100%.
+              Maximum variance was {verifyOutcome.maxVariancePct.toFixed(2)}%; the two implied
+              scales differed by {verifyOutcome.scaleSpreadPct.toFixed(2)}%.{" "}
+              {verifyOutcome.canRecalibrate
+                ? "The checks agree with each other, so Overwatch can recalibrate from both. You must run two new checks before the sheet becomes verified."
+                : "The checks disagree with each other. Re-run them on two clear printed dimensions before changing the scale."}
             </p>
             <DialogFooter>
               <Button
                 variant="outline"
                 onClick={() => setVerifyOutcome(null)}
-                disabled={verifySheetMutation.isPending}
+                disabled={scaleCorrectionMutation.isPending}
               >
-                Keep Current Scale
+                Keep Unverified
               </Button>
-              <Button
-                onClick={applyVerifyCorrection}
-                disabled={verifySheetMutation.isPending}
-                data-testid="verify-scale-recalibrate"
-              >
-                Recalibrate To Match
-              </Button>
+              {verifyOutcome.canRecalibrate && (
+                <Button
+                  onClick={applyVerifyCorrection}
+                  disabled={scaleCorrectionMutation.isPending}
+                  data-testid="verify-scale-recalibrate"
+                >
+                  Recalibrate &amp; Recheck
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>

@@ -44,6 +44,11 @@ import {
   takeoffTrustLabel,
 } from "../src/lib/plan-room-trust.ts";
 import {
+  isCurrentScaleAssessment,
+  previewScaleAssuranceCheck,
+  summarizeScaleAssuranceChecks,
+} from "../src/lib/plan-room-scale-assurance.ts";
+import {
   TAKEOFF_UNDO_DEPTH,
   commitRedo,
   commitUndo,
@@ -495,6 +500,83 @@ assert.equal(
   }),
   0,
 );
+
+// --- Two-check Scale Assurance ---------------------------------------------
+const assuranceView = { width: 1000, height: 1000 };
+const assuranceCheckOne = previewScaleAssuranceCheck({
+  points: [
+    { x: 0.1, y: 0.2 },
+    { x: 0.6, y: 0.2 },
+  ],
+  labeledDistanceFeet: 5,
+  scaleFeetPerPixel: 0.01,
+  viewSize: assuranceView,
+  checkNumber: 1,
+});
+const assuranceCheckTwo = previewScaleAssuranceCheck({
+  points: [
+    { x: 0.2, y: 0.1 },
+    { x: 0.2, y: 0.6 },
+  ],
+  labeledDistanceFeet: 5,
+  scaleFeetPerPixel: 0.01,
+  viewSize: assuranceView,
+  checkNumber: 2,
+});
+assert.ok(assuranceCheckOne);
+assert.ok(assuranceCheckTwo);
+assert.equal(assuranceCheckOne.measured_distance_feet, 5);
+assert.equal(assuranceCheckOne.variance_pct, 0);
+const assurancePass = summarizeScaleAssuranceChecks([assuranceCheckOne, assuranceCheckTwo]);
+assert.equal(assurancePass?.outcome, "verified");
+assert.equal(assurancePass?.maxVariancePct, 0);
+assert.equal(assurancePass?.scaleSpreadPct, 0);
+assert.equal(assurancePass?.correctedScaleFeetPerPixel, 0.01);
+
+// Both dimensions agree with each other but expose a half-size/wrong active
+// scale. The correction is safe to suggest, but the sheet remains unverified
+// until two fresh checks pass against the corrected scale.
+const wrongScaleOne = previewScaleAssuranceCheck({
+  points: assuranceCheckOne.points,
+  labeledDistanceFeet: 5,
+  scaleFeetPerPixel: 0.02,
+  viewSize: assuranceView,
+  checkNumber: 1,
+});
+const wrongScaleTwo = previewScaleAssuranceCheck({
+  points: assuranceCheckTwo.points,
+  labeledDistanceFeet: 5,
+  scaleFeetPerPixel: 0.02,
+  viewSize: assuranceView,
+  checkNumber: 2,
+});
+assert.ok(wrongScaleOne && wrongScaleTwo);
+const assuranceConflict = summarizeScaleAssuranceChecks([wrongScaleOne, wrongScaleTwo]);
+assert.equal(assuranceConflict?.outcome, "conflict");
+assert.equal(assuranceConflict?.maxVariancePct, 100);
+assert.equal(assuranceConflict?.scaleSpreadPct, 0);
+assert.equal(assuranceConflict?.correctedScaleFeetPerPixel, 0.01);
+
+const disagreeingSecond = { ...assuranceCheckTwo, implied_scale_feet_per_pixel: 0.012 };
+const assuranceDisagreement = summarizeScaleAssuranceChecks([assuranceCheckOne, disagreeingSecond]);
+assert.equal(assuranceDisagreement?.outcome, "conflict");
+assert.ok(assuranceDisagreement.scaleSpreadPct > 1.5);
+assert.equal(summarizeScaleAssuranceChecks([assuranceCheckOne]), null);
+assert.equal(
+  previewScaleAssuranceCheck({
+    points: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.1, y: 0.1 },
+    ],
+    labeledDistanceFeet: 5,
+    scaleFeetPerPixel: 0.01,
+    viewSize: assuranceView,
+    checkNumber: 1,
+  }),
+  null,
+);
+assert.equal(isCurrentScaleAssessment({ scale_revision: 4 }, 4), true);
+assert.equal(isCurrentScaleAssessment({ scale_revision: 3 }, 4), false);
 
 // --- Feet + inches entry ---
 assert.equal(parseFeetInches("12' 6\""), 12.5);

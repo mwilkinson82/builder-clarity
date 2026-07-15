@@ -15,6 +15,12 @@ import {
   takeoffUnitsCompatible,
 } from "@/lib/plan-room-math";
 import { calculateAuthoritativeTakeoff } from "@/lib/plan-room-quantity";
+import {
+  normalizeScaleAssessment,
+  SCALE_ASSURANCE_TOLERANCE_PCT,
+  type RecordScaleAssessmentResult,
+  type ScaleAssessmentRow,
+} from "@/lib/plan-room-scale-assurance";
 import type { Json } from "@/integrations/supabase/types";
 
 type DynamicSupabaseError = { code?: string; message: string };
@@ -33,6 +39,9 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
 };
 type DynamicSupabaseClient = {
   from(relation: string): DynamicSupabaseQuery;
+};
+type DynamicSupabaseRpcClient = {
+  rpc(name: string, args: Record<string, unknown>): Promise<DynamicSupabaseResult<unknown[]>>;
 };
 
 const PLAN_ROOM_BUCKET = "plan-room";
@@ -68,9 +77,23 @@ function planRoomSchemaPending(message = "Plan Room backend schema is still bein
     plan_sets: [] as PlanSetRow[],
     sheets: [] as PlanSheetRow[],
     measurements: [] as TakeoffMeasurementRow[],
+    scale_assessments: [] as ScaleAssessmentRow[],
+    scale_assurance_ready: false,
     schema_ready: false,
     schema_message: message,
   };
+}
+
+function isMissingScaleAssuranceSchemaError(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return Boolean(
+    error &&
+    (error.code === "42P01" ||
+      error.code === "PGRST202" ||
+      error.code === "PGRST205" ||
+      message.includes("estimate_scale_assessments") ||
+      message.includes("record_estimate_scale_assessment")),
+  );
 }
 
 export type TakeoffToolType = "linear" | "area" | "count";
@@ -649,6 +672,26 @@ const recalculateSheetTakeoffsInput = z.object({
   plan_sheet_id: z.string().uuid(),
 });
 
+const scaleAssurancePointInput = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+});
+
+const recordScaleAssessmentInput = z.object({
+  estimate_id: z.string().uuid(),
+  plan_sheet_id: z.string().uuid(),
+  scale_revision: z.number().int().min(1),
+  checks: z
+    .array(
+      z.object({
+        points: z.tuple([scaleAssurancePointInput, scaleAssurancePointInput]),
+        labeled_distance_feet: z.number().gt(0).max(1_000_000),
+      }),
+    )
+    .length(2),
+  notes: z.string().max(2000).optional().default(""),
+});
+
 const deleteMeasurementInput = z.object({
   id: z.string().uuid(),
 });
@@ -715,15 +758,78 @@ export const getPlanRoom = createServerFn({ method: "GET" })
     if (sheetsResult.error) throw new Error(sheetsResult.error.message);
     if (measurementsResult.error) throw new Error(measurementsResult.error.message);
 
+    const assessmentsResult = await dynamicTable(context.supabase, "estimate_scale_assessments")
+      .select("*")
+      .eq("estimate_id", data.estimate_id)
+      .order("created_at", { ascending: false })
+      .limit(500);
+    const scaleAssuranceReady = !isMissingScaleAssuranceSchemaError(assessmentsResult.error);
+    if (assessmentsResult.error && scaleAssuranceReady) {
+      throw new Error(assessmentsResult.error.message);
+    }
+
     return {
       plan_sets: ((setsResult.data ?? []) as Record<string, unknown>[]).map(normalizePlanSet),
       sheets: ((sheetsResult.data ?? []) as Record<string, unknown>[]).map(normalizePlanSheet),
       measurements: ((measurementsResult.data ?? []) as Record<string, unknown>[]).map(
         normalizeTakeoffMeasurement,
       ),
+      scale_assessments: scaleAssuranceReady
+        ? ((assessmentsResult.data ?? []) as Record<string, unknown>[]).map(
+            normalizeScaleAssessment,
+          )
+        : [],
+      scale_assurance_ready: scaleAssuranceReady,
       schema_ready: true,
       schema_message: "",
     };
+  });
+
+export const recordScaleAssessment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof recordScaleAssessmentInput>) =>
+    recordScaleAssessmentInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await loadEstimate(context, data.estimate_id);
+    const result = await (context.supabase as unknown as DynamicSupabaseRpcClient).rpc(
+      "record_estimate_scale_assessment",
+      {
+        p_estimate_id: data.estimate_id,
+        p_plan_sheet_id: data.plan_sheet_id,
+        p_scale_revision: data.scale_revision,
+        p_checks: data.checks as Json,
+        p_notes: clean(data.notes, 2000),
+      },
+    );
+    if (isMissingScaleAssuranceSchemaError(result.error)) {
+      throw new Error("Scale Assurance is waiting for its Lovable database migration.");
+    }
+    if (result.error) throw new Error(result.error.message);
+    const raw = ((result.data ?? [])[0] ?? {}) as Record<string, unknown>;
+    if (!raw.assessment_id) throw new Error("Scale Assurance did not return a saved review.");
+    const normalized = normalizeScaleAssessment({
+      id: raw.assessment_id,
+      estimate_id: data.estimate_id,
+      plan_sheet_id: data.plan_sheet_id,
+      scale_revision: data.scale_revision,
+      outcome: raw.outcome,
+      tolerance_pct: SCALE_ASSURANCE_TOLERANCE_PCT,
+      max_variance_pct: raw.max_variance_pct,
+      scale_spread_pct: raw.scale_spread_pct,
+      evidence: raw.evidence,
+      notes: data.notes,
+      created_by: context.userId,
+      created_at: raw.verified_at ?? new Date().toISOString(),
+    });
+    return {
+      assessment_id: normalized.id,
+      outcome: normalized.outcome,
+      max_variance_pct: normalized.max_variance_pct,
+      scale_spread_pct: normalized.scale_spread_pct,
+      verified_at: raw.verified_at == null ? null : str(raw.verified_at),
+      evidence: normalized.evidence,
+    } satisfies RecordScaleAssessmentResult;
   });
 
 // Lightweight check for the estimate workspace's first-run launcher: how many
@@ -880,6 +986,9 @@ export const updatePlanSheet = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const patch: Record<string, unknown> = { ...data.patch };
+    if (patch.scale_verified_at != null) {
+      throw new Error("Use Scale Assurance to verify a sheet with two dimension checks.");
+    }
     for (const key of ["sheet_number", "sheet_name", "discipline", "scale_label"]) {
       if (typeof patch[key] === "string") patch[key] = clean(String(patch[key]), 200);
     }
