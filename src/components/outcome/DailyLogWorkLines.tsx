@@ -21,7 +21,16 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { CalendarClock, EyeOff, Pencil, Plus, Trash2, UsersRound, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarClock,
+  EyeOff,
+  Pencil,
+  Plus,
+  Trash2,
+  UsersRound,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,7 +49,12 @@ import {
   type DailyWipEntryRow,
   type ScheduleActivityOption,
 } from "@/lib/daily-wip.functions";
-import { costItemsForEdit, crewPeople, type CostLineItem } from "@/lib/daily-wip";
+import {
+  costItemsForEdit,
+  crewPeople,
+  progressChronologyWarning,
+  type CostLineItem,
+} from "@/lib/daily-wip";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 
@@ -389,6 +403,29 @@ function DailyLogWorkLinesImpl(
     draft.quantity_items.some(qtyRowHasContent) ||
     draft.material_items.some(resourceRowHasContent) ||
     draft.equipment_items.some(resourceRowHasContent);
+  const chronologyWarning = useMemo(
+    () =>
+      progressChronologyWarning(
+        {
+          id: draft.id,
+          subcontractor_id: draft.subcontractor_id || null,
+          cost_bucket_id: draft.cost_bucket_id || null,
+          percent_complete: draft.percent_complete,
+          entry_date: reportDate,
+          updated_at: editing?.updated_at,
+        },
+        entriesQuery.data ?? [],
+      ),
+    [
+      draft.id,
+      draft.subcontractor_id,
+      draft.cost_bucket_id,
+      draft.percent_complete,
+      reportDate,
+      editing?.updated_at,
+      entriesQuery.data,
+    ],
+  );
 
   // Build the save payload from the current compose draft. Shared by the "Add
   // line" button and the parent-triggered flush so both persist identical rows.
@@ -440,12 +477,23 @@ function DailyLogWorkLinesImpl(
     if (inFlightSaveRef.current) return inFlightSaveRef.current;
     if (!draftHasContent) return Promise.resolve();
 
+    if (chronologyWarning) {
+      const direction =
+        chronologyWarning.kind === "decrease-from-prior"
+          ? `A prior report on ${chronologyWarning.neighboringDate} is already at ${chronologyWarning.neighboringPercent}%.`
+          : `A later report on ${chronologyWarning.neighboringDate} is only at ${chronologyWarning.neighboringPercent}%.`;
+      const intentional = window.confirm(
+        `${direction}\n\nSaving ${chronologyWarning.currentPercent}% on ${reportDate} makes cumulative progress move backward and will create a negative earned/cost correction in Daily WIP.\n\nContinue only if this is an intentional correction.`,
+      );
+      if (!intentional) return Promise.reject(new Error("Progress save cancelled for review."));
+    }
+
     const inFlight = saveMutation.mutateAsync(buildSavePayload()).then(() => undefined);
     inFlightSaveRef.current = inFlight;
     return inFlight.finally(() => {
       if (inFlightSaveRef.current === inFlight) inFlightSaveRef.current = null;
     });
-  }, [draftHasContent, saveMutation, buildSavePayload]);
+  }, [draftHasContent, chronologyWarning, reportDate, saveMutation, buildSavePayload]);
 
   const handleSave = () => {
     if (!draftHasContent) {
@@ -875,6 +923,20 @@ function DailyLogWorkLinesImpl(
               {draft.schedule_activity_id ? null : " Link a schedule activity to use CPM."}
             </span>
           </label>
+          {chronologyWarning ? (
+            <div className="flex gap-2 rounded-md border border-warning/35 bg-warning/10 p-3 text-xs text-warning sm:col-span-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <div className="font-semibold">Cumulative progress is out of date order</div>
+                <p className="mt-0.5 leading-relaxed">
+                  {chronologyWarning.kind === "decrease-from-prior"
+                    ? `${chronologyWarning.neighboringDate} is already ${chronologyWarning.neighboringPercent}%, so ${chronologyWarning.currentPercent}% here would move progress backward.`
+                    : `${chronologyWarning.currentPercent}% here is above the later ${chronologyWarning.neighboringDate} report at ${chronologyWarning.neighboringPercent}%.`}{" "}
+                  Saving this will be treated as an intentional negative correction in Daily WIP.
+                </p>
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="mt-3 flex justify-end">
           <Button

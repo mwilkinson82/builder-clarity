@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { InstalledQuantities } from "@/components/outcome/InstalledQuantities";
 import { ItemizedCostEditor } from "@/components/outcome/ItemizedCostEditor";
 import { PerformedByField } from "@/components/outcome/PerformedByField";
+import { SubcontractProductionBenchmarks } from "@/components/outcome/SubcontractProductionBenchmarks";
 import { createDraftCostItem, type DraftCostItem } from "@/components/outcome/daily-wip-drafts";
 import {
   Dialog,
@@ -79,6 +80,8 @@ interface BucketOption {
   // The SOV price of this line (what the owner pays) — the route's full bucket
   // rows carry it; the daily P&L prices each day's % movement with it.
   contract_value?: number;
+  contract_quantity?: number;
+  unit?: string;
 }
 
 interface DailyWipWorkspaceProps {
@@ -370,12 +373,69 @@ export function DailyWipWorkspace({
       ),
     [projectSubsQuery.data],
   );
+  const productionBenchmarkSettings = useMemo(() => {
+    const subCompanyByBuyout = new Map(
+      (projectSubsQuery.data?.subcontracts ?? []).map((sub) => [sub.id, sub.subcontractor_id]),
+    );
+    const map = new Map<
+      string,
+      { plannedQuantity: number; unit: string; benchmarkLaborRate: number }
+    >();
+    for (const allocation of projectSubsQuery.data?.allocations ?? []) {
+      const companyId = subCompanyByBuyout.get(allocation.subcontract_id);
+      const key = subCommitmentKey(companyId, allocation.cost_bucket_id);
+      if (!key || allocation.planned_quantity <= 0 || !allocation.unit.trim()) continue;
+      const next = {
+        plannedQuantity: allocation.planned_quantity,
+        unit: allocation.unit.trim(),
+        benchmarkLaborRate: allocation.benchmark_labor_rate,
+      };
+      const prior = map.get(key);
+      if (!prior) {
+        map.set(key, next);
+      } else if (
+        prior.unit.toLowerCase() === next.unit.toLowerCase() &&
+        prior.benchmarkLaborRate === next.benchmarkLaborRate
+      ) {
+        map.set(key, { ...prior, plannedQuantity: prior.plannedQuantity + next.plannedQuantity });
+      } else {
+        // Multiple buyouts by the same company/code need one consistent unit and
+        // benchmark before OverWatch can combine them without inventing math.
+        map.delete(key);
+      }
+    }
+    return map;
+  }, [projectSubsQuery.data]);
   const commitmentFor = useCallback(
     (row: Pick<DailyWipRowLike, "subcontractor_id" | "cost_bucket_id">): number | null => {
       const key = subCommitmentKey(row.subcontractor_id, row.cost_bucket_id);
       return key ? (commitmentLookup.get(key) ?? null) : null;
     },
     [commitmentLookup],
+  );
+  const benchmarkTargetFor = useCallback(
+    (row: Pick<DailyWipRowLike, "subcontractor_id" | "cost_bucket_id">): number | null => {
+      const key = subCommitmentKey(row.subcontractor_id, row.cost_bucket_id);
+      if (!key) return null;
+      const setting = productionBenchmarkSettings.get(key);
+      const commitment = commitmentLookup.get(key) ?? 0;
+      if (
+        !setting ||
+        setting.plannedQuantity <= 0 ||
+        setting.benchmarkLaborRate <= 0 ||
+        commitment <= 0
+      ) {
+        return null;
+      }
+      // planned quantity / (buyout dollars / GC benchmark dollars per labor-hour)
+      return (setting.plannedQuantity * setting.benchmarkLaborRate) / commitment;
+    },
+    [commitmentLookup, productionBenchmarkSettings],
+  );
+  const effectiveProductionTargetFor = useCallback(
+    (row: DailyWipRowLike): number | null =>
+      benchmarkTargetFor(row) ?? row.target_production_rate ?? null,
+    [benchmarkTargetFor],
   );
   // A sub line's %-complete is cumulative and logged fresh each day, so its work
   // put in place on a given day is the increment since the prior log — not its
@@ -540,6 +600,10 @@ export function DailyWipWorkspace({
     subcontractor_id: draft.subcontractor_id || null,
     cost_bucket_id: draft.cost_bucket_id || null,
   });
+  const draftBenchmarkTarget = benchmarkTargetFor({
+    subcontractor_id: draft.subcontractor_id || null,
+    cost_bucket_id: draft.cost_bucket_id || null,
+  });
   const draftIsSub = Boolean(
     draft.subcontractor_id && draftCommitment != null && draftCommitment > 0,
   );
@@ -626,7 +690,7 @@ export function DailyWipWorkspace({
       equipment_items,
       quantity: draft.quantity,
       unit: draft.unit.trim(),
-      target_production_rate: draft.target_production_rate,
+      target_production_rate: draftBenchmarkTarget ?? draft.target_production_rate,
       // Preserve the super's itemized quantities + % basis through the costing save.
       quantity_items: draft.quantity_items,
       percent_basis: draft.percent_basis,
@@ -663,7 +727,7 @@ export function DailyWipWorkspace({
       ),
       quantity: entry.quantity,
       unit: entry.unit,
-      target_production_rate: entry.target_production_rate,
+      target_production_rate: effectiveProductionTargetFor(entry),
       quantity_items: entry.quantity_items.map((q) => ({
         quantity: q.quantity,
         unit: q.unit,
@@ -1105,8 +1169,9 @@ export function DailyWipWorkspace({
                     type="number"
                     min={0}
                     step="0.01"
-                    value={draft.target_production_rate ?? ""}
+                    value={draftBenchmarkTarget ?? draft.target_production_rate ?? ""}
                     placeholder="qty / labor hr"
+                    disabled={draftBenchmarkTarget != null}
                     onChange={(event) =>
                       setDraftField(
                         "target_production_rate",
@@ -1115,7 +1180,9 @@ export function DailyWipWorkspace({
                     }
                   />
                   <span className="text-[10px] text-muted-foreground">
-                    Optional management target
+                    {draftBenchmarkTarget != null
+                      ? "Calculated from the subcontract production benchmark"
+                      : "Optional management target"}
                   </span>
                 </label>
                 <label className="flex flex-col gap-1">
@@ -1379,7 +1446,10 @@ export function DailyWipWorkspace({
                   .map((entry) => ({
                     entry,
                     rate: productionRate(entry),
-                    pace: productionPace(entry),
+                    pace: productionPace({
+                      ...entry,
+                      target_production_rate: effectiveProductionTargetFor(entry),
+                    }),
                   }))
                   .filter((row) => row.rate != null)
                   .map(({ entry, rate, pace }) => (
@@ -1423,6 +1493,14 @@ export function DailyWipWorkspace({
           ) : null}
         </aside>
       </div>
+
+      <SubcontractProductionBenchmarks
+        entries={entriesQuery.data ?? []}
+        buckets={buckets}
+        commitments={commitmentLookup}
+        subcontractorNames={subNameById}
+        settings={productionBenchmarkSettings}
+      />
     </div>
   );
 }

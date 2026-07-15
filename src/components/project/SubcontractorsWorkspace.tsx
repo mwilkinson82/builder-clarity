@@ -67,6 +67,7 @@ import {
   setSubcontractPaymentExposure,
   setSubcontractPaymentStatus,
   updateSubcontractAllocation,
+  updateSubcontractProductionBenchmark,
   updateSubcontractPayment,
 } from "@/lib/subcontracts.functions";
 import { sumChangeOrders, summarizeSubPayments } from "@/lib/subcontract-budget";
@@ -118,6 +119,7 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
   const deleteSubFn = useServerFn(deleteSubcontract);
   const allocateFn = useServerFn(allocateSubcontract);
   const updateAllocFn = useServerFn(updateSubcontractAllocation);
+  const updateBenchmarkFn = useServerFn(updateSubcontractProductionBenchmark);
   const deleteAllocFn = useServerFn(deleteSubcontractAllocation);
   const recordCoFn = useServerFn(recordSubcontractChangeOrder);
   const setCoExposureFn = useServerFn(setSubcontractChangeOrderExposure);
@@ -327,6 +329,29 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
       toast.success("Allocation updated");
     },
     onError: onError("update the allocation"),
+  });
+  const updateBenchmark = useMutation({
+    mutationFn: (input: {
+      id: string;
+      plannedQuantity: number;
+      unit: string;
+      benchmarkLaborRate: number;
+    }) =>
+      updateBenchmarkFn({
+        data: {
+          id: input.id,
+          planned_quantity: input.plannedQuantity,
+          unit: input.unit,
+          benchmark_labor_rate: input.benchmarkLaborRate,
+        },
+      }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Production benchmark saved", {
+        description: "Daily WIP will derive the buyout unit cost and target production pace.",
+      });
+    },
+    onError: onError("save the production benchmark"),
   });
   const removeAlloc = useMutation({
     mutationFn: (id: string) => deleteAllocFn({ data: { id } }),
@@ -895,6 +920,9 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
                 allocate.mutate({ subcontractId: sub.id, costBucketId, amount })
               }
               onUpdateAllocation={(id, amount) => updateAlloc.mutate({ id, amount })}
+              onUpdateProductionBenchmark={(id, plannedQuantity, unit, benchmarkLaborRate) =>
+                updateBenchmark.mutate({ id, plannedQuantity, unit, benchmarkLaborRate })
+              }
               onRemoveAllocation={(id) => removeAlloc.mutate(id)}
               changeOrders={subChangeOrders}
               exposures={exposures}

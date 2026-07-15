@@ -48,6 +48,9 @@ export interface CardAllocation {
   cost_code: string;
   description: string;
   amount: number;
+  planned_quantity: number;
+  unit: string;
+  benchmark_labor_rate: number;
 }
 export interface CardChangeOrder {
   id: string;
@@ -327,6 +330,12 @@ interface CardProps {
   onEditBuyout: (contractValue: number, retainagePct: number) => void;
   onAllocate: (costBucketId: string, amount: number) => void;
   onUpdateAllocation: (id: string, amount: number) => void;
+  onUpdateProductionBenchmark: (
+    id: string,
+    plannedQuantity: number,
+    unit: string,
+    benchmarkLaborRate: number,
+  ) => void;
   onRemoveAllocation: (id: string) => void;
   changeOrders: CardChangeOrder[];
   exposures: RiskOption[];
@@ -393,6 +402,7 @@ export function SubcontractCard({
   onEditBuyout,
   onAllocate,
   onUpdateAllocation,
+  onUpdateProductionBenchmark,
   onRemoveAllocation,
   changeOrders,
   exposures,
@@ -448,6 +458,10 @@ export function SubcontractCard({
   const [buyoutRetainage, setBuyoutRetainage] = useState(0);
   const [editAllocId, setEditAllocId] = useState<string | null>(null);
   const [editAllocAmount, setEditAllocAmount] = useState(0);
+  const [benchmarkAllocId, setBenchmarkAllocId] = useState<string | null>(null);
+  const [benchmarkQuantity, setBenchmarkQuantity] = useState(0);
+  const [benchmarkUnit, setBenchmarkUnit] = useState("");
+  const [benchmarkRate, setBenchmarkRate] = useState(0);
   const [editPayId, setEditPayId] = useState<string | null>(null);
   const [editPay, setEditPay] = useState<PaymentEdit>({
     amount: 0,
@@ -498,6 +512,12 @@ export function SubcontractCard({
   const openAllocEditor = (a: CardAllocation) => {
     setEditAllocId(a.id);
     setEditAllocAmount(a.amount);
+  };
+  const openBenchmarkEditor = (a: CardAllocation) => {
+    setBenchmarkAllocId(a.id);
+    setBenchmarkQuantity(a.planned_quantity);
+    setBenchmarkUnit(a.unit);
+    setBenchmarkRate(a.benchmark_labor_rate);
   };
   const openPayEditor = (p: CardPayment) => {
     setEditPayId(p.id);
@@ -886,72 +906,173 @@ export function SubcontractCard({
         </div>
         {allocations.length > 0 ? (
           <ul className="mt-2 divide-y divide-hairline text-sm">
-            {allocations.map((a) => (
-              <li key={a.id} className="py-1.5">
-                {editAllocId === a.id ? (
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <span className="text-foreground">
-                      <span className="font-medium">{a.cost_code || "No code"}</span>
-                      <span className="ml-2 text-muted-foreground">{a.description}</span>
-                    </span>
-                    <div className="flex items-center gap-1 sm:ml-auto">
-                      <MoneyInput
-                        value={editAllocAmount}
-                        onValueChange={setEditAllocAmount}
-                        align="right"
-                      />
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="gap-1"
-                        disabled={editAllocAmount < 0}
-                        onClick={() => {
-                          onUpdateAllocation(a.id, editAllocAmount);
-                          setEditAllocId(null);
-                        }}
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setEditAllocId(null)}
-                        aria-label="Cancel"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
+            {allocations.map((a) => {
+              const unitCost = a.planned_quantity > 0 ? a.amount / a.planned_quantity : null;
+              const laborEquivalentHours =
+                a.benchmark_labor_rate > 0 ? a.amount / a.benchmark_labor_rate : null;
+              const derivedTarget =
+                laborEquivalentHours != null && laborEquivalentHours > 0 && a.planned_quantity > 0
+                  ? a.planned_quantity / laborEquivalentHours
+                  : null;
+              return (
+                <li key={a.id} className="py-2">
+                  {editAllocId === a.id ? (
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <span className="text-foreground">
+                        <span className="font-medium">{a.cost_code || "No code"}</span>
+                        <span className="ml-2 text-muted-foreground">{a.description}</span>
+                      </span>
+                      <div className="flex items-center gap-1 sm:ml-auto">
+                        <MoneyInput
+                          value={editAllocAmount}
+                          onValueChange={setEditAllocAmount}
+                          align="right"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="gap-1"
+                          disabled={editAllocAmount < 0}
+                          onClick={() => {
+                            onUpdateAllocation(a.id, editAllocAmount);
+                            setEditAllocId(null);
+                          }}
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setEditAllocId(null)}
+                          aria-label="Cancel"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between">
-                    <span className="text-foreground">
-                      <span className="font-medium">{a.cost_code || "No code"}</span>
-                      <span className="ml-2 text-muted-foreground">{a.description}</span>
-                    </span>
-                    <span className="flex items-center gap-3">
-                      <span className="font-semibold tabular-nums">{fmtUSD(a.amount)}</span>
-                      <button
-                        type="button"
-                        className="text-muted-foreground hover:text-foreground"
-                        onClick={() => openAllocEditor(a)}
-                        aria-label="Edit allocation amount"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className="text-muted-foreground hover:text-danger"
-                        onClick={() => onRemoveAllocation(a.id)}
-                        aria-label="Remove allocation"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </span>
-                  </div>
-                )}
-              </li>
-            ))}
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <span className="text-foreground">
+                        <span className="font-medium">{a.cost_code || "No code"}</span>
+                        <span className="ml-2 text-muted-foreground">{a.description}</span>
+                      </span>
+                      <span className="flex items-center gap-3">
+                        <span className="font-semibold tabular-nums">{fmtUSD(a.amount)}</span>
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-foreground"
+                          onClick={() => openAllocEditor(a)}
+                          aria-label="Edit allocation amount"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-danger"
+                          onClick={() => onRemoveAllocation(a.id)}
+                          aria-label="Remove allocation"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    </div>
+                  )}
+                  {benchmarkAllocId === a.id ? (
+                    <div className="mt-2 rounded-md border border-accent/25 bg-accent/5 p-3">
+                      <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                        Production benchmark
+                      </div>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_110px_1fr_auto] sm:items-end">
+                        <label className="text-[11px] text-muted-foreground">
+                          Planned scope quantity
+                          <Input
+                            type="number"
+                            min={0}
+                            value={benchmarkQuantity || ""}
+                            onChange={(event) =>
+                              setBenchmarkQuantity(Number(event.target.value) || 0)
+                            }
+                          />
+                        </label>
+                        <label className="text-[11px] text-muted-foreground">
+                          Unit
+                          <Input
+                            value={benchmarkUnit}
+                            placeholder="SF"
+                            onChange={(event) => setBenchmarkUnit(event.target.value)}
+                          />
+                        </label>
+                        <label className="text-[11px] text-muted-foreground">
+                          GC loaded benchmark $/labor hr
+                          <MoneyInput value={benchmarkRate} onValueChange={setBenchmarkRate} />
+                        </label>
+                        <div className="flex gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={
+                              benchmarkQuantity <= 0 || !benchmarkUnit.trim() || benchmarkRate <= 0
+                            }
+                            onClick={() => {
+                              onUpdateProductionBenchmark(
+                                a.id,
+                                benchmarkQuantity,
+                                benchmarkUnit.trim(),
+                                benchmarkRate,
+                              );
+                              setBenchmarkAllocId(null);
+                            }}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setBenchmarkAllocId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                        This is your estimating benchmark, not the subcontractor&apos;s payroll
+                        rate. OverWatch uses it to translate the lump-sum buyout into
+                        labor-equivalent hours and a required production pace.
+                      </p>
+                    </div>
+                  ) : a.planned_quantity > 0 && a.unit && a.benchmark_labor_rate > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => openBenchmarkEditor(a)}
+                      className="mt-1.5 flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-surface px-2.5 py-2 text-left text-[11px] text-muted-foreground transition-colors hover:bg-secondary/70"
+                    >
+                      <span className="font-semibold text-foreground">Production benchmark</span>
+                      <span>
+                        {a.planned_quantity.toLocaleString()} {a.unit}
+                      </span>
+                      <span>{unitCost == null ? "—" : `${fmtUSD(unitCost)}/${a.unit}`}</span>
+                      <span>{fmtUSD(a.benchmark_labor_rate)}/labor hr</span>
+                      <span className="font-semibold text-success">
+                        {derivedTarget == null
+                          ? "—"
+                          : `${derivedTarget.toFixed(2)} ${a.unit}/labor hr target`}
+                      </span>
+                      <Pencil className="ml-auto h-3 w-3" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openBenchmarkEditor(a)}
+                      className="mt-1.5 text-[11px] font-semibold text-clay hover:underline"
+                    >
+                      + Set production benchmark
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         ) : null}
         {unallocated > 0.005 ? (
