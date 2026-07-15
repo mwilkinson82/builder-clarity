@@ -1,10 +1,26 @@
-import { Check, RefreshCcw, Ruler, ScanText, Sparkles, SquareDashed } from "lucide-react";
+import {
+  Check,
+  Clock3,
+  ListPlus,
+  LocateFixed,
+  RefreshCcw,
+  Ruler,
+  ScanText,
+  Sparkles,
+  SquareDashed,
+  X,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type {
   MeasurementAssistantPlanResult,
   MeasurementAssistantSuggestion,
 } from "@/lib/plan-room-measurement-assistant";
+import {
+  measurementScopeStatusLabel,
+  type MeasurementScopeDecisionStatus,
+  type MeasurementScopeQueueItem,
+} from "@/lib/plan-room-measurement-scope";
 
 export function MeasurementAssistantPanel({
   plan,
@@ -13,8 +29,14 @@ export function MeasurementAssistantPanel({
   scaleVerified,
   preparedSuggestionId,
   completedSuggestionIds,
+  queueItemBySuggestionId,
+  duplicateCountBySuggestionId,
+  activeEvidenceSourceLine,
+  decisionPending,
   onAnalyze,
   onPrepare,
+  onShowEvidence,
+  onDecision,
   onClear,
 }: {
   plan: MeasurementAssistantPlanResult | null;
@@ -23,8 +45,17 @@ export function MeasurementAssistantPanel({
   scaleVerified: boolean;
   preparedSuggestionId: string;
   completedSuggestionIds: string[];
+  queueItemBySuggestionId: Record<string, MeasurementScopeQueueItem | undefined>;
+  duplicateCountBySuggestionId: Record<string, number>;
+  activeEvidenceSourceLine: string;
+  decisionPending: boolean;
   onAnalyze: () => void;
   onPrepare: (suggestion: MeasurementAssistantSuggestion) => void;
+  onShowEvidence: (suggestion: MeasurementAssistantSuggestion) => void;
+  onDecision: (
+    suggestion: MeasurementAssistantSuggestion,
+    status: MeasurementScopeDecisionStatus,
+  ) => void;
   onClear: () => void;
 }) {
   const completed = new Set(completedSuggestionIds);
@@ -93,7 +124,10 @@ export function MeasurementAssistantPanel({
             <div className="space-y-2">
               {plan.suggestions.map((suggestion) => {
                 const isPrepared = preparedSuggestionId === suggestion.id;
-                const isCompleted = completed.has(suggestion.id);
+                const queueItem = queueItemBySuggestionId[suggestion.id];
+                const duplicateCount = duplicateCountBySuggestionId[suggestion.id] ?? 0;
+                const isCompleted =
+                  completed.has(suggestion.id) || queueItem?.status === "completed";
                 return (
                   <div
                     key={suggestion.id}
@@ -121,6 +155,18 @@ export function MeasurementAssistantPanel({
                               ? "Direct note"
                               : "Estimator review"}
                           </Badge>
+                          {queueItem && (
+                            <Badge
+                              variant={queueItem.status === "accepted" ? "secondary" : "outline"}
+                            >
+                              {measurementScopeStatusLabel(queueItem.status)}
+                            </Badge>
+                          )}
+                          {duplicateCount > 1 && (
+                            <Badge variant="outline">
+                              Possible duplicate · {duplicateCount} sheets
+                            </Badge>
+                          )}
                         </div>
                         <p className="mt-1.5 text-[11px] text-muted-foreground">
                           {suggestion.rationale}
@@ -129,29 +175,82 @@ export function MeasurementAssistantPanel({
                           {suggestion.source_line} · “{suggestion.source_excerpt}”
                         </blockquote>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={isPrepared ? "secondary" : "outline"}
-                        className="shrink-0 gap-1.5"
-                        onClick={() => onPrepare(suggestion)}
-                        disabled={isCompleted}
-                        data-testid={`measurement-suggestion-start-${suggestion.id}`}
-                      >
-                        {isCompleted ? (
-                          <>
-                            <Check className="h-3.5 w-3.5" /> Measured
-                          </>
-                        ) : isPrepared ? (
-                          scaleVerified ? (
-                            "Drawing"
-                          ) : (
-                            "Prepared"
-                          )
-                        ) : (
-                          "Start"
+                      <div className="flex shrink-0 flex-col items-end gap-1.5">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={
+                            activeEvidenceSourceLine === suggestion.source_line
+                              ? "secondary"
+                              : "ghost"
+                          }
+                          className="h-7 gap-1 px-2 text-[10px]"
+                          onClick={() => onShowEvidence(suggestion)}
+                        >
+                          <LocateFixed className="h-3 w-3" /> Note
+                        </Button>
+                        {!queueItem && !isCompleted && (
+                          <div className="flex gap-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 gap-1 px-2 text-[10px]"
+                              onClick={() => onDecision(suggestion, "deferred")}
+                              disabled={decisionPending}
+                            >
+                              <Clock3 className="h-3 w-3" /> Later
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 gap-1 px-2 text-[10px]"
+                              onClick={() => onDecision(suggestion, "rejected")}
+                              disabled={decisionPending}
+                            >
+                              <X className="h-3 w-3" /> Reject
+                            </Button>
+                          </div>
                         )}
-                      </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={
+                            isPrepared || queueItem?.status === "accepted" ? "secondary" : "outline"
+                          }
+                          className="gap-1.5"
+                          onClick={() =>
+                            queueItem?.status === "accepted"
+                              ? onPrepare(suggestion)
+                              : onDecision(suggestion, "accepted")
+                          }
+                          disabled={isCompleted || decisionPending}
+                          data-testid={`measurement-suggestion-start-${suggestion.id}`}
+                        >
+                          {isCompleted ? (
+                            <>
+                              <Check className="h-3.5 w-3.5" /> Measured
+                            </>
+                          ) : isPrepared ? (
+                            scaleVerified ? (
+                              "Drawing"
+                            ) : (
+                              "Prepared"
+                            )
+                          ) : queueItem?.status === "accepted" ? (
+                            "Start"
+                          ) : queueItem?.status === "rejected" ? (
+                            <>
+                              <ListPlus className="h-3.5 w-3.5" /> Reopen
+                            </>
+                          ) : (
+                            <>
+                              <ListPlus className="h-3.5 w-3.5" /> Queue
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 );

@@ -1,6 +1,7 @@
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
-  groupPdfMeasurementText,
+  groupPdfMeasurementEvidence,
+  type MeasurementEvidenceAnchor,
   type MeasurementSourceLine,
 } from "@/lib/plan-room-measurement-assistant";
 
@@ -25,22 +26,28 @@ function withinCharacterBudget(lines: MeasurementSourceLine[]) {
   return accepted;
 }
 
-export async function extractPdfMeasurementSourceLines({
+export interface ExtractedPdfMeasurementEvidence {
+  sourceLines: MeasurementSourceLine[];
+  anchors: Record<string, MeasurementEvidenceAnchor>;
+}
+
+export async function extractPdfMeasurementEvidence({
   fileUrl,
   pageNumber,
 }: {
   fileUrl: string;
   pageNumber: number;
-}): Promise<MeasurementSourceLine[]> {
+}): Promise<ExtractedPdfMeasurementEvidence> {
   const pdfjs = await import("pdfjs-dist");
   configurePdfWorker(pdfjs);
   const pdf = await pdfjs.getDocument({ url: fileUrl }).promise;
   try {
     const page = await pdf.getPage(Math.max(1, pageNumber));
+    const viewport = page.getViewport({ scale: 1 });
     const content = (await page.getTextContent()) as {
-      items: Array<{ str?: string; transform?: number[] }>;
+      items: Array<{ str?: string; transform?: number[]; width?: number }>;
     };
-    const grouped = groupPdfMeasurementText(
+    const grouped = groupPdfMeasurementEvidence(
       content.items
         .filter((item) => typeof item.str === "string" && Array.isArray(item.transform))
         .map((item) => {
@@ -50,12 +57,31 @@ export async function extractPdfMeasurementSourceLines({
             x: transform[4] ?? 0,
             y: transform[5] ?? 0,
             height: Math.hypot(transform[2] ?? 0, transform[3] ?? 0),
+            width: item.width,
           };
         }),
+      viewport.width,
+      viewport.height,
     );
-    return withinCharacterBudget(grouped);
+    const sourceLines = withinCharacterBudget(grouped);
+    const acceptedLineNumbers = new Set(sourceLines.map((line) => line.line_number));
+    return {
+      sourceLines,
+      anchors: Object.fromEntries(
+        grouped
+          .filter((line) => acceptedLineNumbers.has(line.line_number))
+          .map((line) => [line.line_number, line.anchor]),
+      ),
+    };
   } finally {
     const destroy = (pdf as unknown as { destroy?: () => Promise<void> }).destroy;
     await destroy?.call(pdf).catch(() => undefined);
   }
+}
+
+export async function extractPdfMeasurementSourceLines(input: {
+  fileUrl: string;
+  pageNumber: number;
+}) {
+  return (await extractPdfMeasurementEvidence(input)).sourceLines;
 }
