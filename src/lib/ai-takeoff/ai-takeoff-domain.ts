@@ -37,6 +37,10 @@ export interface AiCountProposal {
   y: number;
   confidence: number;
   status: AiProposalStatus;
+  source?: "model" | "template" | "discovery";
+  originalX?: number;
+  originalY?: number;
+  nudged?: boolean;
 }
 
 // Detection raster: the sheet's long edge renders at this many pixels before

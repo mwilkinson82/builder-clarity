@@ -14,6 +14,7 @@ import {
   SAMPLE_PLAN_SET_MIME,
   takeoffUnitsCompatible,
 } from "@/lib/plan-room-math";
+import { calculateAuthoritativeTakeoff } from "@/lib/plan-room-quantity";
 import type { Json } from "@/integrations/supabase/types";
 
 type DynamicSupabaseError = { code?: string; message: string };
@@ -108,9 +109,14 @@ export interface PlanSheetRow {
   thumbnail_path: string;
   width_px: number;
   height_px: number;
+  scale_revision: number;
+  scale_changed_at: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export type TakeoffCalculationMethod = "legacy" | "geometry" | "count" | "manual_override";
+export type TakeoffCalculationStatus = "current" | "unverified_scale" | "stale" | "review_required";
 
 export interface TakeoffMeasurementRow {
   id: string;
@@ -130,6 +136,20 @@ export interface TakeoffMeasurementRow {
   // AI provenance (AITAKEOFF1): true when this marker came from accepted AI
   // count proposals. The human approved every point; the model only suggested.
   created_by_ai: boolean;
+  calculation_method: TakeoffCalculationMethod;
+  calculation_status: TakeoffCalculationStatus;
+  calculated_quantity: number | null;
+  calculation_scale_revision: number | null;
+  calculated_at: string | null;
+  calculation_context: Json;
+  override_reason: string;
+  ai_operation_id: string | null;
+  ai_proposal_source: string | null;
+  ai_confidence: number | null;
+  ai_original_geometry: Json | null;
+  ai_review_action: "accepted" | "nudged" | null;
+  ai_reviewed_by: string | null;
+  ai_reviewed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -188,6 +208,8 @@ const normalizePlanSheet = (row: Record<string, unknown>): PlanSheetRow => ({
   thumbnail_path: str(row.thumbnail_path),
   width_px: Math.round(num(row.width_px)),
   height_px: Math.round(num(row.height_px)),
+  scale_revision: Math.max(1, Math.round(num(row.scale_revision, 1))),
+  scale_changed_at: row.scale_changed_at == null ? null : str(row.scale_changed_at),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
 });
@@ -208,6 +230,26 @@ const normalizeTakeoffMeasurement = (row: Record<string, unknown>): TakeoffMeasu
   geometry: (row.geometry ?? {}) as Json,
   notes: str(row.notes),
   created_by_ai: Boolean(row.created_by_ai),
+  calculation_method: str(row.calculation_method, "legacy") as TakeoffCalculationMethod,
+  calculation_status: str(row.calculation_status, "current") as TakeoffCalculationStatus,
+  calculated_quantity: row.calculated_quantity == null ? null : num(row.calculated_quantity),
+  calculation_scale_revision:
+    row.calculation_scale_revision == null
+      ? null
+      : Math.max(1, Math.round(num(row.calculation_scale_revision, 1))),
+  calculated_at: row.calculated_at == null ? null : str(row.calculated_at),
+  calculation_context: (row.calculation_context ?? {}) as Json,
+  override_reason: str(row.override_reason),
+  ai_operation_id: row.ai_operation_id == null ? null : str(row.ai_operation_id),
+  ai_proposal_source: row.ai_proposal_source == null ? null : str(row.ai_proposal_source),
+  ai_confidence: row.ai_confidence == null ? null : num(row.ai_confidence),
+  ai_original_geometry: (row.ai_original_geometry ?? null) as Json | null,
+  ai_review_action:
+    row.ai_review_action === "accepted" || row.ai_review_action === "nudged"
+      ? row.ai_review_action
+      : null,
+  ai_reviewed_by: row.ai_reviewed_by == null ? null : str(row.ai_reviewed_by),
+  ai_reviewed_at: row.ai_reviewed_at == null ? null : str(row.ai_reviewed_at),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
 });
@@ -575,20 +617,36 @@ const measurementInput = z.object({
   tool_type: z.enum(["linear", "area", "count"]),
   label: z.string().min(1).max(240),
   unit: z.string().min(1).max(16),
-  quantity: z.number().min(0).max(999999999),
+  // Accepted for backwards compatibility with older clients, but the server
+  // derives the saved value from geometry and the authoritative sheet scale.
+  quantity: z.number().min(0).max(999999999).optional(),
   waste_pct: z.number().int().min(0).max(100000).optional().default(0),
   color: z.string().max(40).optional().default("#1b7a6e"),
   geometry: z.unknown().optional().default({}),
   notes: z.string().max(2000).optional().default(""),
   created_by_ai: z.boolean().optional().default(false),
+  override_reason: z.string().max(1000).optional().default(""),
+  ai_operation_id: z.string().uuid().nullable().optional(),
+  ai_proposal_source: z.string().max(32).nullable().optional(),
+  ai_confidence: z.number().min(0).max(1).nullable().optional(),
+  ai_original_geometry: z.unknown().nullable().optional(),
+  ai_review_action: z.enum(["accepted", "nudged"]).nullable().optional(),
 });
 
-const updateMeasurementInput = z.object({
-  id: z.string().uuid(),
-  patch: measurementInput
-    .omit({ estimate_id: true, plan_sheet_id: true })
-    .partial()
-    .refine((patch) => Object.keys(patch).length > 0, "No takeoff changes were provided."),
+const updateMeasurementInput = z
+  .object({
+    id: z.string().uuid(),
+    recalculate_from_geometry: z.boolean().optional().default(false),
+    patch: measurementInput.omit({ estimate_id: true, plan_sheet_id: true }).partial(),
+  })
+  .refine(
+    (input) => input.recalculate_from_geometry || Object.keys(input.patch).length > 0,
+    "No takeoff changes were provided.",
+  );
+
+const recalculateSheetTakeoffsInput = z.object({
+  estimate_id: z.string().uuid(),
+  plan_sheet_id: z.string().uuid(),
 });
 
 const deleteMeasurementInput = z.object({
@@ -872,11 +930,78 @@ export const applyScaleToSheets = createServerFn({ method: "POST" })
     return { sheets: updated };
   });
 
+const TAKEOFF_TRUST_COLUMNS = [
+  "calculation_method",
+  "calculation_status",
+  "calculated_quantity",
+  "calculation_scale_revision",
+  "calculated_at",
+  "calculation_context",
+  "override_reason",
+  "ai_operation_id",
+  "ai_proposal_source",
+  "ai_confidence",
+  "ai_original_geometry",
+  "ai_review_action",
+  "ai_reviewed_by",
+  "ai_reviewed_at",
+] as const;
+
+function isMissingTakeoffTrustColumn(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" || error.code === "42703") &&
+    TAKEOFF_TRUST_COLUMNS.some((column) => message.includes(column)),
+  );
+}
+
+function withoutTakeoffTrustColumns(payload: Record<string, unknown>) {
+  const legacyPayload = { ...payload };
+  for (const column of TAKEOFF_TRUST_COLUMNS) delete legacyPayload[column];
+  return legacyPayload;
+}
+
+async function loadMeasurementSheet(
+  context: { supabase: unknown },
+  sheetId: string,
+  estimateId: string,
+) {
+  const result = await dynamicTable(context.supabase, "estimate_plan_sheets")
+    .select("*")
+    .eq("id", sheetId)
+    .eq("estimate_id", estimateId)
+    .single();
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message ?? "Takeoff sheet was not found.");
+  }
+  return result.data as Record<string, unknown>;
+}
+
+function calculatedTakeoffPayload(calculation: ReturnType<typeof calculateAuthoritativeTakeoff>) {
+  return {
+    quantity: calculation.quantity,
+    calculation_method: calculation.method,
+    calculation_status: calculation.status,
+    calculated_quantity: calculation.quantity,
+    calculation_scale_revision: calculation.scaleRevision,
+    calculated_at: new Date().toISOString(),
+    calculation_context: calculation.context as Json,
+    override_reason: "",
+  };
+}
+
 export const createTakeoffMeasurement = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof measurementInput>) => measurementInput.parse(input))
   .handler(async ({ data, context }) => {
     await loadEstimate(context, data.estimate_id);
+    const sheet = await loadMeasurementSheet(context, data.plan_sheet_id, data.estimate_id);
+    const calculation = calculateAuthoritativeTakeoff({
+      tool: data.tool_type,
+      geometry: data.geometry,
+      sheet,
+    });
     const insertPayload: Record<string, unknown> = {
       estimate_id: data.estimate_id,
       plan_sheet_id: data.plan_sheet_id,
@@ -886,12 +1011,21 @@ export const createTakeoffMeasurement = createServerFn({ method: "POST" })
       tool_type: data.tool_type,
       label: clean(data.label, 240),
       unit: clean(data.unit.toUpperCase(), 16),
-      quantity: data.quantity,
+      ...calculatedTakeoffPayload(calculation),
       waste_pct: data.waste_pct,
       color: clean(data.color, 40) || "#1b7a6e",
       geometry: data.geometry as Json,
       notes: clean(data.notes, 2000),
       created_by_ai: data.created_by_ai,
+      ai_operation_id: data.created_by_ai ? (data.ai_operation_id ?? null) : null,
+      ai_proposal_source: data.created_by_ai ? clean(data.ai_proposal_source ?? "model", 32) : null,
+      ai_confidence: data.created_by_ai ? (data.ai_confidence ?? null) : null,
+      ai_original_geometry: data.created_by_ai
+        ? ((data.ai_original_geometry ?? data.geometry) as Json)
+        : null,
+      ai_review_action: data.created_by_ai ? (data.ai_review_action ?? "accepted") : null,
+      ai_reviewed_by: data.created_by_ai ? context.userId : null,
+      ai_reviewed_at: data.created_by_ai ? new Date().toISOString() : null,
     };
     let { data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
       .insert(insertPayload)
@@ -899,19 +1033,21 @@ export const createTakeoffMeasurement = createServerFn({ method: "POST" })
       .single();
     // Pre-migration fallback: before the created_by_ai column lands, human
     // takeoffs keep saving exactly as they always have.
-    if (error && isMissingCreatedByAiColumn(error)) {
-      delete insertPayload.created_by_ai;
+    if (error && (isMissingCreatedByAiColumn(error) || isMissingTakeoffTrustColumn(error))) {
+      const legacyPayload = withoutTakeoffTrustColumns(insertPayload);
+      if (isMissingCreatedByAiColumn(error)) delete legacyPayload.created_by_ai;
       ({ data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-        .insert(insertPayload)
+        .insert(legacyPayload)
         .select("*")
         .single());
     }
     if (error || !row) throw new Error(error?.message ?? "Takeoff did not save.");
 
+    let sync = null;
     if (data.estimate_line_item_id) {
-      await syncTakeoffQuantityToLine(context, data.estimate_id, data.estimate_line_item_id);
+      sync = await syncTakeoffQuantityToLine(context, data.estimate_id, data.estimate_line_item_id);
     }
-    return { measurement: normalizeTakeoffMeasurement(row as Record<string, unknown>) };
+    return { measurement: normalizeTakeoffMeasurement(row as Record<string, unknown>), sync };
   });
 
 export const updateTakeoffMeasurement = createServerFn({ method: "POST" })
@@ -921,15 +1057,16 @@ export const updateTakeoffMeasurement = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const current = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-      .select("estimate_id,estimate_line_item_id")
+      .select("*")
       .eq("id", data.id)
       .single();
     if (current.error || !current.data) {
       throw new Error(current.error?.message ?? "Takeoff was not found.");
     }
-    const estimateId = str((current.data as Record<string, unknown>).estimate_id);
-    const previousLineId = (current.data as Record<string, unknown>).estimate_line_item_id as
-      string | null;
+    const currentRow = current.data as Record<string, unknown>;
+    const currentMeasurement = normalizeTakeoffMeasurement(currentRow);
+    const estimateId = currentMeasurement.estimate_id;
+    const previousLineId = currentMeasurement.estimate_line_item_id;
     const patch: Record<string, unknown> = { ...data.patch };
     if (typeof patch.label === "string") patch.label = clean(patch.label, 240);
     if (typeof patch.unit === "string") patch.unit = clean(patch.unit.toUpperCase(), 16);
@@ -937,25 +1074,153 @@ export const updateTakeoffMeasurement = createServerFn({ method: "POST" })
     if (typeof patch.notes === "string") patch.notes = clean(patch.notes, 2000);
     if (patch.geometry != null) patch.geometry = patch.geometry as Json;
 
-    const { data: row, error } = await dynamicTable(
-      context.supabase,
-      "estimate_takeoff_measurements",
-    )
+    const nextTool = (patch.tool_type ?? currentMeasurement.tool_type) as TakeoffToolType;
+    const nextGeometry = patch.geometry ?? currentMeasurement.geometry;
+    const sheet = await loadMeasurementSheet(context, currentMeasurement.plan_sheet_id, estimateId);
+    const quantityChanged =
+      typeof patch.quantity === "number" &&
+      Math.abs(patch.quantity - currentMeasurement.quantity) > 0.00005;
+    const geometryChanged = patch.geometry !== undefined || patch.tool_type !== undefined;
+
+    if (data.recalculate_from_geometry || geometryChanged) {
+      const calculation = calculateAuthoritativeTakeoff({
+        tool: nextTool,
+        geometry: nextGeometry,
+        sheet,
+      });
+      Object.assign(patch, calculatedTakeoffPayload(calculation));
+    } else if (quantityChanged) {
+      const overrideReason = clean(str(patch.override_reason), 1000);
+      if (overrideReason.length < 3) {
+        throw new Error("Explain why this takeoff quantity is being manually overridden.");
+      }
+      const calculation = calculateAuthoritativeTakeoff({
+        tool: nextTool,
+        geometry: nextGeometry,
+        sheet,
+      });
+      Object.assign(patch, {
+        calculation_method: "manual_override",
+        calculation_status: "current",
+        calculated_quantity: calculation.quantity,
+        calculation_scale_revision: calculation.scaleRevision,
+        calculated_at: new Date().toISOString(),
+        calculation_context: calculation.context as Json,
+        override_reason: overrideReason,
+      });
+    } else {
+      // Older UI versions send the displayed quantity with every edit. An
+      // unchanged copy is not evidence of a manual override and must never
+      // replace the server-owned quantity.
+      delete patch.quantity;
+      if (
+        currentMeasurement.calculation_method === "manual_override" &&
+        typeof patch.override_reason === "string"
+      ) {
+        const overrideReason = clean(patch.override_reason, 1000);
+        if (overrideReason.length < 3) {
+          throw new Error("Keep a clear reason for this manual quantity override.");
+        }
+        patch.override_reason = overrideReason;
+      } else {
+        delete patch.override_reason;
+      }
+    }
+    if (
+      currentMeasurement.created_by_ai &&
+      (geometryChanged ||
+        patch.ai_operation_id !== undefined ||
+        patch.ai_confidence !== undefined ||
+        patch.ai_review_action !== undefined)
+    ) {
+      patch.ai_reviewed_by = context.userId;
+      patch.ai_reviewed_at = new Date().toISOString();
+    }
+
+    let { data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
       .update(patch)
       .eq("id", data.id)
       .select("*")
       .single();
+    if (error && isMissingTakeoffTrustColumn(error)) {
+      ({ data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+        .update(withoutTakeoffTrustColumns(patch))
+        .eq("id", data.id)
+        .select("*")
+        .single());
+    }
     if (error || !row) throw new Error(error?.message ?? "Takeoff did not update.");
 
     const measurement = normalizeTakeoffMeasurement(row as Record<string, unknown>);
     const nextLineId = measurement.estimate_line_item_id;
+    const syncResults = [];
     if (previousLineId && previousLineId !== nextLineId) {
-      await syncTakeoffQuantityToLine(context, estimateId, previousLineId);
+      syncResults.push(await syncTakeoffQuantityToLine(context, estimateId, previousLineId));
     }
     if (nextLineId) {
-      await syncTakeoffQuantityToLine(context, estimateId, nextLineId);
+      syncResults.push(await syncTakeoffQuantityToLine(context, estimateId, nextLineId));
     }
-    return { measurement };
+    return { measurement, sync: syncResults.at(-1) ?? null };
+  });
+
+export const recalculateSheetTakeoffs = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof recalculateSheetTakeoffsInput>) =>
+    recalculateSheetTakeoffsInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await loadEstimate(context, data.estimate_id);
+    const sheet = await loadMeasurementSheet(context, data.plan_sheet_id, data.estimate_id);
+    const measurementsResult = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+      .select("*")
+      .eq("estimate_id", data.estimate_id)
+      .eq("plan_sheet_id", data.plan_sheet_id);
+    if (measurementsResult.error) throw new Error(measurementsResult.error.message);
+
+    const updated: TakeoffMeasurementRow[] = [];
+    const skippedManualOverrides: string[] = [];
+    const linkedLineIds = new Set<string>();
+    for (const raw of (measurementsResult.data ?? []) as Record<string, unknown>[]) {
+      const measurement = normalizeTakeoffMeasurement(raw);
+      if (measurement.calculation_method === "manual_override") {
+        skippedManualOverrides.push(measurement.id);
+        continue;
+      }
+      const calculation = calculateAuthoritativeTakeoff({
+        tool: measurement.tool_type,
+        geometry: measurement.geometry,
+        sheet,
+      });
+      const patch = calculatedTakeoffPayload(calculation);
+      let result = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+        .update(patch)
+        .eq("id", measurement.id)
+        .select("*")
+        .single();
+      if (result.error && isMissingTakeoffTrustColumn(result.error)) {
+        result = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+          .update({ quantity: calculation.quantity })
+          .eq("id", measurement.id)
+          .select("*")
+          .single();
+      }
+      if (result.error || !result.data) {
+        throw new Error(result.error?.message ?? "Takeoff did not recalculate.");
+      }
+      const next = normalizeTakeoffMeasurement(result.data as Record<string, unknown>);
+      updated.push(next);
+      if (next.estimate_line_item_id) linkedLineIds.add(next.estimate_line_item_id);
+    }
+
+    const syncResults = [];
+    for (const lineId of linkedLineIds) {
+      syncResults.push(await syncTakeoffQuantityToLine(context, data.estimate_id, lineId));
+    }
+    return {
+      measurements: updated,
+      skipped_manual_overrides: skippedManualOverrides,
+      syncs: syncResults,
+    };
   });
 
 export const deleteTakeoffMeasurement = createServerFn({ method: "POST" })
@@ -1027,13 +1292,40 @@ async function syncTakeoffQuantityToLine(
     throw new Error(lineResult.error?.message ?? "Estimate line was not found.");
   }
 
-  const measurementsResult = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-    .select("quantity,waste_pct,unit")
+  let measurementsResult = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+    .select("id,quantity,waste_pct,unit,calculation_status")
     .eq("estimate_id", estimateId)
     .eq("estimate_line_item_id", lineItemId);
+  let calculationTrustReady = true;
+  if (measurementsResult.error && isMissingTakeoffTrustColumn(measurementsResult.error)) {
+    calculationTrustReady = false;
+    measurementsResult = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+      .select("id,quantity,waste_pct,unit")
+      .eq("estimate_id", estimateId)
+      .eq("estimate_line_item_id", lineItemId);
+  }
   if (measurementsResult.error) throw new Error(measurementsResult.error.message);
 
   const measurements = (measurementsResult.data ?? []) as Record<string, unknown>[];
+  const untrustedMeasurements = calculationTrustReady
+    ? measurements.filter((row) => str(row.calculation_status, "review_required") !== "current")
+    : [];
+  if (untrustedMeasurements.length > 0) {
+    return {
+      conflict: false as const,
+      unit_conflict: false as const,
+      calculation_conflict: true as const,
+      quantity: num((lineResult.data as Record<string, unknown>).quantity),
+      takeoff_quantity: null,
+      takeoff_unit: "",
+      line_unit: str((lineResult.data as Record<string, unknown>).unit),
+      measurement_count: measurements.length,
+      blocked_measurements: untrustedMeasurements.map((row) => ({
+        id: str(row.id),
+        status: str(row.calculation_status, "review_required"),
+      })),
+    };
+  }
   // Waste-applied rollup: each measurement contributes quantity x
   // (1 + waste_pct / 100). Rounded to the column's 4 decimal places.
   const rollup = measurements.reduce(
@@ -1061,6 +1353,7 @@ async function syncTakeoffQuantityToLine(
     return {
       conflict: false as const,
       unit_conflict: true as const,
+      calculation_conflict: false as const,
       quantity: currentQuantity,
       takeoff_quantity: quantity,
       takeoff_unit: normalizeTakeoffUnit(mismatchedUnit),
@@ -1084,6 +1377,7 @@ async function syncTakeoffQuantityToLine(
     return {
       conflict: true as const,
       unit_conflict: false as const,
+      calculation_conflict: false as const,
       quantity: currentQuantity,
       takeoff_quantity: quantity,
       takeoff_unit: takeoffUnit,
@@ -1127,6 +1421,7 @@ async function syncTakeoffQuantityToLine(
   return {
     conflict: false as const,
     unit_conflict: false as const,
+    calculation_conflict: false as const,
     quantity,
     takeoff_quantity: quantity,
     takeoff_unit: takeoffUnit,
