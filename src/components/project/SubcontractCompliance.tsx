@@ -472,18 +472,21 @@ export function SubcontractCompliance({
         ) : (
           <p className="mt-1 text-[11px] text-muted-foreground">No lien waivers on file.</p>
         )}
-        <div className="mt-2 grid gap-2 rounded-md border border-hairline bg-surface/50 p-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
-          <select
-            value={wType}
-            onChange={(e) => setWType(e.target.value as LienWaiverRow["waiver_type"])}
-            className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
-          >
-            {(Object.keys(WAIVER_LABEL) as LienWaiverRow["waiver_type"][]).map((k) => (
-              <option key={k} value={k}>
-                {WAIVER_LABEL[k]}
-              </option>
-            ))}
-          </select>
+        <div className="mt-2 grid items-end gap-2 rounded-md border border-hairline bg-surface/50 p-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <label className="text-[11px] text-muted-foreground">
+            Waiver type
+            <select
+              value={wType}
+              onChange={(e) => setWType(e.target.value as LienWaiverRow["waiver_type"])}
+              className="mt-1 h-8 w-full rounded-md border border-hairline bg-surface px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            >
+              {(Object.keys(WAIVER_LABEL) as LienWaiverRow["waiver_type"][]).map((k) => (
+                <option key={k} value={k}>
+                  {WAIVER_LABEL[k]}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="text-[11px] text-muted-foreground">
             Through
             <Input
@@ -497,7 +500,7 @@ export function SubcontractCompliance({
             Amount
             <MoneyInput value={wAmount} onValueChange={setWAmount} className="h-8" />
           </label>
-          <div className="flex items-end gap-2">
+          <div className="flex h-8 items-center gap-2">
             <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-accent">
               <Upload className="h-3.5 w-3.5" />
               {wFile ? "Attached" : "Doc"}
