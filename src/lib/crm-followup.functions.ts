@@ -470,7 +470,7 @@ export type CreateCrmValueAssetInput = z.infer<typeof valueAssetInput>;
 
 export const createCrmValueAsset = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input) => valueAssetInput.parse(input))
+  .inputValidator((input) => valueAssetInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
     const storagePath = data.storage_path.trim();
@@ -518,7 +518,7 @@ const enrollmentInput = z.object({
 
 export const enrollOpportunityInFollowupPlaybook = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input) => enrollmentInput.parse(input))
+  .inputValidator((input) => enrollmentInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
     const [opportunityResult, playbookResult, stepResult, existingResult] = await Promise.all([
@@ -666,7 +666,7 @@ const draftInput = z.object({
 
 export const updatePreparedFollowup = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input) => draftInput.parse(input))
+  .inputValidator((input) => draftInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
     if (data.value_asset_id) {
@@ -718,7 +718,7 @@ const completionInput = z.object({
 
 export const completePreparedFollowup = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input) => completionInput.parse(input))
+  .inputValidator((input) => completionInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
     const action = await table(context.supabase, "pipeline_next_actions")
