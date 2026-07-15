@@ -85,7 +85,11 @@ export function MeasurementAssistantPanel({
           ) : (
             <ScanText className="h-3.5 w-3.5" />
           )}
-          {plan ? "Review Again · 1 credit" : "Review Notes · 1 credit"}
+          {pending
+            ? "Reading drawing notes…"
+            : plan
+              ? "Review Again · 1 credit"
+              : "Review Notes · 1 credit"}
         </Button>
       </div>
 

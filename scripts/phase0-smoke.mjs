@@ -2242,6 +2242,17 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/estimates/plan-room/pdfMeasurementText.ts",
+  [
+    /withMeasurementEvidenceTimeout/,
+    /Opening the drawing for note review/,
+    /Opening the selected drawing page/,
+    /Reading selectable drawing notes/,
+  ],
+  "measurement note extraction bounds every pre-AI PDF step and returns control on stalls",
+);
+
+await expectContains(
   "src/components/estimates/plan-room/MeasurementAssistantPanel.tsx",
   [
     /AI measurement planning/,
@@ -2263,6 +2274,12 @@ await expectContains(
     /failAndRefund/,
   ],
   "measurement assistant meters, audits, constrains, and refunds AI note reviews server-side",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/MeasurementAssistantPanel.tsx",
+  [/Reading drawing notes/, /motion-reduce:animate-none/],
+  "measurement note review names its pending state and honors reduced motion",
 );
 
 await expectContains(

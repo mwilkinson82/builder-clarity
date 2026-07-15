@@ -8,6 +8,7 @@ import {
   measurementAssistantTakeoffNote,
   parseMeasurementAssistantPlan,
   sourceExcerptIsSupported,
+  withMeasurementEvidenceTimeout,
   type MeasurementAssistantPlanResult,
 } from "@/lib/plan-room-measurement-assistant";
 import {
@@ -24,6 +25,18 @@ import {
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("guided measurement planning", () => {
+  it("returns control when selectable PDF note extraction stalls", async () => {
+    await expect(
+      withMeasurementEvidenceTimeout(
+        new Promise<never>(() => undefined),
+        "Reading selectable drawing notes",
+        5,
+      ),
+    ).rejects.toThrow(
+      "Reading selectable drawing notes took too long. Try the review again or open the source PDF for manual takeoff.",
+    );
+  });
+
   it("uses stable per-sheet suggestion keys and excludes rejected scope from duplicate warnings", () => {
     const suggestion = {
       tool: "linear" as const,

@@ -1,6 +1,7 @@
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   groupPdfMeasurementEvidence,
+  withMeasurementEvidenceTimeout,
   type MeasurementEvidenceAnchor,
   type MeasurementSourceLine,
 } from "@/lib/plan-room-measurement-assistant";
@@ -40,11 +41,22 @@ export async function extractPdfMeasurementEvidence({
 }): Promise<ExtractedPdfMeasurementEvidence> {
   const pdfjs = await import("pdfjs-dist");
   configurePdfWorker(pdfjs);
-  const pdf = await pdfjs.getDocument({ url: fileUrl }).promise;
+  const loadingTask = pdfjs.getDocument({ url: fileUrl });
+  let pdf: Awaited<typeof loadingTask.promise> | null = null;
   try {
-    const page = await pdf.getPage(Math.max(1, pageNumber));
+    pdf = await withMeasurementEvidenceTimeout(
+      loadingTask.promise,
+      "Opening the drawing for note review",
+    );
+    const page = await withMeasurementEvidenceTimeout(
+      pdf.getPage(Math.max(1, pageNumber)),
+      "Opening the selected drawing page",
+    );
     const viewport = page.getViewport({ scale: 1 });
-    const content = (await page.getTextContent()) as {
+    const content = (await withMeasurementEvidenceTimeout(
+      page.getTextContent(),
+      "Reading selectable drawing notes",
+    )) as {
       items: Array<{ str?: string; transform?: number[]; width?: number }>;
     };
     const grouped = groupPdfMeasurementEvidence(
@@ -74,8 +86,8 @@ export async function extractPdfMeasurementEvidence({
       ),
     };
   } finally {
-    const destroy = (pdf as unknown as { destroy?: () => Promise<void> }).destroy;
-    await destroy?.call(pdf).catch(() => undefined);
+    const disposable = (pdf ?? loadingTask) as unknown as { destroy?: () => Promise<void> };
+    await disposable.destroy?.call(disposable).catch(() => undefined);
   }
 }
 
