@@ -1715,6 +1715,62 @@ export type Database = {
           },
         ]
       }
+      demo_seed_module_versions: {
+        Row: {
+          applied_version: number
+          created_at: string
+          first_seeded_at: string
+          last_error: string
+          last_operation: string
+          last_reset_at: string | null
+          last_seeded_at: string
+          last_seeded_by: string
+          metadata: Json
+          module_key: string
+          project_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          applied_version?: number
+          created_at?: string
+          first_seeded_at?: string
+          last_error?: string
+          last_operation?: string
+          last_reset_at?: string | null
+          last_seeded_at?: string
+          last_seeded_by?: string
+          metadata?: Json
+          module_key: string
+          project_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          applied_version?: number
+          created_at?: string
+          first_seeded_at?: string
+          last_error?: string
+          last_operation?: string
+          last_reset_at?: string | null
+          last_seeded_at?: string
+          last_seeded_by?: string
+          metadata?: Json
+          module_key?: string
+          project_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "demo_seed_module_versions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       email_send_log: {
         Row: {
           created_at: string
