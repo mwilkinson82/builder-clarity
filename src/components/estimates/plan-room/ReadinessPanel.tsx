@@ -9,24 +9,28 @@ export function ReadinessPanel({
   measurements,
   unscaledSheets,
   unlinkedMeasurements,
+  calculationIssues,
   linkedCount,
   hiddenSheetMeasurementCount,
   sheetMeasurements,
   visibleSheetMeasurements,
   openFirstUnscaledSheet,
   showUnlinkedTakeoffs,
+  reviewCalculationIssues,
   setAllTakeoffLayersVisible,
 }: {
   sheets: PlanSheetRow[];
   measurements: TakeoffMeasurementRow[];
   unscaledSheets: PlanSheetRow[];
   unlinkedMeasurements: TakeoffMeasurementRow[];
+  calculationIssues: TakeoffMeasurementRow[];
   linkedCount: number;
   hiddenSheetMeasurementCount: number;
   sheetMeasurements: TakeoffMeasurementRow[];
   visibleSheetMeasurements: TakeoffMeasurementRow[];
   openFirstUnscaledSheet: () => void;
   showUnlinkedTakeoffs: () => void;
+  reviewCalculationIssues: () => void;
   setAllTakeoffLayersVisible: (visible: boolean) => void;
 }) {
   const scaledSheetCount = sheets.length - unscaledSheets.length;
@@ -39,12 +43,14 @@ export function ReadinessPanel({
     (measurements.length === 0 ? 1 : 0) +
     unscaledSheets.length +
     unlinkedMeasurements.length +
+    calculationIssues.length +
     hiddenSheetMeasurementCount;
   const readinessReady =
     sheets.length > 0 &&
     measurements.length > 0 &&
     unscaledSheets.length === 0 &&
     unlinkedMeasurements.length === 0 &&
+    calculationIssues.length === 0 &&
     hiddenSheetMeasurementCount === 0;
   return (
     <section
@@ -69,6 +75,34 @@ export function ReadinessPanel({
         )}
       </div>
       <div className="mt-4 space-y-2 text-xs">
+        <div className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2">
+          <span className="flex min-w-0 items-center gap-2">
+            {calculationIssues.length === 0 ? (
+              <Check className="h-3.5 w-3.5 text-primary" />
+            ) : (
+              <XCircle className="h-3.5 w-3.5 text-danger" />
+            )}
+            <span className="min-w-0">
+              <span className="block font-medium text-foreground">Quantity trust</span>
+              <span className="block truncate text-muted-foreground">
+                {calculationIssues.length === 0
+                  ? "All takeoff quantities are current"
+                  : `${calculationIssues.length} takeoff${calculationIssues.length === 1 ? "" : "s"} cannot feed the estimate yet`}
+              </span>
+            </span>
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 px-2 text-xs"
+            onClick={reviewCalculationIssues}
+            disabled={calculationIssues.length === 0}
+            data-testid="takeoff-readiness-review-calculations"
+          >
+            Review
+          </Button>
+        </div>
         <div className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2">
           <span className="flex min-w-0 items-center gap-2">
             {unscaledSheets.length > 0 ? (

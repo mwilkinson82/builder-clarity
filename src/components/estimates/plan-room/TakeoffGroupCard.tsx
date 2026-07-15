@@ -64,6 +64,9 @@ export function TakeoffGroupCard({
     .join(", ");
   const showWasteRollup = Math.abs(group.rollupQuantity - group.measuredQuantity) > 0.0001;
   const memberIds = group.members.map((member) => member.id);
+  const untrustedCount = group.members.filter(
+    (member) => member.calculation_status !== "current",
+  ).length;
   return (
     <div
       role="button"
@@ -103,6 +106,17 @@ export function TakeoffGroupCard({
               >
                 <Sparkles className="h-2.5 w-2.5" />
                 AI-assisted
+              </Badge>
+            )}
+            {untrustedCount > 0 && (
+              <Badge
+                variant="outline"
+                className="shrink-0 gap-1 border-warning/40 bg-warning/10 text-[10px] text-warning"
+                title="This group contains quantities that must be reviewed before estimate sync."
+                data-testid="takeoff-trust-chip"
+              >
+                <AlertTriangle className="h-2.5 w-2.5" />
+                {untrustedCount} to review
               </Badge>
             )}
           </div>
@@ -234,6 +248,12 @@ export function TakeoffGroupCard({
               variant="outline"
               className="w-full gap-1.5"
               onClick={() => syncLine(linkedLine.id)}
+              disabled={untrustedCount > 0}
+              title={
+                untrustedCount > 0
+                  ? "Review stale or unverified quantities before sending this group."
+                  : "Send this takeoff total to the estimate."
+              }
             >
               <Link2 className="h-3.5 w-3.5" />
               Send Total Qty to Estimate

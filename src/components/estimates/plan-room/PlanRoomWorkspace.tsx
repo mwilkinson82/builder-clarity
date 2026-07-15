@@ -54,6 +54,7 @@ import {
   createTakeoffMeasurement,
   deleteTakeoffMeasurement,
   planRoomBucket,
+  recalculateSheetTakeoffs,
   syncTakeoffToEstimateLine,
   updatePlanSheet,
   updateTakeoffMeasurement,
@@ -222,6 +223,7 @@ export function PlanRoomWorkspace({
   const applyScaleToSheetsFn = useServerFn(applyScaleToSheets);
   const updatePlanSheetsFn = useServerFn(updatePlanSheets);
   const createLineForTakeoffsFn = useServerFn(createLineItemForTakeoffs);
+  const recalculateSheetTakeoffsFn = useServerFn(recalculateSheetTakeoffs);
 
   const [selectedSheetId, setSelectedSheetId] = useState<string>("");
   const [tool, setTool] = useState<ToolMode>("select");
@@ -312,6 +314,7 @@ export function PlanRoomWorkspace({
     notes: "",
     quantity: "",
     unit: "",
+    overrideReason: "",
   });
   const [takeoffSummaryFallback, setTakeoffSummaryFallback] = useState("");
   // Per-sheet undo/redo stacks for takeoff operations. In-memory only: they
@@ -650,6 +653,7 @@ export function PlanRoomWorkspace({
         notes: "",
         quantity: "",
         unit: "",
+        overrideReason: "",
       });
       return;
     }
@@ -659,6 +663,7 @@ export function PlanRoomWorkspace({
       notes: selectedMeasurementNotes,
       quantity: selectedMeasurement ? String(Number(selectedMeasurement.quantity.toFixed(3))) : "",
       unit: selectedMeasurement?.unit ?? "",
+      overrideReason: selectedMeasurement?.override_reason ?? "",
     });
   }, [
     selectedMeasurement,
@@ -816,13 +821,19 @@ export function PlanRoomWorkspace({
       return { ...result, joinedGroupLinked: Boolean(joinedGroup?.linkedLineId) };
     },
     onSuccess: (result, variables) => {
-      toast.success(
-        result.joinedGroupLinked
-          ? "Takeoff saved — added to its group and linked"
-          : selectedLine
-            ? "Takeoff saved and estimate row updated"
-            : "Takeoff saved",
-      );
+      if (result.sync?.calculation_conflict) {
+        toast.warning(
+          "Takeoff saved, but its quantity needs review before it can update the estimate.",
+        );
+      } else {
+        toast.success(
+          result.joinedGroupLinked
+            ? "Takeoff saved — added to its group and linked"
+            : selectedLine
+              ? "Takeoff saved and estimate row updated"
+              : "Takeoff saved",
+        );
+      }
       setPendingPoints([]);
       setSelectedMeasurementId(result.measurement.id);
       recordTakeoffCommand(result.measurement.plan_sheet_id, {
@@ -924,10 +935,15 @@ export function PlanRoomWorkspace({
     mutationFn: ({
       id,
       patch,
+      recalculateFromGeometry = false,
     }: {
       id: string;
       patch: Parameters<typeof updateMeasurementFn>[0]["data"]["patch"];
-    }) => updateMeasurementFn({ data: { id, patch } }),
+      recalculateFromGeometry?: boolean;
+    }) =>
+      updateMeasurementFn({
+        data: { id, patch, recalculate_from_geometry: recalculateFromGeometry },
+      }),
     onSuccess: (_result, variables) => {
       toast.success("Takeoff updated");
       // `measurements` still holds the pre-update row here — the query only
@@ -937,6 +953,25 @@ export function PlanRoomWorkspace({
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Takeoff did not save"),
+  });
+
+  const recalculateSheetMutation = useMutation({
+    mutationFn: (sheetId: string) =>
+      recalculateSheetTakeoffsFn({
+        data: { estimate_id: estimate.id, plan_sheet_id: sheetId },
+      }),
+    onSuccess: (result) => {
+      const recalculated = result.measurements.length;
+      const skipped = result.skipped_manual_overrides.length;
+      toast.success(
+        skipped > 0
+          ? `${recalculated} takeoffs recalculated; ${skipped} manual override${skipped === 1 ? "" : "s"} still need review`
+          : `${recalculated} takeoff${recalculated === 1 ? "" : "s"} recalculated from drawing geometry`,
+      );
+      invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Sheet takeoffs did not recalculate"),
   });
 
   const deleteMeasurementMutation = useMutation({
@@ -1401,6 +1436,18 @@ export function PlanRoomWorkspace({
         },
       }),
     onSuccess: (result, variables) => {
+      if (result.sync.calculation_conflict) {
+        const firstBlockedId = result.sync.blocked_measurements[0]?.id;
+        const firstBlocked = measurements.find((measurement) => measurement.id === firstBlockedId);
+        if (firstBlocked) {
+          setSelectedSheetId(firstBlocked.plan_sheet_id);
+          setSelectedMeasurementId(firstBlocked.id);
+        }
+        toast.error(
+          `${result.sync.blocked_measurements.length} takeoff${result.sync.blocked_measurements.length === 1 ? " is" : "s are"} not trusted yet. Review the highlighted quantity before syncing.`,
+        );
+        return;
+      }
       if (result.sync.unit_conflict || result.sync.conflict) {
         // Show the in-app conflict dialog (unit guard first, then the
         // hand-typed quantity guard) instead of overwriting silently.
@@ -1918,6 +1965,12 @@ export function PlanRoomWorkspace({
       toast.warning("Enter a unit for this takeoff.");
       return;
     }
+    const quantityChanged = Math.abs(quantity - selectedMeasurement.quantity) > 0.00005;
+    const overrideReason = selectedMeasurementDraft.overrideReason.trim();
+    if (quantityChanged && overrideReason.length < 3) {
+      toast.warning("Explain why field judgment should override the drawing quantity.");
+      return;
+    }
     updateMeasurementMutation.mutate({
       id: selectedMeasurement.id,
       patch: {
@@ -1926,6 +1979,7 @@ export function PlanRoomWorkspace({
         notes: selectedMeasurementDraft.notes.trim(),
         quantity,
         unit,
+        ...(quantityChanged ? { override_reason: overrideReason } : {}),
       },
     });
   };
@@ -1937,24 +1991,11 @@ export function PlanRoomWorkspace({
       toast.warning("This takeoff does not have drawing geometry to recalculate.");
       return;
     }
-    const quantity = calculateQuantity(
-      selectedMeasurement.tool_type,
-      points,
-      selectedMeasurementSheet,
-      viewSize,
-    );
-    if (quantity <= 0) {
-      toast.warning(
-        selectedMeasurement.tool_type === "count"
-          ? "Place at least one count marker before recalculating."
-          : "Set the sheet scale before recalculating this takeoff.",
-      );
-      return;
-    }
-    setSelectedMeasurementDraft((draft) => ({
-      ...draft,
-      quantity: String(Number(quantity.toFixed(3))),
-    }));
+    updateMeasurementMutation.mutate({
+      id: selectedMeasurement.id,
+      patch: {},
+      recalculateFromGeometry: true,
+    });
   };
 
   const saveMeasurementGeometry = async (measurementId: string, points: Point[]) => {
@@ -2041,6 +2082,10 @@ export function PlanRoomWorkspace({
   ).length;
   const unlinkedMeasurements = useMemo(
     () => measurements.filter((measurement) => !measurement.estimate_line_item_id),
+    [measurements],
+  );
+  const calculationIssues = useMemo(
+    () => measurements.filter((measurement) => measurement.calculation_status !== "current"),
     [measurements],
   );
   const unscaledSheets = useMemo(
@@ -3562,12 +3607,19 @@ export function PlanRoomWorkspace({
             measurements={measurements}
             unscaledSheets={unscaledSheets}
             unlinkedMeasurements={unlinkedMeasurements}
+            calculationIssues={calculationIssues}
             linkedCount={linkedCount}
             hiddenSheetMeasurementCount={hiddenSheetMeasurementCount}
             sheetMeasurements={sheetMeasurements}
             visibleSheetMeasurements={visibleSheetMeasurements}
             openFirstUnscaledSheet={openFirstUnscaledSheet}
             showUnlinkedTakeoffs={showUnlinkedTakeoffs}
+            reviewCalculationIssues={() => {
+              const firstIssue = calculationIssues[0];
+              if (!firstIssue) return;
+              setSelectedSheetId(firstIssue.plan_sheet_id);
+              setSelectedMeasurementId(firstIssue.id);
+            }}
             setAllTakeoffLayersVisible={setAllTakeoffLayersVisible}
           />
 
@@ -3594,6 +3646,26 @@ export function PlanRoomWorkspace({
                       AI-assisted
                     </Badge>
                   )}
+                  <Badge
+                    variant={
+                      selectedMeasurement.calculation_status === "current" ? "secondary" : "outline"
+                    }
+                    className={cn(
+                      selectedMeasurement.calculation_status !== "current" &&
+                        "border-warning/40 bg-warning/10 text-warning",
+                    )}
+                    data-testid="takeoff-inspector-trust-chip"
+                  >
+                    {selectedMeasurement.calculation_status === "current"
+                      ? selectedMeasurement.calculation_method === "manual_override"
+                        ? "Approved override"
+                        : "Quantity current"
+                      : selectedMeasurement.calculation_status === "unverified_scale"
+                        ? "Verify sheet scale"
+                        : selectedMeasurement.calculation_status === "stale"
+                          ? "Scale changed"
+                          : "Review required"}
+                  </Badge>
                   <Badge variant="secondary">
                     {toolLabel(selectedMeasurement.tool_type)} ·{" "}
                     {formatQty(selectedMeasurement.quantity, selectedMeasurement.unit)}
@@ -3616,6 +3688,34 @@ export function PlanRoomWorkspace({
                     Geometry: drag the white points on the plan to refine this takeoff. Quantity
                     recalculates and syncs to the linked estimate row when saved.
                   </p>
+                  <p className="mt-1" data-testid="selected-takeoff-calculation-source">
+                    Quantity source: {selectedMeasurement.calculation_method.replaceAll("_", " ")}
+                    {selectedMeasurement.calculation_scale_revision
+                      ? ` · scale revision ${selectedMeasurement.calculation_scale_revision}`
+                      : " · scale independent"}
+                  </p>
+                  {selectedMeasurement.calculation_status !== "current" && (
+                    <div className="mt-3 flex items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-2 text-foreground">
+                      <span>
+                        {selectedMeasurement.calculation_status === "unverified_scale"
+                          ? "Verify this sheet against a known dimension before sending its length or area to the estimate."
+                          : "Recalculate this sheet from its saved geometry before sending quantities to the estimate."}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 shrink-0"
+                        onClick={() =>
+                          recalculateSheetMutation.mutate(selectedMeasurement.plan_sheet_id)
+                        }
+                        disabled={recalculateSheetMutation.isPending}
+                        data-testid="selected-takeoff-recalculate-sheet"
+                      >
+                        Recalculate sheet
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label>Takeoff label</Label>
@@ -3651,6 +3751,7 @@ export function PlanRoomWorkspace({
                         size="sm"
                         variant="outline"
                         onClick={recalculateSelectedMeasurement}
+                        disabled={updateMeasurementMutation.isPending}
                         data-testid="selected-takeoff-recalculate"
                       >
                         Recalc
@@ -3675,6 +3776,30 @@ export function PlanRoomWorkspace({
                     />
                   </div>
                 </div>
+                {(Math.abs(
+                  Number(selectedMeasurementDraft.quantity || 0) - selectedMeasurement.quantity,
+                ) > 0.00005 ||
+                  selectedMeasurement.calculation_method === "manual_override") && (
+                  <div className="space-y-1.5">
+                    <Label>Override reason</Label>
+                    <Textarea
+                      rows={2}
+                      value={selectedMeasurementDraft.overrideReason}
+                      onChange={(event) =>
+                        setSelectedMeasurementDraft((draft) => ({
+                          ...draft,
+                          overrideReason: event.target.value,
+                        }))
+                      }
+                      placeholder="Example: field-verified dimension supersedes the printed plan."
+                      data-testid="selected-takeoff-override-reason"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Manual quantities are allowed, but the estimator's reason stays in the audit
+                      trail.
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label>Markup color</Label>
                   <div className="flex flex-wrap gap-2" data-testid="selected-takeoff-color-picker">

@@ -2478,6 +2478,22 @@ expectSql(
 expectSql(
   sql,
   [
+    /add column if not exists scale_revision integer not null default 1/i,
+    /calculation_method varchar\(32\) not null default 'legacy'/i,
+    /calculation_status varchar\(32\) not null default 'review_required'/i,
+    /ai_operation_id uuid references public\.ai_operations\(id\) on delete set null/i,
+    /create or replace function public\.tg_plan_sheet_takeoff_trust\(\)/i,
+    /new\.scale_revision := old\.scale_revision \+ 1/i,
+    /create or replace function public\.tg_invalidate_takeoffs_for_sheet_scale\(\)/i,
+    /calculation_status = case[\s\S]*when calculation_method = 'manual_override' then 'review_required'[\s\S]*else 'stale'/i,
+    /notify pgrst, 'reload schema'/i,
+  ],
+  "takeoff trust migration versions scales, invalidates dependent work, records AI review, and refreshes the API schema",
+);
+
+expectSql(
+  sql,
+  [
     /create or replace function public\.can_read_estimate\(p_estimate_id uuid\)/i,
     /create or replace function public\.can_manage_estimate\(p_estimate_id uuid\)/i,
     /public\.can_manage_estimate\(estimate_id\)/i,

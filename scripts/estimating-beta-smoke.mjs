@@ -37,6 +37,7 @@ import {
   takeoffUnitsCompatible,
   GEOMETRY_SNAP_TOLERANCE_PX,
 } from "../src/lib/plan-room-math.ts";
+import { calculateAuthoritativeTakeoff } from "../src/lib/plan-room-quantity.ts";
 import {
   TAKEOFF_UNDO_DEPTH,
   commitRedo,
@@ -314,6 +315,87 @@ assert.equal(
     viewSize: takeoffViewSize,
   }),
   3,
+);
+
+// --- Server-owned takeoff calculation trust layer --------------------------
+const trustedLinear = calculateAuthoritativeTakeoff({
+  tool: "linear",
+  geometry: {
+    points: [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+    ],
+    // The authoritative sheet dimensions win over a stale browser view size.
+    view_size: { width: 20, height: 20 },
+  },
+  sheet: {
+    width_px: 100,
+    height_px: 100,
+    scale_feet_per_pixel: 0.5,
+    scale_revision: 7,
+    scale_verified_at: "2026-07-15T00:00:00.000Z",
+  },
+});
+assert.equal(trustedLinear.quantity, 50);
+assert.equal(trustedLinear.method, "geometry");
+assert.equal(trustedLinear.status, "current");
+assert.equal(trustedLinear.scaleRevision, 7);
+assert.equal(trustedLinear.context.view_size_source, "sheet");
+
+const unverifiedArea = calculateAuthoritativeTakeoff({
+  tool: "area",
+  geometry: {
+    points: [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ],
+    view_size: { width: 100, height: 100 },
+  },
+  sheet: { scale_feet_per_pixel: 0.5, scale_revision: 2, scale_verified_at: null },
+});
+assert.equal(unverifiedArea.quantity, 2500);
+assert.equal(unverifiedArea.status, "unverified_scale");
+assert.equal(unverifiedArea.context.view_size_source, "geometry_fallback");
+
+const scaleIndependentCount = calculateAuthoritativeTakeoff({
+  tool: "count",
+  geometry: {
+    points: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.2, y: 0.2 },
+      { x: 0.3, y: 0.3 },
+    ],
+  },
+  sheet: {},
+});
+assert.equal(scaleIndependentCount.quantity, 3);
+assert.equal(scaleIndependentCount.status, "current");
+assert.equal(scaleIndependentCount.scaleRevision, null);
+assert.throws(
+  () =>
+    calculateAuthoritativeTakeoff({
+      tool: "linear",
+      geometry: { points: [{ x: 0, y: 0 }] },
+      sheet: { scale_feet_per_pixel: 0.5 },
+    }),
+  /at least two points/,
+);
+assert.throws(
+  () =>
+    calculateAuthoritativeTakeoff({
+      tool: "area",
+      geometry: {
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+        ],
+      },
+      sheet: { scale_feet_per_pixel: 0 },
+    }),
+  /Set a sheet scale/,
 );
 
 // --- Takeoff unit alias matcher (Phase 2 unit-mismatch guard) ---

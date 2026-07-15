@@ -197,7 +197,19 @@ export function useAiAssist({
   const cancelRequestedRef = useRef(false);
   const operationIdRef = useRef<string | null>(null);
   // AI measurement created per sheet during this review (id + points so far).
-  const aiMeasurementsRef = useRef(new Map<string, { id: string; points: SheetPoint[] }>());
+  const aiMeasurementsRef = useRef(
+    new Map<
+      string,
+      {
+        id: string;
+        points: SheetPoint[];
+        originalPoints: SheetPoint[];
+        minimumConfidence: number;
+        sources: Set<string>;
+        nudged: boolean;
+      }
+    >(),
+  );
   // Rejections the user made this session, keyed by sheet + exemplar label.
   // Each carries the user's REASON (AITAKEOFF10 Task 0): only explicit
   // "wrong_symbol" verdicts may ever become stage-B negatives — placement
@@ -780,6 +792,10 @@ export function useAiAssist({
             y: point.y,
             confidence: VERIFIED_PROPOSAL_CONFIDENCE,
             status: "pending",
+            source: "template",
+            originalX: point.x,
+            originalY: point.y,
+            nudged: false,
           });
         }
         // Paint the template ghosts NOW — they render during "scanning" too, so
@@ -951,6 +967,10 @@ export function useAiAssist({
                 y: verdict.point.y,
                 confidence: verdict.confidence,
                 status: "pending",
+                source: "model",
+                originalX: verdict.point.x,
+                originalY: verdict.point.y,
+                nudged: false,
               });
               // A bonus find — drop it onto the canvas alongside the ghosts
               // already there instead of waiting for the whole scan to end.
@@ -1139,6 +1159,19 @@ export function useAiAssist({
       }
       for (const [sheetId, sheetProposals] of bySheet) {
         const existing = aiMeasurementsRef.current.get(sheetId);
+        const acceptedOriginalPoints = sheetProposals.map((proposal) => ({
+          x: proposal.originalX ?? proposal.x,
+          y: proposal.originalY ?? proposal.y,
+        }));
+        const acceptedSources = new Set(
+          sheetProposals.map(
+            (proposal) => proposal.source ?? (reviewOverride ? "discovery" : "model"),
+          ),
+        );
+        const minimumConfidence = Math.min(
+          ...sheetProposals.map((proposal) => proposal.confidence),
+        );
+        const wasNudged = sheetProposals.some((proposal) => proposal.nudged);
         if (!existing) {
           let points: SheetPoint[] = [];
           for (const proposal of sheetProposals) {
@@ -1163,27 +1196,52 @@ export function useAiAssist({
               geometry: geometryFromPoints(points, viewSize),
               notes: `AI-assisted count — sheet ${sheetTag}. Every point was reviewed and accepted by hand.`,
               created_by_ai: true,
+              ai_operation_id: lastOperationId,
+              ai_proposal_source: Array.from(acceptedSources).sort().join("+").slice(0, 32),
+              ai_confidence: minimumConfidence,
+              ai_original_geometry: geometryFromPoints(acceptedOriginalPoints, viewSize),
+              ai_review_action: wasNudged ? "nudged" : "accepted",
             },
           });
           aiMeasurementsRef.current.set(sheetId, {
             id: result.measurement.id,
             points,
+            originalPoints: acceptedOriginalPoints,
+            minimumConfidence,
+            sources: acceptedSources,
+            nudged: wasNudged,
           });
         } else {
           let points = existing.points;
           for (const proposal of sheetProposals) {
             points = appendAcceptedPoint(points, proposal).points;
           }
+          const originalPoints = [...existing.originalPoints, ...acceptedOriginalPoints];
+          const sources = new Set([...existing.sources, ...acceptedSources]);
+          const nextMinimumConfidence = Math.min(existing.minimumConfidence, minimumConfidence);
+          const nextWasNudged = existing.nudged || wasNudged;
           await updateMeasurementFn({
             data: {
               id: existing.id,
               patch: {
                 geometry: geometryFromPoints(points, viewSize),
                 quantity: points.length,
+                ai_operation_id: lastOperationId,
+                ai_proposal_source: Array.from(sources).sort().join("+").slice(0, 32),
+                ai_confidence: nextMinimumConfidence,
+                ai_original_geometry: geometryFromPoints(originalPoints, viewSize),
+                ai_review_action: nextWasNudged ? "nudged" : "accepted",
               },
             },
           });
-          aiMeasurementsRef.current.set(sheetId, { id: existing.id, points });
+          aiMeasurementsRef.current.set(sheetId, {
+            id: existing.id,
+            points,
+            originalPoints,
+            minimumConfidence: nextMinimumConfidence,
+            sources,
+            nudged: nextWasNudged,
+          });
         }
       }
     },
@@ -1191,6 +1249,7 @@ export function useAiAssist({
       createMeasurementFn,
       estimateId,
       exemplar,
+      lastOperationId,
       reviewOverride,
       sheetById,
       updateMeasurementFn,
@@ -1323,7 +1382,16 @@ export function useAiAssist({
       if (!activeProposal || isAccepting) return;
       setProposals((current) =>
         current.map((p) =>
-          p.id === activeProposal.id ? { ...p, x: clamp01(p.x + dx), y: clamp01(p.y + dy) } : p,
+          p.id === activeProposal.id
+            ? {
+                ...p,
+                originalX: p.originalX ?? p.x,
+                originalY: p.originalY ?? p.y,
+                x: clamp01(p.x + dx),
+                y: clamp01(p.y + dy),
+                nudged: true,
+              }
+            : p,
         ),
       );
     },
@@ -1410,6 +1478,10 @@ export function useAiAssist({
             y: point.y,
             confidence: VERIFIED_PROPOSAL_CONFIDENCE,
             status: "pending",
+            source: "discovery",
+            originalX: point.x,
+            originalY: point.y,
+            nudged: false,
           });
         }
       }

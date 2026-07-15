@@ -2011,8 +2011,10 @@ export type Database = {
           id: string
           page_number: number
           plan_set_id: string
+          scale_changed_at: string | null
           scale_feet_per_pixel: number
           scale_label: string
+          scale_revision: number
           scale_source: string
           scale_verified_at: string | null
           sheet_name: string
@@ -2030,8 +2032,10 @@ export type Database = {
           id?: string
           page_number?: number
           plan_set_id: string
+          scale_changed_at?: string | null
           scale_feet_per_pixel?: number
           scale_label?: string
+          scale_revision?: number
           scale_source?: string
           scale_verified_at?: string | null
           sheet_name?: string
@@ -2049,8 +2053,10 @@ export type Database = {
           id?: string
           page_number?: number
           plan_set_id?: string
+          scale_changed_at?: string | null
           scale_feet_per_pixel?: number
           scale_label?: string
+          scale_revision?: number
           scale_source?: string
           scale_verified_at?: string | null
           sheet_name?: string
@@ -2079,6 +2085,19 @@ export type Database = {
       }
       estimate_takeoff_measurements: {
         Row: {
+          ai_confidence: number | null
+          ai_operation_id: string | null
+          ai_original_geometry: Json | null
+          ai_proposal_source: string | null
+          ai_review_action: string | null
+          ai_reviewed_at: string | null
+          ai_reviewed_by: string | null
+          calculated_at: string | null
+          calculated_quantity: number | null
+          calculation_context: Json
+          calculation_method: string
+          calculation_scale_revision: number | null
+          calculation_status: string
           color: string
           created_at: string
           created_by: string | null
@@ -2090,6 +2109,7 @@ export type Database = {
           label: string
           library_item_id: string | null
           notes: string
+          override_reason: string
           plan_sheet_id: string
           quantity: number
           tool_type: string
@@ -2098,6 +2118,19 @@ export type Database = {
           waste_pct: number
         }
         Insert: {
+          ai_confidence?: number | null
+          ai_operation_id?: string | null
+          ai_original_geometry?: Json | null
+          ai_proposal_source?: string | null
+          ai_review_action?: string | null
+          ai_reviewed_at?: string | null
+          ai_reviewed_by?: string | null
+          calculated_at?: string | null
+          calculated_quantity?: number | null
+          calculation_context?: Json
+          calculation_method?: string
+          calculation_scale_revision?: number | null
+          calculation_status?: string
           color?: string
           created_at?: string
           created_by?: string | null
@@ -2109,6 +2142,7 @@ export type Database = {
           label: string
           library_item_id?: string | null
           notes?: string
+          override_reason?: string
           plan_sheet_id: string
           quantity?: number
           tool_type: string
@@ -2117,6 +2151,19 @@ export type Database = {
           waste_pct?: number
         }
         Update: {
+          ai_confidence?: number | null
+          ai_operation_id?: string | null
+          ai_original_geometry?: Json | null
+          ai_proposal_source?: string | null
+          ai_review_action?: string | null
+          ai_reviewed_at?: string | null
+          ai_reviewed_by?: string | null
+          calculated_at?: string | null
+          calculated_quantity?: number | null
+          calculation_context?: Json
+          calculation_method?: string
+          calculation_scale_revision?: number | null
+          calculation_status?: string
           color?: string
           created_at?: string
           created_by?: string | null
@@ -2128,6 +2175,7 @@ export type Database = {
           label?: string
           library_item_id?: string | null
           notes?: string
+          override_reason?: string
           plan_sheet_id?: string
           quantity?: number
           tool_type?: string
@@ -2136,6 +2184,13 @@ export type Database = {
           waste_pct?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "estimate_takeoff_measurements_ai_operation_id_fkey"
+            columns: ["ai_operation_id"]
+            isOneToOne: false
+            referencedRelation: "ai_operations"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "estimate_takeoff_measurements_estimate_id_fkey"
             columns: ["estimate_id"]
