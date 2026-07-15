@@ -67,6 +67,7 @@ import {
 } from "../src/lib/receivables.ts";
 import { summarizeCostSettlement } from "../src/lib/cost-settlement.ts";
 import { previewCertifiedWipBillingHandoff } from "../src/lib/certified-wip-billing.ts";
+import { fmtUSDCents } from "../src/lib/billing-format.ts";
 import {
   applicationFeeFromDollars,
   cappedApplicationFeeFromDollars,
@@ -174,6 +175,7 @@ assert.equal(certifiedPreview.priorCompletedAndStoredCents, 3_500_000);
 assert.equal(certifiedPreview.proposedWorkThisPeriodCents, 2_000_000);
 assert.equal(certifiedPreview.deltaCents, 1_750_000);
 assert.equal(certifiedPreview.block, null);
+assert.equal(fmtUSDCents(centsToDollars(33_900_000)), "$339,000.00");
 
 const stalePreview = previewCertifiedWipBillingHandoff({
   certification,

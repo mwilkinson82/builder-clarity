@@ -44,6 +44,7 @@ import {
 } from "@/lib/certified-wip-billing";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  centsToDollars,
   dollarsToCents,
   lineWorkForPercentCents,
   percentOfCents,
@@ -944,7 +945,7 @@ function CertifiedSovBillingHandoffPanel({
             if (!canApply || !onApply) return;
             const direction = preview.deltaCents >= 0 ? "increase" : "decrease";
             const confirmed = window.confirm(
-              `Apply the PM-certified ${certification.certified_percent.toFixed(2)}% position to ${line?.cost_code || line?.description || "this SOV line"}? This will ${direction} current-period work by ${fmtUSD(Math.abs(preview.deltaCents))}. The application will remain a draft.`,
+              `Apply the PM-certified ${certification.certified_percent.toFixed(2)}% position to ${line?.cost_code || line?.description || "this SOV line"}? This will ${direction} current-period work by ${fmtUSD(centsToDollars(Math.abs(preview.deltaCents)))}. The application will remain a draft.`,
             );
             if (confirmed) onApply(certification.id, payApp.id);
           };
@@ -986,10 +987,11 @@ function CertifiedSovBillingHandoffPanel({
                   Draft result
                 </div>
                 <div className="mt-1 font-serif text-xl text-foreground">
-                  {fmtUSD(preview.proposedWorkThisPeriodCents)}
+                  {fmtUSD(centsToDollars(preview.proposedWorkThisPeriodCents))}
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  current-period work · {fmtUSD(preview.targetTotalCents)} cumulative
+                  current-period work · {fmtUSD(centsToDollars(preview.targetTotalCents))}{" "}
+                  cumulative
                 </div>
               </div>
 

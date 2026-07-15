@@ -3711,12 +3711,22 @@ await expectContains(
   "certified WIP reaches only an explicit draft billing handoff with stale, floor, and audit guards",
 );
 await expectContains(
+  "supabase/migrations/20260715190552_restrict_certified_wip_handoff_execution.sql",
+  [
+    /revoke execute on function public\.apply_production_sov_certification_to_billing\(uuid, uuid\)[\s\S]*from public, anon/,
+    /grant execute on function public\.apply_production_sov_certification_to_billing\(uuid, uuid\)[\s\S]*to authenticated, service_role/,
+    /notify pgrst, 'reload schema'/,
+  ],
+  "certified WIP billing handoff execution is restricted to signed-in application roles",
+);
+await expectContains(
   "src/components/billing/BillingEnhancements.tsx",
   [
     /PM billing handoff/,
     /Accounting\s+chooses what enters this draft/,
     /Apply to draft/,
     /application will remain a draft/,
+    /fmtUSD\(centsToDollars\(preview\.targetTotalCents\)\)/,
   ],
   "billing presents PM decisions as an optional accounting-native worksheet",
 );
