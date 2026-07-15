@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { KanbanSquare, List, Plus, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
+import {
+  CalendarClock,
+  KanbanSquare,
+  List,
+  Plus,
+  RotateCcw,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { createEstimate } from "@/lib/estimates.functions";
@@ -40,6 +48,7 @@ import { PipelineList } from "./PipelineList";
 import { PipelineGlanceCard } from "./PipelineMetrics";
 import { PipelineRailLists } from "./PipelineRailLists";
 import { PipelineCrmOverview } from "./PipelineCrmOverview";
+import { FollowUpStudio } from "./FollowUpStudio";
 import { OpportunityCreateDialog, QuickAddOpportunity } from "./OpportunityCreateDialog";
 import { OpportunityDetail } from "./OpportunityDetail";
 import {
@@ -110,6 +119,7 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
   const completeActionFn = useServerFn(completeNextAction);
 
   const [viewMode, setViewMode] = useState<PipelineViewMode>("kanban");
+  const [workspaceMode, setWorkspaceMode] = useState<"pipeline" | "followup">("pipeline");
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState<PipelineStage | "all">("all");
   const [assignedFilter, setAssignedFilter] = useState("all");
@@ -478,6 +488,42 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
     applyLocalDemoPatch(id, { last_activity_at: now, updated_at: now });
   };
 
+  if (workspaceMode === "followup") {
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
+          <h1 className="font-serif text-[30px] font-normal leading-none text-foreground">
+            Follow-Up Studio
+          </h1>
+          <span className="text-sm text-muted-foreground">
+            Useful material, prepared messages, and disciplined follow-through.
+          </span>
+        </div>
+        <Tabs
+          value={workspaceMode}
+          onValueChange={(value) => setWorkspaceMode(value as "pipeline" | "followup")}
+        >
+          <TabsList className="h-auto rounded-xl border border-hairline bg-surface p-1 shadow-card">
+            <TabsTrigger value="pipeline" className="gap-1.5">
+              <KanbanSquare className="h-3.5 w-3.5" /> Pipeline
+            </TabsTrigger>
+            <TabsTrigger value="followup" className="gap-1.5">
+              <CalendarClock className="h-3.5 w-3.5" /> Follow-Up Studio
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <FollowUpStudio
+          opportunities={opportunities}
+          members={members}
+          onOpenOpportunity={(id) => {
+            setSelectedId(id);
+            setWorkspaceMode("pipeline");
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       {/* 1. Page header inside the CRM tab */}
@@ -502,6 +548,20 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
           />
         </div>
       </div>
+
+      <Tabs
+        value={workspaceMode}
+        onValueChange={(value) => setWorkspaceMode(value as "pipeline" | "followup")}
+      >
+        <TabsList className="h-auto rounded-xl border border-hairline bg-surface p-1 shadow-card">
+          <TabsTrigger value="pipeline" className="gap-1.5">
+            <KanbanSquare className="h-3.5 w-3.5" /> Pipeline
+          </TabsTrigger>
+          <TabsTrigger value="followup" className="gap-1.5">
+            <CalendarClock className="h-3.5 w-3.5" /> Follow-Up Studio
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {/* 2. Glance grid: rail lists (left) + pipeline-at-a-glance (right) */}
       <div className="grid items-start gap-4 xl:grid-cols-[1.25fr_1fr]">
