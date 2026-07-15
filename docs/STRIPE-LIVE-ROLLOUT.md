@@ -135,3 +135,28 @@ falls back to the legacy or test account ID.
 Do not delete the legacy `stripe_connect_account_id` columns during this
 rollout. They remain synchronized with the active mode for compatibility and
 can be removed only after the deployed code and canary are proven.
+
+## Contractor Circle included access
+
+Contractor Circle remains billed by the separate Circle/ALPio Stripe account.
+OverWatch never attempts to retrieve or manage that Stripe subscription. The
+Circle Hub is the membership authority and exposes a signed tier lookup that
+OverWatch checks on company-settings load and on a manual refresh.
+
+Set the same high-entropy value as a server-only secret in both Lovable
+projects:
+
+```text
+CONTRACTOR_CIRCLE_SHARED_SECRET
+```
+
+OverWatch may also override the default Hub endpoint when needed:
+
+```text
+CONTRACTOR_CIRCLE_TIER_LOOKUP_URL=https://app.alpcontractorcircle.com/api/public/overwatch/tier-lookup
+```
+
+The sync grants included Pro only for `circle` and `hardcore`. It is
+fail-open: authentication, network, or Hub errors leave existing access
+untouched. Existing rollout grants remain administrative until positively
+matched, so alternate member emails cannot silently downgrade a client.

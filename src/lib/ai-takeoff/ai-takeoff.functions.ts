@@ -69,6 +69,16 @@ function maxSheetsPerScan(): number {
   return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MAX_SHEETS_PER_SCAN;
 }
 
+function isMissingMonthlyGrantRpc(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return (
+    error?.code === "PGRST202" ||
+    error?.code === "42883" ||
+    (message.includes("ensure_monthly_ai_credit_grant") &&
+      (message.includes("does not exist") || message.includes("schema cache")))
+  );
+}
+
 // Guardrail config (AITAKEOFF2 Task 2): env-overridable, defaults from the
 // domain module so client and server agree.
 function minProposalConfidence(): number {
@@ -213,6 +223,18 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
     const chargedCredits = isSuperAdmin ? 0 : quote;
 
     if (!isSuperAdmin) {
+      const monthlyGrant = await (
+        context.supabase as unknown as {
+          rpc(
+            fn: string,
+            args: { p_organization_id: string },
+          ): Promise<DynamicSupabaseResult<number>>;
+        }
+      ).rpc("ensure_monthly_ai_credit_grant", { p_organization_id: organizationId });
+      if (monthlyGrant.error && !isMissingMonthlyGrantRpc(monthlyGrant.error)) {
+        throw new Error(monthlyGrant.error.message);
+      }
+
       // Balance pre-check with the user's own read access (RLS members-read).
       const ledgerResult = (await dynamicTable(context.supabase, "credit_ledger")
         .select("delta")

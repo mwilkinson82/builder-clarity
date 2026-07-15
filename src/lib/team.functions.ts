@@ -72,6 +72,12 @@ export interface TeamOrganization {
   storage_limit_mb: number;
   daily_report_limit_per_month: number;
   contractor_circle_grant: boolean;
+  entitlement_source: "free" | "stripe" | "contractor_circle" | "admin";
+  entitlement_expires_at: string;
+  billing_grace_ends_at: string;
+  circle_entitlement_checked_at: string;
+  circle_entitlement_member_email: string;
+  circle_entitlement_tier: string;
 }
 
 export interface CompanyWorkspaceContext {
@@ -171,13 +177,6 @@ const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const bool = (v: unknown) => (typeof v === "boolean" ? v : Boolean(v));
 
-const CONTRACTOR_CIRCLE_GRANT_LIMITS = {
-  projects: 10,
-  seats: 10,
-  storageMb: 10_240,
-  dailyReportsPerMonth: 1_000,
-} as const;
-
 const ORGANIZATION_BASE_SELECT =
   "id,updated_at,name,slug,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant";
 
@@ -198,6 +197,12 @@ const ORGANIZATION_COMMERCIAL_COLUMNS = [
   "subscription_current_period_end",
   "subscription_cancel_at_period_end",
   "payment_processor_ready",
+  "entitlement_source",
+  "entitlement_expires_at",
+  "billing_grace_ends_at",
+  "circle_entitlement_checked_at",
+  "circle_entitlement_member_email",
+  "circle_entitlement_tier",
 ] as const;
 
 const ORGANIZATION_IDENTITY_COLUMNS = [
@@ -294,17 +299,20 @@ function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
     subscription_current_period_end: str(row.subscription_current_period_end),
     subscription_cancel_at_period_end: bool(row.subscription_cancel_at_period_end),
     payment_processor_ready: stripeConnection.ready,
-    project_limit: contractorCircleGrant
-      ? CONTRACTOR_CIRCLE_GRANT_LIMITS.projects
-      : num(row.project_limit),
-    seat_limit: contractorCircleGrant ? CONTRACTOR_CIRCLE_GRANT_LIMITS.seats : num(row.seat_limit),
-    storage_limit_mb: contractorCircleGrant
-      ? CONTRACTOR_CIRCLE_GRANT_LIMITS.storageMb
-      : num(row.storage_limit_mb),
-    daily_report_limit_per_month: contractorCircleGrant
-      ? CONTRACTOR_CIRCLE_GRANT_LIMITS.dailyReportsPerMonth
-      : num(row.daily_report_limit_per_month),
+    project_limit: num(row.project_limit),
+    seat_limit: num(row.seat_limit),
+    storage_limit_mb: num(row.storage_limit_mb),
+    daily_report_limit_per_month: num(row.daily_report_limit_per_month),
     contractor_circle_grant: contractorCircleGrant,
+    entitlement_source: str(
+      row.entitlement_source,
+      contractorCircleGrant ? "contractor_circle" : "free",
+    ) as TeamOrganization["entitlement_source"],
+    entitlement_expires_at: str(row.entitlement_expires_at),
+    billing_grace_ends_at: str(row.billing_grace_ends_at),
+    circle_entitlement_checked_at: str(row.circle_entitlement_checked_at),
+    circle_entitlement_member_email: str(row.circle_entitlement_member_email),
+    circle_entitlement_tier: str(row.circle_entitlement_tier),
   };
 }
 
@@ -458,6 +466,21 @@ export const getCompanyWorkspaceContext = createServerFn({ method: "GET" })
       plan_code: organization.plan_code,
       billing_status: organization.billing_status,
     };
+  });
+
+export const refreshContractorCircleEntitlement = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const organizationId = await ensureCurrentOrganization(context);
+    await requireOrgCapability(
+      context,
+      organizationId,
+      "company.manage_settings",
+      "You do not have permission to refresh this company's membership.",
+    );
+    const { reconcileContractorCircleEntitlement } =
+      await import("@/lib/contractor-circle-entitlements.server");
+    return reconcileContractorCircleEntitlement({ organizationId, force: true });
   });
 
 const activityHeartbeatInput = z.object({
@@ -665,6 +688,19 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const organizationId = await ensureCurrentOrganization(context);
 
+    try {
+      const { reconcileContractorCircleEntitlement } =
+        await import("@/lib/contractor-circle-entitlements.server");
+      await reconcileContractorCircleEntitlement({ organizationId });
+    } catch (error) {
+      // Membership sync is deliberately fail-open: a Hub outage must never
+      // lock a paying contractor out of an active OverWatch company.
+      console.error("Contractor Circle automatic entitlement refresh failed open", {
+        organization_id: organizationId,
+        error,
+      });
+    }
+
     const [orgRes, membersRes, invitesRes, projectsRes] = await Promise.all([
       loadOrganization(context, organizationId),
       context.supabase
@@ -699,6 +735,9 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       owner_id: p.owner_id as string,
     }));
     const projectIds = projects.map((p) => p.id);
+    const meteredProjectIds = projects
+      .filter((project) => project.job_number !== "DEMO-HARBOR")
+      .map((project) => project.id);
 
     const [projectMembersRes, dailyReportUsage, contactsRes, clientAccessRes] = await Promise.all([
       projectIds.length === 0
@@ -708,7 +747,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
             .select("*")
             .in("project_id", projectIds)
             .order("created_at", { ascending: true }),
-      loadDailyReportUsage(context, projectIds),
+      loadDailyReportUsage(context, meteredProjectIds),
       context.supabase
         .from("client_contacts")
         .select("id,name,email,company,title,phone,status")
@@ -863,7 +902,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       canManageBilling,
       isSuperAdmin,
       usage: {
-        projects: projectIds.length,
+        projects: meteredProjectIds.length,
         activeSeats: members.filter((m) => m.status === "active").length,
         pendingInvites: invites.length,
         dailyReports: dailyReportUsage.total,
@@ -1095,7 +1134,7 @@ export const createTeamInvite = createServerFn({ method: "POST" })
 
     const { data: organization, error: orgError } = await context.supabase
       .from("organizations")
-      .select("id, seat_limit, contractor_circle_grant")
+      .select("id, seat_limit")
       .eq("id", organizationId)
       .single();
     if (orgError) throw new Error(orgError.message);
@@ -1119,11 +1158,7 @@ export const createTeamInvite = createServerFn({ method: "POST" })
     if (invitesError) throw new Error(invitesError.message);
 
     const claimedSeats = (activeSeats ?? 0) + (pendingInvites ?? 0);
-    if (
-      !bool(organization.contractor_circle_grant) &&
-      organization.seat_limit !== null &&
-      claimedSeats >= organization.seat_limit
-    ) {
+    if (organization.seat_limit !== null && claimedSeats >= organization.seat_limit) {
       throw new Error(
         `This Overwatch company is at its ${organization.seat_limit}-seat limit. Revoke an invite or upgrade before adding another person.`,
       );

@@ -33,6 +33,7 @@ import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/l
 import { Route as LovableEmailQueueProcessRouteImport } from './routes/lovable/email/queue/process'
 import { Route as LovableEmailAuthWebhookRouteImport } from './routes/lovable/email/auth/webhook'
 import { Route as LovableEmailAuthPreviewRouteImport } from './routes/lovable/email/auth/preview'
+import { Route as ApiStripeSubscriptionPortalRouteImport } from './routes/api/stripe/subscription/portal'
 import { Route as ApiStripeConnectAccountLinkRouteImport } from './routes/api/stripe/connect/account-link'
 import { Route as ApiStripeCheckoutSubscriptionRouteImport } from './routes/api/stripe/checkout/subscription'
 import { Route as ApiStripeCheckoutInvoiceRouteImport } from './routes/api/stripe/checkout/invoice'
@@ -169,6 +170,12 @@ const LovableEmailAuthPreviewRoute = LovableEmailAuthPreviewRouteImport.update({
   path: '/lovable/email/auth/preview',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiStripeSubscriptionPortalRoute =
+  ApiStripeSubscriptionPortalRouteImport.update({
+    id: '/api/stripe/subscription/portal',
+    path: '/api/stripe/subscription/portal',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiStripeConnectAccountLinkRoute =
   ApiStripeConnectAccountLinkRouteImport.update({
     id: '/api/stripe/connect/account-link',
@@ -244,6 +251,7 @@ export interface FileRoutesByFullPath {
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
+  '/api/stripe/subscription/portal': typeof ApiStripeSubscriptionPortalRoute
   '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
   '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
@@ -277,6 +285,7 @@ export interface FileRoutesByTo {
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
+  '/api/stripe/subscription/portal': typeof ApiStripeSubscriptionPortalRoute
   '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
   '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
@@ -312,6 +321,7 @@ export interface FileRoutesById {
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
+  '/api/stripe/subscription/portal': typeof ApiStripeSubscriptionPortalRoute
   '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
   '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
@@ -347,6 +357,7 @@ export interface FileRouteTypes {
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
+    | '/api/stripe/subscription/portal'
     | '/lovable/email/auth/preview'
     | '/lovable/email/auth/webhook'
     | '/lovable/email/queue/process'
@@ -380,6 +391,7 @@ export interface FileRouteTypes {
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
+    | '/api/stripe/subscription/portal'
     | '/lovable/email/auth/preview'
     | '/lovable/email/auth/webhook'
     | '/lovable/email/queue/process'
@@ -414,6 +426,7 @@ export interface FileRouteTypes {
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
+    | '/api/stripe/subscription/portal'
     | '/lovable/email/auth/preview'
     | '/lovable/email/auth/webhook'
     | '/lovable/email/queue/process'
@@ -433,6 +446,7 @@ export interface RootRouteChildren {
   ApiStripeCheckoutInvoiceRoute: typeof ApiStripeCheckoutInvoiceRoute
   ApiStripeCheckoutSubscriptionRoute: typeof ApiStripeCheckoutSubscriptionRoute
   ApiStripeConnectAccountLinkRoute: typeof ApiStripeConnectAccountLinkRoute
+  ApiStripeSubscriptionPortalRoute: typeof ApiStripeSubscriptionPortalRoute
   LovableEmailAuthPreviewRoute: typeof LovableEmailAuthPreviewRoute
   LovableEmailAuthWebhookRoute: typeof LovableEmailAuthWebhookRoute
   LovableEmailQueueProcessRoute: typeof LovableEmailQueueProcessRoute
@@ -610,6 +624,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LovableEmailAuthPreviewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/stripe/subscription/portal': {
+      id: '/api/stripe/subscription/portal'
+      path: '/api/stripe/subscription/portal'
+      fullPath: '/api/stripe/subscription/portal'
+      preLoaderRoute: typeof ApiStripeSubscriptionPortalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/stripe/connect/account-link': {
       id: '/api/stripe/connect/account-link'
       path: '/api/stripe/connect/account-link'
@@ -771,6 +792,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiStripeCheckoutInvoiceRoute: ApiStripeCheckoutInvoiceRoute,
   ApiStripeCheckoutSubscriptionRoute: ApiStripeCheckoutSubscriptionRoute,
   ApiStripeConnectAccountLinkRoute: ApiStripeConnectAccountLinkRoute,
+  ApiStripeSubscriptionPortalRoute: ApiStripeSubscriptionPortalRoute,
   LovableEmailAuthPreviewRoute: LovableEmailAuthPreviewRoute,
   LovableEmailAuthWebhookRoute: LovableEmailAuthWebhookRoute,
   LovableEmailQueueProcessRoute: LovableEmailQueueProcessRoute,

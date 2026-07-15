@@ -223,30 +223,32 @@ export const upsertDailyReport = createServerFn({ method: "POST" })
     if (project.organization_id) {
       const { data: existing, error: existingError } = await context.supabase
         .from("daily_reports")
-        .select("id")
+        .select("id,attachment_bytes")
         .eq("project_id", projectId)
         .eq("report_date", report.report_date)
         .maybeSingle();
       if (existingError) throw new Error(existingError.message);
 
+      const { data: organization, error: orgError } = await context.supabase
+        .from("organizations")
+        .select("daily_report_limit_per_month,storage_limit_mb")
+        .eq("id", project.organization_id)
+        .single();
+      if (orgError) throw new Error(orgError.message);
+
+      const { data: organizationProjects, error: orgProjectsError } = await context.supabase
+        .from("projects")
+        .select("id,job_number")
+        .eq("organization_id", project.organization_id);
+      if (orgProjectsError) throw new Error(orgProjectsError.message);
+
+      const projectIds = (organizationProjects ?? [])
+        .filter((organizationProject) => organizationProject.job_number !== "DEMO-HARBOR")
+        .map((organizationProject) => organizationProject.id);
+
       if (!existing) {
-        const { data: organization, error: orgError } = await context.supabase
-          .from("organizations")
-          .select("daily_report_limit_per_month,contractor_circle_grant")
-          .eq("id", project.organization_id)
-          .single();
-        if (orgError) throw new Error(orgError.message);
-
         const limit = Number(organization.daily_report_limit_per_month ?? 0);
-        if (!bool(organization.contractor_circle_grant) && limit > 0) {
-          const { data: organizationProjects, error: orgProjectsError } = await context.supabase
-            .from("projects")
-            .select("id")
-            .eq("organization_id", project.organization_id)
-            .is("archived_at", null);
-          if (orgProjectsError) throw new Error(orgProjectsError.message);
-
-          const projectIds = (organizationProjects ?? []).map((p) => p.id);
+        if (limit > 0) {
           const bounds = monthBounds(report.report_date);
           const { count, error: countError } =
             projectIds.length === 0
@@ -264,6 +266,28 @@ export const upsertDailyReport = createServerFn({ method: "POST" })
               `This Overwatch company is at its ${limit}-daily-log monthly limit. Upgrade before adding another daily report for this month.`,
             );
           }
+        }
+      }
+
+      const storageLimitBytes = Number(organization.storage_limit_mb ?? 0) * 1024 * 1024;
+      if (storageLimitBytes > 0 && projectIds.length > 0) {
+        const { data: storageRows, error: storageError } = await context.supabase
+          .from("daily_reports")
+          .select("id,attachment_bytes")
+          .in("project_id", projectIds);
+        if (storageError) throw new Error(storageError.message);
+
+        const currentBytes = (storageRows ?? []).reduce(
+          (sum, row) => sum + Number(row.attachment_bytes ?? 0),
+          0,
+        );
+        const existingBytes = Number(existing?.attachment_bytes ?? 0);
+        const nextBytes = currentBytes - existingBytes + attachmentBytes;
+        if (nextBytes > storageLimitBytes) {
+          const storageGb = Number(organization.storage_limit_mb ?? 0) / 1024;
+          throw new Error(
+            `This OverWatch company has reached its ${storageGb.toLocaleString()} GB daily-report storage limit. Remove attachments or upgrade before saving this report.`,
+          );
         }
       }
     }

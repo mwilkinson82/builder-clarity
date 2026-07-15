@@ -3,9 +3,9 @@ import { z } from "zod";
 import {
   appendStripeForm,
   getAppOrigin,
-  getOrganizationStripeMode,
   jsonError,
   jsonOk,
+  readServerEnv,
   requireAuthedStripeContext,
   requireCanManageOrganization,
   stripePost,
@@ -14,7 +14,7 @@ import {
 
 const subscriptionCheckoutInput = z.object({
   organizationId: z.string().uuid().optional(),
-  priceId: z.string().max(200).optional(),
+  planCode: z.literal("pro").default("pro"),
   successPath: z.string().max(500).optional(),
   cancelPath: z.string().max(500).optional(),
 });
@@ -26,10 +26,29 @@ type OrganizationRecord = {
   billing_email: string;
   stripe_customer_id: string;
   stripe_price_id: string;
+  stripe_subscription_id: string;
+  contractor_circle_grant: boolean;
+};
+
+type DynamicResult = {
+  data: Record<string, unknown> | null;
+  error: { message: string } | null;
+};
+
+type DynamicQuery = PromiseLike<DynamicResult> & {
+  select(columns: string): DynamicQuery;
+  eq(column: string, value: unknown): DynamicQuery;
+  update(values: Record<string, unknown>): DynamicQuery;
+  maybeSingle(): Promise<DynamicResult>;
+  single(): Promise<DynamicResult>;
 };
 
 const dynamicTable = (supabase: unknown, relation: string) =>
-  (supabase as { from(table: string): any }).from(relation);
+  (supabase as { from(table: string): DynamicQuery }).from(relation);
+
+function subscriptionStripeMode() {
+  return readServerEnv("OVERWATCH_SUBSCRIPTION_MODE").toLowerCase() === "test" ? "test" : "live";
+}
 
 function normalizedInternalPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
@@ -49,23 +68,19 @@ async function resolveOrganizationId(
   return data as string;
 }
 
-async function resolvePriceId(
-  bodyPriceId: string | undefined,
-  organization: OrganizationRecord,
+async function resolvePlan(
+  planCode: "pro",
   context: Awaited<ReturnType<typeof requireAuthedStripeContext>>,
 ) {
-  if (bodyPriceId) return bodyPriceId;
-  if (organization.stripe_price_id) return organization.stripe_price_id;
-
   const { data: plan, error } = await dynamicTable(context.admin, "subscription_plans")
-    .select("stripe_price_id,checkout_enabled")
-    .eq("code", organization.plan_code)
+    .select("code,stripe_price_id,checkout_enabled,is_public")
+    .eq("code", planCode)
     .maybeSingle();
   if (error) throw new Error(error.message);
 
   const planPriceId =
-    plan && typeof (plan as any).stripe_price_id === "string" && (plan as any).checkout_enabled
-      ? (plan as any).stripe_price_id
+    plan && typeof plan.stripe_price_id === "string" && plan.checkout_enabled && plan.is_public
+      ? plan.stripe_price_id
       : "";
 
   if (!planPriceId) {
@@ -74,7 +89,7 @@ async function resolvePriceId(
     );
   }
 
-  return planPriceId;
+  return { code: planCode, priceId: planPriceId };
 }
 
 export const Route = createFileRoute("/api/stripe/checkout/subscription")({
@@ -87,15 +102,31 @@ export const Route = createFileRoute("/api/stripe/checkout/subscription")({
           const organizationId = await resolveOrganizationId(body.organizationId, context);
           await requireCanManageOrganization(context, organizationId);
 
-          const { data: organization, error: orgError } = await dynamicTable(context.admin, "organizations")
-            .select("id,name,plan_code,billing_email,stripe_customer_id,stripe_price_id")
+          const { data: organization, error: orgError } = await dynamicTable(
+            context.admin,
+            "organizations",
+          )
+            .select(
+              "id,name,plan_code,billing_email,stripe_customer_id,stripe_price_id,stripe_subscription_id,contractor_circle_grant",
+            )
             .eq("id", organizationId)
             .single();
           if (orgError) throw new Error(orgError.message);
           if (!organization) throw new Error("Organization not found.");
 
           const orgRecord = organization as unknown as OrganizationRecord;
-          const priceId = await resolvePriceId(body.priceId, orgRecord, context);
+          if (orgRecord.contractor_circle_grant) {
+            throw new Error(
+              "OverWatch Pro is already included with this company's Contractor Circle membership.",
+            );
+          }
+          if (orgRecord.stripe_subscription_id) {
+            throw new Error(
+              "This company already has an OverWatch subscription. Manage the existing subscription instead of starting another one.",
+            );
+          }
+          const plan = await resolvePlan(body.planCode, context);
+          const priceId = plan.priceId;
           const origin = getAppOrigin(request);
           const successUrl = new URL(
             normalizedInternalPath(body.successPath, "/team?checkout=success"),
@@ -115,23 +146,23 @@ export const Route = createFileRoute("/api/stripe/checkout/subscription")({
           appendStripeForm(form, "line_items[0][quantity]", 1);
           appendStripeForm(form, "metadata[kind]", "subscription");
           appendStripeForm(form, "metadata[organization_id]", orgRecord.id);
+          appendStripeForm(form, "metadata[plan_code]", plan.code);
           appendStripeForm(form, "metadata[user_id]", context.user.id);
           appendStripeForm(form, "subscription_data[metadata][organization_id]", orgRecord.id);
+          appendStripeForm(form, "subscription_data[metadata][plan_code]", plan.code);
           appendStripeForm(form, "subscription_data[metadata][user_id]", context.user.id);
           appendStripeForm(form, "customer", orgRecord.stripe_customer_id);
           if (!orgRecord.stripe_customer_id) {
             appendStripeForm(form, "customer_email", orgRecord.billing_email || context.user.email);
           }
 
-          const stripeMode = await getOrganizationStripeMode(context.admin, orgRecord.id);
           const session = await stripePost<StripeCheckoutSession>(
             "checkout/sessions",
             form,
             `subscription-checkout:${orgRecord.id}:${priceId}`,
             undefined,
-            stripeMode,
+            subscriptionStripeMode(),
           );
-
 
           const { error: updateError } = await dynamicTable(context.admin, "organizations")
             .update({

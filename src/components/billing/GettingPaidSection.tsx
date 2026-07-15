@@ -35,7 +35,7 @@ import {
 import type { StripeMode } from "@/lib/stripe-mode";
 import type { StripeConnectDetails, StripeConnectReadiness } from "@/lib/stripe-connect-status";
 import {
-  applicationFeeFromDollars,
+  cappedApplicationFeeFromDollars,
   formatBasisPoints,
   STRIPE_STANDARD_US_FEES,
 } from "@/lib/stripe-fee-config";
@@ -307,6 +307,7 @@ export function GettingPaidSection({
   const currentLimitDollars = currentLimit / 100;
   const applicationFeeBps = paymentLimit?.applicationFeeBps;
   const resolvedApplicationFeeBps = applicationFeeBps ?? 0;
+  const applicationFeeCapCents = paymentLimit?.applicationFeeCapCents ?? 0;
   const exampleCardFee =
     (currentLimitDollars * STRIPE_STANDARD_US_FEES.cardPercent) / 100 +
     STRIPE_STANDARD_US_FEES.cardFixedCents / 100;
@@ -314,9 +315,10 @@ export function GettingPaidSection({
     (currentLimitDollars * STRIPE_STANDARD_US_FEES.achDebitPercent) / 100,
     STRIPE_STANDARD_US_FEES.achDebitCapCents / 100,
   );
-  const exampleOverwatchFee = applicationFeeFromDollars(
+  const exampleOverwatchFee = cappedApplicationFeeFromDollars(
     currentLimitDollars,
     resolvedApplicationFeeBps,
+    applicationFeeCapCents,
   );
   const saveProfileButton = (label: string) => (
     <Button
@@ -452,7 +454,11 @@ export function GettingPaidSection({
                     ? "Checking…"
                     : paymentLimitQuery.isError
                       ? "Unavailable"
-                      : formatBasisPoints(resolvedApplicationFeeBps)}
+                      : applicationFeeCapCents > 0
+                        ? `${formatBasisPoints(resolvedApplicationFeeBps)} · $${(
+                            applicationFeeCapCents / 100
+                          ).toFixed(0)} cap`
+                        : formatBasisPoints(resolvedApplicationFeeBps)}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {paymentLimitQuery.isLoading

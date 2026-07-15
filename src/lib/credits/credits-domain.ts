@@ -8,7 +8,12 @@ export const AI_COUNT_SCAN_CREDITS_PER_SHEET = 1;
 export const DEFAULT_MAX_SHEETS_PER_SCAN = 30;
 
 export type CreditLedgerReason =
-  "signup_grant" | "purchase" | "ai_count_scan" | "refund" | "admin_adjustment";
+  | "signup_grant"
+  | "monthly_plan_grant"
+  | "purchase"
+  | "ai_count_scan"
+  | "refund"
+  | "admin_adjustment";
 
 export interface CreditLedgerEntryInput {
   delta: number;

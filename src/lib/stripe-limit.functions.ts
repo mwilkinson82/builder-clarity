@@ -4,7 +4,10 @@ import { z } from "zod";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS } from "@/lib/payments-domain";
-import { normalizeApplicationFeeBps } from "@/lib/stripe-fee-config";
+import {
+  normalizeApplicationFeeBps,
+  normalizeApplicationFeeCapCents,
+} from "@/lib/stripe-fee-config";
 
 type ServerContext = {
   supabase: SupabaseClient;
@@ -50,6 +53,7 @@ async function requireBillingManager(context: ServerContext, organizationId: str
 export interface StripePaymentLimitContext {
   currentLimitCents: number;
   applicationFeeBps: number;
+  applicationFeeCapCents: number;
   liveAccountId: string;
   liveConnectStatus: string;
   requestSchemaReady: boolean;
@@ -104,6 +108,10 @@ export const getStripePaymentLimitContext = createServerFn({ method: "GET" })
       applicationFeeBps: normalizeApplicationFeeBps(
         process.env.OVERWATCH_INVOICE_APPLICATION_FEE_BPS ||
           import.meta.env.VITE_OVERWATCH_INVOICE_APPLICATION_FEE_BPS,
+      ),
+      applicationFeeCapCents: normalizeApplicationFeeCapCents(
+        process.env.OVERWATCH_INVOICE_APPLICATION_FEE_CAP_CENTS ||
+          import.meta.env.VITE_OVERWATCH_INVOICE_APPLICATION_FEE_CAP_CENTS,
       ),
       liveAccountId:
         typeof row.stripe_connect_account_id_live === "string"

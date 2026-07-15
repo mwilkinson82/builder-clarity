@@ -26,6 +26,7 @@ import {
   type StripeMode,
 } from "@/lib/stripe-mode";
 import { stripeConnectDetails } from "@/lib/stripe-connect-status";
+import { sendCommercialNotice } from "@/lib/commercial-notifications.server";
 
 type StripeObject = Record<string, unknown> & {
   id?: string;
@@ -220,13 +221,59 @@ async function ensureInvoicePaidNotifications(
     { onConflict: "recipient_id,dedupe_key", ignoreDuplicates: true },
   );
   if (error) throw new Error(error.message);
+  await sendCommercialNotice(admin, {
+    organizationId,
+    kind: "pro_activated",
+    eventId: str(object.id) || str(object.subscription),
+  }).catch((noticeError) => {
+    console.error("Pro activation notice failed", { organization_id: organizationId, noticeError });
+  });
 }
 
 function subscriptionStatus(value: string) {
   if (value === "active" || value === "trialing") return "active";
-  if (value === "past_due" || value === "unpaid") return "past_due";
+  if (value === "past_due") return "past_due";
+  if (value === "unpaid") return "suspended";
   if (value === "canceled" || value === "incomplete_expired") return "cancelled";
   return value || "unknown";
+}
+
+function subscriptionPriceId(object: StripeObject) {
+  const items = objectRecord(object.items);
+  const data = Array.isArray(items.data) ? items.data : [];
+  const firstItem = objectRecord(data[0]);
+  return str(objectRecord(firstItem.price).id);
+}
+
+type CommercialPlan = {
+  code: string;
+  stripe_price_id: string;
+  project_limit: number;
+  seat_limit: number;
+  storage_limit_mb: number;
+  daily_report_limit_per_month: number;
+};
+
+async function loadCommercialPlan(admin: unknown, planCode: string, priceId = "") {
+  let query = dynamicTable(admin, "subscription_plans").select(
+    "code,stripe_price_id,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month",
+  );
+  query = planCode ? query.eq("code", planCode) : query.eq("stripe_price_id", priceId);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data)
+    throw new Error(`OverWatch plan configuration was not found for ${planCode || priceId}.`);
+  return data as unknown as CommercialPlan;
+}
+
+function planEntitlementPatch(plan: CommercialPlan) {
+  return {
+    plan_code: plan.code,
+    project_limit: plan.project_limit,
+    seat_limit: plan.seat_limit,
+    storage_limit_mb: plan.storage_limit_mb,
+    daily_report_limit_per_month: plan.daily_report_limit_per_month,
+  };
 }
 
 function connectAccountStatus(object: StripeObject) {
@@ -575,18 +622,24 @@ async function markSubscriptionCheckoutComplete(object: StripeObject) {
   if (!organizationId) return;
 
   const admin = createSupabaseAdminClient();
+  const plan = await loadCommercialPlan(admin, metadata.plan_code || "pro");
   const { error } = await dynamicTable(admin, "organizations")
     .update({
+      ...planEntitlementPatch(plan),
       stripe_customer_id: str(object.customer),
       stripe_subscription_id: str(object.subscription),
       stripe_checkout_session_id: str(object.id),
+      stripe_price_id: plan.stripe_price_id,
       billing_status: "active",
+      entitlement_source: "stripe",
+      contractor_circle_grant: false,
+      billing_grace_ends_at: null,
     })
     .eq("id", organizationId);
   if (error) throw new Error(error.message);
 }
 
-async function markSubscriptionUpdated(object: StripeObject) {
+async function markSubscriptionUpdated(object: StripeObject, stripeEventId = "") {
   const subscriptionId = str(object.id);
   const customerId = str(object.customer);
   const metadata = sessionMetadata(object);
@@ -594,21 +647,97 @@ async function markSubscriptionUpdated(object: StripeObject) {
   if (!subscriptionId && !organizationId && !customerId) return;
 
   const admin = createSupabaseAdminClient();
-  const patch = {
+  let organizationQuery = dynamicTable(admin, "organizations").select(
+    "id,plan_code,billing_status,billing_grace_ends_at,contractor_circle_grant,entitlement_source",
+  );
+  if (organizationId) organizationQuery = organizationQuery.eq("id", organizationId);
+  else if (subscriptionId) {
+    organizationQuery = organizationQuery.eq("stripe_subscription_id", subscriptionId);
+  } else organizationQuery = organizationQuery.eq("stripe_customer_id", customerId);
+  const { data: organization, error: organizationError } = await organizationQuery.maybeSingle();
+  if (organizationError) throw new Error(organizationError.message);
+  if (!organization) return;
+
+  const organizationRecord = organization as Record<string, unknown>;
+  const normalizedStatus = subscriptionStatus(str(object.status));
+  const patch: Record<string, unknown> = {
     stripe_subscription_id: subscriptionId,
     stripe_customer_id: customerId,
-    billing_status: subscriptionStatus(str(object.status)),
+    billing_status: normalizedStatus,
     subscription_current_period_end: epochToIso(object.current_period_end),
     subscription_cancel_at_period_end: Boolean(object.cancel_at_period_end),
   };
 
-  let query = dynamicTable(admin, "organizations").update(patch);
-  if (organizationId) query = query.eq("id", organizationId);
-  else if (subscriptionId) query = query.eq("stripe_subscription_id", subscriptionId);
-  else query = query.eq("stripe_customer_id", customerId);
+  if (!organizationRecord.contractor_circle_grant) {
+    if (normalizedStatus === "active") {
+      const priceId = subscriptionPriceId(object);
+      const plan = await loadCommercialPlan(admin, metadata.plan_code || "", priceId);
+      Object.assign(patch, planEntitlementPatch(plan), {
+        stripe_price_id: plan.stripe_price_id || priceId,
+        entitlement_source: "stripe",
+        billing_grace_ends_at: null,
+      });
+    } else if (normalizedStatus === "past_due") {
+      const existingGrace = str(organizationRecord.billing_grace_ends_at);
+      Object.assign(patch, {
+        entitlement_source: "stripe",
+        billing_grace_ends_at:
+          existingGrace || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+    } else if (normalizedStatus === "cancelled" || normalizedStatus === "suspended") {
+      const freePlan = await loadCommercialPlan(admin, "free");
+      Object.assign(patch, planEntitlementPatch(freePlan), {
+        stripe_subscription_id: "",
+        stripe_price_id: "",
+        entitlement_source: "free",
+        billing_grace_ends_at: null,
+      });
+    }
+  }
 
-  const { error } = await query;
+  const { error } = await dynamicTable(admin, "organizations")
+    .update(patch)
+    .eq("id", str(organizationRecord.id));
   if (error) throw new Error(error.message);
+
+  const previousStatus = str(organizationRecord.billing_status);
+  const previousSource = str(organizationRecord.entitlement_source);
+  const eventId = stripeEventId || str(object.id) || subscriptionId;
+  if (normalizedStatus === "active" && previousStatus !== "active") {
+    await sendCommercialNotice(admin, {
+      organizationId: str(organizationRecord.id),
+      kind: "pro_activated",
+      eventId,
+    }).catch((noticeError) => {
+      console.error("Pro activation notice failed", {
+        organization_id: organizationId,
+        noticeError,
+      });
+    });
+  } else if (normalizedStatus === "past_due" && previousStatus !== "past_due") {
+    await sendCommercialNotice(admin, {
+      organizationId: str(organizationRecord.id),
+      kind: "payment_past_due",
+      eventId,
+      graceEndsAt: String(patch.billing_grace_ends_at || ""),
+    }).catch((noticeError) => {
+      console.error("Past-due notice failed", { organization_id: organizationId, noticeError });
+    });
+  } else if (
+    (normalizedStatus === "cancelled" || normalizedStatus === "suspended") &&
+    previousSource === "stripe"
+  ) {
+    await sendCommercialNotice(admin, {
+      organizationId: str(organizationRecord.id),
+      kind: "subscription_ended",
+      eventId,
+    }).catch((noticeError) => {
+      console.error("Subscription-ended notice failed", {
+        organization_id: organizationId,
+        noticeError,
+      });
+    });
+  }
 }
 
 async function markConnectAccountUpdated(object: StripeObject, livemode: boolean) {
@@ -710,7 +839,7 @@ export async function handleStripeWebhook(request: Request): Promise<Response> {
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted":
-        await markSubscriptionUpdated(object);
+        await markSubscriptionUpdated(object, str(event.id));
         break;
       case "account.updated":
         await markConnectAccountUpdated(object, Boolean(event.livemode));

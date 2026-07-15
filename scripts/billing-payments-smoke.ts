@@ -68,8 +68,10 @@ import {
 import { summarizeCostSettlement } from "../src/lib/cost-settlement.ts";
 import {
   applicationFeeFromDollars,
+  cappedApplicationFeeFromDollars,
   formatBasisPoints,
   normalizeApplicationFeeBps,
+  normalizeApplicationFeeCapCents,
 } from "../src/lib/stripe-fee-config.ts";
 
 // --- Stripe application-fee disclosure and checkout parity -----------------
@@ -83,6 +85,10 @@ assert.equal(formatBasisPoints(100), "1%");
 assert.equal(applicationFeeFromDollars(25_000, 0), 0);
 assert.equal(applicationFeeFromDollars(25_000, 25), 62.5);
 assert.equal(applicationFeeFromDollars(1, 100), 0.01);
+assert.equal(normalizeApplicationFeeCapCents("1000"), 1000);
+assert.equal(normalizeApplicationFeeCapCents(undefined), 0);
+assert.equal(cappedApplicationFeeFromDollars(25_000, 4, 1000), 10);
+assert.equal(cappedApplicationFeeFromDollars(100_000, 4, 1000), 10);
 
 // --- Cost settlement: partial cash + linked supplier credits ---------------
 
