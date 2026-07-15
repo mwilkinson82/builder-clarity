@@ -39,6 +39,11 @@ import {
 } from "../src/lib/plan-room-math.ts";
 import { calculateAuthoritativeTakeoff } from "../src/lib/plan-room-quantity.ts";
 import {
+  addTakeoffToPlanRoomCache,
+  takeoffSyncBlockReason,
+  takeoffTrustLabel,
+} from "../src/lib/plan-room-trust.ts";
+import {
   TAKEOFF_UNDO_DEPTH,
   commitRedo,
   commitUndo,
@@ -397,6 +402,26 @@ assert.throws(
     }),
   /Set a sheet scale/,
 );
+
+// Trust copy and immediate cache insertion stay deterministic across every
+// Plan Room surface. A successful create appears in worksheet/readiness data
+// before the background query refresh completes.
+assert.equal(takeoffTrustLabel("current"), "Quantity current");
+assert.equal(takeoffTrustLabel("unverified_scale"), "Verify scale");
+assert.match(takeoffSyncBlockReason("stale"), /scale change/);
+assert.equal(takeoffSyncBlockReason("current"), "");
+const cachedMeasurement = { id: "existing" };
+const createdMeasurement = { id: "created" };
+const updatedPlanRoomCache = addTakeoffToPlanRoomCache(
+  { measurements: [cachedMeasurement], schema_ready: true },
+  createdMeasurement,
+);
+assert.deepEqual(
+  updatedPlanRoomCache.measurements.map((measurement) => measurement.id),
+  ["created", "existing"],
+);
+assert.equal(updatedPlanRoomCache.schema_ready, true);
+assert.equal(addTakeoffToPlanRoomCache(undefined, createdMeasurement), undefined);
 
 // --- Takeoff unit alias matcher (Phase 2 unit-mismatch guard) ---
 assert.equal(normalizeTakeoffUnit("LF"), "LF");

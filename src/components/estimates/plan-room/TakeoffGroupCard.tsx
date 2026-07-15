@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  Eye,
   Link2,
   Sparkles,
   Trash2,
@@ -34,6 +35,7 @@ export function TakeoffGroupCard({
   linkMeasurements,
   classifyMeasurements,
   syncLine,
+  linkedLineUntrustedCount = 0,
   classifyPending = false,
 }: {
   group: TakeoffWorksheetGroup<TakeoffMeasurementRow>;
@@ -53,6 +55,7 @@ export function TakeoffGroupCard({
       | { type: "label"; description: string; unit: string },
   ) => void;
   syncLine: (lineId: string) => void;
+  linkedLineUntrustedCount?: number;
   classifyPending?: boolean;
 }) {
   const linkedLine = group.linkedLineId
@@ -67,30 +70,18 @@ export function TakeoffGroupCard({
   const untrustedCount = group.members.filter(
     (member) => member.calculation_status !== "current",
   ).length;
+  const syncBlockedCount = Math.max(untrustedCount, linkedLineUntrustedCount);
   return (
     <div
-      role="button"
-      tabIndex={0}
       data-testid="takeoff-group-card"
       className={cn(
         "rounded-md border border-hairline p-3 text-left transition",
         isSelected && "border-primary bg-primary/5 shadow-sm",
       )}
-      onClick={(event) => {
-        const target = event.target as HTMLElement;
-        if (target.closest("button,[role='combobox'],input,textarea")) return;
-        selectMeasurement(group.members[0]);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          selectMeasurement(group.members[0]);
-        }
-      }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span
               className="h-3 w-3 shrink-0 rounded-sm border border-black/15"
               style={{ backgroundColor: group.color }}
@@ -128,26 +119,37 @@ export function TakeoffGroupCard({
             {group.sheetIds.length === 1 ? "Sheet" : "Sheets"}: {sheetLabels}
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 shrink-0 gap-1 px-2 text-xs"
-          title={expanded ? "Hide the individual takeoffs" : "Show the individual takeoffs"}
-          aria-expanded={expanded}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleExpanded();
-          }}
-          data-testid="takeoff-group-expand"
-        >
-          {expanded ? (
-            <ChevronDown className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5" />
-          )}
-          {group.members.length}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1 px-2 text-xs"
+            title="Open the first takeoff in this group on the drawing"
+            onClick={() => selectMeasurement(group.members[0])}
+            data-testid="takeoff-group-open"
+          >
+            <Eye className="h-3.5 w-3.5" />
+            Open
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1 px-2 text-xs"
+            title={expanded ? "Hide the individual takeoffs" : "Show the individual takeoffs"}
+            aria-expanded={expanded}
+            onClick={onToggleExpanded}
+            data-testid="takeoff-group-expand"
+          >
+            {expanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+            {group.members.length}
+          </Button>
+        </div>
       </div>
       {expanded && (
         <div className="mt-2 space-y-1.5" data-testid="takeoff-group-members">
@@ -243,17 +245,27 @@ export function TakeoffGroupCard({
                 </span>
               </p>
             )}
+            {untrustedCount === 0 && linkedLineUntrustedCount > 0 && (
+              <p
+                className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-foreground"
+                data-testid="takeoff-group-linked-trust-warning"
+              >
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                Another takeoff feeding this estimate row needs review before the row can sync.
+              </p>
+            )}
             <Button
               size="sm"
               variant="outline"
               className="w-full gap-1.5"
               onClick={() => syncLine(linkedLine.id)}
-              disabled={untrustedCount > 0}
+              disabled={syncBlockedCount > 0}
               title={
-                untrustedCount > 0
-                  ? "Review stale or unverified quantities before sending this group."
+                syncBlockedCount > 0
+                  ? `${syncBlockedCount} takeoff${syncBlockedCount === 1 ? "" : "s"} feeding this estimate row must be reviewed before sending.`
                   : "Send this takeoff total to the estimate."
               }
+              data-testid="takeoff-group-sync"
             >
               <Link2 className="h-3.5 w-3.5" />
               Send Total Qty to Estimate
