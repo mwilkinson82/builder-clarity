@@ -10,14 +10,20 @@ import { z } from "zod";
 import {
   appendStripeForm,
   getAppOrigin,
-  getOrganizationStripeMode,
   jsonError,
   jsonOk,
+  readServerEnv,
   requireAuthedStripeContext,
+  requireCanManageOrganization,
   stripePost,
   type StripeCheckoutSession,
 } from "@/lib/stripe.server";
 import { creditPacksFromEnv, findCreditPack } from "@/lib/credits/credits-domain";
+import {
+  creditPackLineItemFields,
+  creditPackStripeMode,
+  liveCreditPackPriceId,
+} from "@/lib/credits/credit-pack-checkout";
 
 const creditCheckoutInput = z.object({
   packId: z.string().max(100),
@@ -40,9 +46,9 @@ export const Route = createFileRoute("/api/stripe/checkout/credits")({
           const body = creditCheckoutInput.parse(await request.json());
           const context = await requireAuthedStripeContext(request);
 
-          // Purchases always target the buyer's own workspace; resolving the
-          // org through ensure_current_user_account is itself the membership
-          // proof, so any signed-in member can top up their company.
+          // Purchases always target the buyer's own workspace. Because this is
+          // a company charge, the same company-management permission used by
+          // subscription checkout is required before opening Stripe.
           const { data: organizationId, error: orgError } = await context.authed.rpc(
             "ensure_current_user_account",
           );
@@ -50,6 +56,7 @@ export const Route = createFileRoute("/api/stripe/checkout/credits")({
           if (!organizationId) {
             throw new Error("No Overwatch company workspace is available for this user.");
           }
+          await requireCanManageOrganization(context, String(organizationId));
 
           const packs = creditPacksFromEnv(process.env.CREDIT_PACKS_JSON);
           const pack = findCreditPack(packs, body.packId);
@@ -73,14 +80,22 @@ export const Route = createFileRoute("/api/stripe/checkout/credits")({
           // Cards only: credits should land the moment checkout completes,
           // never wait on async bank settlement.
           appendStripeForm(form, "payment_method_types[0]", "card");
-          appendStripeForm(form, "line_items[0][quantity]", 1);
-          appendStripeForm(form, "line_items[0][price_data][currency]", "usd");
-          appendStripeForm(form, "line_items[0][price_data][unit_amount]", pack.amountCents);
-          appendStripeForm(
-            form,
-            "line_items[0][price_data][product_data][name]",
-            `Overwatch AI credits — ${pack.label}`,
+          // Credit packs are OverWatch revenue, independent of the contractor's
+          // connected-account sandbox/live setting. Production uses the
+          // permanent live catalog Price; explicit test mode keeps inline test
+          // pricing so local/sandbox QA never needs a duplicate test product.
+          const stripeMode = creditPackStripeMode(
+            readServerEnv("OVERWATCH_CREDIT_PACK_MODE") ||
+              readServerEnv("OVERWATCH_SUBSCRIPTION_MODE"),
           );
+          const livePriceId = liveCreditPackPriceId({
+            packId: pack.id,
+            override: readServerEnv("OVERWATCH_AI_CREDIT_PACK_PRICE_ID"),
+          });
+          const lineItemFields = creditPackLineItemFields({ pack, mode: stripeMode, livePriceId });
+          for (const [key, value] of Object.entries(lineItemFields)) {
+            appendStripeForm(form, key, value);
+          }
           appendStripeForm(form, "metadata[kind]", "credit_pack");
           appendStripeForm(form, "metadata[organization_id]", String(organizationId));
           appendStripeForm(form, "metadata[user_id]", context.user.id);
@@ -88,7 +103,6 @@ export const Route = createFileRoute("/api/stripe/checkout/credits")({
           appendStripeForm(form, "metadata[credits]", pack.credits);
           appendStripeForm(form, "customer_email", context.user.email);
 
-          const stripeMode = await getOrganizationStripeMode(context.admin, String(organizationId));
           const session = await stripePost<StripeCheckoutSession>(
             "checkout/sessions",
             form,
