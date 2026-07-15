@@ -4,6 +4,7 @@ import {
   buildCpmProgressRecommendations,
   resolveCpmProgressDecision,
 } from "../src/lib/cpm-progress.ts";
+import { HARBOR_DEMO_CPM_WALKTHROUGH } from "../src/lib/demo-seed.ts";
 
 const activities = [
   {
@@ -135,5 +136,40 @@ assert.throws(
     }),
   /Explain why/,
 );
+
+// Harbor Residence is the onboarding acceptance fixture. Its seeded Daily WIP
+// evidence must produce a real CPM decision rather than a disabled empty state.
+const harbor = HARBOR_DEMO_CPM_WALKTHROUGH;
+const harborRecommendations = buildCpmProgressRecommendations({
+  activities: [
+    {
+      id: "harbor-drywall-activity",
+      activityId: harbor.scheduleActivityCode,
+      name: "Drywall hang and finish",
+      division: "09 - Finishes",
+      currentPercent: 40,
+    },
+  ],
+  entries: [
+    {
+      id: "harbor-reviewed-wip",
+      scheduleActivityId: "harbor-drywall-activity",
+      entryDate: harbor.entryDate,
+      updatedAt: harbor.reviewedAt,
+      activity: harbor.activity,
+      quantity: harbor.quantity,
+      unit: harbor.unit,
+      percentBasis: "cpm",
+      reviewedPercent: harbor.reviewedPercent,
+      reviewedAt: harbor.reviewedAt,
+    },
+  ],
+  controls: [],
+  reviews: [],
+});
+assert.equal(harborRecommendations.length, 1);
+assert.equal(harborRecommendations[0]?.recommendedPercent, 52);
+assert.equal(harborRecommendations[0]?.variancePercent, 12);
+assert.equal(harborRecommendations[0]?.evidenceCount, 1);
 
 console.log("CPM progress review smoke passed");
