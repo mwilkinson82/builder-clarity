@@ -1945,6 +1945,179 @@ export type Database = {
           },
         ]
       }
+      estimate_measurement_scope_events: {
+        Row: {
+          action: string
+          actor_id: string | null
+          created_at: string
+          estimate_id: string
+          id: string
+          scope_item_id: string
+          takeoff_measurement_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          created_at?: string
+          estimate_id: string
+          id?: string
+          scope_item_id: string
+          takeoff_measurement_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          created_at?: string
+          estimate_id?: string
+          id?: string
+          scope_item_id?: string
+          takeoff_measurement_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_measurement_scope_events_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_measurement_scope_events_scope_item_id_fkey"
+            columns: ["scope_item_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_measurement_scope_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_measurement_scope_events_takeoff_measurement_id_fkey"
+            columns: ["takeoff_measurement_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_takeoff_measurements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_measurement_scope_items: {
+        Row: {
+          ai_operation_id: string | null
+          completed_at: string | null
+          completed_by: string | null
+          created_at: string
+          created_by: string | null
+          decision_at: string
+          decision_by: string | null
+          estimate_id: string
+          estimate_line_item_id: string | null
+          id: string
+          label: string
+          library_item_id: string | null
+          plan_sheet_id: string
+          scope_key: string
+          source_anchor: Json
+          source_excerpt: string
+          source_line: string
+          status: string
+          suggestion_key: string
+          takeoff_measurement_id: string | null
+          tool_type: string
+          unit: string
+          updated_at: string
+        }
+        Insert: {
+          ai_operation_id?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          decision_at?: string
+          decision_by?: string | null
+          estimate_id: string
+          estimate_line_item_id?: string | null
+          id?: string
+          label: string
+          library_item_id?: string | null
+          plan_sheet_id: string
+          scope_key: string
+          source_anchor?: Json
+          source_excerpt: string
+          source_line: string
+          status?: string
+          suggestion_key: string
+          takeoff_measurement_id?: string | null
+          tool_type: string
+          unit: string
+          updated_at?: string
+        }
+        Update: {
+          ai_operation_id?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          decision_at?: string
+          decision_by?: string | null
+          estimate_id?: string
+          estimate_line_item_id?: string | null
+          id?: string
+          label?: string
+          library_item_id?: string | null
+          plan_sheet_id?: string
+          scope_key?: string
+          source_anchor?: Json
+          source_excerpt?: string
+          source_line?: string
+          status?: string
+          suggestion_key?: string
+          takeoff_measurement_id?: string | null
+          tool_type?: string
+          unit?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_measurement_scope_items_ai_operation_id_fkey"
+            columns: ["ai_operation_id"]
+            isOneToOne: false
+            referencedRelation: "ai_operations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_measurement_scope_items_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_measurement_scope_items_estimate_line_item_id_fkey"
+            columns: ["estimate_line_item_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_line_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_measurement_scope_items_library_item_id_fkey"
+            columns: ["library_item_id"]
+            isOneToOne: false
+            referencedRelation: "cost_library_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_measurement_scope_items_plan_sheet_id_fkey"
+            columns: ["plan_sheet_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sheets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_measurement_scope_items_takeoff_measurement_id_fkey"
+            columns: ["takeoff_measurement_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_takeoff_measurements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       estimate_plan_sets: {
         Row: {
           created_at: string
@@ -6420,6 +6593,40 @@ export type Database = {
         Returns: boolean
       }
       can_view_financials: { Args: { p_project_id: string }; Returns: boolean }
+      complete_estimate_measurement_scope_item: {
+        Args: { p_scope_item_id: string; p_takeoff_measurement_id: string }
+        Returns: {
+          ai_operation_id: string | null
+          completed_at: string | null
+          completed_by: string | null
+          created_at: string
+          created_by: string | null
+          decision_at: string
+          decision_by: string | null
+          estimate_id: string
+          estimate_line_item_id: string | null
+          id: string
+          label: string
+          library_item_id: string | null
+          plan_sheet_id: string
+          scope_key: string
+          source_anchor: Json
+          source_excerpt: string
+          source_line: string
+          status: string
+          suggestion_key: string
+          takeoff_measurement_id: string | null
+          tool_type: string
+          unit: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "estimate_measurement_scope_items"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       convert_pipeline_opportunity_to_project: {
         Args: { p_opportunity_id: string }
         Returns: string
@@ -6518,6 +6725,53 @@ export type Database = {
           p_payment_reference?: string
         }
         Returns: Json
+      }
+      record_estimate_measurement_scope_decision: {
+        Args: {
+          p_ai_operation_id: string
+          p_estimate_id: string
+          p_label: string
+          p_plan_sheet_id: string
+          p_scope_key: string
+          p_source_anchor: Json
+          p_source_excerpt: string
+          p_source_line: string
+          p_status: string
+          p_suggestion_key: string
+          p_tool_type: string
+          p_unit: string
+        }
+        Returns: {
+          ai_operation_id: string | null
+          completed_at: string | null
+          completed_by: string | null
+          created_at: string
+          created_by: string | null
+          decision_at: string
+          decision_by: string | null
+          estimate_id: string
+          estimate_line_item_id: string | null
+          id: string
+          label: string
+          library_item_id: string | null
+          plan_sheet_id: string
+          scope_key: string
+          source_anchor: Json
+          source_excerpt: string
+          source_line: string
+          status: string
+          suggestion_key: string
+          takeoff_measurement_id: string | null
+          tool_type: string
+          unit: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "estimate_measurement_scope_items"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       record_estimate_scale_assessment: {
         Args: {
