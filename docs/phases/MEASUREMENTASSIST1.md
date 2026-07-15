@@ -196,7 +196,7 @@ Initial enterprise slice:
 
 ### Stage 6 release gate
 
-1. Apply `20260715212100_revision_scope_assistant_provenance.sql` only through the Lovable
+1. Apply `20260715213051_c90abab6-08c4-4b95-a5b9-f1af7f1148cb.sql` only through the Lovable
    connector.
 2. Verify both AI constraints accept `ai_revision_scope_review`, the impact RPC remains revoked
    from PUBLIC and anon, and its search path remains empty.

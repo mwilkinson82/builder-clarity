@@ -2417,7 +2417,7 @@ await expectContains(
 );
 
 await expectContains(
-  "supabase/migrations/20260715212100_revision_scope_assistant_provenance.sql",
+  "supabase/migrations/20260715213051_c90abab6-08c4-4b95-a5b9-f1af7f1148cb.sql",
   [
     /ai_revision_scope_review/,
     /operation\.sheet_ids @> ARRAY\[v_match\.revision_sheet_id, v_match\.base_sheet_id\]/,
