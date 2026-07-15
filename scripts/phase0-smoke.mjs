@@ -502,7 +502,6 @@ await expectContains(
     /HARBOR_DEMO_PROJECT_MANAGER/,
     /Marshall Wilkinson/,
     /ensureHarborDemoProjectManager/,
-    /HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID/,
     /isHarborDemoProject/,
     /getHarborDemoCpmActivityRows/,
     /job_number/,
@@ -1202,9 +1201,10 @@ await expectContains(
     /const seedHarborDemoClaims = async/,
     /seed_key: "harbor-demo:claim:electrical-delay"/,
     /seed_key: "harbor-demo:claim:weather-delay"/,
-    /await seedHarborDemoClaims\(context\.supabase, pid/,
+    /claims: \(\) => seedHarborDemoClaims\(supabase, projectId, seedWarnings\)/,
+    /ensureVersionedHarborDemoModules\(context\.supabase, pid, context\.userId/,
   ],
-  "Harbor demo project seeds claims at runtime alongside inspections",
+  "Harbor demo project seeds claims through the versioned runtime engine",
 );
 
 // CLAIM CYCLE LOG (Claims/CO/Risk arc — slice 3): the dated back-and-forth on a

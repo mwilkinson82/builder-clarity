@@ -13,6 +13,7 @@
     "test:estimating": "node --experimental-strip-types scripts/estimating-beta-smoke.mjs",
     "test:ai": "node --experimental-strip-types scripts/ai-takeoff-credits-smoke.ts && node --experimental-strip-types scripts/ai-template-match-smoke.ts && node --experimental-strip-types scripts/ai-embedding-match-smoke.ts && node --experimental-strip-types scripts/ai-incremental-placement-smoke.ts && node --experimental-strip-types scripts/ai-exemplar-isolation-smoke.ts && node --experimental-strip-types scripts/ai-embedding-cluster-smoke.ts && vitest run",
     "test:cpm": "node --experimental-strip-types scripts/constructline-cpm-smoke.ts && node --experimental-strip-types scripts/cpm-progress-review-smoke.ts",
+    "test:demo": "node --experimental-strip-types scripts/harbor-demo-engine-smoke.ts",
     "test:crm": "node --experimental-strip-types scripts/crm-pipeline-smoke.ts",
     "test:billing": "node --experimental-strip-types scripts/billing-payments-smoke.ts",
     "test:budget": "node --experimental-strip-types scripts/budget-contract-smoke.ts",
