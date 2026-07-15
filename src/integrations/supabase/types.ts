@@ -2118,6 +2118,141 @@ export type Database = {
           },
         ]
       }
+      estimate_plan_revision_match_events: {
+        Row: {
+          action: string
+          actor_id: string | null
+          created_at: string
+          estimate_id: string
+          id: string
+          match_id: string
+          snapshot: Json
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          created_at?: string
+          estimate_id: string
+          id?: string
+          match_id: string
+          snapshot: Json
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          created_at?: string
+          estimate_id?: string
+          id?: string
+          match_id?: string
+          snapshot?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_plan_revision_match_events_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_plan_revision_match_events_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_revision_matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_plan_revision_matches: {
+        Row: {
+          ai_operation_id: string | null
+          base_sheet_id: string | null
+          confidence: number
+          created_at: string
+          estimate_id: string
+          evidence: Json
+          id: string
+          proposal_method: string
+          reason: string
+          review_action: string
+          reviewed_at: string
+          reviewed_by: string | null
+          revision_plan_set_id: string
+          revision_sheet_id: string
+          updated_at: string
+        }
+        Insert: {
+          ai_operation_id?: string | null
+          base_sheet_id?: string | null
+          confidence?: number
+          created_at?: string
+          estimate_id: string
+          evidence?: Json
+          id?: string
+          proposal_method: string
+          reason?: string
+          review_action: string
+          reviewed_at?: string
+          reviewed_by?: string | null
+          revision_plan_set_id: string
+          revision_sheet_id: string
+          updated_at?: string
+        }
+        Update: {
+          ai_operation_id?: string | null
+          base_sheet_id?: string | null
+          confidence?: number
+          created_at?: string
+          estimate_id?: string
+          evidence?: Json
+          id?: string
+          proposal_method?: string
+          reason?: string
+          review_action?: string
+          reviewed_at?: string
+          reviewed_by?: string | null
+          revision_plan_set_id?: string
+          revision_sheet_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_plan_revision_matches_ai_operation_id_fkey"
+            columns: ["ai_operation_id"]
+            isOneToOne: false
+            referencedRelation: "ai_operations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_plan_revision_matches_base_sheet_id_fkey"
+            columns: ["base_sheet_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sheets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_plan_revision_matches_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_plan_revision_matches_revision_plan_set_id_fkey"
+            columns: ["revision_plan_set_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_plan_revision_matches_revision_sheet_id_fkey"
+            columns: ["revision_sheet_id"]
+            isOneToOne: true
+            referencedRelation: "estimate_plan_sheets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       estimate_plan_sets: {
         Row: {
           created_at: string
@@ -7133,6 +7268,32 @@ export type Database = {
       role_preset_capabilities: {
         Args: { p_role: Database["public"]["Enums"]["account_role"] }
         Returns: Json
+      }
+      save_estimate_plan_revision_decisions: {
+        Args: { p_decisions: Json; p_revision_plan_set_id: string }
+        Returns: {
+          ai_operation_id: string | null
+          base_sheet_id: string | null
+          confidence: number
+          created_at: string
+          estimate_id: string
+          evidence: Json
+          id: string
+          proposal_method: string
+          reason: string
+          review_action: string
+          reviewed_at: string
+          reviewed_by: string | null
+          revision_plan_set_id: string
+          revision_sheet_id: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "estimate_plan_revision_matches"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       save_estimate_takeoff_assembly: {
         Args: {
