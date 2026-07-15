@@ -87,11 +87,18 @@ import {
 } from "@/lib/plan-room-math";
 import {
   previewScaleAssuranceCheck,
+  resolveScaleAssessmentForSheet,
   SCALE_ASSURANCE_TOLERANCE_PCT,
   summarizeScaleAssuranceChecks,
   type ScaleAssessmentRow,
   type ScaleAssuranceCheckPreview,
 } from "@/lib/plan-room-scale-assurance";
+import { analyzePlanSheetMeasurementNotes } from "@/lib/plan-room-measurement-assistant.functions";
+import {
+  measurementAssistantTakeoffNote,
+  type MeasurementAssistantPlanResult,
+  type MeasurementAssistantSuggestion,
+} from "@/lib/plan-room-measurement-assistant";
 import {
   commitRedo,
   commitUndo,
@@ -159,7 +166,6 @@ import {
   searchMatches,
   sheetDisplayName,
   slugFileName,
-  sheetScaleStatus,
   toolLabel,
   unitFor,
   unitLongName,
@@ -190,6 +196,8 @@ import { LinkOrCreatePicker, TakeoffFinishPopover } from "./TakeoffClassify";
 import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
+import { MeasurementAssistantPanel } from "./MeasurementAssistantPanel";
+import { extractPdfMeasurementSourceLines } from "./pdfMeasurementText";
 import { FlagIssueButton } from "../FlagIssueButton";
 
 interface PlanRoomWorkspaceProps {
@@ -242,6 +250,7 @@ export function PlanRoomWorkspace({
   const applyScaleToSheetsFn = useServerFn(applyScaleToSheets);
   const updatePlanSheetsFn = useServerFn(updatePlanSheets);
   const recordScaleAssessmentFn = useServerFn(recordScaleAssessment);
+  const analyzeMeasurementNotesFn = useServerFn(analyzePlanSheetMeasurementNotes);
   const createLineForTakeoffsFn = useServerFn(createLineItemForTakeoffs);
   const recalculateSheetTakeoffsFn = useServerFn(recalculateSheetTakeoffs);
 
@@ -256,6 +265,19 @@ export function PlanRoomWorkspace({
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const [verifyFeet, setVerifyFeet] = useState("");
   const [scaleCheckDrafts, setScaleCheckDrafts] = useState<ScaleAssuranceCheckPreview[]>([]);
+  const [scaleAssessmentOverride, setScaleAssessmentOverride] = useState<ScaleAssessmentRow | null>(
+    null,
+  );
+  const [scaleVerifiedAtOverride, setScaleVerifiedAtOverride] = useState<string | null | undefined>(
+    undefined,
+  );
+  const [measurementAssistantPlan, setMeasurementAssistantPlan] =
+    useState<MeasurementAssistantPlanResult | null>(null);
+  const [preparedMeasurementSuggestionId, setPreparedMeasurementSuggestionId] = useState("");
+  const [completedMeasurementSuggestionIds, setCompletedMeasurementSuggestionIds] = useState<
+    string[]
+  >([]);
+  const [measurementSourceNote, setMeasurementSourceNote] = useState("");
   const [pdfPageMetrics, setPdfPageMetrics] = useState<{
     widthPoints: number;
     heightPoints: number;
@@ -350,14 +372,26 @@ export function PlanRoomWorkspace({
     () => sheets.find((sheet) => sheet.id === selectedSheetId) ?? sheets[0] ?? null,
     [selectedSheetId, sheets],
   );
-  const latestScaleAssessment = useMemo(
-    () =>
-      currentSheet
-        ? (scaleAssessments.find((assessment) => assessment.plan_sheet_id === currentSheet.id) ??
-          null)
-        : null,
-    [currentSheet, scaleAssessments],
-  );
+  const latestScaleAssessment = useMemo(() => {
+    if (!currentSheet) return null;
+    return resolveScaleAssessmentForSheet({
+      assessments: scaleAssessments,
+      pendingAssessment: scaleAssessmentOverride,
+      sheetId: currentSheet.id,
+      scaleRevision: currentSheet.scale_revision,
+    });
+  }, [currentSheet, scaleAssessmentOverride, scaleAssessments]);
+  const effectiveScaleVerifiedAt =
+    scaleVerifiedAtOverride !== undefined
+      ? scaleVerifiedAtOverride
+      : (currentSheet?.scale_verified_at ?? null);
+  const currentSheetScaleStatus = !currentSheet?.scale_feet_per_pixel
+    ? "none"
+    : effectiveScaleVerifiedAt &&
+        latestScaleAssessment?.outcome === "verified" &&
+        latestScaleAssessment.scale_revision === currentSheet.scale_revision
+      ? "verified"
+      : "unverified";
   const currentPlanSet = currentSheet
     ? (planSets.find((planSet) => planSet.id === currentSheet.plan_set_id) ?? null)
     : null;
@@ -373,7 +407,31 @@ export function PlanRoomWorkspace({
     setCalibrationPoints([]);
     setVerifyFeet("");
     setVerifyOutcome(null);
+    setScaleAssessmentOverride(null);
+    setScaleVerifiedAtOverride(undefined);
+    setMeasurementAssistantPlan(null);
+    setPreparedMeasurementSuggestionId("");
+    setCompletedMeasurementSuggestionIds([]);
+    setMeasurementSourceNote("");
   }, [currentSheet?.id, currentSheet?.scale_revision]);
+
+  useEffect(() => {
+    if (
+      scaleAssessmentOverride &&
+      scaleAssessments.some((assessment) => assessment.id === scaleAssessmentOverride.id)
+    ) {
+      setScaleAssessmentOverride(null);
+    }
+  }, [scaleAssessmentOverride, scaleAssessments]);
+
+  useEffect(() => {
+    if (
+      scaleVerifiedAtOverride !== undefined &&
+      currentSheet?.scale_verified_at === scaleVerifiedAtOverride
+    ) {
+      setScaleVerifiedAtOverride(undefined);
+    }
+  }, [currentSheet?.scale_verified_at, scaleVerifiedAtOverride]);
   const revisionSheetOptions = useMemo(
     () =>
       sheets
@@ -835,6 +893,13 @@ export function PlanRoomWorkspace({
       const label =
         measurementLabel.trim() || line?.description || `${toolLabel(measurementTool)} takeoff`;
       const unit = unitFor(measurementTool, line);
+      const preparedSuggestion = measurementAssistantPlan?.suggestions.find(
+        (suggestion) => suggestion.id === preparedMeasurementSuggestionId,
+      );
+      const preparedNote =
+        preparedSuggestion?.tool === measurementTool && preparedSuggestion.label === label
+          ? measurementSourceNote
+          : "";
       // Label-match inheritance (beta batch 2): finishing into an existing
       // group inherits its estimate-row link, library item, and color —
       // unless the takeoff was explicitly aimed at a row in the tools panel.
@@ -854,7 +919,7 @@ export function PlanRoomWorkspace({
           waste_pct: 0,
           color: joinedGroup ? joinedGroup.color : takeoffColor,
           geometry: geometryFromPoints(points, viewSize),
-          notes: line ? "Quantity produced from Plan Room takeoff." : "",
+          notes: preparedNote || (line ? "Quantity produced from Plan Room takeoff." : ""),
         },
       });
       return { ...result, joinedGroupLinked: Boolean(joinedGroup?.linkedLineId) };
@@ -884,6 +949,19 @@ export function PlanRoomWorkspace({
         snapshot: snapshotFromMeasurement(result.measurement),
       });
       if (variables.measurementTool !== "count") setTool("select");
+      const completedSuggestion = measurementAssistantPlan?.suggestions.find(
+        (suggestion) =>
+          suggestion.id === preparedMeasurementSuggestionId &&
+          suggestion.tool === variables.measurementTool &&
+          suggestion.label === result.measurement.label,
+      );
+      if (completedSuggestion) {
+        setCompletedMeasurementSuggestionIds((current) =>
+          current.includes(completedSuggestion.id) ? current : [...current, completedSuggestion.id],
+        );
+        setPreparedMeasurementSuggestionId("");
+        setMeasurementSourceNote("");
+      }
       const anchor = variables.points[variables.points.length - 1];
       if (anchor) {
         // The takeoff comes to you: classify right where you finished.
@@ -925,6 +1003,8 @@ export function PlanRoomWorkspace({
       });
     },
     onSuccess: (result) => {
+      setScaleAssessmentOverride(result.assessment);
+      setScaleVerifiedAtOverride(result.verified_at);
       const summary = summarizeScaleAssuranceChecks(result.evidence);
       if (result.outcome === "verified") {
         toast.success(
@@ -978,6 +1058,8 @@ export function PlanRoomWorkspace({
       setCalibrationPoints([]);
       setVerifyFeet("");
       setVerifyOutcome(null);
+      setScaleAssessmentOverride(null);
+      setScaleVerifiedAtOverride(null);
       setTool("select");
       invalidate();
     },
@@ -1704,6 +1786,72 @@ export function PlanRoomWorkspace({
       throw new Error(error?.message ?? "The drawing set file did not open.");
     }
     return data.signedUrl;
+  };
+
+  const measurementAssistantMutation = useMutation({
+    mutationFn: async () => {
+      if (!currentSheet || !currentPlanSet) throw new Error("Choose a drawing sheet first.");
+      if (currentPlanSet.file_mime_type !== "application/pdf" || !currentPlanSet.file_path) {
+        throw new Error("Measurement note review needs an uploaded vector PDF.");
+      }
+      const fileUrl = await planSetSignedUrl(currentPlanSet);
+      const sourceLines = await extractPdfMeasurementSourceLines({
+        fileUrl,
+        pageNumber: currentSheet.page_number,
+      });
+      if (sourceLines.length === 0) {
+        throw new Error(
+          "No selectable drawing notes were found on this sheet. It may be a scanned image.",
+        );
+      }
+      return analyzeMeasurementNotesFn({
+        data: {
+          estimate_id: estimate.id,
+          plan_sheet_id: currentSheet.id,
+          sheet_number: currentSheet.sheet_number,
+          sheet_name: currentSheet.sheet_name,
+          source_lines: sourceLines,
+        },
+      });
+    },
+    onSuccess: (plan) => {
+      setMeasurementAssistantPlan(plan);
+      setPreparedMeasurementSuggestionId("");
+      setCompletedMeasurementSuggestionIds([]);
+      setMeasurementSourceNote("");
+      toast.success(
+        plan.suggestions.length > 0
+          ? `${plan.suggestions.length} cited measurement suggestion${plan.suggestions.length === 1 ? "" : "s"} ready for review.`
+          : "AI found no sufficiently cited measurement scope and left the checklist empty.",
+      );
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Drawing notes could not be reviewed"),
+  });
+
+  const prepareMeasurementSuggestion = (suggestion: MeasurementAssistantSuggestion) => {
+    setMeasurementLabel(suggestion.label);
+    setMeasurementSourceNote(measurementAssistantTakeoffNote(suggestion));
+    setPreparedMeasurementSuggestionId(suggestion.id);
+    setPendingPoints([]);
+    setCalibrationPoints([]);
+    setSelectedMeasurementId("");
+    if (isCockpitMode) {
+      setCockpitPanels((current) => ({ ...current, tools: true }));
+    }
+    if (currentSheetScaleStatus !== "verified") {
+      setTool("select");
+      toast.warning(
+        "Scope prepared. Complete two Scale Assurance checks before drawing this measurement.",
+      );
+      return;
+    }
+    setTool(suggestion.tool);
+    toast.info(
+      suggestion.tool === "linear"
+        ? "Linear takeoff armed. Trace the scope; double-click or press Enter to finish."
+        : "Area takeoff armed. Trace the perimeter, then finish the area.",
+    );
   };
 
   // Lazy thumbnail backfill: sets uploaded before thumbnails existed gain them
@@ -2577,13 +2725,13 @@ export function PlanRoomWorkspace({
       {currentSheetNavigationItem && (
         <>
           <Badge
-            variant={sheetScaleStatus(currentSheet) === "verified" ? "secondary" : "outline"}
+            variant={currentSheetScaleStatus === "verified" ? "secondary" : "outline"}
             className="hidden xl:inline-flex"
             data-testid="plan-cockpit-sheet-scale-status"
           >
-            {sheetScaleStatus(currentSheet) === "verified"
+            {currentSheetScaleStatus === "verified"
               ? "Scale verified"
-              : sheetScaleStatus(currentSheet) === "unverified"
+              : currentSheetScaleStatus === "unverified"
                 ? "Scale set — unverified"
                 : "Needs scale"}
           </Badge>
@@ -3132,7 +3280,7 @@ export function PlanRoomWorkspace({
                 <p className="text-xs text-muted-foreground">
                   {currentSheet?.scale_feet_per_pixel
                     ? `Scale set: ${currentSheet.scale_label || `${currentSheet.scale_feet_per_pixel.toFixed(4)} ft/px`}${
-                        currentSheet.scale_verified_at
+                        currentSheetScaleStatus === "verified"
                           ? " — verified"
                           : currentSheet.scale_source === "stated"
                             ? " — from stated scale, complete two assurance checks"
@@ -3324,6 +3472,27 @@ export function PlanRoomWorkspace({
               <Target className="h-4 w-4 text-muted-foreground" />
             </div>
             <div className="mt-4 space-y-3">
+              <MeasurementAssistantPanel
+                plan={measurementAssistantPlan}
+                pending={measurementAssistantMutation.isPending}
+                canAnalyze={Boolean(
+                  backendReady &&
+                  currentSheet &&
+                  currentPlanSet?.file_mime_type === "application/pdf" &&
+                  currentPlanSet.file_path,
+                )}
+                scaleVerified={currentSheetScaleStatus === "verified"}
+                preparedSuggestionId={preparedMeasurementSuggestionId}
+                completedSuggestionIds={completedMeasurementSuggestionIds}
+                onAnalyze={() => measurementAssistantMutation.mutate()}
+                onPrepare={prepareMeasurementSuggestion}
+                onClear={() => {
+                  setMeasurementAssistantPlan(null);
+                  setPreparedMeasurementSuggestionId("");
+                  setCompletedMeasurementSuggestionIds([]);
+                  setMeasurementSourceNote("");
+                }}
+              />
               <div className="space-y-1.5">
                 <Label>Takeoff label</Label>
                 <Input
@@ -3353,11 +3522,11 @@ export function PlanRoomWorkspace({
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <Label>Set drawing scale</Label>
-                  {sheetScaleStatus(currentSheet) === "verified" ? (
+                  {currentSheetScaleStatus === "verified" ? (
                     <Badge variant="secondary" data-testid="scale-status-verified">
                       Scale verified
                     </Badge>
-                  ) : sheetScaleStatus(currentSheet) === "unverified" ? (
+                  ) : currentSheetScaleStatus === "unverified" ? (
                     <Badge variant="outline" data-testid="scale-status-unverified">
                       Set, not verified
                     </Badge>
@@ -3501,7 +3670,7 @@ export function PlanRoomWorkspace({
                 <FeetInchesHint value={calibrationFeet} onAccept={setCalibrationFeet} />
                 {Boolean(currentSheet?.scale_feet_per_pixel) && (
                   <ScaleAssurancePanel
-                    sheet={currentSheet}
+                    sheet={{ ...currentSheet, scale_verified_at: effectiveScaleVerifiedAt }}
                     latestAssessment={latestScaleAssessment}
                     drafts={scaleCheckDrafts}
                     tool={tool}
@@ -3528,7 +3697,7 @@ export function PlanRoomWorkspace({
                     <span>
                       Scale locked at {currentSheet.scale_feet_per_pixel.toFixed(4)} feet per
                       drawing pixel.
-                      {currentSheet.scale_source === "stated" && !currentSheet.scale_verified_at
+                      {currentSheet.scale_source === "stated" && !effectiveScaleVerifiedAt
                         ? " From stated scale — complete two assurance checks."
                         : ""}
                     </span>

@@ -49,6 +49,10 @@ import {
   summarizeScaleAssuranceChecks,
 } from "../src/lib/plan-room-scale-assurance.ts";
 import {
+  groupPdfMeasurementText,
+  parseMeasurementAssistantPlan,
+} from "../src/lib/plan-room-measurement-assistant.ts";
+import {
   TAKEOFF_UNDO_DEPTH,
   commitRedo,
   commitUndo,
@@ -577,6 +581,46 @@ assert.equal(
 );
 assert.equal(isCurrentScaleAssessment({ scale_revision: 4 }, 4), true);
 assert.equal(isCurrentScaleAssessment({ scale_revision: 3 }, 4), false);
+
+// --- Estimator-guided AI measurement planning -----------------------------
+const measurementSourceLines = groupPdfMeasurementText([
+  { text: "CONTINUOUS GWB", x: 20, y: 700, height: 12 },
+  { text: "AT CORRIDOR WALLS", x: 140, y: 700, height: 12 },
+  { text: "EPOXY FLOOR FINISH IN MECHANICAL ROOM", x: 20, y: 650, height: 12 },
+]);
+assert.deepEqual(measurementSourceLines, [
+  { line_number: "L001", text: "CONTINUOUS GWB AT CORRIDOR WALLS" },
+  { line_number: "L002", text: "EPOXY FLOOR FINISH IN MECHANICAL ROOM" },
+]);
+const measurementPlan = parseMeasurementAssistantPlan(
+  JSON.stringify({
+    summary: "Interior finish scope is called out.",
+    suggestions: [
+      {
+        label: "Corridor GWB walls",
+        tool: "linear",
+        unit: "LF",
+        source_line: "L001",
+        source_excerpt: "CONTINUOUS GWB AT CORRIDOR WALLS",
+        rationale: "Trace the corridor wall run.",
+        evidence_strength: "direct",
+      },
+      {
+        label: "Invented footing",
+        tool: "linear",
+        unit: "LF",
+        source_line: "L002",
+        source_excerpt: "CONCRETE FOOTING",
+        rationale: "This is not in the cited line.",
+        evidence_strength: "direct",
+      },
+    ],
+    warnings: [],
+  }),
+  measurementSourceLines,
+);
+assert.equal(measurementPlan.suggestions.length, 1);
+assert.equal(measurementPlan.suggestions[0].unit, "LF");
 
 // --- Feet + inches entry ---
 assert.equal(parseFeetInches("12' 6\""), 12.5);

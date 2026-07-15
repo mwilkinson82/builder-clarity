@@ -50,6 +50,7 @@ export interface ScaleAssessmentRow {
 }
 
 export type RecordScaleAssessmentResult = {
+  assessment: ScaleAssessmentRow;
   assessment_id: string;
   outcome: ScaleAssuranceOutcome;
   max_variance_pct: number;
@@ -157,4 +158,24 @@ export function isCurrentScaleAssessment(
   scaleRevision: number,
 ) {
   return Boolean(assessment && assessment.scale_revision === scaleRevision);
+}
+
+export function resolveScaleAssessmentForSheet({
+  assessments,
+  pendingAssessment,
+  sheetId,
+  scaleRevision,
+}: {
+  assessments: ScaleAssessmentRow[];
+  pendingAssessment: ScaleAssessmentRow | null;
+  sheetId: string;
+  scaleRevision: number;
+}) {
+  if (
+    pendingAssessment?.plan_sheet_id === sheetId &&
+    pendingAssessment.scale_revision === scaleRevision
+  ) {
+    return pendingAssessment;
+  }
+  return assessments.find((assessment) => assessment.plan_sheet_id === sheetId) ?? null;
 }
