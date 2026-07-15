@@ -31,3 +31,25 @@ Every new capability must include:
 ## Current acceptance slice
 
 The Daily WIP-to-CPM walkthrough uses the active `09-020 Drywall hang and finish` activity. CPM begins at 40%; PM-reviewed Harbor Daily WIP recommends 52%. This produces a meaningful choice among accept, keep, and override while preserving the same evidence gate used by customer projects.
+
+## Versioned demo engine
+
+Harbor is a per-company working copy of canonical fixture definitions stored in application code. Clicking, editing, or completing work in one company's Harbor project never changes the canonical fixture or another company's copy.
+
+The engine manages one version per operational module in dependency order. The initial registry covers:
+
+1. Project foundation and demo identity.
+2. CPM schedule.
+3. Reviewed Daily WIP-to-CPM evidence.
+4. Inspections.
+5. Claims and the claim-cycle history.
+
+An **ensure** run is non-destructive. It fills missing stable demo records and records the module version only after the adapter succeeds. It must not overwrite a contractor's walkthrough edits merely because the project was opened again.
+
+A **reset** run is explicit and destructive only to stable demo-owned records for the selected module. The current reset API restores dependencies first, rewrites canonical records by deterministic activity ID, record ID, or seed key, and leaves user-created/non-demo records untouched. The Start Here shell may expose Reset lesson only for a registered module with focused acceptance coverage.
+
+The database registry is `demo_seed_module_versions`. It stores the applied version and latest result for each Harbor project copy. It is protected by the same `can_read_project` and `can_manage_project` rules as the project itself. The canonical fixture is never stored in that table.
+
+## Onboarding build order
+
+The Start Here shell follows the core project-management workflows first: project controls, budget/SOV, subcontractors, Daily Reports, Daily WIP, CPM, production, billing, IOR/risk, procurement, inspections, claims, and closeout records. Estimating remains a product-development sandbox and does not enter guided onboarding until its workflow and sample drawings are stable.

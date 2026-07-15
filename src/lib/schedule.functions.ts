@@ -817,6 +817,8 @@ export const listSchedule = createServerFn({ method: "GET" })
       const ensureResult = await ensureHarborDemoCpmActivitiesForProject(
         context.supabase,
         data.projectId,
+        [],
+        context.userId,
       );
       if (ensureResult.ensured) {
         const refreshedActivities = await context.supabase

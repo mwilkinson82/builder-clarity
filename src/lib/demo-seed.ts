@@ -10,6 +10,66 @@ export const HARBOR_DEMO_JOB_NUMBER = "DEMO-HARBOR";
 export const HARBOR_DEMO_NAME = "Harbor Residence";
 export const HARBOR_DEMO_CLIENT = "Private Luxury Residence";
 
+// Each version represents the canonical fixture contract for one operational
+// Harbor module. Versions only move forward when a module adapter changes.
+// The order is dependency-aware so a downstream fixture never runs before its
+// real prerequisites exist.
+export const HARBOR_DEMO_MODULES = [
+  { key: "project-foundation", version: 1, dependsOn: [] },
+  { key: "cpm-schedule", version: 1, dependsOn: ["project-foundation"] },
+  {
+    key: "daily-wip-cpm-evidence",
+    version: 1,
+    dependsOn: ["project-foundation", "cpm-schedule"],
+  },
+  { key: "inspections", version: 1, dependsOn: ["project-foundation"] },
+  { key: "claims", version: 1, dependsOn: ["project-foundation"] },
+] as const;
+
+export type HarborDemoModuleKey = (typeof HARBOR_DEMO_MODULES)[number]["key"];
+export type HarborDemoModuleOperation = "ensure" | "reset";
+export type HarborDemoModuleStatus = "missing" | "upgrade" | "current" | "failed";
+
+export interface HarborDemoModuleVersionRow {
+  module_key: string;
+  applied_version: number;
+  status: "ready" | "failed";
+}
+
+export interface HarborDemoModulePlanItem {
+  key: HarborDemoModuleKey;
+  targetVersion: number;
+  appliedVersion: number;
+  status: HarborDemoModuleStatus;
+  dependsOn: readonly HarborDemoModuleKey[];
+}
+
+export const planHarborDemoModules = (
+  rows: readonly HarborDemoModuleVersionRow[] | null | undefined,
+): HarborDemoModulePlanItem[] => {
+  const rowByKey = new Map((rows ?? []).map((row) => [row.module_key, row]));
+
+  return HARBOR_DEMO_MODULES.map((module) => {
+    const row = rowByKey.get(module.key);
+    const appliedVersion = Math.max(0, Number(row?.applied_version) || 0);
+    const status: HarborDemoModuleStatus = !row
+      ? "missing"
+      : row.status === "failed"
+        ? "failed"
+        : appliedVersion < module.version
+          ? "upgrade"
+          : "current";
+
+    return {
+      key: module.key,
+      targetVersion: module.version,
+      appliedVersion,
+      status,
+      dependsOn: module.dependsOn,
+    };
+  });
+};
+
 // Harbor is the product walkthrough, not a decorative sample project. Every
 // operational workflow needs enough connected evidence to make its real
 // controls usable. This fixture gives Daily WIP -> CPM a stable, believable
