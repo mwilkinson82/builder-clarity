@@ -13,6 +13,7 @@ const impact: RevisionImpactItem = {
   required_action: "remeasure",
   status: "open",
   notes: "Estimator verified the changed wall line in the overlay.",
+  ai_provenance: null,
 };
 
 const baseReview = {
@@ -81,5 +82,45 @@ describe("revision impact review", () => {
         impacts: [{ ...impact, title: "" }],
       }),
     ).toContain("specific title");
+  });
+
+  it("normalizes legacy rows and validates structured AI note provenance", () => {
+    const { ai_provenance: _provenance, ...legacyImpact } = impact;
+    expect(normalizeRevisionImpactItems([legacyImpact])[0].ai_provenance).toBeNull();
+
+    const citedImpact: RevisionImpactItem = {
+      ...impact,
+      ai_provenance: {
+        source: "ai_revision_scope_review",
+        operation_id: "00000000-0000-4000-8000-000000000010",
+        candidate_id: "revision-scope-candidate-1",
+        citations: [
+          {
+            sheet_role: "revision",
+            line_number: "L001",
+            excerpt: "PROVIDE 2 HOUR GWB PARTITION",
+          },
+        ],
+      },
+    };
+    expect(
+      revisionImpactReviewInputSchema.safeParse({
+        ...baseReview,
+        disposition: "needs_follow_up",
+        impacts: [citedImpact],
+      }).success,
+    ).toBe(true);
+    expect(
+      revisionImpactReviewInputSchema.safeParse({
+        ...baseReview,
+        disposition: "needs_follow_up",
+        impacts: [
+          {
+            ...citedImpact,
+            ai_provenance: { ...citedImpact.ai_provenance, candidate_id: "invented" },
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });

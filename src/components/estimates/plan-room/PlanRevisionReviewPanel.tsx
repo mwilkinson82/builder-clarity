@@ -25,6 +25,7 @@ import {
   analyzePlanRevisionSet,
   getPlanRevisionMatches,
   savePlanRevisionDecisions,
+  type PlanRevisionMatchRow,
 } from "@/lib/plan-revision-match.functions";
 import {
   revisionMatchCredits,
@@ -32,6 +33,7 @@ import {
   type PlanRevisionReviewAction,
 } from "@/lib/plan-revision-match";
 import type { PlanSetRow, PlanSheetRow } from "@/lib/plan-room.functions";
+import type { RevisionScopeAssistantResult } from "@/lib/plan-revision-scope-assistant";
 import { cn } from "@/lib/utils";
 import { PlanRevisionImpactRegister } from "./PlanRevisionImpactRegister";
 
@@ -63,6 +65,7 @@ export function PlanRevisionReviewPanel({
   sheets,
   processingIdentity = false,
   onUseOverlay,
+  onReviewRevisionNotes,
 }: {
   estimateId: string;
   currentPlanSet: PlanSetRow | null;
@@ -71,6 +74,7 @@ export function PlanRevisionReviewPanel({
   sheets: PlanSheetRow[];
   processingIdentity?: boolean;
   onUseOverlay: (sheetId: string) => void;
+  onReviewRevisionNotes: (match: PlanRevisionMatchRow) => Promise<RevisionScopeAssistantResult>;
 }) {
   const qc = useQueryClient();
   const getMatchesFn = useServerFn(getPlanRevisionMatches);
@@ -280,6 +284,7 @@ export function PlanRevisionReviewPanel({
                 sheetById.get(currentAcceptedMatch.base_sheet_id ?? "")?.plan_set_id ?? "",
               ),
             )}
+            onReviewRevisionNotes={() => onReviewRevisionNotes(currentAcceptedMatch)}
           />
         </div>
       ) : null}

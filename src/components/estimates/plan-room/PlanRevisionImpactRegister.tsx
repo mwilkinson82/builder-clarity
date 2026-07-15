@@ -1,7 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useMemo, useState } from "react";
-import { ClipboardCheck, History, Loader2, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  ClipboardCheck,
+  History,
+  Loader2,
+  Plus,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +52,11 @@ import {
   type RevisionImpactStatus,
 } from "@/lib/plan-revision-impact";
 import type { PlanRevisionMatchRow } from "@/lib/plan-revision-match.functions";
+import {
+  revisionScopeCandidateToImpact,
+  type RevisionScopeAssistantResult,
+  type RevisionScopeCandidate,
+} from "@/lib/plan-revision-scope-assistant";
 
 const reviewedAt = (value: string) => {
   const date = new Date(value);
@@ -63,6 +76,7 @@ const newImpact = (): RevisionImpactItem => ({
   required_action: "scope_review",
   status: "open",
   notes: "",
+  ai_provenance: null,
 });
 
 export function PlanRevisionImpactRegister({
@@ -70,11 +84,13 @@ export function PlanRevisionImpactRegister({
   match,
   revisionSheetLabel,
   baseSheetLabel,
+  onReviewRevisionNotes,
 }: {
   estimateId: string;
   match: PlanRevisionMatchRow;
   revisionSheetLabel: string;
   baseSheetLabel: string;
+  onReviewRevisionNotes: () => Promise<RevisionScopeAssistantResult>;
 }) {
   const qc = useQueryClient();
   const getReviewsFn = useServerFn(getPlanRevisionImpactReviews);
@@ -83,6 +99,7 @@ export function PlanRevisionImpactRegister({
   const [disposition, setDisposition] = useState<RevisionImpactDisposition>("needs_follow_up");
   const [summaryNotes, setSummaryNotes] = useState("");
   const [impacts, setImpacts] = useState<RevisionImpactItem[]>([]);
+  const [assistantPlan, setAssistantPlan] = useState<RevisionScopeAssistantResult | null>(null);
 
   const reviewsQuery = useQuery({
     queryKey: ["plan-revision-impact-reviews", estimateId],
@@ -110,6 +127,10 @@ export function PlanRevisionImpactRegister({
     setReviewOpen(true);
   };
 
+  useEffect(() => {
+    setAssistantPlan(null);
+  }, [match.id, match.revision_sheet_id, match.base_sheet_id]);
+
   const draftError = revisionImpactDraftError({ disposition, impacts });
 
   const saveMutation = useMutation({
@@ -131,6 +152,39 @@ export function PlanRevisionImpactRegister({
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Revision impact review did not save"),
   });
+
+  const assistantMutation = useMutation({
+    mutationFn: onReviewRevisionNotes,
+    onSuccess: (result) => {
+      setAssistantPlan(result);
+      toast.success(result.summary);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Revision notes could not be reviewed"),
+  });
+
+  const addedCandidateIds = useMemo(
+    () =>
+      new Set(
+        impacts
+          .map((impact) => impact.ai_provenance?.candidate_id)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    [impacts],
+  );
+
+  const addAssistantCandidate = (candidate: RevisionScopeCandidate) => {
+    if (!assistantPlan || addedCandidateIds.has(candidate.id)) return;
+    setDisposition((current) => (current === "no_estimate_impact" ? "needs_follow_up" : current));
+    setImpacts((current) => [
+      ...current,
+      revisionScopeCandidateToImpact({
+        candidate,
+        operationId: assistantPlan.operation_id,
+        impactId: crypto.randomUUID(),
+      }),
+    ]);
+  };
 
   const updateImpact = (id: string, patch: Partial<RevisionImpactItem>) => {
     setImpacts((current) =>
@@ -214,8 +268,9 @@ export function PlanRevisionImpactRegister({
               <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Estimator-controlled conclusion
             </p>
             <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-              AI did not determine the delta. Saving creates an append-only review version; it does
-              not transfer takeoffs, retain scale, or change the estimate.
+              AI may surface cited note differences, but it does not determine the delta. Saving
+              creates an append-only review version; it does not transfer takeoffs, retain scale, or
+              change the estimate.
             </p>
           </div>
 
@@ -228,6 +283,103 @@ export function PlanRevisionImpactRegister({
               <p className="font-medium text-muted-foreground">Revision sheet</p>
               <p className="mt-0.5 text-foreground">{revisionSheetLabel}</p>
             </div>
+          </div>
+
+          <div className="rounded-md border border-hairline bg-surface p-3 text-xs">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 font-medium text-foreground">
+                  <Sparkles className="h-3.5 w-3.5 text-primary" /> Cited revision-note review
+                </p>
+                <p className="mt-1 max-w-2xl text-[10px] leading-4 text-muted-foreground">
+                  AI compares selectable text from this accepted pair. It cannot see revision clouds
+                  or geometry, and every candidate remains an unclassified estimator task.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 shrink-0 text-[11px]"
+                onClick={() => assistantMutation.mutate()}
+                disabled={assistantMutation.isPending}
+                data-testid="plan-revision-scope-assistant"
+              >
+                {assistantMutation.isPending ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                {assistantMutation.isPending
+                  ? "Reading both sheets"
+                  : "Review notes · up to 1 credit"}
+              </Button>
+            </div>
+
+            {assistantPlan ? (
+              <ScrollArea className="mt-3 max-h-52 pr-2" data-testid="plan-revision-scope-results">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                    <span>{assistantPlan.summary}</span>
+                    <span>
+                      {assistantPlan.credits_charged === 0
+                        ? "Admin review · no credit charged"
+                        : `${assistantPlan.credits_charged} AI credit charged`}
+                    </span>
+                  </div>
+                  {assistantPlan.warnings.map((warning) => (
+                    <p
+                      key={warning}
+                      className="rounded border border-warning/30 bg-warning/10 p-2 text-[10px]"
+                    >
+                      {warning}
+                    </p>
+                  ))}
+                  {assistantPlan.candidates.map((candidate) => {
+                    const alreadyAdded = addedCandidateIds.has(candidate.id);
+                    return (
+                      <div
+                        key={candidate.id}
+                        className="rounded-md border border-primary/15 bg-primary/5 p-2.5"
+                        data-testid={`plan-revision-scope-${candidate.id}`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-medium text-foreground">{candidate.title}</p>
+                            <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                              Revision {candidate.revision_citation.line_number}: “
+                              {candidate.revision_citation.excerpt}”
+                            </p>
+                            {candidate.base_citation ? (
+                              <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                                Prior {candidate.base_citation.line_number}: “
+                                {candidate.base_citation.excerpt}”
+                              </p>
+                            ) : (
+                              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                No prior-note counterpart cited. Verify the drawing before relying
+                                on this candidate.
+                              </p>
+                            )}
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={alreadyAdded ? "secondary" : "outline"}
+                            className="h-7 shrink-0 text-[10px]"
+                            onClick={() => addAssistantCandidate(candidate)}
+                            disabled={alreadyAdded}
+                          >
+                            <Plus className="mr-1 h-3 w-3" />
+                            {alreadyAdded ? "Added" : "Add for review"}
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            ) : null}
           </div>
 
           <ScrollArea className="max-h-[56vh] pr-3">
@@ -306,6 +458,11 @@ export function PlanRevisionImpactRegister({
                       >
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-xs font-medium text-foreground">Impact {index + 1}</p>
+                          {impact.ai_provenance ? (
+                            <Badge variant="outline" className="ml-auto text-[9px]">
+                              AI note candidate · verify
+                            </Badge>
+                          ) : null}
                           <Button
                             type="button"
                             size="icon"

@@ -178,6 +178,41 @@ Initial enterprise slice:
 7. Confirm no review creates, updates, or deletes a takeoff; retains a scale; or changes Harbor's
    `$1,606,137` total.
 
+## Stage 6 — Cited revision-note scope assistant
+
+- On an already accepted sheet pair, AI may compare selectable PDF text from the prior and revised
+  pages and select estimating-relevant note differences for human review.
+- Every candidate must cite visible revision text; a prior citation is retained only when it is a
+  valid supplied counterpart. The application rejects unsupported excerpts, unchanged lines,
+  administrative issue text, and non-construction scope.
+- The model does not see drawing images, geometry, revision clouds, quantities, costs, or takeoff
+  data. It cannot assert that scope was added, removed, measured, counted, priced, or changed.
+- Adding a candidate creates an unclassified, open Scope review draft. The estimator must inspect
+  the overlay, classify the impact, select the follow-up action, and save the review version.
+- A completed AI operation, candidate identifier, and server-normalized citations remain attached
+  to the saved impact. The save RPC rejects forged or cross-pair provenance.
+- One accepted-pair note review consumes at most one AI credit; platform-super-admin reviews remain
+  unmetered. Missing selectable text stops before the AI operation or charge.
+
+### Stage 6 release gate
+
+1. Apply `20260715212100_revision_scope_assistant_provenance.sql` only through the Lovable
+   connector.
+2. Verify both AI constraints accept `ai_revision_scope_review`, the impact RPC remains revoked
+   from PUBLIC and anon, and its search path remains empty.
+3. On a legitimate accepted vector-PDF pair, review notes and confirm every candidate shows its
+   exact revision citation and any supplied prior counterpart.
+4. Confirm unsupported, unchanged, and administrative note candidates are omitted by the
+   deterministic parser even when returned by the model.
+5. Add a candidate and confirm it enters the review as Unclassified + Scope review + Open; AI must
+   not assign an impact category or quantity action.
+6. Save the estimator-classified review and verify the RPC rebuilt provenance from the completed
+   same-estimate, same-pair AI operation rather than trusting client-supplied citations.
+7. Confirm missing selectable text creates no operation or credit charge, and provider failure
+   marks the operation failed and refunds the credit.
+8. Confirm the comparison never changes geometry, scales, takeoffs, line quantities, or Harbor's
+   `$1,606,137` total.
+
 ## Kill criteria
 
 Stop expansion if the live Harbor review shows uncited suggestions, repeated irrelevant title-block

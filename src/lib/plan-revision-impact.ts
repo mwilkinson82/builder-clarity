@@ -29,6 +29,22 @@ export type RevisionImpactAction = (typeof revisionImpactActions)[number];
 export type RevisionImpactStatus = (typeof revisionImpactStatuses)[number];
 export type RevisionImpactDisposition = (typeof revisionImpactDispositions)[number];
 
+export const revisionImpactAiProvenanceSchema = z.object({
+  source: z.literal("ai_revision_scope_review"),
+  operation_id: z.string().uuid(),
+  candidate_id: z.string().regex(/^revision-scope-candidate-\d{1,2}$/),
+  citations: z
+    .array(
+      z.object({
+        sheet_role: z.enum(["revision", "base"]),
+        line_number: z.string().regex(/^L\d{3}$/),
+        excerpt: z.string().trim().min(3).max(260),
+      }),
+    )
+    .min(1)
+    .max(2),
+});
+
 export const revisionImpactItemSchema = z.object({
   id: z.string().uuid(),
   category: z.enum(revisionImpactCategories),
@@ -36,6 +52,7 @@ export const revisionImpactItemSchema = z.object({
   required_action: z.enum(revisionImpactActions),
   status: z.enum(revisionImpactStatuses),
   notes: z.string().trim().max(1000),
+  ai_provenance: revisionImpactAiProvenanceSchema.nullish().transform((value) => value ?? null),
 });
 
 export type RevisionImpactItem = z.infer<typeof revisionImpactItemSchema>;
