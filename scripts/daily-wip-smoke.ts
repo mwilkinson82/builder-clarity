@@ -1111,6 +1111,35 @@ assert.deepEqual(
     "building",
     "two projects, five field days, and forty-plus hours build benchmark confidence",
   );
+
+  const conservativeBenchmark = summarizeProductionBenchmarks([
+    {
+      ...benchmarkRows[0],
+      id: "conservative-1",
+      quantity: 1_000,
+      laborHours: 32,
+    },
+    {
+      ...benchmarkRows[0],
+      id: "conservative-2",
+      date: "2026-07-02",
+      quantity: 2_100,
+      laborHours: 64,
+    },
+    {
+      ...benchmarkRows[0],
+      id: "conservative-3",
+      date: "2026-07-03",
+      quantity: 2_100,
+      laborHours: 64,
+    },
+  ])[0];
+  assert.equal(conservativeBenchmark.actualRate, 32.5, "aggregate observed rate is retained");
+  assert.equal(
+    conservativeBenchmark.planningRate,
+    32.5,
+    "planning rate never exceeds the aggregate observed rate",
+  );
 }
 
 console.log("daily WIP smoke: all assertions passed");
