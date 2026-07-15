@@ -366,6 +366,63 @@ export type SheetTextItem = {
   rotated?: boolean;
 };
 
+/**
+ * Normalize a pdfjs text transform into the displayed sheet coordinate system.
+ *
+ * pdfjs returns text items in the PDF's unrotated user space, while
+ * `getViewport()` reports the rendered page after its Rotate entry is applied.
+ * Comparing the raw item coordinates with the rotated viewport silently moves
+ * title-block text to the wrong edge of portrait-authored consultant sheets.
+ * The normalized result uses the extractor's expected bottom-left origin.
+ */
+export function normalizePdfTextItemForSheetIdentity({
+  text,
+  textTransform,
+  viewportTransform,
+  pageHeight,
+}: {
+  text: string;
+  textTransform: readonly number[];
+  viewportTransform: readonly number[];
+  pageHeight: number;
+}): SheetTextItem {
+  const value = (matrix: readonly number[], index: number, fallback: number) => {
+    const candidate = Number(matrix[index]);
+    return Number.isFinite(candidate) ? candidate : fallback;
+  };
+  const [va, vb, vc, vd, ve, vf] = [
+    value(viewportTransform, 0, 1),
+    value(viewportTransform, 1, 0),
+    value(viewportTransform, 2, 0),
+    value(viewportTransform, 3, 1),
+    value(viewportTransform, 4, 0),
+    value(viewportTransform, 5, 0),
+  ];
+  const [ta, tb, tc, td, te, tf] = [
+    value(textTransform, 0, 1),
+    value(textTransform, 1, 0),
+    value(textTransform, 2, 0),
+    value(textTransform, 3, 1),
+    value(textTransform, 4, 0),
+    value(textTransform, 5, 0),
+  ];
+  const combined = [
+    va * ta + vc * tb,
+    vb * ta + vd * tb,
+    va * tc + vc * td,
+    vb * tc + vd * td,
+    va * te + vc * tf + ve,
+    vb * te + vd * tf + vf,
+  ];
+  return {
+    text,
+    x: combined[4],
+    y: Math.max(0, pageHeight - combined[5]),
+    height: Math.max(1, Math.hypot(combined[2], combined[3])),
+    rotated: Math.abs(combined[1]) > Math.abs(combined[0]),
+  };
+}
+
 const TITLE_BLOCK_FIELD_LABELS =
   /^(scale|date|drawn|checked|approved|designed|reviewed|project\s*(no|number)?|job\s*(no|number)?|sheet\s*(no|number)?|rev(ision)?s?|of|as\s+noted|as\s+shown|issued?|plot\s*(date|by)|drawing\s*(no|number)|dwg|file\s*(no|name)?|copyright|key\s*plan|seal|stamp|phone|fax|e-?mail|consultants?)\b/i;
 
@@ -419,6 +476,7 @@ const DEFAULT_TEXT_ITEM_HEIGHT = 8;
 // Rough advance of a text run when pdfjs gives no width: chars x height x 0.55.
 const APPROX_CHAR_WIDTH_RATIO = 0.55;
 const MAX_TITLE_LINES = 3;
+const TITLE_SHORT_WORD_PATTERN = /^(?:plan|detail|details|section|sections)$/i;
 
 type NormalizedTextItem = {
   text: string;
@@ -680,7 +738,13 @@ export function extractSheetIdentity({
     if (matchSheetNumber(line.text.replace(/\s+/g, ""))) return false;
     if (TITLE_BLOCK_FIELD_LABELS.test(line.text)) return false;
     if (!/[A-Za-z]{3,}/.test(line.text)) return false;
-    if (line.text.split(/\s+/).length < 2 && line.text.length < 6) return false;
+    if (
+      line.text.split(/\s+/).length < 2 &&
+      line.text.length < 6 &&
+      !TITLE_SHORT_WORD_PATTERN.test(line.text)
+    ) {
+      return false;
+    }
     if (outsideTexts.has(normalizeTitleText(line.text))) return false;
     if (projectFieldTexts?.has(normalizeTitleText(line.text))) return false;
     if (line.yMax < chosen.y - chosen.height * 2.5) return false; // beneath the number
@@ -786,6 +850,8 @@ export type SheetIdentityPage = {
 };
 
 export const PROJECT_FIELD_MIN_SHEETS = 3;
+const REPEATED_SHEET_TITLE_TEXT_PATTERN =
+  /\b(?:ceiling|details?|electrical|elevations?|floor|foundation|framing|mechanical|notes?|plan|plumbing|roof|schedules?|sections?|specifications?|structural|wall)\b/i;
 
 export function buildProjectFieldTexts(
   pages: SheetIdentityPage[],
@@ -812,7 +878,14 @@ export function buildProjectFieldTexts(
   }
   const projectFields = new Set<string>();
   for (const [key, count] of pageCountByKey) {
-    if (count >= minSheets) projectFields.add(key.slice(key.indexOf("|") + 1));
+    const text = key.slice(key.indexOf("|") + 1);
+    // Consultant packages legitimately repeat title fragments such as ROOF
+    // FRAMING + SECTIONS across several sheets. Those construction-title words
+    // are not project identity even when they repeat at the same title-block
+    // location; filtering them produced blank titles on the real Crystal set.
+    if (count >= minSheets && !REPEATED_SHEET_TITLE_TEXT_PATTERN.test(text)) {
+      projectFields.add(text);
+    }
   }
   return projectFields;
 }
