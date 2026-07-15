@@ -66,6 +66,7 @@ import {
   receivableAgingBucket,
 } from "../src/lib/receivables.ts";
 import { summarizeCostSettlement } from "../src/lib/cost-settlement.ts";
+import { previewCertifiedWipBillingHandoff } from "../src/lib/certified-wip-billing.ts";
 import {
   applicationFeeFromDollars,
   cappedApplicationFeeFromDollars,
@@ -147,6 +148,50 @@ assert.equal(dollarsToCents(centsToDollars(2500000)), 2500000);
 // The classic float trap: 285.55 * 100 = 28554.999... must round, not truncate.
 assert.equal(dollarsToCents(285.55), 28555);
 assert.equal(dollarsToCents(Number.NaN), 0);
+
+// --- PM-certified WIP -> accounting draft handoff --------------------------
+
+const certification = {
+  certified_percent: 60,
+} as never;
+const draftLine = {
+  scheduled_value_cents: 10_000_000,
+  change_order_value_cents: 0,
+  work_completed_previous_cents: 3_000_000,
+  materials_stored_previous_cents: 500_000,
+  work_completed_this_period_cents: 250_000,
+  materials_stored_this_period_cents: 500_000,
+} as never;
+const certifiedPreview = previewCertifiedWipBillingHandoff({
+  certification,
+  line: draftLine,
+  applicationStatus: "draft",
+  stale: false,
+  alreadyApplied: false,
+});
+assert.equal(certifiedPreview.targetTotalCents, 6_000_000);
+assert.equal(certifiedPreview.priorCompletedAndStoredCents, 3_500_000);
+assert.equal(certifiedPreview.proposedWorkThisPeriodCents, 2_000_000);
+assert.equal(certifiedPreview.deltaCents, 1_750_000);
+assert.equal(certifiedPreview.block, null);
+
+const stalePreview = previewCertifiedWipBillingHandoff({
+  certification,
+  line: draftLine,
+  applicationStatus: "draft",
+  stale: true,
+  alreadyApplied: false,
+});
+assert.equal(stalePreview.block, "stale");
+
+const belowPriorPreview = previewCertifiedWipBillingHandoff({
+  certification: { certified_percent: 20 } as never,
+  line: draftLine,
+  applicationStatus: "draft",
+  stale: false,
+  alreadyApplied: false,
+});
+assert.equal(belowPriorPreview.block, "below_prior");
 
 // --- Partial payment arithmetic ---------------------------------------------
 

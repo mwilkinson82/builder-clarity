@@ -3643,6 +3643,40 @@ await expectContains(
   ],
   "SOV certifications are append-only, project-scoped, and tied to reviewed WIP evidence",
 );
+await expectContains(
+  "supabase/migrations/20260715180124_certified_wip_billing_handoff.sql",
+  [
+    /create table if not exists public\.production_sov_billing_handoffs/,
+    /apply_production_sov_certification_to_billing/,
+    /v_app\.status <> 'draft'/,
+    /wip\.wip_reviewed_at > v_cert\.certified_at/,
+    /v_target_total_cents < v_prior_total_cents/,
+    /perform public\.sync_billing_application_from_lines/,
+    /pm_certification_applied/,
+    /grant select on table public\.production_sov_billing_handoffs to authenticated/,
+  ],
+  "certified WIP reaches only an explicit draft billing handoff with stale, floor, and audit guards",
+);
+await expectContains(
+  "src/components/billing/BillingEnhancements.tsx",
+  [
+    /PM billing handoff/,
+    /Accounting\s+chooses what enters this draft/,
+    /Apply to draft/,
+    /application will remain a draft/,
+  ],
+  "billing presents PM decisions as an optional accounting-native worksheet",
+);
+await expectContains(
+  "src/lib/certified-wip-billing.ts",
+  [
+    /priorCompletedAndStoredCents/,
+    /currentStoredMaterialsCents/,
+    /proposedWorkThisPeriodCents/,
+    /stored_materials_exceed_target/,
+  ],
+  "billing handoff preview preserves prior certificates and stored materials",
+);
 
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");

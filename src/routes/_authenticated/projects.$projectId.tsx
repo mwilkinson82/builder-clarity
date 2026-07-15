@@ -103,6 +103,7 @@ import {
   WorkspaceHeader,
 } from "@/components/project/billing/billing-workspace-atoms";
 import {
+  applyCertifiedSovPositionToBilling,
   createCostActual,
   updateCostActual,
   generateBillingLineItems,
@@ -541,6 +542,7 @@ function ProjectPage() {
   const updateBillingLineFn = useServerFn(updateBillingLineItem);
   const updateBillingLinesFn = useServerFn(updateBillingLineItems);
   const updateBillingRetainageRateFn = useServerFn(updateBillingApplicationRetainageRate);
+  const applyCertifiedSovPositionFn = useServerFn(applyCertifiedSovPositionToBilling);
   const createCostActualFn = useServerFn(createCostActual);
   const updateCostActualFn = useServerFn(updateCostActual);
   const importCostActualsFn = useServerFn(importCostActuals);
@@ -1300,6 +1302,22 @@ function ProjectPage() {
   const billingWorkspaceQuery = useQuery({
     queryKey: ["billing-workspace", projectId],
     queryFn: () => loadBillingWorkspaceFn({ data: { projectId } }),
+  });
+  const certifiedSovBillingApply = useMutation({
+    mutationFn: (input: { certificationId: string; billingApplicationId: string }) =>
+      applyCertifiedSovPositionFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("PM-certified position applied", {
+        description:
+          "The matching SOV line and draft application totals were updated. The application remains unsubmitted.",
+      });
+    },
+    onError: (err) => {
+      toast.error("Certified position was not applied", {
+        description: err instanceof Error ? err.message : "Review the PM handoff and try again.",
+      });
+    },
   });
   const billingLineGenerate = useMutation({
     mutationFn: (input: { projectId: string; billingApplicationId: string }) =>
@@ -3376,6 +3394,7 @@ function ProjectPage() {
                     costActualSetStatus.isPending
                   }
                   savingBucketBilling={bucketBillingUpdate.isPending}
+                  applyingCertifiedSovPosition={certifiedSovBillingApply.isPending}
                   onCreate={handleCreatePayApp}
                   onUpdate={handleUpdatePayApp}
                   onDelete={handleDeletePayApp}
@@ -3412,6 +3431,9 @@ function ProjectPage() {
                   }
                   onUpdateBucketBillingSettings={(id, patch) =>
                     bucketBillingUpdate.mutate({ id, patch })
+                  }
+                  onApplyCertifiedSovPosition={(certificationId, billingApplicationId) =>
+                    certifiedSovBillingApply.mutate({ certificationId, billingApplicationId })
                   }
                   onCreateInvoice={handleCreateInvoice}
                   onUpdateInvoice={handleUpdateInvoice}

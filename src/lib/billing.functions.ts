@@ -13,6 +13,10 @@ import { computeBudgetLedger, type BudgetLedger, type BudgetLedgerRow } from "@/
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
 import { latestPercentBySubBucket } from "@/lib/daily-wip";
 import type { ExposureLike, ExposureAllocationLike, HoldClass } from "@/lib/exposure-allocation";
+import {
+  normalizeProductionSovCertification,
+  type ProductionSovCertificationRow,
+} from "@/lib/production-forecast.functions";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -306,10 +310,40 @@ type ChangeOrderRecord = {
 
 export interface BillingWorkspaceData {
   schemaReady: boolean;
+  certifiedSovHandoffReady: boolean;
   lineItems: BillingLineItemRow[];
   costActuals: CostActualRow[];
   changeOrderAllocations: ChangeOrderAllocationRow[];
+  certifiedSovPositions: BillingSovCertificationRow[];
+  certifiedSovHandoffs: ProductionSovBillingHandoffRow[];
   wip: ProjectWIPResult | null;
+}
+
+export interface BillingSovCertificationRow extends ProductionSovCertificationRow {
+  is_stale: boolean;
+  is_superseded: boolean;
+}
+
+export interface ProductionSovBillingHandoffRow {
+  id: string;
+  project_id: string;
+  production_sov_certification_id: string;
+  billing_application_id: string | null;
+  billing_line_item_id: string | null;
+  cost_bucket_id: string;
+  application_number_snapshot: string;
+  cost_code_snapshot: string;
+  description_snapshot: string;
+  certified_percent: number;
+  contract_value_cents: number;
+  prior_completed_and_stored_cents: number;
+  prior_draft_work_cents: number;
+  retained_draft_materials_cents: number;
+  applied_work_this_period_cents: number;
+  applied_total_completed_and_stored_cents: number;
+  applied_by: string;
+  applied_by_name: string | null;
+  applied_at: string;
 }
 
 export interface PortfolioBillingProject extends ProjectWIPResult {
@@ -436,6 +470,31 @@ const normalizeLineItem = (row: Record<string, unknown>): BillingLineItemRow => 
   sort_order: num(row.sort_order),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
+});
+
+const normalizeProductionSovBillingHandoff = (
+  row: Record<string, unknown>,
+): ProductionSovBillingHandoffRow => ({
+  id: str(row.id),
+  project_id: str(row.project_id),
+  production_sov_certification_id: str(row.production_sov_certification_id),
+  billing_application_id:
+    row.billing_application_id == null ? null : str(row.billing_application_id),
+  billing_line_item_id: row.billing_line_item_id == null ? null : str(row.billing_line_item_id),
+  cost_bucket_id: str(row.cost_bucket_id),
+  application_number_snapshot: str(row.application_number_snapshot),
+  cost_code_snapshot: str(row.cost_code_snapshot),
+  description_snapshot: str(row.description_snapshot),
+  certified_percent: num(row.certified_percent),
+  contract_value_cents: num(row.contract_value_cents),
+  prior_completed_and_stored_cents: num(row.prior_completed_and_stored_cents),
+  prior_draft_work_cents: num(row.prior_draft_work_cents),
+  retained_draft_materials_cents: num(row.retained_draft_materials_cents),
+  applied_work_this_period_cents: num(row.applied_work_this_period_cents),
+  applied_total_completed_and_stored_cents: num(row.applied_total_completed_and_stored_cents),
+  applied_by: str(row.applied_by),
+  applied_by_name: null,
+  applied_at: str(row.applied_at),
 });
 
 const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => ({
@@ -814,13 +873,141 @@ export const getBillingWorkspace = createServerFn({ method: "GET" })
       allocations: loaded.allocations,
     });
 
+    const [certificationRes, handoffRes, reviewedWipRes] = await Promise.all([
+      dynamicTable(ctx.supabase, "production_sov_certifications")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("certified_at", { ascending: false }),
+      dynamicTable(ctx.supabase, "production_sov_billing_handoffs")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("applied_at", { ascending: false }),
+      dynamicTable(ctx.supabase, "daily_wip_entries")
+        .select("cost_bucket_id,percent_basis,wip_reviewed_at")
+        .eq("project_id", data.projectId)
+        .eq("percent_basis", "sov")
+        .order("wip_reviewed_at", { ascending: false }),
+    ]);
+    const certificationRelationMissing = isMissingRestRelation(
+      certificationRes.error,
+      "production_sov_certifications",
+    );
+    const handoffRelationMissing = isMissingRestRelation(
+      handoffRes.error,
+      "production_sov_billing_handoffs",
+    );
+    const reviewedWipRelationMissing = isMissingRestRelation(
+      reviewedWipRes.error,
+      "daily_wip_entries",
+    );
+    const certifiedSovHandoffReady =
+      !certificationRelationMissing && !handoffRelationMissing && !reviewedWipRelationMissing;
+    if (certificationRes.error && !certificationRelationMissing) {
+      throw new Error(certificationRes.error.message);
+    }
+    if (handoffRes.error && !handoffRelationMissing) throw new Error(handoffRes.error.message);
+    if (reviewedWipRes.error && !reviewedWipRelationMissing) {
+      throw new Error(reviewedWipRes.error.message);
+    }
+
+    const certifications = certificationRes.error
+      ? []
+      : ((certificationRes.data ?? []) as Record<string, unknown>[]).map(
+          normalizeProductionSovCertification,
+        );
+    const handoffs = handoffRes.error
+      ? []
+      : ((handoffRes.data ?? []) as Record<string, unknown>[]).map(
+          normalizeProductionSovBillingHandoff,
+        );
+    const latestReviewByBucket = new Map<string, string>();
+    for (const row of (reviewedWipRes.data ?? []) as Record<string, unknown>[]) {
+      const bucketId = str(row.cost_bucket_id);
+      const reviewedAt = str(row.wip_reviewed_at);
+      if (bucketId && reviewedAt && !latestReviewByBucket.has(bucketId)) {
+        latestReviewByBucket.set(bucketId, reviewedAt);
+      }
+    }
+    const latestCertificationByBucket = new Set<string>();
+
+    const profileIds = Array.from(
+      new Set(
+        [
+          ...certifications.map((certification) => certification.certified_by),
+          ...handoffs.map((handoff) => handoff.applied_by),
+        ].filter(Boolean),
+      ),
+    );
+    const profileNameById = new Map<string, string>();
+    if (profileIds.length > 0) {
+      const profileRes = await dynamicTable(ctx.supabase, "profiles")
+        .select("id,full_name,email")
+        .in("id", profileIds);
+      if (!profileRes.error) {
+        for (const row of (profileRes.data ?? []) as Record<string, unknown>[]) {
+          const name = str(row.full_name).trim() || str(row.email).trim();
+          if (name) profileNameById.set(str(row.id), name);
+        }
+      }
+    }
+
+    const certifiedSovPositions: BillingSovCertificationRow[] = certifications.map(
+      (certification) => {
+        const isSuperseded = latestCertificationByBucket.has(certification.cost_bucket_id);
+        latestCertificationByBucket.add(certification.cost_bucket_id);
+        const reviewedAt = latestReviewByBucket.get(certification.cost_bucket_id);
+        return {
+          ...certification,
+          certified_by_name:
+            profileNameById.get(certification.certified_by) ?? certification.certified_by_name,
+          is_stale: Boolean(reviewedAt && reviewedAt > certification.certified_at),
+          is_superseded: isSuperseded,
+        };
+      },
+    );
+
     return {
       schemaReady: loaded.schemaReady,
+      certifiedSovHandoffReady,
       lineItems: loaded.lineItems,
       costActuals: loaded.costActuals,
       changeOrderAllocations: loaded.allocations,
+      certifiedSovPositions,
+      certifiedSovHandoffs: handoffs.map((handoff) => ({
+        ...handoff,
+        applied_by_name: profileNameById.get(handoff.applied_by) ?? null,
+      })),
       wip,
     } satisfies BillingWorkspaceData;
+  });
+
+const applyCertifiedSovInput = z.object({
+  certificationId: z.string().uuid(),
+  billingApplicationId: z.string().uuid(),
+});
+
+export const applyCertifiedSovPositionToBilling = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof applyCertifiedSovInput>) =>
+    applyCertifiedSovInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    const result = await ctx.supabase.rpc("apply_production_sov_certification_to_billing", {
+      p_certification_id: data.certificationId,
+      p_billing_application_id: data.billingApplicationId,
+    });
+    if (result.error) {
+      if (
+        /apply_production_sov_certification_to_billing|schema cache|does not exist/i.test(
+          result.error.message,
+        )
+      ) {
+        throw new Error("Certified WIP handoff is waiting on the Lovable database migration.");
+      }
+      throw new Error(result.error.message);
+    }
+    return result.data as Record<string, unknown>;
   });
 
 // Optional second slice for the contractor-facing cost ledger. Keeping it
