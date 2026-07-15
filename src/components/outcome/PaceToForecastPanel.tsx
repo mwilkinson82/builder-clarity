@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { CalendarClock, CheckCircle2, CircleAlert, Gauge, ShieldCheck } from "lucide-react";
+import { CalendarClock, CircleAlert, Gauge, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { CertificationHistoryPanel } from "@/components/outcome/CertificationHistoryPanel";
 import {
   Dialog,
   DialogContent,
@@ -444,6 +445,12 @@ export function PaceToForecastPanel({
           </div>
         )}
       </div>
+
+      <CertificationHistoryPanel
+        certifications={certifications ?? []}
+        buckets={buckets}
+        isLoading={contextQuery.isLoading}
+      />
 
       <Dialog
         open={selectedRecommendation != null}

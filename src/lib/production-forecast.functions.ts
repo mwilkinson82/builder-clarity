@@ -10,6 +10,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   insert(values: unknown): DynamicSupabaseQuery;
   update(values: unknown): DynamicSupabaseQuery;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
+  in(column: string, values: unknown[]): DynamicSupabaseQuery;
   order(column: string, options?: { ascending?: boolean }): DynamicSupabaseQuery;
   single(): Promise<DynamicSupabaseResult>;
 };
@@ -52,6 +53,7 @@ export interface ProductionSovCertificationRow {
   calculation_version: string;
   certification_note: string;
   certified_by: string;
+  certified_by_name: string | null;
   certified_at: string;
 }
 
@@ -81,6 +83,7 @@ function normalizeCertification(row: Record<string, unknown>): ProductionSovCert
     calculation_version: str(row.calculation_version),
     certification_note: str(row.certification_note),
     certified_by: str(row.certified_by),
+    certified_by_name: row.certified_by_name == null ? null : str(row.certified_by_name),
     certified_at: str(row.certified_at),
   };
 }
@@ -117,13 +120,33 @@ export const loadProductionForecastContext = createServerFn({ method: "GET" })
       throw new Error(certificationResult.error.message);
     }
 
+    const certifications = ((certificationResult.data ?? []) as Record<string, unknown>[]).map(
+      normalizeCertification,
+    );
+    const certifierIds = Array.from(
+      new Set(certifications.map((certification) => certification.certified_by).filter(Boolean)),
+    );
+    const certifierNameById = new Map<string, string>();
+    if (certifierIds.length > 0) {
+      const profileResult = await dynamicTable(context.supabase, "profiles")
+        .select("id,full_name,email")
+        .in("id", certifierIds);
+      if (!profileResult.error) {
+        for (const profile of (profileResult.data ?? []) as Record<string, unknown>[]) {
+          const name = str(profile.full_name).trim() || str(profile.email).trim();
+          if (name) certifierNameById.set(str(profile.id), name);
+        }
+      }
+    }
+
     return {
       nextBillingDate:
         ((projectResult.data as Record<string, unknown> | null)?.next_billing_date as
           string | null) ?? null,
-      certifications: ((certificationResult.data ?? []) as Record<string, unknown>[]).map(
-        normalizeCertification,
-      ),
+      certifications: certifications.map((certification) => ({
+        ...certification,
+        certified_by_name: certifierNameById.get(certification.certified_by) ?? null,
+      })),
       certificationEnabled: true,
     };
   });
