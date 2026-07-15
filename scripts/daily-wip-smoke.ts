@@ -28,6 +28,16 @@ import {
   priorCodePercent,
 } from "../src/lib/daily-wip.ts";
 import { subcontractProductionBenchmarks } from "../src/lib/subcontract-production.ts";
+import {
+  aggregateProductionSeries,
+  canonicalProductionUnit,
+  inclusiveDateSpan,
+  productionScopeKey,
+  shiftIsoDate,
+  summarizeProduction,
+  summarizeProductionScopes,
+  type ProductionAnalyticsRow,
+} from "../src/lib/production-analytics.ts";
 
 const row = (over: Partial<Parameters<typeof rowWorkInPlace>[0]> = {}) => ({
   crew_count: 0,
@@ -851,6 +861,119 @@ assert.deepEqual(
   assert.equal(day.unmeasuredCost, 792, "…and its cost is reported, not hidden");
   assert.equal(day.earned, 4_668.1, "earned sums cents-exact");
   assert.equal(day.profit, -216.9, "day profit = earned − measured cost");
+}
+
+// ── Production Control analytics (project Phase 1, 2026-07-15) ─────────────
+{
+  const productionRows: ProductionAnalyticsRow[] = [
+    {
+      id: "drywall-1",
+      date: "2026-07-07",
+      performerKey: "sub:atlas",
+      performerName: "Atlas Drywall",
+      performerType: "subcontractor",
+      costBucketId: "drywall",
+      costCode: "09-2900",
+      scopeName: "Drywall installation",
+      activity: "Hang Level 1",
+      quantity: 100,
+      unit: "sq ft",
+      laborHours: 10,
+      targetRate: 8,
+      fieldValue: 500,
+    },
+    {
+      id: "drywall-2",
+      date: "2026-07-08",
+      performerKey: "sub:atlas",
+      performerName: "Atlas Drywall",
+      performerType: "subcontractor",
+      costBucketId: "drywall",
+      costCode: "09-2900",
+      scopeName: "Drywall installation",
+      activity: "Hang Level 1",
+      quantity: 100,
+      unit: "SF",
+      laborHours: 20,
+      targetRate: 8,
+      fieldValue: 500,
+    },
+    {
+      id: "boxes-1",
+      date: "2026-07-08",
+      performerKey: "self",
+      performerName: "Self-perform",
+      performerType: "self-perform",
+      costBucketId: "electrical",
+      costCode: "26-0500",
+      scopeName: "Electrical rough-in",
+      activity: "Set boxes",
+      quantity: 20,
+      unit: "each",
+      laborHours: 8,
+      targetRate: 2,
+      fieldValue: 880,
+    },
+    {
+      id: "boxes-unmeasured",
+      date: "2026-07-09",
+      performerKey: "self",
+      performerName: "Self-perform",
+      performerType: "self-perform",
+      costBucketId: "electrical",
+      costCode: "26-0500",
+      scopeName: "Electrical rough-in",
+      activity: "Layout",
+      quantity: 0,
+      unit: "EA",
+      laborHours: 8,
+      targetRate: 2,
+      fieldValue: 880,
+    },
+  ];
+
+  assert.equal(canonicalProductionUnit("square feet"), "SF", "unit aliases normalize");
+  assert.equal(canonicalProductionUnit("Each"), "EA", "count units normalize");
+  assert.equal(
+    productionScopeKey(productionRows[0]),
+    productionScopeKey(productionRows[1]),
+    "the same performer, cost code, and normalized unit remain one scope",
+  );
+
+  const drywall = summarizeProduction(productionRows.slice(0, 2));
+  assert.equal(
+    drywall.actualRate,
+    200 / 30,
+    "period rate is quantity ÷ hours, not a mean of rates",
+  );
+  assert.equal(drywall.targetRate, 8, "the comparable target stays weighted by earned hours");
+  assert.equal(drywall.performanceIndex, 25 / 30, "index = earned hours ÷ actual hours");
+  assert.equal(drywall.hoursVariance, 5, "positive hours variance is labor-equivalent hours lost");
+
+  const combined = summarizeProduction(productionRows);
+  assert.equal(combined.actualRate, null, "mixed units never fabricate a company-wide rate");
+  assert.equal(combined.targetRate, null, "mixed units never fabricate a target rate");
+  assert.equal(combined.performanceIndex, 35 / 38, "different units combine through earned hours");
+  assert.equal(combined.coveragePercent, 38 / 46, "unmeasured hours lower coverage honestly");
+  assert.equal(combined.measuredScopeCount, 2, "the combined pulse counts measured scopes");
+
+  const scopes = summarizeProductionScopes(productionRows);
+  assert.equal(scopes.length, 2, "performer/cost-code/unit scopes stay separate");
+  assert.equal(scopes[0].status, "behind", "the weakest measured scope ranks first");
+  assert.equal(scopes[1].unit, "EA", "scope rows retain their normalized unit");
+
+  const daily = aggregateProductionSeries(productionRows, "day");
+  assert.equal(daily.length, 3, "daily grain creates one point per field date");
+  assert.equal(daily[1].quantity, 120, "same-day mixed work retains total recorded output");
+  assert.equal(daily[1].unit, null, "same-day mixed units are never mislabeled as one unit");
+  assert.ok(daily[1].trendPerformanceIndex != null, "series exposes the rolling weighted trend");
+
+  const weekly = aggregateProductionSeries(productionRows, "week");
+  assert.equal(weekly.length, 1, "Monday-through-Sunday entries group into one week");
+  assert.match(weekly[0].label, /^Week of /, "weekly labels explain their period start");
+
+  assert.equal(shiftIsoDate("2026-07-15", -7), "2026-07-08", "date shifting is UTC-stable");
+  assert.equal(inclusiveDateSpan("2026-07-01", "2026-07-15"), 15, "date spans are inclusive");
 }
 
 console.log("daily WIP smoke: all assertions passed");

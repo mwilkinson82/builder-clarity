@@ -12,6 +12,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   CalendarClock,
+  BarChart3,
   ChevronLeft,
   ChevronRight,
   HardHat,
@@ -25,6 +26,7 @@ import { InstalledQuantities } from "@/components/outcome/InstalledQuantities";
 import { ItemizedCostEditor } from "@/components/outcome/ItemizedCostEditor";
 import { PerformedByField } from "@/components/outcome/PerformedByField";
 import { SubcontractProductionBenchmarks } from "@/components/outcome/SubcontractProductionBenchmarks";
+import { ProductionControlView } from "@/components/outcome/ProductionControlView";
 import { createDraftCostItem, type DraftCostItem } from "@/components/outcome/daily-wip-drafts";
 import {
   Dialog,
@@ -57,6 +59,7 @@ import {
   dailyWipWorkInPlaceTotal,
   isPercentOverridden,
   laborCost,
+  laborHours,
   crewPeople,
   priorSubPercent,
   productionPace,
@@ -72,6 +75,7 @@ import {
   type CostLineItem,
   type DailyWipRowLike,
 } from "@/lib/daily-wip";
+import type { ProductionAnalyticsRow } from "@/lib/production-analytics";
 
 interface BucketOption {
   id: string;
@@ -240,6 +244,7 @@ function entryNeedsPrice(
 }
 
 type StatScope = "day" | "week" | "month";
+type WipWorkspaceMode = "daily" | "production";
 
 export function DailyWipWorkspace({
   projectId,
@@ -275,6 +280,7 @@ export function DailyWipWorkspace({
   const [formOpen, setFormOpen] = useState(false);
   // The dark stat panel's Day / Week / Month lens — presentation-only.
   const [statScope, setStatScope] = useState<StatScope>("day");
+  const [workspaceMode, setWorkspaceMode] = useState<WipWorkspaceMode>("daily");
   const closeForm = () => {
     setFormOpen(false);
     setEditingId(null);
@@ -364,10 +370,19 @@ export function DailyWipWorkspace({
     }
     return options;
   }, [projectSubsQuery.data, subNameById]);
-  const subName = (id: string | null) => (id ? (subNameById.get(id) ?? "Subcontractor") : null);
-  const performedByName = (
-    row: Pick<DailyWipEntryRow, "subcontractor_id" | "unmatched_vendor_name">,
-  ) => (subName(row.subcontractor_id) ?? row.unmatched_vendor_name) || null;
+  const subName = useCallback(
+    (id: string | null) => (id ? (subNameById.get(id) ?? "Subcontractor") : null),
+    [subNameById],
+  );
+  const performedByName = useCallback(
+    (row: Pick<DailyWipEntryRow, "subcontractor_id" | "unmatched_vendor_name">) =>
+      (subName(row.subcontractor_id) ?? row.unmatched_vendor_name) || null,
+    [subName],
+  );
+  const bucketById = useMemo(
+    () => new Map(buckets.map((bucket) => [bucket.id, bucket])),
+    [buckets],
+  );
 
   // Committed dollars per (sub company, cost code) from executed buyouts, so a
   // sub-tagged work line can be valued by earned value: commitment × % complete.
@@ -782,6 +797,54 @@ export function DailyWipWorkspace({
     equipment_cost: draftEquipment,
   });
 
+  const productionRows = useMemo<ProductionAnalyticsRow[]>(
+    () =>
+      (entriesQuery.data ?? []).map((entry) => {
+        const bucket = entry.cost_bucket_id ? bucketById.get(entry.cost_bucket_id) : undefined;
+        const performerName = performedByName(entry) ?? "Self-perform";
+        const isExternal = Boolean(entry.subcontractor_id || entry.unmatched_vendor_name);
+        const performerKey = entry.subcontractor_id
+          ? `sub:${entry.subcontractor_id}`
+          : entry.unmatched_vendor_name
+            ? `vendor:${entry.unmatched_vendor_name.trim().toLowerCase()}`
+            : "self-perform";
+        return {
+          id: entry.id,
+          date: entry.entry_date,
+          performerKey,
+          performerName,
+          performerType: isExternal ? "subcontractor" : "self-perform",
+          costBucketId: entry.cost_bucket_id ?? "",
+          costCode: bucket?.cost_code ?? "",
+          scopeName: bucket?.bucket ?? "Uncoded scope",
+          activity: entry.activity,
+          quantity: entry.quantity,
+          unit: entry.unit,
+          laborHours: laborHours(entry),
+          targetRate: effectiveProductionTargetFor(entry),
+          fieldValue: rowWorkInPlace(entry, commitmentFor(entry), priorPercentFor(entry)),
+        };
+      }),
+    [
+      entriesQuery.data,
+      bucketById,
+      performedByName,
+      effectiveProductionTargetFor,
+      commitmentFor,
+      priorPercentFor,
+    ],
+  );
+
+  if (workspaceMode === "production") {
+    return (
+      <ProductionControlView
+        rows={productionRows}
+        loading={entriesQuery.isLoading}
+        onShowDaily={() => setWorkspaceMode("daily")}
+      />
+    );
+  }
+
   const unpricedCount = unpricedRows.length;
   // Sign-aware headline coloring: earned reads success; the cost figure turns
   // danger only when the measured day actually lost money.
@@ -799,6 +862,24 @@ export function DailyWipWorkspace({
 
   return (
     <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-lg border border-hairline bg-surface p-1">
+          <Button type="button" size="sm" variant="secondary" className="h-8" aria-pressed="true">
+            Daily WIP
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-8 gap-1.5"
+            aria-pressed="false"
+            onClick={() => setWorkspaceMode("production")}
+          >
+            <BarChart3 className="h-3.5 w-3.5" /> Production Control
+          </Button>
+        </div>
+        <span className="text-xs text-muted-foreground">Daily facts or production trends</span>
+      </div>
       {/* Verdict header — the pill, the answer, then the date stepper. */}
       <div>
         <div className="flex flex-wrap items-center gap-2.5">
