@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent } from "react";
@@ -96,9 +96,23 @@ import {
 import { analyzePlanSheetMeasurementNotes } from "@/lib/plan-room-measurement-assistant.functions";
 import {
   measurementAssistantTakeoffNote,
+  type MeasurementEvidenceAnchor,
   type MeasurementAssistantPlanResult,
   type MeasurementAssistantSuggestion,
 } from "@/lib/plan-room-measurement-assistant";
+import {
+  completeMeasurementScopeItem,
+  getMeasurementScopeQueue,
+  saveMeasurementScopeDecision,
+} from "@/lib/plan-room-measurement-scope.functions";
+import {
+  duplicateScopeCounts,
+  measurementScopeKey,
+  measurementSuggestionKey,
+  scopeItemAsSuggestion,
+  type MeasurementScopeDecisionStatus,
+  type MeasurementScopeQueueItem,
+} from "@/lib/plan-room-measurement-scope";
 import {
   commitRedo,
   commitUndo,
@@ -117,7 +131,7 @@ import {
   type TakeoffUndoStack,
   type TakeoffUpdatePatch,
 } from "@/lib/takeoff-undo";
-import type { ProcessedSheetPage } from "./PdfSheetViewer";
+import type { PlanEvidenceFocus, ProcessedSheetPage } from "./PdfSheetViewer";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 import { AiAssistPanel } from "./AiAssistPanel";
 import { useSymbolDiscovery } from "./useSymbolDiscovery";
@@ -197,7 +211,8 @@ import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
 import { MeasurementAssistantPanel } from "./MeasurementAssistantPanel";
-import { extractPdfMeasurementSourceLines } from "./pdfMeasurementText";
+import { MeasurementScopeQueuePanel } from "./MeasurementScopeQueuePanel";
+import { extractPdfMeasurementEvidence } from "./pdfMeasurementText";
 import { FlagIssueButton } from "../FlagIssueButton";
 
 interface PlanRoomWorkspaceProps {
@@ -251,8 +266,16 @@ export function PlanRoomWorkspace({
   const updatePlanSheetsFn = useServerFn(updatePlanSheets);
   const recordScaleAssessmentFn = useServerFn(recordScaleAssessment);
   const analyzeMeasurementNotesFn = useServerFn(analyzePlanSheetMeasurementNotes);
+  const getMeasurementScopeQueueFn = useServerFn(getMeasurementScopeQueue);
+  const saveMeasurementScopeDecisionFn = useServerFn(saveMeasurementScopeDecision);
+  const completeMeasurementScopeItemFn = useServerFn(completeMeasurementScopeItem);
   const createLineForTakeoffsFn = useServerFn(createLineItemForTakeoffs);
   const recalculateSheetTakeoffsFn = useServerFn(recalculateSheetTakeoffs);
+  const measurementScopeQueueQuery = useQuery({
+    queryKey: ["measurement-scope-queue", estimate.id],
+    queryFn: () => getMeasurementScopeQueueFn({ data: { estimate_id: estimate.id } }),
+    enabled: schemaReady !== false,
+  });
 
   const [selectedSheetId, setSelectedSheetId] = useState<string>("");
   const [tool, setTool] = useState<ToolMode>("select");
@@ -278,6 +301,15 @@ export function PlanRoomWorkspace({
     string[]
   >([]);
   const [measurementSourceNote, setMeasurementSourceNote] = useState("");
+  const [measurementEvidenceAnchors, setMeasurementEvidenceAnchors] = useState<
+    Record<string, MeasurementEvidenceAnchor>
+  >({});
+  const [measurementEvidenceFocus, setMeasurementEvidenceFocus] = useState<
+    (PlanEvidenceFocus & { sheetId: string }) | null
+  >(null);
+  const [preparedMeasurementScopeItemId, setPreparedMeasurementScopeItemId] = useState("");
+  const [pendingMeasurementScopeStart, setPendingMeasurementScopeStart] =
+    useState<MeasurementScopeQueueItem | null>(null);
   const [pdfPageMetrics, setPdfPageMetrics] = useState<{
     widthPoints: number;
     heightPoints: number;
@@ -401,6 +433,39 @@ export function PlanRoomWorkspace({
   const overlayPlanSet = overlaySheet
     ? (planSets.find((planSet) => planSet.id === overlaySheet.plan_set_id) ?? null)
     : null;
+  const measurementScopeItems = useMemo(
+    () => measurementScopeQueueQuery.data?.items ?? [],
+    [measurementScopeQueueQuery.data?.items],
+  );
+  const measurementScopeDuplicateCounts = useMemo(
+    () => duplicateScopeCounts(measurementScopeItems),
+    [measurementScopeItems],
+  );
+  const queueItemBySuggestionId = useMemo(() => {
+    if (!currentSheet || !measurementAssistantPlan) return {};
+    return Object.fromEntries(
+      measurementAssistantPlan.suggestions.map((suggestion) => {
+        const suggestionKey = measurementSuggestionKey(currentSheet.id, suggestion);
+        return [
+          suggestion.id,
+          measurementScopeItems.find(
+            (item) =>
+              item.plan_sheet_id === currentSheet.id && item.suggestion_key === suggestionKey,
+          ),
+        ];
+      }),
+    ) as Record<string, MeasurementScopeQueueItem | undefined>;
+  }, [currentSheet, measurementAssistantPlan, measurementScopeItems]);
+  const duplicateCountBySuggestionId = useMemo(() => {
+    if (!measurementAssistantPlan) return {};
+    return Object.fromEntries(
+      measurementAssistantPlan.suggestions.map((suggestion) => [
+        suggestion.id,
+        (measurementScopeDuplicateCounts.get(measurementScopeKey(suggestion)) ?? 0) +
+          (queueItemBySuggestionId[suggestion.id] ? 0 : 1),
+      ]),
+    ) as Record<string, number>;
+  }, [measurementAssistantPlan, measurementScopeDuplicateCounts, queueItemBySuggestionId]);
 
   useEffect(() => {
     setScaleCheckDrafts([]);
@@ -413,6 +478,8 @@ export function PlanRoomWorkspace({
     setPreparedMeasurementSuggestionId("");
     setCompletedMeasurementSuggestionIds([]);
     setMeasurementSourceNote("");
+    setMeasurementEvidenceAnchors({});
+    setPreparedMeasurementScopeItemId("");
   }, [currentSheet?.id, currentSheet?.scale_revision]);
 
   useEffect(() => {
@@ -775,6 +842,17 @@ export function PlanRoomWorkspace({
     qc.invalidateQueries({ queryKey: ["estimates"] });
   };
 
+  const cacheMeasurementScopeItem = (item: MeasurementScopeQueueItem) => {
+    qc.setQueryData<{ items: MeasurementScopeQueueItem[]; ready: boolean }>(
+      ["measurement-scope-queue", estimate.id],
+      (current) => ({
+        ready: true,
+        items: [item, ...(current?.items ?? []).filter((candidate) => candidate.id !== item.id)],
+      }),
+    );
+    qc.invalidateQueries({ queryKey: ["measurement-scope-queue", estimate.id] });
+  };
+
   // --- Takeoff undo/redo (Phase 4 Task 0) ---
   // Commands are recorded only after the server confirms the original
   // operation. Scale changes and estimate-row creation stay off this stack:
@@ -922,7 +1000,11 @@ export function PlanRoomWorkspace({
           notes: preparedNote || (line ? "Quantity produced from Plan Room takeoff." : ""),
         },
       });
-      return { ...result, joinedGroupLinked: Boolean(joinedGroup?.linkedLineId) };
+      return {
+        ...result,
+        joinedGroupLinked: Boolean(joinedGroup?.linkedLineId),
+        measurementScopeItemId: preparedMeasurementScopeItemId,
+      };
     },
     onSuccess: (result, variables) => {
       qc.setQueryData<PlanRoomMeasurementCache>(["plan-room", estimate.id], (current) =>
@@ -961,6 +1043,25 @@ export function PlanRoomWorkspace({
         );
         setPreparedMeasurementSuggestionId("");
         setMeasurementSourceNote("");
+      }
+      if (result.measurementScopeItemId) {
+        void completeMeasurementScopeItemFn({
+          data: {
+            scope_item_id: result.measurementScopeItemId,
+            takeoff_measurement_id: result.measurement.id,
+          },
+        })
+          .then(({ item }) => {
+            cacheMeasurementScopeItem(item);
+          })
+          .catch((error) =>
+            toast.warning(
+              error instanceof Error
+                ? `Takeoff saved, but scope completion needs review: ${error.message}`
+                : "Takeoff saved, but scope completion needs review.",
+            ),
+          )
+          .finally(() => setPreparedMeasurementScopeItemId(""));
       }
       const anchor = variables.points[variables.points.length - 1];
       if (anchor) {
@@ -1795,28 +1896,31 @@ export function PlanRoomWorkspace({
         throw new Error("Measurement note review needs an uploaded vector PDF.");
       }
       const fileUrl = await planSetSignedUrl(currentPlanSet);
-      const sourceLines = await extractPdfMeasurementSourceLines({
+      const evidence = await extractPdfMeasurementEvidence({
         fileUrl,
         pageNumber: currentSheet.page_number,
       });
-      if (sourceLines.length === 0) {
+      if (evidence.sourceLines.length === 0) {
         throw new Error(
           "No selectable drawing notes were found on this sheet. It may be a scanned image.",
         );
       }
-      return analyzeMeasurementNotesFn({
+      const plan = await analyzeMeasurementNotesFn({
         data: {
           estimate_id: estimate.id,
           plan_sheet_id: currentSheet.id,
           sheet_number: currentSheet.sheet_number,
           sheet_name: currentSheet.sheet_name,
-          source_lines: sourceLines,
+          source_lines: evidence.sourceLines,
         },
       });
+      return { plan, anchors: evidence.anchors };
     },
-    onSuccess: (plan) => {
+    onSuccess: ({ plan, anchors }) => {
       setMeasurementAssistantPlan(plan);
+      setMeasurementEvidenceAnchors(anchors);
       setPreparedMeasurementSuggestionId("");
+      setPreparedMeasurementScopeItemId("");
       setCompletedMeasurementSuggestionIds([]);
       setMeasurementSourceNote("");
       toast.success(
@@ -1828,6 +1932,110 @@ export function PlanRoomWorkspace({
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Drawing notes could not be reviewed"),
   });
+
+  const measurementScopeDecisionMutation = useMutation({
+    mutationFn: ({
+      suggestion,
+      status,
+      sheetId,
+      aiOperationId,
+      anchor,
+      suggestionKey,
+      scopeKey,
+    }: {
+      suggestion: MeasurementAssistantSuggestion;
+      status: MeasurementScopeDecisionStatus;
+      sheetId: string;
+      aiOperationId: string | null;
+      anchor: MeasurementEvidenceAnchor | null;
+      suggestionKey?: string;
+      scopeKey?: string;
+    }) =>
+      saveMeasurementScopeDecisionFn({
+        data: {
+          estimate_id: estimate.id,
+          plan_sheet_id: sheetId,
+          ai_operation_id: aiOperationId,
+          suggestion_key: suggestionKey ?? measurementSuggestionKey(sheetId, suggestion),
+          scope_key: scopeKey ?? measurementScopeKey(suggestion),
+          label: suggestion.label,
+          tool_type: suggestion.tool,
+          unit: suggestion.unit,
+          source_line: suggestion.source_line,
+          source_excerpt: suggestion.source_excerpt,
+          source_anchor: anchor,
+          status,
+        },
+      }),
+    onSuccess: ({ item }, variables) => {
+      cacheMeasurementScopeItem(item);
+      toast.success(
+        variables.status === "accepted"
+          ? "Scope added to the estimate queue."
+          : variables.status === "deferred"
+            ? "Scope deferred for later review."
+            : "Scope rejected and retained in the review history.",
+      );
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Scope decision did not save"),
+  });
+
+  const showMeasurementEvidence = ({
+    sheetId,
+    sourceLine,
+    label,
+    anchor,
+  }: {
+    sheetId: string;
+    sourceLine: string;
+    label: string;
+    anchor: MeasurementEvidenceAnchor | null;
+  }) => {
+    if (!anchor) {
+      toast.warning(
+        "This cited note has no saved drawing location. Re-review its vector PDF sheet.",
+      );
+      return;
+    }
+    if (currentSheet?.id !== sheetId) openSheet(sheetId);
+    setMeasurementEvidenceFocus({
+      id: `${sheetId}-${sourceLine}-${Date.now()}`,
+      sheetId,
+      sourceLine,
+      label,
+      ...anchor,
+    });
+  };
+
+  const decideMeasurementSuggestion = (
+    suggestion: MeasurementAssistantSuggestion,
+    status: MeasurementScopeDecisionStatus,
+  ) => {
+    if (!currentSheet || !measurementAssistantPlan) return;
+    measurementScopeDecisionMutation.mutate({
+      suggestion,
+      status,
+      sheetId: currentSheet.id,
+      aiOperationId: measurementAssistantPlan.operation_id,
+      anchor: measurementEvidenceAnchors[suggestion.source_line] ?? null,
+    });
+  };
+
+  const decideMeasurementScopeItem = (
+    item: MeasurementScopeQueueItem,
+    status: MeasurementScopeDecisionStatus,
+  ) => {
+    measurementScopeDecisionMutation.mutate({
+      suggestion: scopeItemAsSuggestion(item),
+      status,
+      sheetId: item.plan_sheet_id,
+      aiOperationId: item.ai_operation_id,
+      anchor: item.source_anchor,
+      suggestionKey: item.suggestion_key,
+      scopeKey: item.scope_key,
+    });
+  };
 
   const prepareMeasurementSuggestion = (suggestion: MeasurementAssistantSuggestion) => {
     setMeasurementLabel(suggestion.label);
@@ -1853,6 +2061,40 @@ export function PlanRoomWorkspace({
         : "Area takeoff armed. Trace the perimeter, then finish the area.",
     );
   };
+
+  const startMeasurementScopeItem = (item: MeasurementScopeQueueItem) => {
+    if (item.status === "deferred") {
+      decideMeasurementScopeItem(item, "accepted");
+      return;
+    }
+    if (item.status !== "accepted") return;
+    showMeasurementEvidence({
+      sheetId: item.plan_sheet_id,
+      sourceLine: item.source_line,
+      label: item.label,
+      anchor: item.source_anchor,
+    });
+    if (currentSheet?.id !== item.plan_sheet_id) {
+      setPendingMeasurementScopeStart(item);
+      return;
+    }
+    setPreparedMeasurementScopeItemId(item.id);
+    prepareMeasurementSuggestion(scopeItemAsSuggestion(item));
+  };
+
+  useEffect(() => {
+    if (
+      !pendingMeasurementScopeStart ||
+      currentSheet?.id !== pendingMeasurementScopeStart.plan_sheet_id
+    ) {
+      return;
+    }
+    setPreparedMeasurementScopeItemId(pendingMeasurementScopeStart.id);
+    prepareMeasurementSuggestion(scopeItemAsSuggestion(pendingMeasurementScopeStart));
+    setPendingMeasurementScopeStart(null);
+    // Scope preparation is deliberately triggered only by this cross-sheet handoff.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSheet?.id, pendingMeasurementScopeStart]);
 
   // Lazy thumbnail backfill: sets uploaded before thumbnails existed gain them
   // in the background from the already-fetched PDF, current sheet first, one
@@ -3423,6 +3665,11 @@ export function PlanRoomWorkspace({
               />
             }
             aiReviewBar={<AiReviewBar ai={aiAssist} />}
+            evidenceFocus={
+              measurementEvidenceFocus?.sheetId === currentSheet?.id
+                ? measurementEvidenceFocus
+                : null
+            }
             hasPreviousSheet={Boolean(previousSheetNavigationItem)}
             hasNextSheet={Boolean(nextSheetNavigationItem)}
             onPreviousSheet={() => openAdjacentSheet(-1)}
@@ -3484,14 +3731,60 @@ export function PlanRoomWorkspace({
                 scaleVerified={currentSheetScaleStatus === "verified"}
                 preparedSuggestionId={preparedMeasurementSuggestionId}
                 completedSuggestionIds={completedMeasurementSuggestionIds}
+                queueItemBySuggestionId={queueItemBySuggestionId}
+                duplicateCountBySuggestionId={duplicateCountBySuggestionId}
+                activeEvidenceSourceLine={
+                  measurementEvidenceFocus?.sheetId === currentSheet?.id
+                    ? measurementEvidenceFocus.sourceLine
+                    : ""
+                }
+                decisionPending={measurementScopeDecisionMutation.isPending}
                 onAnalyze={() => measurementAssistantMutation.mutate()}
-                onPrepare={prepareMeasurementSuggestion}
+                onPrepare={(suggestion) => {
+                  setPreparedMeasurementScopeItemId(
+                    queueItemBySuggestionId[suggestion.id]?.id ?? "",
+                  );
+                  prepareMeasurementSuggestion(suggestion);
+                }}
+                onShowEvidence={(suggestion) => {
+                  if (!currentSheet) return;
+                  showMeasurementEvidence({
+                    sheetId: currentSheet.id,
+                    sourceLine: suggestion.source_line,
+                    label: suggestion.label,
+                    anchor: measurementEvidenceAnchors[suggestion.source_line] ?? null,
+                  });
+                }}
+                onDecision={decideMeasurementSuggestion}
                 onClear={() => {
                   setMeasurementAssistantPlan(null);
                   setPreparedMeasurementSuggestionId("");
+                  setPreparedMeasurementScopeItemId("");
                   setCompletedMeasurementSuggestionIds([]);
                   setMeasurementSourceNote("");
+                  setMeasurementEvidenceAnchors({});
                 }}
+              />
+              <MeasurementScopeQueuePanel
+                items={measurementScopeItems}
+                sheets={sheets}
+                measurements={measurements}
+                lineItems={lineItems}
+                ready={
+                  measurementScopeQueueQuery.isPending ||
+                  measurementScopeQueueQuery.data?.ready !== false
+                }
+                pending={measurementScopeDecisionMutation.isPending}
+                onLocate={(item) =>
+                  showMeasurementEvidence({
+                    sheetId: item.plan_sheet_id,
+                    sourceLine: item.source_line,
+                    label: item.label,
+                    anchor: item.source_anchor,
+                  })
+                }
+                onStart={startMeasurementScopeItem}
+                onDecision={decideMeasurementScopeItem}
               />
               <div className="space-y-1.5">
                 <Label>Takeoff label</Label>

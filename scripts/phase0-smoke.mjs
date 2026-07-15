@@ -2233,7 +2233,7 @@ await expectContains(
     /createTakeoffMeasurement/,
     /syncTakeoffToEstimateLine/,
     /MeasurementAssistantPanel/,
-    /extractPdfMeasurementSourceLines/,
+    /extractPdfMeasurementEvidence/,
     /analyzePlanSheetMeasurementNotes/,
     /schemaReady/,
     /Plan Room backend is still coming online/,
@@ -2263,6 +2263,23 @@ await expectContains(
     /failAndRefund/,
   ],
   "measurement assistant meters, audits, constrains, and refunds AI note reviews server-side",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/MeasurementScopeQueuePanel.tsx",
+  [
+    /Scope queue/,
+    /Possible duplicate/,
+    /reviewer history stay with the\s+estimate/i,
+    /Feeds estimate row/,
+  ],
+  "measurement scope queue keeps cross-sheet status, duplicate warnings, reviewers, and destinations visible",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/PdfSheetViewer.tsx",
+  [/measurement-evidence-highlight/, /cited note/, /evidenceFocus/],
+  "measurement evidence navigation highlights and centers the cited PDF note",
 );
 
 await expectContains(
@@ -2529,6 +2546,25 @@ expectSql(
     /notify pgrst, 'reload schema'/i,
   ],
   "guided measurement migration preserves scale evidence least privilege and adds audited AI planning",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.estimate_measurement_scope_items/i,
+    /create table if not exists public\.estimate_measurement_scope_events/i,
+    /status in \('accepted', 'rejected', 'deferred', 'completed'\)/i,
+    /grant select on table public\.estimate_measurement_scope_items to authenticated/i,
+    /grant select on table public\.estimate_measurement_scope_events to authenticated/i,
+    /create policy estimate_measurement_scope_items_team_select/i,
+    /create policy estimate_measurement_scope_events_team_select/i,
+    /create or replace function public\.record_estimate_measurement_scope_decision/i,
+    /create or replace function public\.complete_estimate_measurement_scope_item/i,
+    /only queued scope can be completed/i,
+    /security definer[\s\S]*set search_path = ''/i,
+    /notify pgrst, 'reload schema'/i,
+  ],
+  "measurement scope queue is durable, least-privilege, reviewer-owned, and RLS protected",
 );
 
 expectSql(

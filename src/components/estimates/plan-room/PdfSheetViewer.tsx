@@ -265,6 +265,16 @@ export type ProcessedSheetPage = {
   thumbnail: Blob | null;
 };
 
+export interface PlanEvidenceFocus {
+  id: string;
+  sourceLine: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 // Walks a plan set's pages once with the already-loaded pdfjs machinery,
 // optionally extracting title-block identity (vector text only; scanned PDFs
 // simply find nothing) and rendering sidebar thumbnails. `throttleMs` keeps
@@ -386,6 +396,7 @@ export function PlanCanvas({
   onAiGhostSelect,
   aiPanel,
   aiReviewBar,
+  evidenceFocus = null,
   hasPreviousSheet = false,
   hasNextSheet = false,
   onPreviousSheet,
@@ -441,6 +452,9 @@ export function PlanCanvas({
   // cockpit modes (same overlay discipline as the command decks).
   aiPanel?: ReactNode;
   aiReviewBar?: ReactNode;
+  // Normalized PDF text evidence. Selecting a cited note zooms to this box;
+  // the overlay never creates or modifies takeoff geometry.
+  evidenceFocus?: PlanEvidenceFocus | null;
   hasPreviousSheet?: boolean;
   hasNextSheet?: boolean;
   onPreviousSheet?: () => void;
@@ -511,6 +525,31 @@ export function PlanCanvas({
   const overlayBlendMode = overlayMode === "compare" ? "multiply" : "normal";
   const selectedMeasurement =
     measurements.find((measurement) => measurement.id === selectedMeasurementId) ?? null;
+
+  useEffect(() => {
+    if (!evidenceFocus) return;
+    const nextZoom = Math.max(zoom, 2.25);
+    if (nextZoom !== zoom) setZoom(nextZoom);
+    const centerEvidence = () => {
+      const stage = scrollRef.current;
+      if (!stage) return;
+      const centerX = (evidenceFocus.x + evidenceFocus.width / 2) * viewSize.width * nextZoom;
+      const centerY = (evidenceFocus.y + evidenceFocus.height / 2) * viewSize.height * nextZoom;
+      stage.scrollTo({
+        left: Math.max(0, centerX - stage.clientWidth / 2),
+        top: Math.max(0, centerY - stage.clientHeight / 2),
+        behavior: "smooth",
+      });
+    };
+    let innerFrame = 0;
+    const frame = requestAnimationFrame(() => {
+      innerFrame = requestAnimationFrame(centerEvidence);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (innerFrame) cancelAnimationFrame(innerFrame);
+    };
+  }, [evidenceFocus, viewSize.height, viewSize.width, zoom]);
 
   useEffect(() => {
     if (hasMiniMapPreference) return;
@@ -1668,6 +1707,26 @@ export function PlanCanvas({
             )}
 
             {renderFailed && <PlanRenderRetryNotice onRetry={retryPlanRender} />}
+
+            {evidenceFocus && (
+              <div
+                className="pointer-events-none absolute z-20 rounded-sm border-2 border-clay bg-clay/15 shadow-lg ring-2 ring-clay/30"
+                style={{
+                  left: `${evidenceFocus.x * 100}%`,
+                  top: `${evidenceFocus.y * 100}%`,
+                  width: `${evidenceFocus.width * 100}%`,
+                  height: `${evidenceFocus.height * 100}%`,
+                  minHeight: "10px",
+                }}
+                role="note"
+                aria-label={`${evidenceFocus.sourceLine} evidence for ${evidenceFocus.label}`}
+                data-testid="measurement-evidence-highlight"
+              >
+                <span className="absolute -top-6 left-0 whitespace-nowrap rounded-sm bg-foreground px-1.5 py-0.5 text-[10px] text-background shadow-sm">
+                  {evidenceFocus.sourceLine} cited note
+                </span>
+              </div>
+            )}
 
             <svg
               ref={svgRef}

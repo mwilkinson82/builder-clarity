@@ -58,13 +58,37 @@ language, but the displayed excerpt only showed an attic-area fire-code limit. T
 gate now requires that exact excerpt—not hidden text on the same PDF row—to support both the label
 and measurement tool.
 
-## Stage 2 — Evidence navigation and scope queue
+## Stage 2 — Evidence navigation and scope queue (implementation release)
 
-- Highlight the cited note on the drawing when its suggestion is selected.
-- Add a multi-sheet review queue with duplicate-scope detection.
-- Preserve accepted, rejected, deferred, and completed checklist state per estimate.
-- Show which estimate row or cost-library item ultimately received each measured scope.
-- Add reviewer identity and timestamps to checklist decisions.
+- Keep a normalized PDF rectangle with every extracted source line and center a visible highlight
+  when the estimator selects its cited note.
+- Add a multi-sheet review queue with duplicate-scope warnings. Similar labels remain separate
+  decisions because the same scope can legitimately occur on multiple sheets.
+- Preserve accepted, rejected, deferred, and completed checklist state per estimate through
+  least-privilege decision RPCs; the Data API exposes the queue as read-only.
+- Complete a queued item only after a real estimator-drawn takeoff saves on the cited sheet.
+- Show which estimate row ultimately receives each measured scope, or state clearly that the
+  completed takeoff remains unlinked.
+- Record reviewer identity and timestamps for every checklist decision and completion.
+- Append every decision and completion to a read-only event trail so reopening scope never erases
+  who reviewed it previously.
+
+### Stage 2 release gate
+
+1. Apply `20260715175219_measurement_scope_queue.sql` through the Lovable connector.
+2. Verify authenticated receives SELECT only on `estimate_measurement_scope_items` and its event
+   trail; anon receives no privileges.
+3. Verify both decision RPCs reject unauthenticated users and enforce `can_manage_estimate`.
+4. On two Harbor vector-PDF sheets, queue the same supported LF/SF label and confirm the UI warns
+   about possible duplicate scope without merging or deleting either decision.
+5. Select Evidence from the current sheet and from another sheet; confirm the correct sheet opens,
+   zooms, and highlights the cited text without creating geometry.
+6. Defer and reject suggestions, refresh the browser, and confirm state, reviewer, and timestamp
+   persist.
+7. Start one accepted item, complete the takeoff, and confirm the queue changes to Measured only
+   after the takeoff save succeeds.
+8. Link that takeoff to an estimate row and confirm the destination is named in the queue while the
+   estimate total changes only through the existing quantity-trust sync path.
 
 ## Stage 3 — Assembly assistance, still human-controlled
 

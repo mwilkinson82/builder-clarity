@@ -36,6 +36,18 @@ export interface PdfMeasurementTextItem {
   x: number;
   y: number;
   height: number;
+  width?: number;
+}
+
+export interface MeasurementEvidenceAnchor {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface MeasurementSourceEvidence extends MeasurementSourceLine {
+  anchor: MeasurementEvidenceAnchor;
 }
 
 const clean = (value: unknown, max: number) =>
@@ -137,16 +149,17 @@ export function measurementSourceLineNumber(index: number) {
  * Convert positioned PDF text runs into stable, line-numbered evidence.
  * PDF coordinates grow bottom-up, so rows sort by descending y and then x.
  */
-export function groupPdfMeasurementText(
-  items: PdfMeasurementTextItem[],
-  maxLines = 600,
-): MeasurementSourceLine[] {
+function groupedPdfMeasurementRows(items: PdfMeasurementTextItem[], maxLines: number) {
   const usable = items
     .map((item) => ({
       text: clean(item.text, 500),
       x: Number(item.x),
       y: Number(item.y),
       height: Math.max(1, Number(item.height) || 1),
+      width: Math.max(
+        1,
+        Number(item.width) || clean(item.text, 500).length * Math.max(1, Number(item.height)) * 0.5,
+      ),
     }))
     .filter(
       (item) =>
@@ -174,18 +187,64 @@ export function groupPdfMeasurementText(
 
   return rows
     .sort((a, b) => b.y - a.y)
-    .map((row) =>
-      clean(
+    .map((row) => ({
+      text: clean(
         row.items
           .sort((a, b) => a.x - b.x)
           .map((item) => item.text)
           .join(" "),
         500,
       ),
-    )
-    .filter(Boolean)
-    .slice(0, Math.max(1, maxLines))
-    .map((text, index) => ({ line_number: measurementSourceLineNumber(index), text }));
+      items: row.items,
+    }))
+    .filter((row) => row.text)
+    .slice(0, Math.max(1, maxLines));
+}
+
+export function groupPdfMeasurementText(
+  items: PdfMeasurementTextItem[],
+  maxLines = 600,
+): MeasurementSourceLine[] {
+  return groupedPdfMeasurementRows(items, maxLines).map((row, index) => ({
+    line_number: measurementSourceLineNumber(index),
+    text: row.text,
+  }));
+}
+
+export function groupPdfMeasurementEvidence(
+  items: PdfMeasurementTextItem[],
+  pageWidth: number,
+  pageHeight: number,
+  maxLines = 600,
+): MeasurementSourceEvidence[] {
+  const safeWidth = Math.max(1, pageWidth);
+  const safeHeight = Math.max(1, pageHeight);
+  return groupedPdfMeasurementRows(items, maxLines).map((row, index) => {
+    const maxTextHeight = Math.max(...row.items.map((item) => item.height), 1);
+    const left = Math.max(0, Math.min(...row.items.map((item) => item.x)) - maxTextHeight * 0.35);
+    const right = Math.min(
+      safeWidth,
+      Math.max(...row.items.map((item) => item.x + item.width)) + maxTextHeight * 0.35,
+    );
+    const topPdf = Math.min(
+      safeHeight,
+      Math.max(...row.items.map((item) => item.y + item.height * 0.9)),
+    );
+    const bottomPdf = Math.max(
+      0,
+      Math.min(...row.items.map((item) => item.y - item.height * 0.25)),
+    );
+    return {
+      line_number: measurementSourceLineNumber(index),
+      text: row.text,
+      anchor: {
+        x: left / safeWidth,
+        y: Math.max(0, (safeHeight - topPdf) / safeHeight),
+        width: Math.max(0.002, (right - left) / safeWidth),
+        height: Math.max(0.002, (topPdf - bottomPdf) / safeHeight),
+      },
+    };
+  });
 }
 
 function parseJsonObject(raw: string): Record<string, unknown> {
