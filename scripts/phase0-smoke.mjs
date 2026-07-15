@@ -3788,6 +3788,34 @@ await expectContains(
   "project production control packages pace-to-billing and guarded SOV certification",
 );
 await expectContains(
+  "src/components/outcome/CpmProgressReviewPanel.tsx",
+  [
+    /Daily WIP → CPM/,
+    /What controls this activity\?/,
+    /Accept recommendation/,
+    /Apply override/,
+    /Nothing changes in CPM[\s\S]*accepts or overrides/,
+  ],
+  "project production control requires an explicit PM decision before Daily WIP reaches CPM",
+);
+await expectContains(
+  "supabase/migrations/20260715195710_reviewable_cpm_progress.sql",
+  [
+    /create table if not exists public\.schedule_activity_progress_controls/,
+    /create table if not exists public\.schedule_activity_progress_reviews/,
+    /apply_wip_schedule_progress_review/,
+    /Schedule progress changed while you were reviewing it/,
+    /wip_reviewed_at is not null/,
+    /CPM progress decisions require reviewed Daily WIP evidence/,
+    /schedule_activity_progress_reviews_override_note_check/,
+    /schedule_activity_progress_reviews_source_wip_idx/,
+    /grant select, insert on table public\.schedule_activity_progress_reviews to authenticated/,
+    /revoke all on table public\.schedule_activity_progress_reviews from public, anon/,
+    /revoke all on function public\.apply_wip_schedule_progress_review\([\s\S]*from public, anon/,
+  ],
+  "CPM progress decisions are atomic, stale-guarded, append-only, and tied to reviewed WIP evidence",
+);
+await expectContains(
   "supabase/migrations/20260715143424_production_sov_certifications.sql",
   [
     /create table if not exists public\.production_sov_certifications/,

@@ -14,6 +14,7 @@ import {
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, XAxis, YAxis } from "recharts";
 
 import { Button } from "@/components/ui/button";
+import { CpmProgressReviewPanel } from "@/components/outcome/CpmProgressReviewPanel";
 import { PaceToForecastPanel } from "@/components/outcome/PaceToForecastPanel";
 import {
   LegendSwatch,
@@ -733,6 +734,8 @@ export function ProductionControlView({
           </section>
         </>
       )}
+
+      <CpmProgressReviewPanel projectId={projectId} />
     </div>
   );
 }
