@@ -173,6 +173,12 @@ function activityOptionLabel(a: ScheduleActivityOption): string {
   return [a.activity_id, a.name].filter(Boolean).join(" · ") || "Untitled activity";
 }
 
+type ProductionQuantityItem = EntryDraft["quantity_items"][number];
+
+function productionMeasureLabel(item: ProductionQuantityItem): string {
+  return [item.unit.trim(), item.description.trim()].filter(Boolean).join(" ") || "units";
+}
+
 // Group activities under their CPM division for the picker's <optgroup>s, keeping
 // first-seen order (which the query already sorts by sort_order).
 function groupActivitiesByDivision(
@@ -743,6 +749,32 @@ export function DailyWipWorkspace({
   const setDraftField = <K extends keyof EntryDraft>(key: K, value: EntryDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
 
+  // Daily Reports can capture several installed quantities on one work line.
+  // Daily WIP compares one of them with labor-hours; keeping the chosen measure
+  // first also preserves the existing API/storage contract for scalar production.
+  const selectProductionMeasure = (selectedIndex: number) => {
+    setDraft((prev) => {
+      const selected = prev.quantity_items[selectedIndex];
+      if (!selected) return prev;
+      const quantityItems = [
+        selected,
+        ...prev.quantity_items.filter((_, index) => index !== selectedIndex),
+      ];
+      return {
+        ...prev,
+        quantity: selected.quantity,
+        unit: selected.unit,
+        quantity_items: quantityItems,
+      };
+    });
+  };
+
+  const draftProductionItem = draft.quantity_items[0] ?? null;
+  const draftProductionMeasure = draftProductionItem
+    ? productionMeasureLabel(draftProductionItem)
+    : draft.unit.trim() || "units";
+  const draftProductionUnit = draftProductionItem?.unit.trim() || draft.unit.trim() || "units";
+
   const unpricedCount = unpricedRows.length;
   // Sign-aware headline coloring: earned reads success; the cost figure turns
   // danger only when the measured day actually lost money.
@@ -1129,7 +1161,7 @@ export function DailyWipWorkspace({
                   </span>
                 </label>
               </div>
-              <div className="mt-1 grid gap-3.5 sm:grid-cols-4">
+              <div className="mt-1 grid items-start gap-3.5 sm:grid-cols-4">
                 {draft.quantity_items.length > 0 ? (
                   <div className="sm:col-span-2">
                     <InstalledQuantities items={draft.quantity_items} />
@@ -1161,48 +1193,76 @@ export function DailyWipWorkspace({
                     </label>
                   </>
                 )}
-                <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                    Target rate
-                  </span>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={draftBenchmarkTarget ?? draft.target_production_rate ?? ""}
-                    placeholder="qty / labor hr"
-                    disabled={draftBenchmarkTarget != null}
-                    onChange={(event) =>
-                      setDraftField(
-                        "target_production_rate",
-                        event.target.value === "" ? null : Number(event.target.value) || null,
-                      )
-                    }
-                  />
-                  <span className="text-[10px] text-muted-foreground">
-                    {draftBenchmarkTarget != null
-                      ? "Calculated from the subcontract production benchmark"
-                      : "Optional management target"}
-                  </span>
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                    % complete
-                  </span>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={draft.percent_complete || ""}
-                    placeholder="from the field — adjust if needed"
-                    onChange={(event) =>
-                      setDraftField(
-                        "percent_complete",
-                        Math.min(100, Math.max(0, Number(event.target.value) || 0)),
-                      )
-                    }
-                  />
-                </label>
+                <div className="grid items-start gap-3.5 sm:col-span-2 sm:grid-cols-2">
+                  {draft.quantity_items.length > 1 ? (
+                    <label className="flex flex-col gap-1 sm:col-span-2">
+                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                        Production measure
+                      </span>
+                      <select
+                        value="0"
+                        onChange={(event) => selectProductionMeasure(Number(event.target.value))}
+                        className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        aria-label="Installed quantity used for the production rate"
+                      >
+                        {draft.quantity_items.map((item, index) => (
+                          <option key={`${item.unit}-${item.description}-${index}`} value={index}>
+                            {productionMeasureLabel(item)} · {item.quantity.toLocaleString("en-US")}{" "}
+                            logged
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-[10px] text-muted-foreground">
+                        Choose which field quantity is divided by total labor-hours.
+                      </span>
+                    </label>
+                  ) : null}
+                  <label className="flex flex-col gap-1">
+                    <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                      Target production rate
+                    </span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={draftBenchmarkTarget ?? draft.target_production_rate ?? ""}
+                      placeholder={`${draftProductionUnit} / labor hr`}
+                      disabled={draftBenchmarkTarget != null}
+                      onChange={(event) =>
+                        setDraftField(
+                          "target_production_rate",
+                          event.target.value === "" ? null : Number(event.target.value) || null,
+                        )
+                      }
+                    />
+                    <span className="text-[10px] text-muted-foreground">
+                      {draftBenchmarkTarget != null
+                        ? `Calculated benchmark in ${draftProductionUnit} per labor-hour.`
+                        : `Expected ${draftProductionMeasure} installed by one labor-hour.`}
+                    </span>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                      % complete
+                    </span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={draft.percent_complete || ""}
+                      placeholder="from the field — adjust if needed"
+                      onChange={(event) =>
+                        setDraftField(
+                          "percent_complete",
+                          Math.min(100, Math.max(0, Number(event.target.value) || 0)),
+                        )
+                      }
+                    />
+                    <span className="text-[10px] text-muted-foreground">
+                      Cumulative scope completion reported from the field.
+                    </span>
+                  </label>
+                </div>
               </div>
               {draftIsSub || editingEntry ? (
                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
@@ -1473,7 +1533,8 @@ export function DailyWipWorkspace({
                           }`}
                         >
                           {pace.status === "on-pace" ? "On pace" : pace.status} · target{" "}
-                          {pace.targetRate.toFixed(2)} · {pace.variancePercent >= 0 ? "+" : ""}
+                          {pace.targetRate.toFixed(2)} {entry.unit || "unit"}/labor hr ·{" "}
+                          {pace.variancePercent >= 0 ? "+" : ""}
                           {(pace.variancePercent * 100).toFixed(1)}%
                         </div>
                       ) : (

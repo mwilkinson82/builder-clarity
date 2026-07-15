@@ -286,7 +286,7 @@ function NarrativeBand({
   );
 }
 
-export function PortfolioHome() {
+export function PortfolioHome({ onNewProject }: { onNewProject: () => void }) {
   const identity = useHomeIdentity();
   const access = useHomeAccess();
   const { metrics } = useHomeMetrics();
@@ -346,9 +346,9 @@ export function PortfolioHome() {
               <span>⌕</span>
               <span>Search…</span>
             </div>
-            <a href={PROJECTS_HREF} className="ow-btn ow-btn--signal">
+            <button type="button" className="ow-btn ow-btn--signal" onClick={onNewProject}>
               + New project
-            </a>
+            </button>
             <NotificationBell className="border-white/15 bg-white/10 text-white/75 hover:text-white" />
             <AvatarMenu identity={identity} />
           </div>

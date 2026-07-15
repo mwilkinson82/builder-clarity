@@ -89,7 +89,23 @@ export const Route = createFileRoute("/_authenticated/")({
 function PortfolioIndex() {
   const tab = useLocation({ select: (l) => (l.search as { tab?: unknown }).tab });
   const hasTab = typeof tab === "string" && tab !== "";
-  return hasTab ? <PortfolioPage /> : <PortfolioHome />;
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+
+  return hasTab ? (
+    <PortfolioPage
+      createProjectOpen={createProjectOpen}
+      onCreateProjectOpenChange={setCreateProjectOpen}
+    />
+  ) : (
+    <>
+      <PortfolioHome onNewProject={() => setCreateProjectOpen(true)} />
+      <NewProjectButton
+        open={createProjectOpen}
+        onOpenChange={setCreateProjectOpen}
+        showTrigger={false}
+      />
+    </>
+  );
 }
 
 // Mirrors ProjectDashboard.needsAttention (warning_count > 0 || gp_at_risk > 0) so a
@@ -145,7 +161,13 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
-function PortfolioPage() {
+function PortfolioPage({
+  createProjectOpen,
+  onCreateProjectOpenChange,
+}: {
+  createProjectOpen: boolean;
+  onCreateProjectOpenChange: (value: boolean) => void;
+}) {
   const list = useServerFn(listProjects);
   const seed = useServerFn(seedDemoIfEmpty);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
@@ -170,7 +192,6 @@ function PortfolioPage() {
     queryFn: () => loadOnboardingStatus(),
   });
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
-  const [createProjectOpen, setCreateProjectOpen] = useState(false);
   useEffect(() => {
     // Client-only: read the persisted dismissal after mount to avoid an SSR mismatch.
     if (typeof window !== "undefined") {
@@ -404,7 +425,7 @@ function PortfolioPage() {
       description: "Start a real job alongside the Harbor Residence demo.",
       done: onboardingHasProject,
       action: (
-        <Button size="sm" variant="outline" onClick={() => setCreateProjectOpen(true)}>
+        <Button size="sm" variant="outline" onClick={() => onCreateProjectOpenChange(true)}>
           New project
         </Button>
       ),
@@ -442,7 +463,7 @@ function PortfolioPage() {
   // checklist can still open the New Project dialog.
   const topBarActions =
     portfolioTab === "projects" ? (
-      <NewProjectButton open={createProjectOpen} onOpenChange={setCreateProjectOpen} />
+      <NewProjectButton open={createProjectOpen} onOpenChange={onCreateProjectOpenChange} />
     ) : undefined;
 
   return (
@@ -1652,9 +1673,11 @@ function InviteByMagicLinkButton() {
 function NewProjectButton({
   open: openProp,
   onOpenChange,
+  showTrigger = true,
 }: {
   open?: boolean;
   onOpenChange?: (value: boolean) => void;
+  showTrigger?: boolean;
 } = {}) {
   const [openState, setOpenState] = useState(false);
   // Controllable so the first-run checklist (ONBOARDING1) can open this dialog; falls back
@@ -1734,17 +1757,19 @@ function NewProjectButton({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" className="gap-1.5">
-          <Plus className="h-3.5 w-3.5" /> New project
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      {showTrigger ? (
+        <DialogTrigger asChild>
+          <Button size="sm" className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> New project
+          </Button>
+        </DialogTrigger>
+      ) : null}
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">New project</DialogTitle>
         </DialogHeader>
         <form className="grid gap-4 py-2" onSubmit={handleCreateProject}>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Project name</Label>
               <Input value={name} onChange={(e) => setName(e.target.value)} />
@@ -1758,7 +1783,7 @@ function NewProjectButton({
             <Label>Client</Label>
             <Input value={client} onChange={(e) => setClient(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Project manager</Label>
               <Input
@@ -1784,7 +1809,7 @@ function NewProjectButton({
               </Select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Original contract (USD)</Label>
               <Input type="number" value={contract} onChange={(e) => setContract(e.target.value)} />
@@ -1798,7 +1823,7 @@ function NewProjectButton({
               />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Baseline completion</Label>
               <Input
@@ -1815,7 +1840,7 @@ function NewProjectButton({
                 onChange={(e) => setForecastCompletion(e.target.value)}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 sm:col-span-2">
               <Label>Calculated variance</Label>
               <div
                 className={`flex h-10 items-center rounded-md border border-input bg-surface px-3 text-sm tabular ${

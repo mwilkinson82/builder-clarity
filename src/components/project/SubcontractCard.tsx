@@ -819,11 +819,11 @@ export function SubcontractCard({
             ))}
           </ul>
         ) : null}
-        <div className="mt-2 flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div className="mt-2 grid gap-2 sm:grid-cols-12 sm:items-center">
           <select
             value={coKind}
             onChange={(e) => setCoKind(e.target.value as "co" | "credit")}
-            className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            className="h-9 w-full rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 sm:col-span-4 lg:col-span-3"
             aria-label="Change order or credit"
           >
             <option value="co">Change order (adds)</option>
@@ -833,12 +833,12 @@ export function SubcontractCard({
             value={coDesc}
             onChange={(e) => setCoDesc(e.target.value)}
             placeholder="What changed (e.g. Added 2 dock pits)"
-            className="flex-1"
+            className="sm:col-span-8 lg:col-span-5"
           />
           <select
             value={coBucket}
             onChange={(e) => setCoBucket(e.target.value)}
-            className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            className="h-9 w-full rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 sm:col-span-6 lg:col-span-4"
             aria-label="Cost code (optional)"
           >
             <option value="">Cost code (optional)…</option>
@@ -852,14 +852,19 @@ export function SubcontractCard({
             type="date"
             value={coDate}
             onChange={(e) => setCoDate(e.target.value)}
-            className="w-40"
+            className="w-full sm:col-span-6 lg:col-span-3"
             aria-label="Change order date"
           />
-          <MoneyInput value={coAmount} onValueChange={setCoAmount} align="right" />
+          <MoneyInput
+            value={coAmount}
+            onValueChange={setCoAmount}
+            align="right"
+            className="sm:col-span-4 lg:col-span-3"
+          />
           <select
             value={coExposure}
             onChange={(event) => setCoExposure(event.target.value)}
-            className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            className="h-9 w-full rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 sm:col-span-6 lg:col-span-4"
             aria-label="Risk Tally attribution (optional)"
           >
             <option value="">Risk Tally (optional)…</option>
@@ -873,7 +878,7 @@ export function SubcontractCard({
             type="button"
             size="sm"
             variant="outline"
-            className="gap-1.5"
+            className="h-9 w-full gap-1.5 sm:col-span-2 lg:col-span-2"
             disabled={coAmount <= 0 || !coDate}
             onClick={() => {
               onRecordChangeOrder(

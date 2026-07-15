@@ -310,11 +310,21 @@ await expectContains(
   [
     /const PROJECTS_HREF = "\/\?tab=projects"/,
     /<a href=\{PROJECTS_HREF\}>Projects<\/a>/,
+    /<button type="button" className="ow-btn ow-btn--signal" onClick=\{onNewProject\}>/,
     /<Link to="\/team">Team<\/Link>/,
     /import \{ AppFooter \} from "@\/components\/layout\/AppFooter"/,
     /<AppFooter context=\{`\$\{identity\.companyName\} · Portfolio`\} \/>/,
   ],
   "portfolio home header links directly to the project catalog and team settings and uses the shared app footer",
+);
+
+await expectContains(
+  "src/routes/_authenticated/index.tsx",
+  [
+    /showTrigger=\{false\}/,
+    /<PortfolioHome onNewProject=\{\(\) => setCreateProjectOpen\(true\)\} \/>/,
+  ],
+  "portfolio home opens the existing new-project dialog directly without detouring through the project catalog",
 );
 
 await expectNotContains(
@@ -3264,7 +3274,13 @@ await expectContains(
 );
 await expectContains(
   "src/components/outcome/DailyWipWorkspace.tsx",
-  [/Target rate/, /effectiveProductionTargetFor/, /productionPace\(/, /No target set/],
+  [
+    /Target production rate/,
+    /Production measure/,
+    /effectiveProductionTargetFor/,
+    /productionPace\(/,
+    /No target set/,
+  ],
   "daily WIP compares actual production with the derived subcontract or explicit PM target",
 );
 await expectContains(
