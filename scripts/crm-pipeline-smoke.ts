@@ -211,4 +211,20 @@ for (const requiredFragment of [
   );
 }
 
+const followupAnonRevoke = readFileSync(
+  new URL("../supabase/migrations/20260715230236_crm_followup_revoke_anon.sql", import.meta.url),
+  "utf8",
+);
+for (const table of [
+  "crm_value_assets",
+  "crm_followup_playbooks",
+  "crm_followup_playbook_steps",
+  "crm_followup_enrollments",
+]) {
+  assert.ok(
+    followupAnonRevoke.includes(`REVOKE ALL PRIVILEGES ON TABLE public.${table} FROM anon`),
+    `CRM follow-up must explicitly deny anonymous Data API access to public.${table}.`,
+  );
+}
+
 console.log("CRM pipeline smoke checks passed.");
