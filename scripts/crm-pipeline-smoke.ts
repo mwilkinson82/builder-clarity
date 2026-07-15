@@ -3,9 +3,17 @@
 // project row is the company's demo opt-out tombstone, and an archived demo
 // means the CRM seeder seeds nothing.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { planCrmDemoSeed } from "../src/lib/pipeline-demo-seed.ts";
 import { harborDemoSeedAction } from "../src/lib/demo-seed.ts";
 import { pruneRemovedDemoCrm } from "../src/components/pipeline/pipeline-ui.ts";
+import {
+  DEFAULT_VALUE_FOLLOWUP_PLAYBOOK,
+  appendValueAssetToBody,
+  followupDueDate,
+  followupTiming,
+  personalizeFollowupTemplate,
+} from "../src/lib/crm-followup-domain.ts";
 
 // ---------- Archived demo tombstone → seed nothing ----------
 const archivedDemo = { id: "project-1", archived_at: "2026-07-01T00:00:00Z" };
@@ -117,5 +125,90 @@ assert.deepEqual(
   makeSnapshot(),
   "Removing a real opportunity leaves the sample rollup untouched.",
 );
+
+// ---------- Value-first follow-up playbook ----------
+assert.deepEqual(
+  DEFAULT_VALUE_FOLLOWUP_PLAYBOOK.steps.map((step) => step.dayOffset),
+  [1, 3, 5, 8],
+  "The default value-first cadence prepares Day 1, 3, 5, and 8 follow-ups.",
+);
+assert.ok(
+  DEFAULT_VALUE_FOLLOWUP_PLAYBOOK.steps.every(
+    (step) => step.purpose.trim() && step.valueAngle.trim() && step.bodyTemplate.trim(),
+  ),
+  "Every follow-up step explains its purpose, value angle, and prepared message.",
+);
+
+const personalized = personalizeFollowupTemplate(
+  "Hi {{contact_first_name}}, {{owner_name}} is ready to discuss {{opportunity_name}}.",
+  {
+    contactName: "Sarah Contractor",
+    opportunityName: "Oak Street Addition",
+    clientName: "Contractor Family",
+    ownerName: "Alex Builder",
+  },
+);
+assert.equal(
+  personalized,
+  "Hi Sarah, Alex Builder is ready to discuss Oak Street Addition.",
+  "Prepared messages personalize the contact, opportunity, and owner without AI.",
+);
+assert.equal(
+  followupDueDate(new Date("2026-07-15T20:00:00.000Z"), 3),
+  "2026-07-18",
+  "Playbook offsets produce deterministic due dates.",
+);
+const fixedNow = new Date("2026-07-15T13:00:00.000Z");
+assert.equal(followupTiming("2026-07-14", fixedNow), "overdue");
+assert.equal(followupTiming("2026-07-15", fixedNow), "today");
+assert.equal(followupTiming("2026-07-16", fixedNow), "upcoming");
+assert.equal(followupTiming(null, fixedNow), "unscheduled");
+assert.equal(
+  appendValueAssetToBody("Here is the guide.", "Decision checklist", "https://example.com/guide"),
+  "Here is the guide.\n\nDecision checklist: https://example.com/guide",
+  "Prepared email bodies include the selected value resource link.",
+);
+
+const followupMigration = readFileSync(
+  new URL(
+    "../supabase/migrations/20260715222809_crm_followup_studio_foundation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+for (const requiredFragment of [
+  "CREATE TABLE IF NOT EXISTS public.crm_value_assets",
+  "CREATE TABLE IF NOT EXISTS public.crm_followup_playbooks",
+  "CREATE TABLE IF NOT EXISTS public.crm_followup_enrollments",
+  "ADD COLUMN IF NOT EXISTS playbook_enrollment_id",
+  "ALTER TABLE public.crm_value_assets ENABLE ROW LEVEL SECURITY",
+  "'crm-assets'",
+]) {
+  assert.ok(
+    followupMigration.includes(requiredFragment),
+    `CRM follow-up migration must contain: ${requiredFragment}`,
+  );
+}
+
+const followupVerifier = readFileSync(
+  new URL(
+    "../supabase/verification/20260715222809_crm_followup_studio_foundation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+for (const requiredFragment of [
+  "RLS is not enabled",
+  "has_table_privilege('authenticated'",
+  "Anon unexpectedly has SELECT",
+  "pipeline_next_actions_followup_enrollment_fk",
+  "public = false",
+  "CRMFOLLOWUP1 VERIFIED",
+]) {
+  assert.ok(
+    followupVerifier.includes(requiredFragment),
+    `CRM follow-up verifier must contain: ${requiredFragment}`,
+  );
+}
 
 console.log("CRM pipeline smoke checks passed.");
