@@ -138,10 +138,6 @@ export const TAKEOFF_LAYER_TEST_IDS: Record<TakeoffLayerKey, string> = {
 // short runs, so these start at one foot; the field accepts feet + inches.
 export const QUICK_CALIBRATION_FEET = [1, 5, 10];
 
-// A verify measurement within this percentage of the labeled dimension marks
-// the sheet's scale as verified.
-export const VERIFY_SCALE_TOLERANCE_PCT = 1.5;
-
 // Stated-scale presets for vector PDFs (X paper inches = Y real feet).
 export type StatedScalePreset = {
   id: string;
@@ -692,8 +688,8 @@ export function draftCommandFor({
       value: points.length === 2 ? formatQty(measuredFeet, "FT") : `${points.length}/2 points`,
       detail:
         points.length === 2
-          ? "Type the labeled dimension, then check it against the active scale."
-          : "Click both ends of a dimension you can read on the drawing.",
+          ? "Type the labeled dimension, then record this assurance check."
+          : "Click both ends of a printed dimension. Two checks are required.",
       ready: points.length === 2 && spanPx > 0 && (sheet?.scale_feet_per_pixel ?? 0) > 0,
       actionLabel: "Check Scale",
     };
@@ -707,7 +703,7 @@ export function draftCommandFor({
     const spanFeet = scale > 0 ? distancePx(points, viewSize) * scale : 0;
     const unverifiedCaveat =
       scale > 0 && sheetScaleStatus(sheet) === "unverified"
-        ? " Scale is unverified — check it against a labeled dimension."
+        ? " Scale is unverified — complete two labeled-dimension checks."
         : "";
     return {
       title: "Ruler check",
