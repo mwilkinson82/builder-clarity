@@ -35,7 +35,9 @@ import {
   productionScopeKey,
   shiftIsoDate,
   summarizeProduction,
+  summarizeProductionProjects,
   summarizeProductionScopes,
+  type PortfolioProductionAnalyticsRow,
   type ProductionAnalyticsRow,
 } from "../src/lib/production-analytics.ts";
 
@@ -974,6 +976,72 @@ assert.deepEqual(
 
   assert.equal(shiftIsoDate("2026-07-15", -7), "2026-07-08", "date shifting is UTC-stable");
   assert.equal(inclusiveDateSpan("2026-07-01", "2026-07-15"), 15, "date spans are inclusive");
+}
+
+// ── Portfolio Production Control analytics (Phase 2, 2026-07-15) ──────────
+{
+  const projects = [
+    { id: "p-behind", name: "Behind project", jobNumber: "101", projectManager: "Morgan" },
+    { id: "p-ahead", name: "Ahead project", jobNumber: "102", projectManager: "Alex" },
+    { id: "p-empty", name: "No field data", jobNumber: "103", projectManager: "Alex" },
+  ];
+  const portfolioRows: PortfolioProductionAnalyticsRow[] = [
+    {
+      id: "behind-1",
+      date: "2026-07-14",
+      projectId: "p-behind",
+      projectName: "Behind project",
+      jobNumber: "101",
+      projectManager: "Morgan",
+      performerKey: "sub:slow",
+      performerName: "Slow Sub",
+      performerType: "subcontractor",
+      costBucketId: "drywall",
+      costCode: "09-2900",
+      scopeName: "Drywall",
+      activity: "Hang board",
+      quantity: 50,
+      unit: "SF",
+      laborHours: 10,
+      targetRate: 10,
+      fieldValue: 500,
+    },
+    {
+      id: "ahead-1",
+      date: "2026-07-15",
+      projectId: "p-ahead",
+      projectName: "Ahead project",
+      jobNumber: "102",
+      projectManager: "Alex",
+      performerKey: "self-perform",
+      performerName: "Self-perform",
+      performerType: "self-perform",
+      costBucketId: "concrete",
+      costCode: "03-3000",
+      scopeName: "Concrete",
+      activity: "Place slab",
+      quantity: 150,
+      unit: "CY",
+      laborHours: 10,
+      targetRate: 10,
+      fieldValue: 1_500,
+    },
+  ];
+
+  const summaries = summarizeProductionProjects(portfolioRows, projects);
+  assert.equal(summaries.length, 3, "every active project stays visible in the ranking");
+  assert.equal(summaries[0].id, "p-behind", "the weakest comparable project rises first");
+  assert.equal(summaries[0].status, "behind", "project status uses target-weighted pace");
+  assert.equal(summaries[0].scopesBehind, 1, "behind scopes roll up per project");
+  assert.equal(summaries[1].id, "p-ahead", "ahead measured work follows the exception");
+  assert.equal(summaries[1].performerCount, 1, "performers are deduplicated inside a project");
+  assert.equal(summaries[1].lastFieldDate, "2026-07-15", "latest evidence date is retained");
+  assert.equal(summaries[2].id, "p-empty", "projects without field evidence sort last");
+  assert.equal(summaries[2].rowCount, 0, "empty projects never fabricate production");
+
+  const company = summarizeProduction(portfolioRows);
+  assert.equal(company.actualRate, null, "unlike units never fabricate a portfolio physical rate");
+  assert.equal(company.performanceIndex, 1, "earned hours combine safely across project units");
 }
 
 console.log("daily WIP smoke: all assertions passed");

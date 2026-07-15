@@ -17,6 +17,8 @@ import { WipReport } from "@/components/reports/WipReport";
 import { JobCostReport } from "@/components/reports/JobCostReport";
 import { BillingHistoryReport } from "@/components/reports/BillingHistoryReport";
 import { RetainageChangeOrderReport } from "@/components/reports/RetainageChangeOrderReport";
+import { PortfolioProductionReport } from "@/components/reports/PortfolioProductionReport";
+import { listPortfolioProduction } from "@/lib/portfolio-production.functions";
 
 export const Route = createFileRoute("/_authenticated/reports")({
   ssr: false,
@@ -24,13 +26,19 @@ export const Route = createFileRoute("/_authenticated/reports")({
   component: ReportsPage,
 });
 
-type ReportKey = "wip" | "job-cost" | "billing-history" | "retainage-co";
+type ReportKey = "production" | "wip" | "job-cost" | "billing-history" | "retainage-co";
 
 // The standard accounting reports a builder expects from Procore / Sage /
 // Buildertrend. WIP and job cost are live; the rest are listed so the surface
 // reads as a real reports hub, not a one-off — each is built on the same live
 // billing data as it lands.
 const REPORTS: { key: ReportKey; label: string; blurb: string; ready: boolean }[] = [
+  {
+    key: "production",
+    label: "Production intelligence",
+    blurb: "Portfolio pace, trends, and project ranking",
+    ready: true,
+  },
   { key: "wip", label: "WIP schedule", blurb: "Contract vs cost vs billing", ready: true },
   { key: "job-cost", label: "Job cost", blurb: "Budget vs actual by cost code", ready: true },
   {
@@ -48,11 +56,12 @@ const REPORTS: { key: ReportKey; label: string; blurb: string; ready: boolean }[
 ];
 
 function ReportsPage() {
-  const [activeReport, setActiveReport] = useState<ReportKey>("wip");
+  const [activeReport, setActiveReport] = useState<ReportKey>("production");
   const listBilling = useServerFn(listPortfolioBilling);
   const listJobCost = useServerFn(listPortfolioJobCost);
   const listBillingHistory = useServerFn(listPortfolioBillingHistory);
   const listChangeOrders = useServerFn(listPortfolioChangeOrders);
+  const listProduction = useServerFn(listPortfolioProduction);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
 
   const billingQuery = useQuery({
@@ -77,6 +86,11 @@ function ReportsPage() {
     queryFn: () => listChangeOrders(),
     enabled: activeReport === "retainage-co",
   });
+  const productionQuery = useQuery({
+    queryKey: ["portfolio-production"],
+    queryFn: () => listProduction(),
+    enabled: activeReport === "production",
+  });
   const { data: companyContext } = useQuery({
     queryKey: ["company-workspace-context"],
     queryFn: () => loadCompanyContext(),
@@ -94,13 +108,15 @@ function ReportsPage() {
   );
 
   const activeQuery =
-    activeReport === "job-cost"
-      ? jobCostQuery
-      : activeReport === "billing-history"
-        ? historyQuery
-        : activeReport === "retainage-co"
-          ? changeOrderQuery
-          : billingQuery;
+    activeReport === "production"
+      ? productionQuery
+      : activeReport === "job-cost"
+        ? jobCostQuery
+        : activeReport === "billing-history"
+          ? historyQuery
+          : activeReport === "retainage-co"
+            ? changeOrderQuery
+            : billingQuery;
 
   // net retainage per project, reused from the WIP/billing engine so the
   // retainage report never disagrees with the WIP report.
@@ -207,6 +223,14 @@ function ReportsPage() {
                 Retry
               </Button>
             </div>
+          ) : activeReport === "production" ? (
+            productionQuery.data ? (
+              <PortfolioProductionReport
+                projects={productionQuery.data.projects}
+                rows={productionQuery.data.rows}
+                loading={productionQuery.isLoading}
+              />
+            ) : null
           ) : activeReport === "job-cost" ? (
             jobCostQuery.data ? (
               <JobCostReport
