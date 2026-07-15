@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   deterministicRevisionProposal,
   parseAiRevisionMatches,
+  rankRevisionCandidates,
   revisionMatchCredits,
   scoreRevisionMatch,
   type RevisionSheetIdentity,
@@ -63,6 +64,26 @@ describe("plan revision metadata matching", () => {
 
     expect(scoreRevisionMatch(revision, base).confidence).toBeLessThan(0.85);
     expect(deterministicRevisionProposal(revision, [base])).toBeNull();
+  });
+
+  it("withholds weak title-word and PDF-position coincidences from AI", () => {
+    const revision = sheet({
+      id: "revision",
+      sheet_number: "A-100",
+      sheet_name: "Floor &",
+      discipline: "",
+      page_number: 3,
+    });
+    const unrelatedBase = sheet({
+      id: "base",
+      sheet_number: "A2.1",
+      sheet_name: "Floor Plan",
+      discipline: "",
+      page_number: 3,
+    });
+
+    expect(scoreRevisionMatch(revision, unrelatedBase).confidence).toBe(0.14);
+    expect(rankRevisionCandidates(revision, [unrelatedBase])).toEqual([]);
   });
 
   it("accepts only supplied AI candidates, prevents duplicate base use, and caps confidence", () => {

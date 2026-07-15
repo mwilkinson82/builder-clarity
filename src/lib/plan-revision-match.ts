@@ -26,6 +26,11 @@ export interface PlanRevisionMatchProposal {
 
 export type PlanRevisionReviewAction = "accepted" | "rejected" | "unmatched";
 
+// Do not ask the model to rank metadata coincidences that are too weak to be
+// useful to an estimator. A matching PDF position (0.02) or generic title-word
+// overlap (up to 0.12) must never become an AI suggestion on its own.
+export const AI_REVISION_CANDIDATE_MIN_CONFIDENCE = 0.2;
+
 const identityText = (value: string) =>
   value
     .normalize("NFKD")
@@ -109,7 +114,7 @@ export function rankRevisionCandidates(
       ...scoreRevisionMatch(revision, base),
       base_created_at: base.plan_set_created_at,
     }))
-    .filter((candidate) => candidate.confidence > 0)
+    .filter((candidate) => candidate.confidence >= AI_REVISION_CANDIDATE_MIN_CONFIDENCE)
     .sort((left, right) => {
       if (right.confidence !== left.confidence) return right.confidence - left.confidence;
       return right.base_created_at.localeCompare(left.base_created_at);
