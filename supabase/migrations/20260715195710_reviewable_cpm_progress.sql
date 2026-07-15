@@ -52,7 +52,7 @@ create table if not exists public.schedule_activity_progress_reviews (
   constraint schedule_activity_progress_reviews_basis_check
     check (basis in ('reviewed_percent', 'installed_quantity')),
   constraint schedule_activity_progress_reviews_decision_check
-    check (decision in ('accepted', 'overridden')),
+    check (decision in ('accepted', 'kept', 'overridden')),
   constraint schedule_activity_progress_reviews_current_check
     check (current_percent >= 0 and current_percent <= 100),
   constraint schedule_activity_progress_reviews_recommended_check
@@ -77,7 +77,12 @@ create table if not exists public.schedule_activity_progress_reviews (
   constraint schedule_activity_progress_reviews_decision_value_check
     check (
       (decision = 'accepted' and abs(accepted_percent - recommended_percent) <= 0.01)
-      or (decision = 'overridden' and abs(accepted_percent - recommended_percent) > 0.01)
+      or (decision = 'kept' and abs(accepted_percent - current_percent) <= 0.01)
+      or (
+        decision = 'overridden'
+        and abs(accepted_percent - recommended_percent) > 0.01
+        and abs(accepted_percent - current_percent) > 0.01
+      )
     ),
   constraint schedule_activity_progress_reviews_override_note_check
     check (decision <> 'overridden' or btrim(review_note) <> '')
@@ -241,6 +246,7 @@ create or replace function public.apply_wip_schedule_progress_review(
   p_current_percent numeric,
   p_recommended_percent numeric,
   p_accepted_percent numeric,
+  p_decision text,
   p_note text,
   p_source_snapshot jsonb
 )
@@ -283,6 +289,10 @@ begin
     raise exception 'Review the linked Daily WIP evidence before changing CPM progress.';
   end if;
 
+  if p_decision not in ('accepted', 'kept', 'overridden') then
+    raise exception 'Choose whether to accept the recommendation, keep CPM as-is, or apply a different value.';
+  end if;
+
   insert into public.schedule_activity_progress_reviews (
     project_id,
     schedule_activity_id,
@@ -313,21 +323,20 @@ begin
     v_current_percent,
     p_recommended_percent,
     p_accepted_percent,
-    case
-      when abs(p_accepted_percent - p_recommended_percent) <= 0.01 then 'accepted'
-      else 'overridden'
-    end,
+    p_decision,
     coalesce(p_note, ''),
     coalesce(p_source_snapshot, '{}'::jsonb),
     auth.uid()
   )
   returning * into v_review;
 
-  update public.schedule_activities
-  set percent_complete = p_accepted_percent,
-      updated_at = now()
-  where id = p_schedule_activity_id
-    and project_id = p_project_id;
+  if p_decision <> 'kept' then
+    update public.schedule_activities
+    set percent_complete = p_accepted_percent,
+        updated_at = now()
+    where id = p_schedule_activity_id
+      and project_id = p_project_id;
+  end if;
 
   return v_review;
 end;
@@ -335,11 +344,11 @@ $$;
 
 revoke all on function public.apply_wip_schedule_progress_review(
   uuid, uuid, uuid, date, date, text, numeric, numeric, text,
-  numeric, numeric, numeric, text, jsonb
+  numeric, numeric, numeric, text, text, jsonb
 ) from public, anon;
 grant execute on function public.apply_wip_schedule_progress_review(
   uuid, uuid, uuid, date, date, text, numeric, numeric, text,
-  numeric, numeric, numeric, text, jsonb
+  numeric, numeric, numeric, text, text, jsonb
 ) to authenticated, service_role;
 
 notify pgrst, 'reload schema';

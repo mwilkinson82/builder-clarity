@@ -1,5 +1,5 @@
 export type CpmProgressBasis = "reviewed_percent" | "installed_quantity";
-export type CpmProgressDecision = "accepted" | "overridden";
+export type CpmProgressDecision = "accepted" | "kept" | "overridden";
 
 export interface CpmProgressActivity {
   id: string;
@@ -59,12 +59,64 @@ export interface CpmProgressRecommendation extends CpmProgressActivity {
   explanation: string;
 }
 
+export interface CpmProgressDecisionResolution {
+  acceptedPercent: number;
+  reviewNote: string;
+  updatesCpm: boolean;
+}
+
 function finite(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
 function percent(value: number): number {
   return Math.min(100, Math.max(0, finite(value)));
+}
+
+export function resolveCpmProgressDecision({
+  decision,
+  currentPercent,
+  recommendedPercent,
+  requestedPercent,
+  note,
+}: {
+  decision: CpmProgressDecision;
+  currentPercent: number;
+  recommendedPercent: number;
+  requestedPercent: number;
+  note: string;
+}): CpmProgressDecisionResolution {
+  if (decision === "accepted") {
+    return {
+      acceptedPercent: recommendedPercent,
+      reviewNote: note.trim(),
+      updatesCpm: true,
+    };
+  }
+  if (decision === "kept") {
+    return {
+      acceptedPercent: currentPercent,
+      reviewNote: "",
+      updatesCpm: false,
+    };
+  }
+  if (
+    !Number.isFinite(requestedPercent) ||
+    requestedPercent < 0 ||
+    requestedPercent > 100 ||
+    Math.abs(requestedPercent - recommendedPercent) <= 0.01 ||
+    Math.abs(requestedPercent - currentPercent) <= 0.01
+  ) {
+    throw new Error("A different CPM value must differ from both the recommendation and CPM now.");
+  }
+  if (!note.trim()) {
+    throw new Error("Explain why the CPM value differs from the Daily WIP recommendation.");
+  }
+  return {
+    acceptedPercent: requestedPercent,
+    reviewNote: note.trim(),
+    updatesCpm: true,
+  };
 }
 
 export function canonicalCpmProgressUnit(value: string): string {

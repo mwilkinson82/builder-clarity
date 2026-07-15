@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 
-import { buildCpmProgressRecommendations } from "../src/lib/cpm-progress.ts";
+import {
+  buildCpmProgressRecommendations,
+  resolveCpmProgressDecision,
+} from "../src/lib/cpm-progress.ts";
 
 const activities = [
   {
@@ -94,5 +97,43 @@ assert.equal(quantityRecommendation.installedQuantity, 2_500);
 assert.equal(quantityRecommendation.recommendedPercent, 25);
 assert.deepEqual(quantityRecommendation.sourceEntryIds, ["quantity-reviewed"]);
 assert.equal(quantityRecommendation.variancePercent, 15);
+
+const kept = resolveCpmProgressDecision({
+  decision: "kept",
+  currentPercent: 25,
+  recommendedPercent: 42,
+  requestedPercent: 42,
+  note: "This must be ignored",
+});
+assert.deepEqual(kept, {
+  acceptedPercent: 25,
+  reviewNote: "",
+  updatesCpm: false,
+});
+
+const accepted = resolveCpmProgressDecision({
+  decision: "accepted",
+  currentPercent: 25,
+  recommendedPercent: 42,
+  requestedPercent: 30,
+  note: "Reviewed",
+});
+assert.deepEqual(accepted, {
+  acceptedPercent: 42,
+  reviewNote: "Reviewed",
+  updatesCpm: true,
+});
+
+assert.throws(
+  () =>
+    resolveCpmProgressDecision({
+      decision: "overridden",
+      currentPercent: 25,
+      recommendedPercent: 42,
+      requestedPercent: 35,
+      note: "",
+    }),
+  /Explain why/,
+);
 
 console.log("CPM progress review smoke passed");

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   buildCpmProgressRecommendations,
+  resolveCpmProgressDecision,
   type CpmProgressActivity,
   type CpmProgressBasis,
   type CpmProgressControl,
@@ -89,7 +90,8 @@ function normalizeReview(row: Record<string, unknown>): CpmProgressReview {
     currentPercent: num(row.current_percent),
     recommendedPercent: num(row.recommended_percent),
     acceptedPercent: num(row.accepted_percent),
-    decision: row.decision === "overridden" ? "overridden" : "accepted",
+    decision:
+      row.decision === "overridden" ? "overridden" : row.decision === "kept" ? "kept" : "accepted",
     note: str(row.review_note),
     reviewedBy: str(row.reviewed_by),
     reviewedByName: null,
@@ -229,6 +231,7 @@ export const applyCpmProgressReview = createServerFn({ method: "POST" })
       .object({
         projectId: z.string().uuid(),
         scheduleActivityId: z.string().uuid(),
+        decision: z.enum(["accepted", "kept", "overridden"]),
         acceptedPercent: z.number().min(0).max(100),
         note: z.string().trim().max(2000),
       })
@@ -251,9 +254,13 @@ export const applyCpmProgressReview = createServerFn({ method: "POST" })
     ) {
       throw new Error("This activity does not have enough reviewed Daily WIP evidence yet.");
     }
-    if (Math.abs(data.acceptedPercent - recommendation.recommendedPercent) > 0.01 && !data.note) {
-      throw new Error("Explain why the CPM value differs from the Daily WIP recommendation.");
-    }
+    const resolution = resolveCpmProgressDecision({
+      decision: data.decision,
+      currentPercent: recommendation.currentPercent,
+      recommendedPercent: recommendation.recommendedPercent,
+      requestedPercent: data.acceptedPercent,
+      note: data.note,
+    });
 
     const sourceSnapshot = {
       entry_ids: recommendation.sourceEntryIds,
@@ -274,8 +281,9 @@ export const applyCpmProgressReview = createServerFn({ method: "POST" })
       p_unit: recommendation.unit,
       p_current_percent: recommendation.currentPercent,
       p_recommended_percent: recommendation.recommendedPercent,
-      p_accepted_percent: data.acceptedPercent,
-      p_note: data.note,
+      p_accepted_percent: resolution.acceptedPercent,
+      p_decision: data.decision,
+      p_note: resolution.reviewNote,
       p_source_snapshot: sourceSnapshot,
     });
     if (result.error) {

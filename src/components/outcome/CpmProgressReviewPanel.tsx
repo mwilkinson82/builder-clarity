@@ -28,7 +28,13 @@ function decisionCopy(row: CpmProgressRecommendation): string {
   const actor = review.reviewedByName ?? "Project manager";
   const date = new Date(review.reviewedAt);
   const dateCopy = Number.isNaN(date.getTime()) ? review.reviewedAt : date.toLocaleString();
-  return `${actor} ${review.decision === "overridden" ? "overrode" : "accepted"} ${review.acceptedPercent.toFixed(1)}% · ${dateCopy}`;
+  const action =
+    review.decision === "overridden"
+      ? `set CPM to ${review.acceptedPercent.toFixed(1)}%`
+      : review.decision === "kept"
+        ? `kept CPM at ${review.acceptedPercent.toFixed(1)}%`
+        : `accepted ${review.acceptedPercent.toFixed(1)}%`;
+  return `${actor} ${action} · ${dateCopy}`;
 }
 
 function ActivityProgressReview({
@@ -72,20 +78,31 @@ function ActivityProgressReview({
     onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to save"),
   });
   const reviewMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: ({
+      decision,
+      value,
+      reviewNote,
+    }: {
+      decision: "accepted" | "kept" | "overridden";
+      value: number;
+      reviewNote: string;
+    }) =>
       applyReview({
         data: {
           projectId,
           scheduleActivityId: row.id,
-          acceptedPercent: Number(acceptedPercent),
-          note,
+          decision,
+          acceptedPercent: value,
+          note: reviewNote,
         },
       }),
     onSuccess: async (review) => {
       toast.success(
         review.decision === "overridden"
           ? `CPM progress set to ${review.acceptedPercent.toFixed(1)}% with override recorded`
-          : `CPM progress updated to ${review.acceptedPercent.toFixed(1)}%`,
+          : review.decision === "kept"
+            ? `CPM remains at ${review.acceptedPercent.toFixed(1)}%`
+            : `CPM progress updated to ${review.acceptedPercent.toFixed(1)}%`,
       );
       setNote("");
       await invalidate();
@@ -97,7 +114,10 @@ function ActivityProgressReview({
   const accepted = Number(acceptedPercent);
   const canApply =
     row.recommendedPercent != null && Number.isFinite(accepted) && accepted >= 0 && accepted <= 100;
-  const isOverride = canApply && Math.abs(accepted - (row.recommendedPercent ?? accepted)) > 0.01;
+  const isDifferentCpm =
+    canApply &&
+    Math.abs(accepted - (row.recommendedPercent ?? accepted)) > 0.01 &&
+    Math.abs(accepted - row.currentPercent) > 0.01;
 
   return (
     <article className="border-t border-hairline px-5 py-5 first:border-t-0">
@@ -245,25 +265,69 @@ function ActivityProgressReview({
             </label>
             <label className="grid gap-1">
               <span className="text-xs font-medium text-foreground">
-                {isOverride ? "Override reason" : "Review note (optional)"}
+                {isDifferentCpm ? "Reason for different CPM value" : "Review note (optional)"}
               </span>
               <Input
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
-                placeholder={isOverride ? "Why is CPM different from Daily WIP?" : "Add context"}
+                placeholder={
+                  isDifferentCpm ? "Why is CPM different from Daily WIP?" : "Add context"
+                }
               />
             </label>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            className="mt-3 gap-1.5"
-            disabled={!canApply || reviewMutation.isPending || (isOverride && !note.trim())}
-            onClick={() => reviewMutation.mutate()}
-          >
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            {isOverride ? `Apply override ${acceptedPercent}%` : "Accept recommendation"}
-          </Button>
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            Keep CPM as-is records that the recommendation was reviewed without changing the
+            schedule or asking for an explanation.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!canApply || reviewMutation.isPending}
+              onClick={() =>
+                reviewMutation.mutate({
+                  decision: "kept",
+                  value: row.currentPercent,
+                  reviewNote: "",
+                })
+              }
+            >
+              Keep CPM as-is
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5"
+              disabled={!canApply || reviewMutation.isPending}
+              onClick={() =>
+                reviewMutation.mutate({
+                  decision: "accepted",
+                  value: row.recommendedPercent ?? row.currentPercent,
+                  reviewNote: note,
+                })
+              }
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Accept recommendation
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={!isDifferentCpm || reviewMutation.isPending || !note.trim()}
+              onClick={() =>
+                reviewMutation.mutate({
+                  decision: "overridden",
+                  value: accepted,
+                  reviewNote: note,
+                })
+              }
+            >
+              Apply different CPM %
+            </Button>
+          </div>
         </div>
       </div>
     </article>
@@ -285,8 +349,8 @@ export function CpmProgressReviewPanel({ projectId }: { projectId: string }) {
           Review field progress before it reaches the schedule
         </h2>
         <p className="mt-1 max-w-4xl text-sm leading-relaxed text-muted-foreground">
-          OverWatch recommends activity progress from PM-reviewed Daily WIP. Nothing changes in CPM
-          until a project manager accepts or overrides the recommendation here.
+          OverWatch recommends activity progress from PM-reviewed Daily WIP. A project manager can
+          accept it, keep CPM as-is with no explanation, or apply a different CPM value here.
         </p>
       </div>
 

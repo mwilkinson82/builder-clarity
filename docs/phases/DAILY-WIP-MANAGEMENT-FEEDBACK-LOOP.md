@@ -55,12 +55,14 @@ the application manually.
 
 - [x] Define which quantity or percent basis controls each linked activity.
 - [x] Present a recommended activity percent with source and variance.
-- [x] Require an explicit PM action before changing CPM progress.
+- [x] Let the PM accept the recommendation, keep CPM unchanged without explanation, or apply a different value.
 - [x] Record the recommendation, accepted value, actor, and timestamp.
 
 Automatic schedule movement remains intentionally excluded. Different
 activities can use different physical bases, and the accepted value now reaches
-CPM only through the PM review action with an append-only evidence snapshot.
+CPM only when the PM accepts the recommendation or applies a different value.
+Keeping CPM as-is records the review without changing schedule progress or
+requiring a reason.
 
 ## Slice 4 — portfolio operating view
 
