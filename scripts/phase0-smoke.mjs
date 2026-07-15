@@ -3525,6 +3525,35 @@ await expectContains(
   "project navigation restores obvious pointer and hover feedback",
 );
 
+// PRODUCTIONCONTROL1: project production history is packaged as weighted,
+// comparable field intelligence without ever averaging unlike units together.
+await expectContains(
+  "src/lib/production-analytics.ts",
+  [
+    /canonicalProductionUnit/,
+    /earnedLaborHours \/ coveredLaborHours/,
+    /aggregateProductionSeries/,
+    /summarizeProductionScopes/,
+  ],
+  "production analytics weights rates by labor-hours and rolls unlike units through earned hours",
+);
+await expectContains(
+  "src/components/outcome/ProductionControlView.tsx",
+  [
+    /Production Control/,
+    /Production pulse/,
+    /Weighted production trend/,
+    /Scope performance ledger/,
+    /earned buyout value/,
+  ],
+  "project production control exposes trend, pace, coverage, and scope-level economics",
+);
+await expectContains(
+  "src/components/outcome/DailyWipWorkspace.tsx",
+  [/ProductionControlView/, /productionRows/, /setWorkspaceMode\("production"\)/],
+  "Daily WIP opens the project production-control workspace from the same field records",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");
