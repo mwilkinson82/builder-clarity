@@ -3803,6 +3803,105 @@ export type Database = {
           },
         ]
       }
+      production_sov_billing_handoffs: {
+        Row: {
+          application_number_snapshot: string
+          applied_at: string
+          applied_by: string
+          applied_total_completed_and_stored_cents: number
+          applied_work_this_period_cents: number
+          billing_application_id: string | null
+          billing_line_item_id: string | null
+          certified_percent: number
+          contract_value_cents: number
+          cost_bucket_id: string
+          cost_code_snapshot: string
+          description_snapshot: string
+          id: string
+          prior_completed_and_stored_cents: number
+          prior_draft_work_cents: number
+          production_sov_certification_id: string
+          project_id: string
+          retained_draft_materials_cents: number
+        }
+        Insert: {
+          application_number_snapshot?: string
+          applied_at?: string
+          applied_by?: string
+          applied_total_completed_and_stored_cents: number
+          applied_work_this_period_cents: number
+          billing_application_id?: string | null
+          billing_line_item_id?: string | null
+          certified_percent: number
+          contract_value_cents: number
+          cost_bucket_id: string
+          cost_code_snapshot?: string
+          description_snapshot?: string
+          id?: string
+          prior_completed_and_stored_cents: number
+          prior_draft_work_cents: number
+          production_sov_certification_id: string
+          project_id: string
+          retained_draft_materials_cents: number
+        }
+        Update: {
+          application_number_snapshot?: string
+          applied_at?: string
+          applied_by?: string
+          applied_total_completed_and_stored_cents?: number
+          applied_work_this_period_cents?: number
+          billing_application_id?: string | null
+          billing_line_item_id?: string | null
+          certified_percent?: number
+          contract_value_cents?: number
+          cost_bucket_id?: string
+          cost_code_snapshot?: string
+          description_snapshot?: string
+          id?: string
+          prior_completed_and_stored_cents?: number
+          prior_draft_work_cents?: number
+          production_sov_certification_id?: string
+          project_id?: string
+          retained_draft_materials_cents?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_sov_billing_handof_production_sov_certification_fkey"
+            columns: ["production_sov_certification_id"]
+            isOneToOne: true
+            referencedRelation: "production_sov_certifications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_sov_billing_handoffs_billing_application_id_fkey"
+            columns: ["billing_application_id"]
+            isOneToOne: false
+            referencedRelation: "billing_applications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_sov_billing_handoffs_billing_line_item_id_fkey"
+            columns: ["billing_line_item_id"]
+            isOneToOne: false
+            referencedRelation: "billing_line_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_sov_billing_handoffs_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_sov_billing_handoffs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       production_sov_certifications: {
         Row: {
           calculation_version: string
@@ -6555,6 +6654,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      apply_production_sov_certification_to_billing: {
+        Args: { p_billing_application_id: string; p_certification_id: string }
+        Returns: Json
+      }
       can_approve_client_change_order: {
         Args: { p_change_order_id: string }
         Returns: boolean
