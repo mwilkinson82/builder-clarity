@@ -2328,6 +2328,227 @@ export type Database = {
           },
         ]
       }
+      estimate_takeoff_assemblies: {
+        Row: {
+          ai_operation_id: string | null
+          ai_proposals: Json
+          confirmed_at: string | null
+          confirmed_by: string | null
+          confirmed_inputs: Json
+          created_at: string
+          created_by: string | null
+          derived_outputs: Json
+          estimate_id: string
+          formula_version: string
+          geometry_calculation_scale_revision: number | null
+          geometry_quantity: number
+          geometry_unit: string
+          id: string
+          source_citations: Json
+          status: string
+          takeoff_measurement_id: string
+          template_id: string
+          updated_at: string
+        }
+        Insert: {
+          ai_operation_id?: string | null
+          ai_proposals?: Json
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          confirmed_inputs?: Json
+          created_at?: string
+          created_by?: string | null
+          derived_outputs?: Json
+          estimate_id: string
+          formula_version?: string
+          geometry_calculation_scale_revision?: number | null
+          geometry_quantity: number
+          geometry_unit: string
+          id?: string
+          source_citations?: Json
+          status?: string
+          takeoff_measurement_id: string
+          template_id: string
+          updated_at?: string
+        }
+        Update: {
+          ai_operation_id?: string | null
+          ai_proposals?: Json
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          confirmed_inputs?: Json
+          created_at?: string
+          created_by?: string | null
+          derived_outputs?: Json
+          estimate_id?: string
+          formula_version?: string
+          geometry_calculation_scale_revision?: number | null
+          geometry_quantity?: number
+          geometry_unit?: string
+          id?: string
+          source_citations?: Json
+          status?: string
+          takeoff_measurement_id?: string
+          template_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_takeoff_assemblies_ai_operation_id_fkey"
+            columns: ["ai_operation_id"]
+            isOneToOne: false
+            referencedRelation: "ai_operations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assemblies_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assemblies_takeoff_measurement_id_fkey"
+            columns: ["takeoff_measurement_id"]
+            isOneToOne: true
+            referencedRelation: "estimate_takeoff_measurements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_takeoff_assembly_events: {
+        Row: {
+          action: string
+          actor_id: string | null
+          ai_operation_id: string | null
+          ai_proposals: Json
+          assembly_id: string
+          confirmed_inputs: Json
+          created_at: string
+          derived_outputs: Json
+          estimate_id: string
+          formula_version: string
+          geometry_calculation_scale_revision: number | null
+          geometry_quantity: number
+          geometry_unit: string
+          id: string
+          source_citations: Json
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          ai_operation_id?: string | null
+          ai_proposals: Json
+          assembly_id: string
+          confirmed_inputs: Json
+          created_at?: string
+          derived_outputs: Json
+          estimate_id: string
+          formula_version: string
+          geometry_calculation_scale_revision?: number | null
+          geometry_quantity: number
+          geometry_unit: string
+          id?: string
+          source_citations: Json
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          ai_operation_id?: string | null
+          ai_proposals?: Json
+          assembly_id?: string
+          confirmed_inputs?: Json
+          created_at?: string
+          derived_outputs?: Json
+          estimate_id?: string
+          formula_version?: string
+          geometry_calculation_scale_revision?: number | null
+          geometry_quantity?: number
+          geometry_unit?: string
+          id?: string
+          source_citations?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_takeoff_assembly_events_ai_operation_id_fkey"
+            columns: ["ai_operation_id"]
+            isOneToOne: false
+            referencedRelation: "ai_operations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assembly_events_assembly_id_fkey"
+            columns: ["assembly_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_takeoff_assemblies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assembly_events_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_takeoff_assembly_outputs: {
+        Row: {
+          assembly_id: string
+          created_at: string
+          estimate_id: string
+          formula: string
+          id: string
+          label: string
+          output_key: string
+          quantity: number
+          rounding_method: string
+          sort_order: number
+          unit: string
+        }
+        Insert: {
+          assembly_id: string
+          created_at?: string
+          estimate_id: string
+          formula: string
+          id?: string
+          label: string
+          output_key: string
+          quantity: number
+          rounding_method: string
+          sort_order?: number
+          unit: string
+        }
+        Update: {
+          assembly_id?: string
+          created_at?: string
+          estimate_id?: string
+          formula?: string
+          id?: string
+          label?: string
+          output_key?: string
+          quantity?: number
+          rounding_method?: string
+          sort_order?: number
+          unit?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_takeoff_assembly_outputs_assembly_id_fkey"
+            columns: ["assembly_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_takeoff_assemblies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assembly_outputs_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       estimate_takeoff_measurements: {
         Row: {
           ai_confidence: number | null
@@ -6658,6 +6879,14 @@ export type Database = {
         Args: { p_billing_application_id: string; p_certification_id: string }
         Returns: Json
       }
+      calculate_takeoff_assembly_outputs: {
+        Args: {
+          p_geometry_quantity: number
+          p_inputs: Json
+          p_template_id: string
+        }
+        Returns: Json
+      }
       can_approve_client_change_order: {
         Args: { p_change_order_id: string }
         Returns: boolean
@@ -6904,6 +7133,42 @@ export type Database = {
       role_preset_capabilities: {
         Args: { p_role: Database["public"]["Enums"]["account_role"] }
         Returns: Json
+      }
+      save_estimate_takeoff_assembly: {
+        Args: {
+          p_ai_operation_id: string
+          p_inputs: Json
+          p_status: string
+          p_takeoff_measurement_id: string
+          p_template_id: string
+        }
+        Returns: {
+          ai_operation_id: string | null
+          ai_proposals: Json
+          confirmed_at: string | null
+          confirmed_by: string | null
+          confirmed_inputs: Json
+          created_at: string
+          created_by: string | null
+          derived_outputs: Json
+          estimate_id: string
+          formula_version: string
+          geometry_calculation_scale_revision: number | null
+          geometry_quantity: number
+          geometry_unit: string
+          id: string
+          source_citations: Json
+          status: string
+          takeoff_measurement_id: string
+          template_id: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "estimate_takeoff_assemblies"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       seed_project_award_contingency: {
         Args: { p_contract: number; p_pct?: number; p_project_id: string }
