@@ -50,6 +50,32 @@ export interface MeasurementSourceEvidence extends MeasurementSourceLine {
   anchor: MeasurementEvidenceAnchor;
 }
 
+export const MEASUREMENT_EVIDENCE_TIMEOUT_MS = 25_000;
+
+export async function withMeasurementEvidenceTimeout<T>(
+  operation: Promise<T>,
+  step: string,
+  timeoutMs = MEASUREMENT_EVIDENCE_TIMEOUT_MS,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `${step} took too long. Try the review again or open the source PDF for manual takeoff.`,
+          ),
+        ),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([operation, deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 const clean = (value: unknown, max: number) =>
   String(value ?? "")
     .replace(/\s+/g, " ")
