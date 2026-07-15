@@ -5463,6 +5463,142 @@ export type Database = {
           },
         ]
       }
+      schedule_activity_progress_controls: {
+        Row: {
+          basis: string
+          created_at: string
+          planned_quantity: number | null
+          project_id: string
+          schedule_activity_id: string
+          unit: string
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          basis?: string
+          created_at?: string
+          planned_quantity?: number | null
+          project_id: string
+          schedule_activity_id: string
+          unit?: string
+          updated_at?: string
+          updated_by?: string
+        }
+        Update: {
+          basis?: string
+          created_at?: string
+          planned_quantity?: number | null
+          project_id?: string
+          schedule_activity_id?: string
+          unit?: string
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_activity_progress_controls_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_activity_progress_controls_schedule_activity_id_fkey"
+            columns: ["schedule_activity_id"]
+            isOneToOne: true
+            referencedRelation: "schedule_activities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      schedule_activity_progress_reviews: {
+        Row: {
+          accepted_percent: number
+          basis: string
+          calculation_version: string
+          current_percent: number
+          decision: string
+          id: string
+          installed_quantity: number | null
+          planned_quantity: number | null
+          project_id: string
+          recommended_percent: number
+          review_note: string
+          reviewed_at: string
+          reviewed_by: string
+          schedule_activity_id: string
+          source_period_end: string
+          source_period_start: string
+          source_snapshot: Json
+          source_wip_entry_id: string | null
+          unit: string
+        }
+        Insert: {
+          accepted_percent: number
+          basis: string
+          calculation_version?: string
+          current_percent: number
+          decision: string
+          id?: string
+          installed_quantity?: number | null
+          planned_quantity?: number | null
+          project_id: string
+          recommended_percent: number
+          review_note?: string
+          reviewed_at?: string
+          reviewed_by?: string
+          schedule_activity_id: string
+          source_period_end: string
+          source_period_start: string
+          source_snapshot?: Json
+          source_wip_entry_id?: string | null
+          unit?: string
+        }
+        Update: {
+          accepted_percent?: number
+          basis?: string
+          calculation_version?: string
+          current_percent?: number
+          decision?: string
+          id?: string
+          installed_quantity?: number | null
+          planned_quantity?: number | null
+          project_id?: string
+          recommended_percent?: number
+          review_note?: string
+          reviewed_at?: string
+          reviewed_by?: string
+          schedule_activity_id?: string
+          source_period_end?: string
+          source_period_start?: string
+          source_snapshot?: Json
+          source_wip_entry_id?: string | null
+          unit?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_activity_progress_reviews_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_activity_progress_reviews_schedule_activity_id_fkey"
+            columns: ["schedule_activity_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_activity_progress_reviews_source_wip_entry_id_fkey"
+            columns: ["source_wip_entry_id"]
+            isOneToOne: false
+            referencedRelation: "daily_wip_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       schedule_activity_updates: {
         Row: {
           activity_id: string
@@ -7013,6 +7149,52 @@ export type Database = {
       apply_production_sov_certification_to_billing: {
         Args: { p_billing_application_id: string; p_certification_id: string }
         Returns: Json
+      }
+      apply_wip_schedule_progress_review: {
+        Args: {
+          p_accepted_percent: number
+          p_basis: string
+          p_current_percent: number
+          p_decision: string
+          p_installed_quantity: number
+          p_note: string
+          p_planned_quantity: number
+          p_project_id: string
+          p_recommended_percent: number
+          p_schedule_activity_id: string
+          p_source_period_end: string
+          p_source_period_start: string
+          p_source_snapshot: Json
+          p_source_wip_entry_id: string
+          p_unit: string
+        }
+        Returns: {
+          accepted_percent: number
+          basis: string
+          calculation_version: string
+          current_percent: number
+          decision: string
+          id: string
+          installed_quantity: number | null
+          planned_quantity: number | null
+          project_id: string
+          recommended_percent: number
+          review_note: string
+          reviewed_at: string
+          reviewed_by: string
+          schedule_activity_id: string
+          source_period_end: string
+          source_period_start: string
+          source_snapshot: Json
+          source_wip_entry_id: string | null
+          unit: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "schedule_activity_progress_reviews"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       calculate_takeoff_assembly_outputs: {
         Args: {
