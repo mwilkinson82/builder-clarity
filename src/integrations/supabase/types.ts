@@ -5365,35 +5365,44 @@ export type Database = {
       subcontract_allocations: {
         Row: {
           amount: number
+          benchmark_labor_rate: number
           cost_bucket_id: string | null
           cost_code: string
           created_at: string
           description: string
           id: string
+          planned_quantity: number
           project_id: string
           subcontract_id: string
+          unit: string
           updated_at: string
         }
         Insert: {
           amount?: number
+          benchmark_labor_rate?: number
           cost_bucket_id?: string | null
           cost_code?: string
           created_at?: string
           description?: string
           id?: string
+          planned_quantity?: number
           project_id: string
           subcontract_id: string
+          unit?: string
           updated_at?: string
         }
         Update: {
           amount?: number
+          benchmark_labor_rate?: number
           cost_bucket_id?: string | null
           cost_code?: string
           created_at?: string
           description?: string
           id?: string
+          planned_quantity?: number
           project_id?: string
           subcontract_id?: string
+          unit?: string
           updated_at?: string
         }
         Relationships: [
