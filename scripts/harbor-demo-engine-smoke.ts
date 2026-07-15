@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { HARBOR_DEMO_MODULES, planHarborDemoModules } from "../src/lib/demo-seed.ts";
+import {
+  HARBOR_DEMO_COMMERCIAL_WORKFLOW,
+  HARBOR_DEMO_MODULES,
+  planHarborDemoModules,
+} from "../src/lib/demo-seed.ts";
 
 const moduleKeys = HARBOR_DEMO_MODULES.map((module) => module.key);
 assert.equal(new Set(moduleKeys).size, moduleKeys.length, "Demo module keys must be unique.");
@@ -28,6 +32,19 @@ assert.equal(mixedPlan.find((module) => module.key === "cpm-schedule")?.status, 
 assert.equal(mixedPlan.find((module) => module.key === "daily-wip-cpm-evidence")?.status, "failed");
 assert.equal(mixedPlan.find((module) => module.key === "claims")?.status, "missing");
 
+assert.deepEqual(
+  HARBOR_DEMO_COMMERCIAL_WORKFLOW.subcontractors.map((subcontractor) => subcontractor.costCode),
+  ["1500", "0300", "0900"],
+);
+assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionMeasure, "LF");
+assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionTargetRate, 7.5);
+assert.equal(
+  HARBOR_DEMO_MODULES.find((module) => module.key === "billing-workspace")?.dependsOn.includes(
+    "production-control",
+  ),
+  true,
+);
+
 const projectsSource = readFileSync("src/lib/projects.functions.ts", "utf8");
 assert.match(projectsSource, /ensureVersionedHarborDemoModules/);
 assert.match(projectsSource, /export const resetHarborDemoModule/);
@@ -44,6 +61,14 @@ assert.doesNotMatch(
 assert.match(projectsSource, /last_operation: "reset"/);
 assert.match(projectsSource, /Only Harbor Residence demo modules can be reset/);
 assert.match(projectsSource, /can_manage_project/);
+assert.match(projectsSource, /ensureHarborDemoBudgetSov/);
+assert.match(projectsSource, /ensureHarborDemoSubcontractBuyout/);
+assert.match(projectsSource, /ensureHarborDemoDailyReportsWip/);
+assert.match(projectsSource, /ensureHarborDemoBillingWorkspace/);
+assert.match(projectsSource, /Progress payment #1/);
+assert.match(projectsSource, /Supplemental finishing crew/);
+assert.match(projectsSource, /the PM certifies production in Daily WIP; accounting chooses/);
+assert.match(projectsSource, /Production measure: LF of conduit per labor-hour/);
 
 const migrationSource = readFileSync(
   "supabase/migrations/20260715221232_harbor_demo_module_versions.sql",

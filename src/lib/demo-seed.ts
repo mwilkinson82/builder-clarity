@@ -16,15 +16,87 @@ export const HARBOR_DEMO_CLIENT = "Private Luxury Residence";
 // real prerequisites exist.
 export const HARBOR_DEMO_MODULES = [
   { key: "project-foundation", version: 1, dependsOn: [] },
+  { key: "budget-sov", version: 1, dependsOn: ["project-foundation"] },
+  {
+    key: "ior-commercial-position",
+    version: 1,
+    dependsOn: ["project-foundation", "budget-sov"],
+  },
+  {
+    key: "subcontract-buyout",
+    version: 1,
+    dependsOn: ["project-foundation", "budget-sov", "ior-commercial-position"],
+  },
   { key: "cpm-schedule", version: 1, dependsOn: ["project-foundation"] },
+  {
+    key: "daily-reports-wip",
+    version: 1,
+    dependsOn: ["budget-sov", "subcontract-buyout", "cpm-schedule"],
+  },
   {
     key: "daily-wip-cpm-evidence",
     version: 1,
-    dependsOn: ["project-foundation", "cpm-schedule"],
+    dependsOn: ["budget-sov", "cpm-schedule", "daily-reports-wip"],
+  },
+  {
+    key: "production-control",
+    version: 1,
+    dependsOn: ["subcontract-buyout", "daily-reports-wip", "daily-wip-cpm-evidence"],
+  },
+  {
+    key: "billing-workspace",
+    version: 1,
+    dependsOn: ["budget-sov", "production-control"],
   },
   { key: "inspections", version: 1, dependsOn: ["project-foundation"] },
   { key: "claims", version: 1, dependsOn: ["project-foundation"] },
 ] as const;
+
+// These are the stable business facts that connect Harbor's commercial
+// walkthrough. They are exported so focused smoke coverage can verify the
+// lesson contract without importing the server-function bundle.
+export const HARBOR_DEMO_COMMERCIAL_WORKFLOW = {
+  billingApplicationNumber: "Pay App 2 — Draft",
+  productionCostCode: "1500",
+  productionMeasure: "LF",
+  productionTargetRate: 7.5,
+  productionPeriod: {
+    start: "2026-07-11",
+    end: "2026-07-13",
+  },
+  subcontractors: [
+    {
+      key: "electrical",
+      name: "ALP Electric",
+      trade: "Electrical",
+      costCode: "1500",
+      buyout: 125_000,
+      plannedQuantity: 25_000,
+      unit: "LF",
+      benchmarkLaborRate: 110,
+    },
+    {
+      key: "concrete",
+      name: "Ironclad Concrete Co.",
+      trade: "Concrete",
+      costCode: "0300",
+      buyout: 145_000,
+      plannedQuantity: 1_800,
+      unit: "CY",
+      benchmarkLaborRate: 110,
+    },
+    {
+      key: "drywall",
+      name: "Summit Drywall & Finishes",
+      trade: "Drywall",
+      costCode: "0900",
+      buyout: 156_000,
+      plannedQuantity: 12_000,
+      unit: "SF",
+      benchmarkLaborRate: 110,
+    },
+  ],
+} as const;
 
 export type HarborDemoModuleKey = (typeof HARBOR_DEMO_MODULES)[number]["key"];
 export type HarborDemoModuleOperation = "ensure" | "reset";
