@@ -2815,13 +2815,19 @@ export type Database = {
           address_line2: string
           billing_contact_name: string
           billing_email: string
+          billing_grace_ends_at: string | null
           billing_status: string
+          circle_entitlement_checked_at: string | null
+          circle_entitlement_member_email: string
+          circle_entitlement_tier: string
           city: string
           contractor_circle_grant: boolean
           country: string
           created_at: string
           created_by: string | null
           daily_report_limit_per_month: number
+          entitlement_expires_at: string | null
+          entitlement_source: string
           id: string
           legal_name: string
           license_number: string
@@ -2860,13 +2866,19 @@ export type Database = {
           address_line2?: string
           billing_contact_name?: string
           billing_email?: string
+          billing_grace_ends_at?: string | null
           billing_status?: string
+          circle_entitlement_checked_at?: string | null
+          circle_entitlement_member_email?: string
+          circle_entitlement_tier?: string
           city?: string
           contractor_circle_grant?: boolean
           country?: string
           created_at?: string
           created_by?: string | null
           daily_report_limit_per_month?: number
+          entitlement_expires_at?: string | null
+          entitlement_source?: string
           id?: string
           legal_name?: string
           license_number?: string
@@ -2905,13 +2917,19 @@ export type Database = {
           address_line2?: string
           billing_contact_name?: string
           billing_email?: string
+          billing_grace_ends_at?: string | null
           billing_status?: string
+          circle_entitlement_checked_at?: string | null
+          circle_entitlement_member_email?: string
+          circle_entitlement_tier?: string
           city?: string
           contractor_circle_grant?: boolean
           country?: string
           created_at?: string
           created_by?: string | null
           daily_report_limit_per_month?: number
+          entitlement_expires_at?: string | null
+          entitlement_source?: string
           id?: string
           legal_name?: string
           license_number?: string
@@ -5898,6 +5916,7 @@ export type Database = {
           created_at: string
           daily_report_limit_per_month: number | null
           is_public: boolean
+          monthly_ai_credits: number
           monthly_price_cents: number
           name: string
           project_limit: number | null
@@ -5913,6 +5932,7 @@ export type Database = {
           created_at?: string
           daily_report_limit_per_month?: number | null
           is_public?: boolean
+          monthly_ai_credits?: number
           monthly_price_cents?: number
           name: string
           project_limit?: number | null
@@ -5928,6 +5948,7 @@ export type Database = {
           created_at?: string
           daily_report_limit_per_month?: number | null
           is_public?: boolean
+          monthly_ai_credits?: number
           monthly_price_cents?: number
           name?: string
           project_limit?: number | null
@@ -6217,6 +6238,10 @@ export type Database = {
         Returns: number
       }
       ensure_current_user_account: { Args: never; Returns: string }
+      ensure_monthly_ai_credit_grant: {
+        Args: { p_organization_id: string }
+        Returns: number
+      }
       ensure_user_account: {
         Args: { p_email: string; p_full_name?: string; p_user_id: string }
         Returns: string
