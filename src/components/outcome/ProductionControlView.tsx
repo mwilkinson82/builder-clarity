@@ -7,6 +7,8 @@ import {
   BarChart3,
   Gauge,
   HardHat,
+  Minus,
+  TrendingDown,
   Users,
 } from "lucide-react";
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, XAxis, YAxis } from "recharts";
