@@ -29,6 +29,8 @@ export type Database = {
           operation_type: string
           organization_id: string
           output_tokens: number
+          request_context: Json
+          result: Json
           sheet_ids: string[]
           sheets_completed: number
           status: string
@@ -48,6 +50,8 @@ export type Database = {
           operation_type?: string
           organization_id: string
           output_tokens?: number
+          request_context?: Json
+          result?: Json
           sheet_ids?: string[]
           sheets_completed?: number
           status?: string
@@ -67,6 +71,8 @@ export type Database = {
           operation_type?: string
           organization_id?: string
           output_tokens?: number
+          request_context?: Json
+          result?: Json
           sheet_ids?: string[]
           sheets_completed?: number
           status?: string
@@ -2085,6 +2091,66 @@ export type Database = {
             columns: ["plan_set_id"]
             isOneToOne: false
             referencedRelation: "estimate_plan_sets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_scale_assessments: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          estimate_id: string
+          evidence: Json
+          id: string
+          max_variance_pct: number
+          notes: string
+          outcome: string
+          plan_sheet_id: string
+          scale_revision: number
+          scale_spread_pct: number
+          tolerance_pct: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          estimate_id: string
+          evidence?: Json
+          id?: string
+          max_variance_pct: number
+          notes?: string
+          outcome: string
+          plan_sheet_id: string
+          scale_revision: number
+          scale_spread_pct: number
+          tolerance_pct?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          estimate_id?: string
+          evidence?: Json
+          id?: string
+          max_variance_pct?: number
+          notes?: string
+          outcome?: string
+          plan_sheet_id?: string
+          scale_revision?: number
+          scale_spread_pct?: number
+          tolerance_pct?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_scale_assessments_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_scale_assessments_plan_sheet_id_fkey"
+            columns: ["plan_sheet_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sheets"
             referencedColumns: ["id"]
           },
         ]
@@ -6452,6 +6518,23 @@ export type Database = {
           p_payment_reference?: string
         }
         Returns: Json
+      }
+      record_estimate_scale_assessment: {
+        Args: {
+          p_checks: Json
+          p_estimate_id: string
+          p_notes?: string
+          p_plan_sheet_id: string
+          p_scale_revision: number
+        }
+        Returns: {
+          assessment_id: string
+          evidence: Json
+          max_variance_pct: number
+          outcome: string
+          scale_spread_pct: number
+          verified_at: string
+        }[]
       }
       reorder_schedule_wbs_sections: {
         Args: {
