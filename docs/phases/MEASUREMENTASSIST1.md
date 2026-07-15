@@ -148,6 +148,36 @@ Initial enterprise slice:
 8. Confirm AI failure creates no saved decision, refunds its credit, and leaves the manual overlay
    selector usable.
 
+## Stage 5 — Estimator-controlled revision impact register
+
+- An accepted sheet pair can open a structured impact review beside the existing visual overlay.
+- The estimator—not AI—records whether the pair has no estimating impact, verified impacts, or
+  unresolved follow-up.
+- Verified impact rows classify added, removed, modified, clarified, coordinated, or unknown scope
+  and route it to remeasure, recount, reprice, scope review, or no-quantity-change follow-up.
+- Saving adds an immutable review version. Earlier conclusions remain in the audit history instead
+  of being overwritten.
+- The register never transfers takeoffs, retains scale, changes geometry, or edits an estimate
+  quantity. Existing trust and estimate-sync gates remain the only quantity path.
+- Tables stay SELECT-only for authenticated Data API users. A narrowly validated manager RPC is the
+  only application write path and only accepts an already reviewed, accepted revision pair.
+
+### Stage 5 release gate
+
+1. Apply `20260715205113_revision_impact_register.sql` only through the Lovable connector.
+2. Verify RLS is enabled, authenticated receives SELECT only, anon receives no table access, and
+   the save RPC is revoked from PUBLIC and anon.
+3. Verify the RPC rejects unauthenticated callers, non-managers, rejected/unmatched pairs,
+   unsupported dispositions, malformed impacts, duplicate impact IDs, and more than 100 impacts.
+4. On an accepted Harbor revision pair, open the overlay and save a Needs follow-up review with one
+   remeasure item. Refresh and confirm reviewer, time, version, and open action persist.
+5. Save a second review version that resolves the action. Confirm version 1 remains queryable and
+   version 2 is presented as current.
+6. Certify another accepted pair as No estimating impact and confirm the database rejects attached
+   impact rows for that disposition.
+7. Confirm no review creates, updates, or deletes a takeoff; retains a scale; or changes Harbor's
+   `$1,606,137` total.
+
 ## Kill criteria
 
 Stop expansion if the live Harbor review shows uncited suggestions, repeated irrelevant title-block
