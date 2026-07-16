@@ -51,6 +51,11 @@ assert.match(projectsSource, /export const resetHarborDemoModule/);
 assert.match(projectsSource, /resetHarborDemoModuleFixtures/);
 assert.match(projectsSource, /satisfies Record<HarborDemoModuleKey/);
 assert.match(projectsSource, /status: warnings\.length === 0 \? "ready" : "failed"/);
+assert.match(
+  projectsSource,
+  /if \(registryAvailable && !moduleNeedsUpgrade\(module\.key\)\)/,
+  "Current Harbor module versions must not rerun their write-heavy adapters on every visit.",
+);
 assert.match(projectsSource, /harborDemoSeedAction\(existingDemo\) === "skip"/);
 assert.match(projectsSource, /\.in\("project_manager", \["", "Overwatch Demo PM"\]\)/);
 assert.doesNotMatch(
@@ -61,6 +66,16 @@ assert.doesNotMatch(
 assert.match(projectsSource, /last_operation: "reset"/);
 assert.match(projectsSource, /Only Harbor Residence demo modules can be reset/);
 assert.match(projectsSource, /can_manage_project/);
+
+const getProjectSource = projectsSource.slice(
+  projectsSource.indexOf("export const getProject"),
+  projectsSource.indexOf("// ---------------- PROJECT CRUD ----------------"),
+);
+assert.doesNotMatch(
+  getProjectSource,
+  /ensureVersionedHarborDemoModules/,
+  "Opening a project must not execute Harbor fixture maintenance in the render-critical loader.",
+);
 assert.match(projectsSource, /ensureHarborDemoBudgetSov/);
 assert.match(projectsSource, /ensureHarborDemoSubcontractBuyout/);
 assert.match(projectsSource, /ensureHarborDemoDailyReportsWip/);
