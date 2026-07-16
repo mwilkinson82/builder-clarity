@@ -2196,6 +2196,8 @@ await expectContains(
     /plan-cockpit-tools-drag/,
     /plan-cockpit-drawings-reset/,
     /plan-cockpit-tools-reset/,
+    /plan-cockpit-drawings-maximize/,
+    /plan-cockpit-tools-maximize/,
     /plan-cockpit-drawings-resize/,
     /plan-cockpit-tools-resize/,
     /readCockpitPanelLayoutStorage/,
@@ -2214,6 +2216,9 @@ await expectContains(
     /CockpitFloatingPanelHeader/,
     /PlanRevisionOverlayPanel/,
     /CommandCenterToolsNav/,
+    /EstimatorActivationDialog/,
+    /EstimatorActivationChecklist/,
+    /useEstimatorActivation/,
     /ScaleDraftEditor/,
     /Selected Takeoff/,
     /selected-takeoff-inspector/,
@@ -2250,6 +2255,44 @@ await expectContains(
     /Worksheet/,
   ],
   "command center tools are split into task-focused estimator workspaces",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/CockpitFloatingPanelHeader.tsx",
+  [
+    /Full screen/,
+    /Restore/,
+    /Minimize/,
+    /Drag \$\{title\} left, right, up, or down/,
+    /maximizeTestId/,
+  ],
+  "command center panels can move in every direction, maximize, restore, and minimize",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/EstimatorActivationDialog.tsx",
+  [
+    /What do you want to accomplish first/,
+    /Try the guided workflow/,
+    /Start a takeoff/,
+    /Compare revisions/,
+  ],
+  "first-time estimators choose one clear job instead of discovering the workbench alone",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/EstimatorActivationChecklist.tsx",
+  [/First trusted takeoff/, /Confirm the scale/, /Create or review a markup/, /Link the quantity/],
+  "first-session guidance keeps the estimator on one trusted takeoff path",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/TakeoffWorksheet.tsx",
+  [
+    /data-layout=\{expanded \? "expanded" : "panel"\}/,
+    /xl:grid-cols-\[minmax\(0,1\.65fr\)_minmax\(300px,0\.7fr\)\]/,
+  ],
+  "the worksheet expands into a full command-center workspace instead of a short scrolling card",
 );
 
 await expectContains(
