@@ -2079,7 +2079,10 @@ export function PlanRoomWorkspace({
           plan_sheet_id: reviewSheet.id,
           sheet_number: reviewSheet.sheet_number,
           sheet_name: reviewSheet.sheet_name,
-          source_lines: evidence.sourceLines,
+          source_lines: evidence.sourceLines.map((line) => ({
+            ...line,
+            anchor: evidence.anchors[line.line_number],
+          })),
           sheet_image: {
             media_type: "image/png",
             base64: canvasToBase64Png(guideRaster.canvas),

@@ -18,6 +18,7 @@ export type { VisionProvider };
 
 // Kept in sync with openai.server.ts DEFAULT_OPENAI_MODEL.
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
+const DEFAULT_OPENAI_MEASUREMENT_MODEL = "gpt-5.6-sol";
 
 /** Ordered list of providers to attempt, primary first, per env config. */
 export function resolveProviderPlan(): VisionProvider[] {
@@ -40,6 +41,18 @@ export function resolveVisionModel(): string {
   return resolveAiModel(process.env.ANTHROPIC_MODEL);
 }
 
+/**
+ * Measurement guidance is a single quality-first localization call, not the
+ * many-tile count scan. Keep its frontier model override separate so improving
+ * guided LF/SF review never makes the proven count workflow slower.
+ */
+export function resolveMeasurementVisionModel(): string {
+  if (resolveProviderPlan().includes("openai")) {
+    return process.env.OPENAI_MEASUREMENT_MODEL?.trim() || DEFAULT_OPENAI_MEASUREMENT_MODEL;
+  }
+  return resolveVisionModel();
+}
+
 /** The leading provider label (diagnostics/readiness). */
 export function resolveVisionProvider(): VisionProvider | "none" {
   return resolveProviderPlan()[0] ?? "none";
@@ -57,6 +70,73 @@ export interface VisionResult {
   /** The model that actually produced the response (for cost metering). */
   model: string;
   provider: VisionProvider;
+}
+
+const measurementReasoningEffort = () => {
+  const configured = process.env.OPENAI_MEASUREMENT_REASONING_EFFORT?.trim().toLowerCase();
+  return ["none", "low", "medium", "high", "xhigh", "max"].includes(configured ?? "")
+    ? (configured as "none" | "low" | "medium" | "high" | "xhigh" | "max")
+    : "medium";
+};
+
+/**
+ * Quality-first full-sheet review for estimator-guided LF/SF candidates.
+ * OpenAI is tried first when configured because GPT-5.6 preserves original
+ * image detail and the Responses API can enforce the measurement-plan schema.
+ * Anthropic remains a service-availability fallback, never a silent quantity
+ * authority.
+ */
+export async function callMeasurementGuideVision(input: {
+  instruction: string;
+  images: VisionImageInput[];
+  responseJsonSchema: { name: string; schema: Record<string, unknown> };
+  maxTokens?: number;
+}): Promise<VisionResult> {
+  const configured = resolveProviderPlan();
+  const plan: VisionProvider[] = configured.includes("openai")
+    ? ["openai", ...configured.filter((provider) => provider !== "openai")]
+    : configured;
+  if (plan.length === 0) {
+    throw new Error(
+      "AI assist is not configured. Add ANTHROPIC_API_KEY or OPENAI_API_KEY to the server environment.",
+    );
+  }
+
+  let lastError: unknown = null;
+  for (const provider of plan) {
+    try {
+      if (provider === "openai") {
+        const { callOpenAiVision } = await import("@/lib/ai-takeoff/openai.server");
+        const result = await callOpenAiVision({
+          model: process.env.OPENAI_MEASUREMENT_MODEL?.trim() || DEFAULT_OPENAI_MEASUREMENT_MODEL,
+          instruction: input.instruction,
+          images: input.images,
+          maxTokens: input.maxTokens ?? 5000,
+          api: "responses",
+          imageDetail: "original",
+          reasoningEffort: measurementReasoningEffort(),
+          responseJsonSchema: input.responseJsonSchema,
+          timeoutMs: 120_000,
+        });
+        return { ...result, provider };
+      }
+      const { callAnthropicVision, resolveConfiguredAiModel } =
+        await import("@/lib/ai-takeoff/anthropic.server");
+      const model = resolveConfiguredAiModel();
+      const result = await callAnthropicVision({
+        model,
+        instruction: input.instruction,
+        images: input.images,
+        maxTokens: input.maxTokens,
+      });
+      return { ...result, model, provider };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("All configured vision providers failed.");
 }
 
 /**
