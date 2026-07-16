@@ -224,8 +224,13 @@ export function subcontractProductionBenchmarks(
     const actualRate =
       installedQuantity > 0 && totalLaborHours > 0 ? installedQuantity / totalLaborHours : null;
     const rawPlannedQuantity = numberValue(setting?.plannedQuantity || bucket?.contract_quantity);
+    // A configured benchmark explicitly chooses the production measure for
+    // this subcontract scope. Daily Reports may retain ancillary quantities
+    // (for example boxes and wire alongside LF of conduit); those extra units
+    // must not invalidate the selected LF comparison.
+    const unitsComparable = !mixedUnits || setting != null;
     const plannedQuantity =
-      (setting != null || !sharedSovLine) && !mixedUnits && rawPlannedQuantity > 0
+      (setting != null || !sharedSovLine) && unitsComparable && rawPlannedQuantity > 0
         ? rawPlannedQuantity
         : null;
     const buyoutUnitCost =
@@ -256,7 +261,7 @@ export function subcontractProductionBenchmarks(
       installedQuantity,
       plannedQuantity,
       latestPercent,
-      !mixedUnits,
+      unitsComparable,
     );
 
     benchmarks.push({

@@ -1758,6 +1758,7 @@ export function ProjectCostTrackingPanel({
     changeOrders,
     changeOrderAllocations,
     subCostByBucket,
+    selfPerformByBucket,
   });
   const totalActual = costForecast.actuals;
   const budgetVariance = costForecast.forecastVariance;

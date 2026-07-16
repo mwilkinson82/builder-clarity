@@ -149,6 +149,40 @@ assert.equal(
   "contract − projection remains the separate projected margin",
 );
 
+// Daily WIP is actual work put in place. Costs and Budget must split the same
+// projected total the same way: WIP moves from forecast into actual without
+// changing EAC while it remains within the code's forecast allowance.
+const costWorkspaceWithDailyWip = summarizeProjectCostForecast({
+  buckets: [
+    {
+      id: "qa-wip-cost",
+      cost_code: "0200",
+      bucket: "Sitework",
+      contract_value: 260000,
+      original_budget: 220000,
+      actual_to_date: 215000,
+      ftc: 8000,
+    },
+  ],
+  selfPerformByBucket: new Map([["qa-wip-cost", 6780]]),
+});
+assert.equal(costWorkspaceWithDailyWip.actuals, 221780, "Daily WIP moves into actual cost");
+assert.equal(
+  costWorkspaceWithDailyWip.forecastToComplete,
+  1220,
+  "Daily WIP relieves the same amount from forecast to complete",
+);
+assert.equal(
+  costWorkspaceWithDailyWip.projectedCost,
+  223000,
+  "Daily WIP component movement does not change projected cost",
+);
+assert.equal(
+  costWorkspaceWithDailyWip.forecastVariance,
+  -3000,
+  "Costs and Budget report the same over-budget position",
+);
+
 // ---------------------------------------------------------------------------
 // Unallocated approved-CO money keeps totals honest, without fake margin.
 // ---------------------------------------------------------------------------
