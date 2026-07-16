@@ -5,6 +5,11 @@ import { findHarborDemoProject, harborDemoSeedAction } from "@/lib/demo-seed";
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "@/lib/estimate-seed-data";
 import type { Json } from "@/integrations/supabase/types";
 import { takeoffUnitsCompatible } from "@/lib/plan-room-math";
+import {
+  buildEstimateQuantitySourceReview,
+  emptyEstimateQuantitySourceReview,
+  type EstimateTakeoffReviewSource,
+} from "@/lib/estimate-quantity-source-review";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -149,6 +154,7 @@ export interface EstimateAssemblyOutputSource {
   link_id: string;
   assembly_id: string;
   measurement_id: string;
+  estimate_line_item_id: string;
   output_key: string;
   output_label: string;
   output_unit: string;
@@ -776,8 +782,8 @@ function isMissingAssemblyOutputSourceRelation(error: DynamicSupabaseError | nul
   return (
     error?.code === "42P01" ||
     error?.code === "PGRST205" ||
-    message.includes("estimate_takeoff_assembly_output_links") ||
-    message.includes("schema cache")
+    ((message.includes("does not exist") || message.includes("schema cache")) &&
+      message.includes("estimate_takeoff_assembly_output_links"))
   );
 }
 
@@ -823,6 +829,7 @@ async function loadAssemblyOutputSources(
       link_id: str(row.id),
       assembly_id: assemblyId,
       measurement_id: measurementId,
+      estimate_line_item_id: estimateLineItemId,
       output_key: str(row.output_key),
       output_label: str(row.output_label),
       output_unit: str(row.output_unit),
@@ -834,6 +841,91 @@ async function loadAssemblyOutputSources(
     });
   }
   return sources;
+}
+
+function isMissingQuantitySourceReviewSchema(error: DynamicSupabaseError | null) {
+  const message = error?.message.toLowerCase() ?? "";
+  return Boolean(
+    error &&
+    (error.code === "42P01" ||
+      error.code === "PGRST205" ||
+      ((error.code === "42703" || error.code === "PGRST204") &&
+        message.includes("calculation_status")) ||
+      ((message.includes("does not exist") || message.includes("schema cache")) &&
+        (message.includes("estimate_takeoff_measurements") ||
+          message.includes("estimate_plan_sheets")))),
+  );
+}
+
+async function loadEstimateQuantitySourceReview(
+  context: { supabase: unknown },
+  estimateId: string,
+  lines: EstimateLineItemRow[],
+  assemblySources: Map<string, EstimateAssemblyOutputSource>,
+) {
+  const [takeoffsResult, sheetsResult] = await Promise.all([
+    dynamicTable(context.supabase, "estimate_takeoff_measurements")
+      .select(
+        "id,estimate_line_item_id,plan_sheet_id,label,unit,quantity,calculation_status,updated_at",
+      )
+      .eq("estimate_id", estimateId),
+    dynamicTable(context.supabase, "estimate_plan_sheets")
+      .select("id,sheet_number,sheet_name")
+      .eq("estimate_id", estimateId),
+  ]);
+
+  const schemaError = takeoffsResult.error ?? sheetsResult.error;
+  if (isMissingQuantitySourceReviewSchema(schemaError)) {
+    return emptyEstimateQuantitySourceReview(false);
+  }
+  if (takeoffsResult.error) throw new Error(takeoffsResult.error.message);
+  if (sheetsResult.error) throw new Error(sheetsResult.error.message);
+
+  const takeoffs: EstimateTakeoffReviewSource[] = (
+    (takeoffsResult.data ?? []) as Record<string, unknown>[]
+  ).map((row) => {
+    const rawStatus = str(row.calculation_status, "review_required");
+    const calculationStatus: EstimateTakeoffReviewSource["calculation_status"] =
+      rawStatus === "current" ||
+      rawStatus === "unverified_scale" ||
+      rawStatus === "stale" ||
+      rawStatus === "review_required"
+        ? rawStatus
+        : "review_required";
+    return {
+      id: str(row.id),
+      estimate_line_item_id:
+        row.estimate_line_item_id == null ? null : str(row.estimate_line_item_id),
+      plan_sheet_id: str(row.plan_sheet_id),
+      label: str(row.label),
+      unit: str(row.unit),
+      quantity: num(row.quantity),
+      calculation_status: calculationStatus,
+      updated_at: str(row.updated_at),
+    };
+  });
+
+  return buildEstimateQuantitySourceReview({
+    takeoffs,
+    assemblies: Array.from(assemblySources.values()).map((source) => ({
+      link_id: source.link_id,
+      measurement_id: source.measurement_id,
+      estimate_line_item_id: source.estimate_line_item_id,
+      output_label: source.output_label,
+      output_unit: source.output_unit,
+      output_quantity: source.output_quantity,
+      formula_version: source.formula_version,
+      status: source.status,
+      last_synced_at: source.last_synced_at,
+      stale_at: source.stale_at,
+    })),
+    lines: lines.map((line) => ({ id: line.id, description: line.description })),
+    sheets: ((sheetsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
+      id: str(row.id),
+      sheet_number: str(row.sheet_number),
+      sheet_name: str(row.sheet_name),
+    })),
+  });
 }
 
 async function getNextLineSortOrder(context: { supabase: unknown }, estimateId: string) {
@@ -1557,8 +1649,14 @@ export const getEstimate = createServerFn({ method: "GET" })
       ...line,
       assembly_output_source: assemblySources.get(line.id) ?? null,
     }));
+    const quantity_source_review = await loadEstimateQuantitySourceReview(
+      context,
+      data.id,
+      tracedLineItems,
+      assemblySources,
+    );
     const totals = calculateEstimateTotals(estimate, line_items);
-    return { estimate, line_items: tracedLineItems, totals };
+    return { estimate, line_items: tracedLineItems, quantity_source_review, totals };
   });
 
 export const createEstimate = createServerFn({ method: "POST" })

@@ -2605,6 +2605,48 @@ await expectContains(
 );
 
 await expectContains(
+  "src/lib/estimate-quantity-source-review.ts",
+  [
+    /EstimateQuantitySourceIssueStatus/,
+    /unverified_scale/,
+    /assembly_stale/,
+    /linked_review_count/,
+    /buildEstimateQuantitySourceReview/,
+  ],
+  "quantity source review derives current, linked, unlinked, takeoff, and assembly trust states",
+);
+
+await expectContains(
+  "src/lib/estimates.functions.ts",
+  [
+    /loadEstimateQuantitySourceReview/,
+    /estimate_takeoff_measurements/,
+    /estimate_plan_sheets/,
+    /quantity_source_review/,
+    /emptyEstimateQuantitySourceReview\(false\)/,
+  ],
+  "estimate loading exposes a read-only quantity trust queue without blocking pre-migration workspaces",
+);
+
+await expectContains(
+  "src/components/estimates/EstimateQuantitySourceReview.tsx",
+  [
+    /Quantity Source Review/,
+    /Nothing here changes\s+or\s+resyncs a worksheet row automatically/,
+    /Plan Room only\. This quantity does not feed the estimate/,
+    /Review markup/,
+    /search=\{\{ measurement: item\.measurement_id \}\}/,
+  ],
+  "estimate-wide quantity review names trust issues and routes only to exact evidence",
+);
+
+await expectContains(
+  "src/components/estimates/EstimateWorkspace.tsx",
+  [/Takeoff needs review/, /takeoffIssueByLineId/, /review=\{quantitySourceReview\}/],
+  "takeoff-fed worksheet rows warn when their source quantity needs review",
+);
+
+await expectContains(
   "src/lib/takeoff-assembly.ts",
   [
     /assembly-engine-v1/,
