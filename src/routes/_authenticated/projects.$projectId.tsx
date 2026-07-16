@@ -224,7 +224,6 @@ import {
   RotateCcw,
   ReceiptText,
   ShieldAlert,
-  Sparkles,
   Gavel,
   Plus,
   PackageCheck,
@@ -2588,18 +2587,25 @@ function ProjectPage() {
               {isDemoProject ? (
                 <TabsTrigger
                   value="start-here"
-                  aria-label="Start Here: Guided Harbor walkthrough"
+                  aria-label="Start Here: Harbor training course"
                   className={cn(
                     "flex w-auto shrink-0 self-start cursor-pointer items-center justify-between gap-3 rounded-lg border border-clay/25 bg-clay/[0.06] px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-clay/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink",
                     "data-[state=active]:border-clay/40 data-[state=active]:bg-secondary data-[state=active]:font-semibold",
                   )}
                 >
                   <span className="flex items-center gap-2">
-                    <Sparkles className="h-3.5 w-3.5 text-clay" />
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-dark-panel p-1">
+                      <img
+                        src="/overwatch-logo-master-reversed.svg"
+                        alt=""
+                        aria-hidden="true"
+                        className="h-full w-full"
+                      />
+                    </span>
                     Start Here
                   </span>
                   <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.1em] text-clay">
-                    Guided
+                    Course
                   </span>
                 </TabsTrigger>
               ) : null}

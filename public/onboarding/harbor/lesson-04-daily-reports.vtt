@@ -1,0 +1,21 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:10.000
+Production control begins in the Daily Project Log. If the field record is weak, every report and forecast above it becomes an opinion.
+
+2
+00:00:10.000 --> 00:00:23.000
+The superintendent records crew count, people per crew, and hours per person. One crew is only useful when the system also knows how many people were actually in it that day.
+
+3
+00:00:23.000 --> 00:00:36.000
+Then record the installed quantity using the unit that matches the work. That could be square feet, linear feet, fixtures, junction boxes, or another measurable production unit.
+
+4
+00:00:36.000 --> 00:00:48.000
+Narrative, photos, weather, delays, and constraints explain why the number moved. The record is strongest when it is captured by the field while the facts are still fresh.
+
+5
+00:00:48.000 --> 00:01:00.000
+That same work line flows into Daily WIP for PM review. The superintendent records the truth once, and OverWatch reuses it without duplicate entry.

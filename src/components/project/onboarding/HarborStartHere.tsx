@@ -3,13 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   ArrowRight,
+  BookOpenCheck,
   Check,
   CheckCircle2,
   Clock3,
-  Play,
   RotateCcw,
   ShieldCheck,
-  Sparkles,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -25,9 +24,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { HarborLessonVideo } from "@/components/project/onboarding/HarborLessonVideo";
 import { cn } from "@/lib/utils";
 import { getHarborDemoModuleStatus, resetHarborDemoModule } from "@/lib/projects.functions";
 import type { HarborDemoModuleStatus } from "@/lib/demo-seed";
+import { HARBOR_LESSON_MEDIA } from "@/lib/harbor-onboarding-media";
 import {
   HARBOR_IOR_FLOW,
   HARBOR_ONBOARDING_LESSONS,
@@ -71,6 +72,11 @@ export interface HarborStartHereTarget {
   wipView?: "daily" | "production";
 }
 
+interface StoredHarborCourseProgress {
+  completedModuleKeys: string[];
+  currentModuleKey: string;
+}
+
 export function HarborStartHere({
   projectId,
   onOpenWorkspace,
@@ -81,26 +87,44 @@ export function HarborStartHere({
   const loadStatus = useServerFn(getHarborDemoModuleStatus);
   const resetLesson = useServerFn(resetHarborDemoModule);
   const queryClient = useQueryClient();
-  const storageKey = `overwatch:harbor-start-here:${projectId}:v1`;
+  const storageKey = `overwatch:harbor-start-here:${projectId}:v2`;
   const [selectedModuleKey, setSelectedModuleKey] = useState(
     HARBOR_ONBOARDING_LESSONS[0].moduleKey,
   );
-  const [visitedModuleKeys, setVisitedModuleKeys] = useState<Set<string>>(new Set());
+  const [completedModuleKeys, setCompletedModuleKeys] = useState<Set<string>>(new Set());
   const [resetCandidate, setResetCandidate] = useState<HarborOnboardingLesson | null>(null);
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(storageKey);
-      const parsed = stored ? (JSON.parse(stored) as unknown) : [];
-      if (Array.isArray(parsed)) {
-        setVisitedModuleKeys(
-          new Set(parsed.filter((value): value is string => typeof value === "string")),
+      const parsed = stored ? (JSON.parse(stored) as Partial<StoredHarborCourseProgress>) : null;
+      if (parsed && Array.isArray(parsed.completedModuleKeys)) {
+        setCompletedModuleKeys(
+          new Set(
+            parsed.completedModuleKeys.filter(
+              (value): value is string => typeof value === "string",
+            ),
+          ),
         );
       }
+      if (
+        parsed?.currentModuleKey &&
+        HARBOR_ONBOARDING_LESSONS.some((lesson) => lesson.moduleKey === parsed.currentModuleKey)
+      ) {
+        setSelectedModuleKey(parsed.currentModuleKey);
+      }
     } catch {
-      setVisitedModuleKeys(new Set());
+      setCompletedModuleKeys(new Set());
     }
   }, [storageKey]);
+
+  const persistCourseProgress = (completed: Set<string>, currentModuleKey: string) => {
+    const progress: StoredHarborCourseProgress = {
+      completedModuleKeys: [...completed],
+      currentModuleKey,
+    };
+    window.localStorage.setItem(storageKey, JSON.stringify(progress));
+  };
 
   const statusQuery = useQuery({
     queryKey: ["harbor-demo-module-status", projectId],
@@ -115,10 +139,10 @@ export function HarborStartHere({
         queryClient.invalidateQueries({ queryKey: ["harbor-demo-module-status", projectId] }),
         queryClient.invalidateQueries({ queryKey: ["project", projectId] }),
       ]);
-      setVisitedModuleKeys((current) => {
+      setCompletedModuleKeys((current) => {
         const next = new Set(current);
         next.delete(lesson.moduleKey);
-        window.localStorage.setItem(storageKey, JSON.stringify([...next]));
+        persistCourseProgress(next, lesson.moduleKey);
         return next;
       });
       setResetCandidate(null);
@@ -140,25 +164,51 @@ export function HarborStartHere({
   const selectedLesson =
     HARBOR_ONBOARDING_LESSONS.find((lesson) => lesson.moduleKey === selectedModuleKey) ??
     HARBOR_ONBOARDING_LESSONS[0];
+  const selectedLessonIndex = HARBOR_ONBOARDING_LESSONS.findIndex(
+    (lesson) => lesson.moduleKey === selectedLesson.moduleKey,
+  );
+  const nextLesson = HARBOR_ONBOARDING_LESSONS[selectedLessonIndex + 1];
+  const selectedMedia = HARBOR_LESSON_MEDIA[selectedLesson.moduleKey];
   const selectedReadiness = readinessCopy(moduleStatusByKey.get(selectedLesson.moduleKey));
   const readyCount = HARBOR_ONBOARDING_LESSONS.filter(
     (lesson) => moduleStatusByKey.get(lesson.moduleKey) === "current",
   ).length;
-  const exploredCount = HARBOR_ONBOARDING_LESSONS.filter((lesson) =>
-    visitedModuleKeys.has(lesson.moduleKey),
+  const completedCount = HARBOR_ONBOARDING_LESSONS.filter((lesson) =>
+    completedModuleKeys.has(lesson.moduleKey),
   ).length;
 
-  const markLessonExplored = (lesson: HarborOnboardingLesson) => {
-    setVisitedModuleKeys((current) => {
+  const selectLesson = (lesson: HarborOnboardingLesson) => {
+    setSelectedModuleKey(lesson.moduleKey);
+    persistCourseProgress(completedModuleKeys, lesson.moduleKey);
+  };
+
+  const completeLesson = (lesson: HarborOnboardingLesson) => {
+    setCompletedModuleKeys((current) => {
       const next = new Set(current);
       next.add(lesson.moduleKey);
-      window.localStorage.setItem(storageKey, JSON.stringify([...next]));
+      const nextModuleKey = nextLesson?.moduleKey ?? lesson.moduleKey;
+      persistCourseProgress(next, nextModuleKey);
       return next;
+    });
+    if (nextLesson) {
+      setSelectedModuleKey(nextLesson.moduleKey);
+      window.setTimeout(() => {
+        document.getElementById("harbor-course-lesson")?.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+          block: "start",
+        });
+      }, 0);
+      return;
+    }
+    toast.success("Harbor Start Here complete", {
+      description: "You can revisit any lesson or practice the workflow in Harbor Residence.",
     });
   };
 
-  const openLesson = (lesson: HarborOnboardingLesson) => {
-    markLessonExplored(lesson);
+  const practiceLesson = (lesson: HarborOnboardingLesson) => {
+    persistCourseProgress(completedModuleKeys, lesson.moduleKey);
     onOpenWorkspace(lesson.target);
   };
 
@@ -225,11 +275,11 @@ export function HarborStartHere({
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-foreground">Your walkthrough</span>
               <span className="text-muted-foreground">
-                {exploredCount} of {HARBOR_ONBOARDING_LESSONS.length} explored
+                {completedCount} of {HARBOR_ONBOARDING_LESSONS.length} completed
               </span>
             </div>
             <Progress
-              value={(exploredCount / HARBOR_ONBOARDING_LESSONS.length) * 100}
+              value={(completedCount / HARBOR_ONBOARDING_LESSONS.length) * 100}
               className="mt-3 h-1.5"
             />
             <p className="mt-3 text-xs text-muted-foreground">
@@ -246,18 +296,25 @@ export function HarborStartHere({
               <p className="eyebrow">Choose a lesson</p>
               <p className="mt-1 text-xs text-muted-foreground">Short. Real. In job order.</p>
             </div>
-            <Sparkles className="h-4 w-4 text-clay" />
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-dark-panel p-1.5">
+              <img
+                src="/overwatch-logo-master-reversed.svg"
+                alt=""
+                aria-hidden="true"
+                className="h-full w-full"
+              />
+            </span>
           </div>
           <ol className="flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
             {HARBOR_ONBOARDING_LESSONS.map((lesson) => {
               const isSelected = selectedLesson.moduleKey === lesson.moduleKey;
-              const isExplored = visitedModuleKeys.has(lesson.moduleKey);
+              const isCompleted = completedModuleKeys.has(lesson.moduleKey);
               const readiness = readinessCopy(moduleStatusByKey.get(lesson.moduleKey));
               return (
                 <li key={lesson.moduleKey} className="min-w-[230px] lg:min-w-0">
                   <button
                     type="button"
-                    onClick={() => setSelectedModuleKey(lesson.moduleKey)}
+                    onClick={() => selectLesson(lesson)}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       isSelected
@@ -268,14 +325,14 @@ export function HarborStartHere({
                     <span
                       className={cn(
                         "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border font-mono text-[10px] font-bold",
-                        isExplored
+                        isCompleted
                           ? "border-success/30 bg-success/[0.08] text-success"
                           : isSelected
                             ? "border-clay/30 bg-clay/[0.08] text-clay"
                             : "border-hairline bg-card text-muted-foreground",
                       )}
                     >
-                      {isExplored ? <Check className="h-3.5 w-3.5" /> : lesson.number}
+                      {isCompleted ? <Check className="h-3.5 w-3.5" /> : lesson.number}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-semibold">
@@ -294,8 +351,9 @@ export function HarborStartHere({
         </div>
 
         <article
+          id="harbor-course-lesson"
           key={selectedLesson.moduleKey}
-          className="min-w-0 rounded-xl border border-hairline bg-card p-5 shadow-card motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 sm:p-7"
+          className="min-w-0 scroll-mt-6 rounded-xl border border-hairline bg-card p-5 shadow-card motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300 sm:p-7"
         >
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-hairline pb-5">
             <div className="max-w-3xl">
@@ -327,50 +385,66 @@ export function HarborStartHere({
             </div>
           </div>
 
-          <div className="grid gap-7 py-6 xl:grid-cols-[minmax(0,1fr)_300px]">
-            <div>
-              <p className="eyebrow">Why it matters</p>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                {selectedLesson.why}
-              </p>
+          <div className="py-6">
+            <p className="eyebrow">Why it matters</p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              {selectedLesson.why}
+            </p>
 
-              <p className="eyebrow mt-7">Do this in Harbor</p>
-              <ol className="mt-3 space-y-3">
-                {selectedLesson.steps.map((step, index) => (
-                  <li key={step} className="flex items-start gap-3">
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-secondary font-mono text-[10px] font-bold text-clay">
-                      {index + 1}
-                    </span>
-                    <span className="pt-0.5 text-sm leading-5 text-foreground">{step}</span>
-                  </li>
-                ))}
-              </ol>
+            <div className="mt-6">
+              <HarborLessonVideo media={selectedMedia} />
             </div>
 
-            <aside className="rounded-xl bg-dark-panel p-5 text-background">
-              <p className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-clay">
-                What success looks like
-              </p>
-              <CheckCircle2 className="mt-4 h-7 w-7 text-success" />
-              <p className="mt-3 font-serif text-xl leading-6">{selectedLesson.result}</p>
-              <p className="mt-4 text-xs leading-5 text-background/60">
-                You are using the real Harbor workflow. Nothing here bypasses normal permissions or
-                application rules.
-              </p>
-            </aside>
+            <div className="mt-7 grid gap-7 xl:grid-cols-[minmax(0,1fr)_300px]">
+              <div>
+                <p className="eyebrow mt-7">Do this in Harbor</p>
+                <ol className="mt-3 space-y-3">
+                  {selectedLesson.steps.map((step, index) => (
+                    <li key={step} className="flex items-start gap-3">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-secondary font-mono text-[10px] font-bold text-clay">
+                        {index + 1}
+                      </span>
+                      <span className="pt-0.5 text-sm leading-5 text-foreground">{step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              <aside className="rounded-xl bg-dark-panel p-5 text-background">
+                <p className="font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-clay">
+                  What success looks like
+                </p>
+                <CheckCircle2 className="mt-4 h-7 w-7 text-success" />
+                <p className="mt-3 font-serif text-xl leading-6">{selectedLesson.result}</p>
+                <p className="mt-4 text-xs leading-5 text-background/60">
+                  You are using the real Harbor workflow. Nothing here bypasses normal permissions
+                  or application rules.
+                </p>
+              </aside>
+            </div>
           </div>
 
           <div className="flex flex-col gap-3 border-t border-hairline pt-5 sm:flex-row sm:items-center sm:justify-between">
-            <Button
-              type="button"
-              variant="signal"
-              className="gap-2 sm:w-auto"
-              onClick={() => openLesson(selectedLesson)}
-            >
-              <Play className="h-4 w-4" />
-              {selectedLesson.target.actionLabel}
-              <ArrowRight className="h-4 w-4" />
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Button
+                type="button"
+                variant="signal"
+                className="gap-2 sm:w-auto"
+                onClick={() => completeLesson(selectedLesson)}
+              >
+                {nextLesson ? `Continue to ${nextLesson.shortTitle}` : "Finish Start Here"}
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2 sm:w-auto"
+                onClick={() => practiceLesson(selectedLesson)}
+              >
+                <BookOpenCheck className="h-4 w-4" />
+                Practice this in Harbor
+              </Button>
+            </div>
             <Button
               type="button"
               variant="ghost"
