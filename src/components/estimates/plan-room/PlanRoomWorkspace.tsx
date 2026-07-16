@@ -155,6 +155,7 @@ import {
   COCKPIT_PANEL_MAX_WIDTH,
   COCKPIT_PANEL_MIN_HEIGHT,
   COCKPIT_PANEL_MIN_WIDTH,
+  COCKPIT_PANEL_MOVE_RESERVE,
   DEFAULT_COCKPIT_PANEL_LAYOUTS,
   DEFAULT_TAKEOFF_LAYER_VISIBILITY,
   DEFAULT_VIEW_SIZE,
@@ -3271,8 +3272,14 @@ export function PlanRoomWorkspace({
         COCKPIT_PANEL_MAX_HEIGHT,
         parentHeight - topGap - COCKPIT_PANEL_EDGE_GAP,
       );
+      const constrainedMaxHeight = Math.max(COCKPIT_PANEL_MIN_HEIGHT, maxHeight);
+      const movementReserve = Math.min(
+        COCKPIT_PANEL_MOVE_RESERVE,
+        Math.max(0, constrainedMaxHeight - COCKPIT_PANEL_MIN_HEIGHT),
+      );
+      const windowedMaxHeight = constrainedMaxHeight - movementReserve;
       const width = clampNumber(layout.width, COCKPIT_PANEL_MIN_WIDTH, Math.max(280, maxWidth));
-      const height = clampNumber(layout.height, COCKPIT_PANEL_MIN_HEIGHT, Math.max(280, maxHeight));
+      const height = clampNumber(layout.height, COCKPIT_PANEL_MIN_HEIGHT, windowedMaxHeight);
       const y = clampNumber(
         layout.y,
         topGap,
@@ -3310,9 +3317,8 @@ export function PlanRoomWorkspace({
   }, [clampCockpitPanelLayout, isCockpitMode]);
   const cockpitPanelStyle = (panel: CockpitPanelKey): CSSProperties => {
     if (cockpitPanelPresentations[panel] === "maximized") {
-      const topGap = cockpitPanelTopGap();
       return {
-        top: topGap,
+        top: COCKPIT_PANEL_EDGE_GAP,
         right: COCKPIT_PANEL_EDGE_GAP,
         bottom: COCKPIT_PANEL_EDGE_GAP,
         left: COCKPIT_PANEL_EDGE_GAP,
@@ -3848,7 +3854,7 @@ export function PlanRoomWorkspace({
             isCockpitMode &&
               (cockpitPanels.drawings
                 ? cockpitPanelPresentations.drawings === "maximized"
-                  ? "absolute z-50 grid auto-rows-min gap-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur xl:grid-cols-2 2xl:grid-cols-3"
+                  ? "absolute z-[60] grid auto-rows-min gap-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur xl:grid-cols-2 2xl:grid-cols-3"
                   : "absolute z-40 space-y-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}
@@ -4325,8 +4331,8 @@ export function PlanRoomWorkspace({
               (cockpitPanels.tools
                 ? cockpitPanelPresentations.tools === "maximized"
                   ? cockpitToolsView === "worksheet"
-                    ? "absolute z-50 flex flex-col gap-2 overflow-hidden rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
-                    : "absolute z-50 flex flex-col gap-2 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
+                    ? "absolute z-[60] flex flex-col gap-2 overflow-hidden rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
+                    : "absolute z-[60] flex flex-col gap-2 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                   : "absolute z-40 space-y-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}

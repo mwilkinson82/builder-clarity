@@ -3037,6 +3037,8 @@ await expectContains(
     /plan-pdf-detail-fast/,
     /plan-pdf-detail-sharp/,
     /plan-pdf-detail-max/,
+    /COCKPIT_PANEL_MOVE_RESERVE/,
+    /overwatch\.plan-room\.cockpit-panels\.v3/,
     /Finish Linear/,
     /Finish Count/,
     /Sharp PDF/,
