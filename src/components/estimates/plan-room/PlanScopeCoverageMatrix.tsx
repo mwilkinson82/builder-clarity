@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   FileSearch,
+  History,
   ScanText,
   ShieldCheck,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import {
 import type { PlanSetRow, PlanSheetRow } from "@/lib/plan-room.functions";
 import {
   planScopeCoverageDiscipline,
+  partitionPlanScopeCoverageDecisions,
   type PlanScopeCoverageRecord,
 } from "@/lib/plan-scope-coverage";
 
@@ -102,24 +104,22 @@ export function PlanScopeCoverageMatrix({
       setSheets
         .map((sheet) => {
           const record = recordBySheet.get(sheet.id) ?? null;
-          const decisions = record
-            ? record.plan.suggestions
-                .map((suggestion) =>
-                  queueItemBySuggestion.get(
-                    `${sheet.id}:${measurementSuggestionKey(sheet.id, suggestion)}`,
-                  ),
-                )
-                .filter((item): item is MeasurementScopeQueueItem => Boolean(item))
-            : [];
-          return { sheet, record, decisions };
+          const { current: decisions, historical: historicalDecisions } =
+            partitionPlanScopeCoverageDecisions({
+              sheetId: sheet.id,
+              record,
+              queueItems: setQueueItems,
+            });
+          return { sheet, record, decisions, historicalDecisions };
         })
         .filter((row) => {
           if (filter === "unreviewed") return !row.record;
           if (filter === "cited") return Boolean(row.record?.plan.suggestions.length);
-          if (filter === "decided") return row.decisions.length > 0;
+          if (filter === "decided")
+            return row.decisions.length + row.historicalDecisions.length > 0;
           return true;
         }),
-    [filter, queueItemBySuggestion, recordBySheet, setSheets],
+    [filter, recordBySheet, setQueueItems, setSheets],
   );
   const groupedRows = useMemo(() => {
     const groups = new Map<string, typeof rows>();
@@ -271,7 +271,7 @@ export function PlanScopeCoverageMatrix({
                       <Badge variant="outline">{disciplineRows.length} sheets</Badge>
                     </div>
                     <div className="divide-y divide-hairline overflow-hidden rounded-lg border border-hairline">
-                      {disciplineRows.map(({ sheet, record, decisions }) => (
+                      {disciplineRows.map(({ sheet, record, decisions, historicalDecisions }) => (
                         <div
                           key={sheet.id}
                           className="grid gap-3 bg-card px-4 py-3 lg:grid-cols-[150px_minmax(0,1fr)_150px_150px] lg:items-start"
@@ -291,50 +291,88 @@ export function PlanScopeCoverageMatrix({
                             )}
                           </div>
 
-                          <div>
-                            {!record ? (
-                              <p className="text-xs text-muted-foreground">
-                                Not reviewed. This is a coverage gap, not a claim that the sheet has
-                                no estimating scope.
-                              </p>
-                            ) : record.plan.suggestions.length === 0 ? (
-                              <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
-                                <span>
-                                  Reviewed; no sufficiently supported LF/SF note candidate was
-                                  retained. Manual visual review is still required.
-                                </span>
-                              </div>
-                            ) : (
-                              <div className="space-y-2">
-                                {record.plan.suggestions.slice(0, 3).map((suggestion) => {
-                                  const decision = queueItemBySuggestion.get(
-                                    `${sheet.id}:${measurementSuggestionKey(sheet.id, suggestion)}`,
-                                  );
-                                  return (
-                                    <div key={suggestion.id} className="text-xs">
+                          <div className="space-y-3">
+                            <div>
+                              {!record ? (
+                                <p className="text-xs text-muted-foreground">
+                                  Not reviewed. This is a coverage gap, not a claim that the sheet
+                                  has no estimating scope.
+                                </p>
+                              ) : record.plan.suggestions.length === 0 ? (
+                                <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                                  <span>
+                                    Reviewed; no sufficiently supported LF/SF note candidate was
+                                    retained. Manual visual review is still required.
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="space-y-2">
+                                  {record.plan.suggestions.slice(0, 3).map((suggestion) => {
+                                    const decision = queueItemBySuggestion.get(
+                                      `${sheet.id}:${measurementSuggestionKey(sheet.id, suggestion)}`,
+                                    );
+                                    return (
+                                      <div key={suggestion.id} className="text-xs">
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                          <span className="font-medium text-foreground">
+                                            {suggestion.label}
+                                          </span>
+                                          <Badge variant="outline">{suggestion.unit}</Badge>
+                                          {decision && (
+                                            <Badge variant="secondary">
+                                              {measurementScopeStatusLabel(decision.status)}
+                                            </Badge>
+                                          )}
+                                        </div>
+                                        <p className="mt-1 text-[11px] text-muted-foreground">
+                                          {suggestion.source_line} · “{suggestion.source_excerpt}”
+                                        </p>
+                                      </div>
+                                    );
+                                  })}
+                                  {record.plan.suggestions.length > 3 && (
+                                    <p className="text-[11px] text-muted-foreground">
+                                      +{record.plan.suggestions.length - 3} more cited candidates
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            {historicalDecisions.length > 0 && (
+                              <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs">
+                                <div className="flex items-start gap-1.5 font-medium text-warning">
+                                  <History className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                  <span>Historical estimator decision retained for audit</span>
+                                </div>
+                                <p className="mt-1 text-[11px] text-muted-foreground">
+                                  The cited candidate is no longer active because it does not pass
+                                  the current evidence gate.
+                                </p>
+                                <div className="mt-2 space-y-2">
+                                  {historicalDecisions.slice(0, 3).map((decision) => (
+                                    <div key={decision.id}>
                                       <div className="flex flex-wrap items-center gap-1.5">
                                         <span className="font-medium text-foreground">
-                                          {suggestion.label}
+                                          {decision.label}
                                         </span>
-                                        <Badge variant="outline">{suggestion.unit}</Badge>
-                                        {decision && (
-                                          <Badge variant="secondary">
-                                            {measurementScopeStatusLabel(decision.status)}
-                                          </Badge>
-                                        )}
+                                        <Badge variant="outline">{decision.unit}</Badge>
+                                        <Badge variant="secondary">
+                                          {measurementScopeStatusLabel(decision.status)}
+                                        </Badge>
                                       </div>
                                       <p className="mt-1 text-[11px] text-muted-foreground">
-                                        {suggestion.source_line} · “{suggestion.source_excerpt}”
+                                        {decision.source_line} · “{decision.source_excerpt}”
                                       </p>
                                     </div>
-                                  );
-                                })}
-                                {record.plan.suggestions.length > 3 && (
-                                  <p className="text-[11px] text-muted-foreground">
-                                    +{record.plan.suggestions.length - 3} more cited candidates
-                                  </p>
-                                )}
+                                  ))}
+                                  {historicalDecisions.length > 3 && (
+                                    <p className="text-[11px] text-muted-foreground">
+                                      +{historicalDecisions.length - 3} more historical decisions
+                                    </p>
+                                  )}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -342,11 +380,15 @@ export function PlanScopeCoverageMatrix({
                           <div>
                             <p className="eyebrow">Disposition</p>
                             <p className="mt-1 text-xs text-foreground">
-                              {decisions.length > 0
-                                ? `${decisions.length} estimator decision${decisions.length === 1 ? "" : "s"}`
-                                : record
-                                  ? "Awaiting estimator"
-                                  : "Not available"}
+                              {decisions.length > 0 && historicalDecisions.length > 0
+                                ? `${decisions.length} current · ${historicalDecisions.length} historical`
+                                : decisions.length > 0
+                                  ? `${decisions.length} estimator decision${decisions.length === 1 ? "" : "s"}`
+                                  : historicalDecisions.length > 0
+                                    ? `${historicalDecisions.length} historical decision${historicalDecisions.length === 1 ? "" : "s"}`
+                                    : record
+                                      ? "Awaiting estimator"
+                                      : "Not available"}
                             </p>
                           </div>
 

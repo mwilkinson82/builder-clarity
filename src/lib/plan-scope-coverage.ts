@@ -6,6 +6,10 @@ import {
   type MeasurementAssistantSuggestion,
   type MeasurementSourceLine,
 } from "@/lib/plan-room-measurement-assistant";
+import {
+  measurementSuggestionKey,
+  type MeasurementScopeQueueItem,
+} from "@/lib/plan-room-measurement-scope";
 
 export interface PlanScopeCoverageRecord {
   operation_id: string;
@@ -118,6 +122,37 @@ export function latestPlanScopeCoverageRecords(rows: unknown[]) {
     records.push(record);
   }
   return records;
+}
+
+/**
+ * Keep estimator decisions visible even when a newer evidence gate no longer
+ * retains the candidate that originally prompted the decision. Historical
+ * decisions remain audit records; they must never become active suggestions.
+ */
+export function partitionPlanScopeCoverageDecisions({
+  sheetId,
+  record,
+  queueItems,
+}: {
+  sheetId: string;
+  record: PlanScopeCoverageRecord | null;
+  queueItems: MeasurementScopeQueueItem[];
+}) {
+  const currentSuggestionKeys = new Set(
+    (record?.plan.suggestions ?? []).map((suggestion) =>
+      measurementSuggestionKey(sheetId, suggestion),
+    ),
+  );
+  const current: MeasurementScopeQueueItem[] = [];
+  const historical: MeasurementScopeQueueItem[] = [];
+
+  for (const item of queueItems) {
+    if (item.plan_sheet_id !== sheetId) continue;
+    if (currentSuggestionKeys.has(item.suggestion_key)) current.push(item);
+    else historical.push(item);
+  }
+
+  return { current, historical };
 }
 
 export function planScopeCoverageDiscipline(input: { sheet_number: string; discipline: string }) {

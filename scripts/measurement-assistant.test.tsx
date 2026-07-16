@@ -19,6 +19,7 @@ import {
 } from "@/lib/plan-room-measurement-scope";
 import {
   latestPlanScopeCoverageRecords,
+  partitionPlanScopeCoverageDecisions,
   planScopeCoverageDiscipline,
 } from "@/lib/plan-scope-coverage";
 import {
@@ -427,6 +428,51 @@ describe("guided measurement planning", () => {
     expect(record.plan.warnings).toEqual([
       "2 AI suggestions were omitted because the cited note did not support the proposed scope or measurement tool.",
     ]);
+  });
+
+  it("retains estimator decisions as audit history without reviving filtered candidates", () => {
+    const sheetId = queuedScope.plan_sheet_id;
+    const currentSuggestion = {
+      id: "current-candidate",
+      label: "Corridor GWB walls",
+      tool: "linear" as const,
+      unit: "LF" as const,
+      source_line: "L014",
+      source_excerpt: "CONTINUOUS GWB AT CORRIDOR WALLS",
+      rationale: "Review the cited note, then trace the supported wall run.",
+      evidence_strength: "review" as const,
+    };
+    const record = {
+      operation_id: "current-operation",
+      sheet_id: sheetId,
+      reviewed_at: "2026-07-15T20:00:00.000Z",
+      model: "gpt-5-mini",
+      credits_charged: 0,
+      source_line_count: 42,
+      plan: { summary: "Current cited scope.", suggestions: [currentSuggestion], warnings: [] },
+    };
+    const currentDecision = {
+      ...queuedScope,
+      suggestion_key: measurementSuggestionKey(sheetId, currentSuggestion),
+    };
+    const historicalDecision = {
+      ...queuedScope,
+      id: "historical-decision",
+      suggestion_key: "measurement-no-longer-retained",
+      label: "Door jamb at GWB partition",
+      source_line: "L103",
+      source_excerpt: "DOOR JAMB AT GWB PARTITION",
+    };
+
+    const partitioned = partitionPlanScopeCoverageDecisions({
+      sheetId,
+      record,
+      queueItems: [currentDecision, historicalDecision],
+    });
+
+    expect(partitioned.current).toEqual([currentDecision]);
+    expect(partitioned.historical).toEqual([historicalDecision]);
+    expect(record.plan.suggestions).toEqual([currentSuggestion]);
   });
 
   it("prefers the just-saved assessment until refreshed server data catches up", () => {
