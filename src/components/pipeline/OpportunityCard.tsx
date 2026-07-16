@@ -2,7 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import { fmtPct, fmtUSD } from "@/lib/format";
 import type { PipelineOpportunityRow } from "@/lib/pipeline.functions";
 import { cn } from "@/lib/utils";
-import { bidChip, gpToneClass, initials } from "./pipeline-ui";
+import { bidChip, gpToneClass, initials, opportunityPricingState } from "./pipeline-ui";
 
 type OpportunityCardProps = {
   opportunity: PipelineOpportunityRow;
@@ -18,6 +18,7 @@ export function OpportunityCard({
   onDragEnd,
 }: OpportunityCardProps) {
   const chip = bidChip(opportunity);
+  const pricing = opportunityPricingState(opportunity);
   return (
     <button
       type="button"
@@ -52,10 +53,17 @@ export function OpportunityCard({
 
       <div className="mt-2.5 flex items-baseline gap-2.5">
         <span className="font-serif text-[19px] leading-none text-foreground">
-          {fmtUSD(opportunity.estimated_contract)}
+          {pricing.priced ? fmtUSD(opportunity.estimated_contract) : "Unpriced"}
         </span>
-        <span className={cn("text-[11.5px] font-bold", gpToneClass(opportunity.estimated_gp_pct))}>
-          {fmtPct(opportunity.estimated_gp_pct)} GP
+        <span
+          className={cn(
+            "text-[11.5px] font-bold",
+            pricing.marginReady
+              ? gpToneClass(opportunity.estimated_gp_pct)
+              : "text-muted-foreground",
+          )}
+        >
+          {pricing.marginReady ? `${fmtPct(opportunity.estimated_gp_pct)} GP` : "GP pending"}
         </span>
       </div>
 

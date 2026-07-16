@@ -6,7 +6,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { planCrmDemoSeed } from "../src/lib/pipeline-demo-seed.ts";
 import { harborDemoSeedAction } from "../src/lib/demo-seed.ts";
-import { pruneRemovedDemoCrm } from "../src/components/pipeline/pipeline-ui.ts";
+import {
+  computePipelineMetrics,
+  opportunityPricingState,
+  pruneRemovedDemoCrm,
+} from "../src/components/pipeline/pipeline-ui.ts";
 import {
   DEFAULT_VALUE_FOLLOWUP_PLAYBOOK,
   appendValueAssetToBody,
@@ -14,6 +18,12 @@ import {
   followupTiming,
   personalizeFollowupTemplate,
 } from "../src/lib/crm-followup-domain.ts";
+import {
+  CRM_ONBOARDING_TASK_TEMPLATES,
+  datePlusDays,
+  parseCrmAiFollowupDraft,
+  parseCrmMeetingBrief,
+} from "../src/lib/crm-action-suite-domain.ts";
 
 // ---------- Archived demo tombstone → seed nothing ----------
 const archivedDemo = { id: "project-1", archived_at: "2026-07-01T00:00:00Z" };
@@ -26,6 +36,98 @@ assert.equal(
   harborDemoSeedAction(archivedDemo),
   "skip",
   "The CRM plan defers to the shared demo-seed opt-out decision.",
+);
+
+// ---------- Financial metrics distinguish unknown from zero ----------
+const pipelineMetrics = computePipelineMetrics([
+  {
+    id: "unpriced",
+    stage: "estimating",
+    archived: false,
+    estimated_contract: 0,
+    estimated_cost: 0,
+    estimated_gp_pct: 0,
+    probability: 30,
+    days_until_bid_due: null,
+    updated_at: "2026-07-16T00:00:00Z",
+  },
+  {
+    id: "margin-ready",
+    stage: "estimating",
+    archived: false,
+    estimated_contract: 100_000,
+    estimated_cost: 80_000,
+    estimated_gp_pct: 20,
+    probability: 50,
+    days_until_bid_due: 4,
+    updated_at: "2026-07-16T00:00:00Z",
+  },
+  {
+    id: "contract-only",
+    stage: "bid_submitted",
+    archived: false,
+    estimated_contract: 100_000,
+    estimated_cost: 0,
+    estimated_gp_pct: 100,
+    probability: 30,
+    days_until_bid_due: 8,
+    updated_at: "2026-07-16T00:00:00Z",
+  },
+] as never);
+assert.equal(
+  pipelineMetrics.activeCount,
+  3,
+  "Unpriced work remains visible in active pipeline count.",
+);
+assert.equal(
+  pipelineMetrics.weighted,
+  80_000,
+  "Weighted pipeline sums priced value; $0 placeholders do not dilute it.",
+);
+assert.equal(
+  pipelineMetrics.pricedCount,
+  2,
+  "Pricing coverage counts contract values that are actually entered.",
+);
+assert.equal(
+  pipelineMetrics.marginReadyCount,
+  1,
+  "GP includes only rows with contract and cost entered.",
+);
+assert.equal(
+  pipelineMetrics.avgGp,
+  20,
+  "Portfolio GP is contract-dollar weighted and excludes incomplete pricing.",
+);
+assert.equal(
+  pipelineMetrics.weightedGp,
+  10_000,
+  "Weighted GP combines actual margin dollars with stage probability.",
+);
+assert.deepEqual(
+  opportunityPricingState({ estimated_contract: 0, estimated_cost: 0 } as never),
+  { priced: false, marginReady: false },
+  "$0 placeholders display as unpriced and GP pending.",
+);
+
+// ---------- AI parsing and contract-to-kickoff defaults ----------
+assert.equal(
+  CRM_ONBOARDING_TASK_TEMPLATES.length,
+  8,
+  "Won work gets eight prepared onboarding steps.",
+);
+assert.equal(datePlusDays("2026-07-16", 5), "2026-07-21");
+assert.equal(
+  parseCrmAiFollowupDraft(
+    '{"subject":"A useful next step","body":"Hi Sam,\\n\\nHere is one practical question to settle.","value_angle":"Reduce decision friction.","resource_idea":"A one-page decision checklist."}',
+  ).resource_idea,
+  "A one-page decision checklist.",
+);
+assert.equal(
+  parseCrmMeetingBrief(
+    '{"executive_summary":"Pricing is incomplete.","relationship_context":[],"desired_outcomes":["Agree on scope."],"questions_to_ask":["Who approves changes?"],"risks_to_surface":["Cost is missing."],"value_to_bring":["A scope checklist."],"next_step_options":["Schedule scope review."]}',
+  ).risks_to_surface[0],
+  "Cost is missing.",
 );
 
 // ---------- Active demo project → seed and link ----------
@@ -226,5 +328,30 @@ for (const table of [
     `CRM follow-up must explicitly deny anonymous Data API access to public.${table}.`,
   );
 }
+
+const actionSuiteMigration = readFileSync(
+  new URL("../supabase/migrations/20260716124626_crm_action_suite.sql", import.meta.url),
+  "utf8",
+);
+for (const requiredFragment of [
+  "CREATE TABLE IF NOT EXISTS public.crm_outbound_messages",
+  "CREATE TABLE IF NOT EXISTS public.crm_meeting_briefs",
+  "CREATE TABLE IF NOT EXISTS public.crm_onboarding_plans",
+  "CREATE TABLE IF NOT EXISTS public.crm_onboarding_tasks",
+  "REVOKE ALL ON public.crm_outbound_messages FROM anon, authenticated",
+  "REFERENCES public.pipeline_opportunities(id, organization_id)",
+  "'ai_crm_assist'",
+]) {
+  assert.ok(
+    actionSuiteMigration.includes(requiredFragment),
+    `CRM action-suite migration must contain: ${requiredFragment}`,
+  );
+}
+
+const actionSuiteVerifier = readFileSync(
+  new URL("../supabase/verification/20260716124626_crm_action_suite.sql", import.meta.url),
+  "utf8",
+);
+assert.ok(actionSuiteVerifier.includes("CRMACTION1 VERIFIED"));
 
 console.log("CRM pipeline smoke checks passed.");

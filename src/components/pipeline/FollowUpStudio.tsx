@@ -1,17 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import {
-  CalendarClock,
-  CheckCircle2,
-  Copy,
-  Library,
-  Mail,
-  PlayCircle,
-  Save,
-  Send,
-  Upload,
-} from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { CalendarClock, Handshake, Library, ListChecks, PlayCircle, Upload } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   completePreparedFollowup,
@@ -20,15 +10,12 @@ import {
   ensureCrmFollowupDefaults,
   listCrmFollowupStudio,
   updatePreparedFollowup,
-  type CrmPreparedFollowup,
-  type CrmValueAsset,
   type CreateCrmValueAssetInput,
 } from "@/lib/crm-followup.functions";
-import { appendValueAssetToBody, followupTiming } from "@/lib/crm-followup-domain";
+import { followupTiming } from "@/lib/crm-followup-domain";
 import { supabase } from "@/integrations/supabase/client";
 import type { PipelineMember, PipelineOpportunityRow } from "@/lib/pipeline.functions";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -39,7 +26,10 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { isDemoOpportunityId, shortDate } from "./pipeline-ui";
+import { isDemoOpportunityId } from "./pipeline-ui";
+import { DeliveryHistoryPanel } from "./DeliveryHistoryPanel";
+import { MeetingPrepPanel } from "./MeetingPrepPanel";
+import { OnboardingPanel } from "./OnboardingPanel";
 import {
   EmptyPanel,
   PreparedFollowupCard,
@@ -64,7 +54,7 @@ type AssetForm = {
   description: string;
   audience: string;
   tags: string;
-  sourceType: "upload" | "link";
+  sourceType: "upload" | "link" | "google_drive";
   externalUrl: string;
 };
 
@@ -164,7 +154,7 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
         description: assetForm.description.trim(),
         source_type: assetForm.sourceType,
         storage_path: storagePath,
-        external_url: assetForm.sourceType === "link" ? assetForm.externalUrl.trim() : "",
+        external_url: assetForm.sourceType === "upload" ? "" : assetForm.externalUrl.trim(),
         original_file_name: assetFile?.name ?? "",
         content_type: assetFile?.type ?? "",
         size_bytes: assetFile?.size ?? 0,
@@ -278,6 +268,12 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
           <TabsTrigger value="library" className="gap-1.5">
             <Library className="h-3.5 w-3.5" /> Value Library
           </TabsTrigger>
+          <TabsTrigger value="meeting-prep" className="gap-1.5">
+            <Handshake className="h-3.5 w-3.5" /> Meeting prep
+          </TabsTrigger>
+          <TabsTrigger value="onboarding" className="gap-1.5">
+            <ListChecks className="h-3.5 w-3.5" /> Onboarding
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="queue" className="space-y-4">
@@ -323,6 +319,7 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
               );
             })
           )}
+          <DeliveryHistoryPanel />
         </TabsContent>
 
         <TabsContent value="playbooks" className="space-y-5">
@@ -457,6 +454,7 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
                       <SelectContent>
                         <SelectItem value="upload">Upload a file</SelectItem>
                         <SelectItem value="link">Article or web link</SelectItem>
+                        <SelectItem value="google_drive">Google Drive link</SelectItem>
                       </SelectContent>
                     </Select>
                   </Field>
@@ -484,7 +482,13 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
                     )}
                   </Field>
                 ) : (
-                  <Field label="Article or resource URL">
+                  <Field
+                    label={
+                      assetForm.sourceType === "google_drive"
+                        ? "Google Drive sharing URL"
+                        : "Article or resource URL"
+                    }
+                  >
                     <Input
                       type="url"
                       value={assetForm.externalUrl}
@@ -494,7 +498,11 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
                           externalUrl: event.target.value,
                         }))
                       }
-                      placeholder="https://…"
+                      placeholder={
+                        assetForm.sourceType === "google_drive"
+                          ? "https://drive.google.com/…"
+                          : "https://…"
+                      }
                     />
                   </Field>
                 )}
@@ -529,11 +537,28 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
                 snapshot?.assets.map((asset) => <ValueAssetRow key={asset.id} asset={asset} />)
               )}
               <div className="rounded-xl border border-dashed border-hairline bg-background px-4 py-3 text-xs text-muted-foreground">
-                Google Drive selection and AI content analysis are the next integration layer.
-                Direct uploads and links remain the durable Overwatch library of record.
+                Google Drive resources use the sharing link you provide. Keep the file permission
+                set so the recipient can open it; OverWatch records the Drive source alongside
+                uploads and articles.
               </div>
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="meeting-prep">
+          <MeetingPrepPanel
+            opportunities={opportunities}
+            members={members}
+            onOpenOpportunity={onOpenOpportunity}
+          />
+        </TabsContent>
+
+        <TabsContent value="onboarding">
+          <OnboardingPanel
+            opportunities={opportunities}
+            members={members}
+            onOpenOpportunity={onOpenOpportunity}
+          />
         </TabsContent>
       </Tabs>
     </div>

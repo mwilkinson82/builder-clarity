@@ -22,6 +22,7 @@ export type CreditLedgerReason =
   | "ai_assembly_assumptions"
   | "ai_revision_match"
   | "ai_revision_scope_review"
+  | "ai_crm_assist"
   | "refund"
   | "admin_adjustment";
 

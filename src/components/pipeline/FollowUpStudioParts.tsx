@@ -1,4 +1,5 @@
 import {
+  Bot,
   CheckCircle2,
   Clock3,
   Copy,
@@ -10,6 +11,8 @@ import {
   Send,
   Sparkles,
 } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import type {
@@ -20,6 +23,17 @@ import type {
 import { appendValueAssetToBody, followupTiming } from "@/lib/crm-followup-domain";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +46,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { generateCrmFollowupDraft } from "@/lib/crm-actions-ai.functions";
+import { sendCrmFollowupEmail } from "@/lib/crm-actions.functions";
 import { shortDate } from "./pipeline-ui";
 
 export type FollowupOutcome =
@@ -59,12 +75,16 @@ export function PreparedFollowupCard({
   onComplete: (outcome: FollowupOutcome, notes: string) => Promise<unknown>;
   onOpenOpportunity: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const generateDraftFn = useServerFn(generateCrmFollowupDraft);
+  const sendEmailFn = useServerFn(sendCrmFollowupEmail);
   const [open, setOpen] = useState(followupTiming(action.due_date) !== "upcoming");
   const [subject, setSubject] = useState(action.subject);
   const [body, setBody] = useState(action.body);
   const [assetId, setAssetId] = useState(action.value_asset_id ?? "none");
   const [outcome, setOutcome] = useState<FollowupOutcome>("sent");
   const [outcomeNotes, setOutcomeNotes] = useState("");
+  const [resourceIdea, setResourceIdea] = useState("");
 
   useEffect(() => {
     setSubject(action.subject);
@@ -98,6 +118,50 @@ export function PreparedFollowupCard({
       )}&body=${encodeURIComponent(readyBody)}`,
     );
   };
+
+  const aiDraftMutation = useMutation({
+    mutationFn: () => generateDraftFn({ data: { action_id: action.id } }),
+    onSuccess: (draft) => {
+      setSubject(draft.subject);
+      setBody(draft.body);
+      setResourceIdea(draft.resource_idea);
+      toast.success("AI draft prepared", {
+        description: "Review the facts and voice before saving or sending.",
+      });
+    },
+    onError: (error) =>
+      toast.error("AI draft was not prepared", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      }),
+  });
+
+  const sendMutation = useMutation({
+    mutationFn: () =>
+      sendEmailFn({
+        data: {
+          action_id: action.id,
+          subject,
+          body,
+          value_asset_id: assetId === "none" ? null : assetId,
+          client_request_id: crypto.randomUUID(),
+          test_mode: false,
+        },
+      }),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["crm-followup-studio"] }),
+        queryClient.invalidateQueries({ queryKey: ["crm-action-suite"] }),
+        queryClient.invalidateQueries({ queryKey: ["pipeline-crm-snapshot"] }),
+      ]);
+      toast.success(
+        result.playbookCompleted ? "Email sent · playbook complete" : "Email sent from OverWatch",
+      );
+    },
+    onError: (error) =>
+      toast.error("Email was not sent", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      }),
+  });
 
   return (
     <Collapsible
@@ -166,7 +230,22 @@ export function PreparedFollowupCard({
             <Field label="Prepared message">
               <Textarea value={body} onChange={(event) => setBody(event.target.value)} rows={9} />
             </Field>
+            {resourceIdea && (
+              <div className="rounded-lg border border-clay/25 bg-clay/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                <span className="font-semibold text-foreground">AI value idea:</span> {resourceIdea}
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-1.5"
+                disabled={aiDraftMutation.isPending}
+                onClick={() => aiDraftMutation.mutate()}
+              >
+                <Bot className="h-3.5 w-3.5" />
+                {aiDraftMutation.isPending ? "Preparing…" : "AI value draft"}
+              </Button>
               <Button type="button" variant="outline" className="gap-1.5" onClick={copyDraft}>
                 <Copy className="h-3.5 w-3.5" /> Copy
               </Button>
@@ -181,12 +260,51 @@ export function PreparedFollowupCard({
               </Button>
               <Button
                 type="button"
+                variant="outline"
                 className="gap-1.5"
                 disabled={!action.contact_email || isSaving}
                 onClick={openEmail}
               >
-                <Send className="h-3.5 w-3.5" /> Open email draft
+                <Mail className="h-3.5 w-3.5" /> Email app
               </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    className="gap-1.5"
+                    disabled={
+                      !action.contact_email ||
+                      !subject.trim() ||
+                      !body.trim() ||
+                      sendMutation.isPending
+                    }
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {sendMutation.isPending ? "Sending…" : "Send from OverWatch"}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Send this reviewed follow-up?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      OverWatch will email {action.contact_email} now, record the delivery, and
+                      close this playbook step. Replies go to your OverWatch profile email.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <div className="rounded-lg border border-hairline bg-muted/40 px-3 py-2 text-sm">
+                    <div className="font-semibold text-foreground">{subject}</div>
+                    <div className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">
+                      {body}
+                    </div>
+                  </div>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Keep editing</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => sendMutation.mutate()}>
+                      Send email
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
             {!action.contact_email && (
               <p className="text-xs text-danger">

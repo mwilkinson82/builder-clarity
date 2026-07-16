@@ -31,15 +31,15 @@ export function PipelineGlanceCard({ metrics }: PipelineGlanceCardProps) {
             <div className="mt-1.5 text-sm font-semibold text-foreground">Active opportunities</div>
           </div>
           <div className="text-right">
-            <div className={MONO_LABEL}>Weighted</div>
+            <div className={MONO_LABEL}>Weighted pipeline</div>
             <div className="mt-1 font-serif text-[26px] leading-none text-foreground">
               {fmtUSD(metrics.weighted)}
             </div>
           </div>
         </div>
         <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
-          In an open stage — Lead, Qualifying, Estimating, Bid submitted, or Negotiating. Won, lost,
-          and no-bid drop out.
+          Stage probability weights priced opportunities. Unpriced work stays visible in the count
+          without being presented as zero-value revenue or zero-margin work.
         </p>
       </div>
 
@@ -59,7 +59,21 @@ export function PipelineGlanceCard({ metrics }: PipelineGlanceCardProps) {
         tone="text-foreground"
       />
       <StatRow label="Win rate · 90d" value={fmtPct(metrics.winRate)} tone="text-success" />
-      <StatRow label="Avg GP" value={fmtPct(metrics.avgGp)} tone="text-foreground" />
+      <StatRow
+        label="Pricing coverage"
+        value={`${metrics.pricedCount}/${metrics.activeCount}`}
+        tone={metrics.pricedCount === metrics.activeCount ? "text-success" : "text-warning"}
+      />
+      <StatRow
+        label="Portfolio GP · margin-ready"
+        value={metrics.marginReadyCount > 0 ? fmtPct(metrics.avgGp) : "Pending"}
+        tone="text-foreground"
+      />
+      <StatRow
+        label="Weighted GP · margin-ready"
+        value={metrics.marginReadyCount > 0 ? fmtUSD(metrics.weightedGp) : "Pending"}
+        tone="text-foreground"
+      />
       <StatRow
         label="Bids due · 7d"
         value={String(metrics.dueThisWeek)}
