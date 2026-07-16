@@ -1833,13 +1833,11 @@ export const getProject = createServerFn({ method: "GET" })
       .order("created_at", { ascending: false });
     if (pRes.error) throw new Error(pRes.error.message);
     if (!pRes.data) throw new Error("Project not found");
-    // Archived demo = the company opted out; opening it must not reseed.
-    if (
-      isHarborDemoProject(pRes.data as Record<string, unknown>) &&
-      harborDemoSeedAction(pRes.data as { archived_at?: unknown }) !== "skip"
-    ) {
-      await ensureVersionedHarborDemoModules(context.supabase, pid, context.userId, []);
-    }
+    // Project reads must stay read-only. Harbor's versioned fixture maintenance
+    // runs from seedDemoIfEmpty (portfolio bootstrap) and the explicit reset
+    // actions below. Running the full engine here made opening Harbor wait for
+    // eleven write-heavy module adapters, and it could overlap the portfolio
+    // bootstrap that was already doing the same work.
     const inspectionRes = await dynamicTable(context.supabase, "project_inspections")
       .select("*")
       .eq("project_id", pid)
@@ -7249,6 +7247,7 @@ const ensureVersionedHarborDemoModules = async (
   let registryAvailable = true;
   let registryWarningAdded = false;
   const appliedVersions = new Map<string, number>();
+  const appliedStatuses = new Map<string, "ready" | "failed">();
   const moduleRuns: HarborDemoModuleRun[] = [];
 
   const registryResult = await dynamicTable(supabase, "demo_seed_module_versions")
@@ -7266,6 +7265,7 @@ const ensureVersionedHarborDemoModules = async (
   } else {
     for (const row of (registryResult.data ?? []) as Array<Record<string, unknown>>) {
       appliedVersions.set(str(row.module_key), num(row.applied_version));
+      appliedStatuses.set(str(row.module_key), str(row.status) === "ready" ? "ready" : "failed");
     }
   }
 
@@ -7313,7 +7313,7 @@ const ensureVersionedHarborDemoModules = async (
 
   const moduleNeedsUpgrade = (key: HarborDemoModuleKey) => {
     const targetVersion = HARBOR_DEMO_MODULES.find((module) => module.key === key)?.version ?? 0;
-    return (appliedVersions.get(key) ?? 0) < targetVersion;
+    return (appliedVersions.get(key) ?? 0) < targetVersion || appliedStatuses.get(key) !== "ready";
   };
 
   const adapters = {
@@ -7339,6 +7339,19 @@ const ensureVersionedHarborDemoModules = async (
   } satisfies Record<HarborDemoModuleKey, () => Promise<unknown>>;
 
   for (const module of HARBOR_DEMO_MODULES) {
+    // A version registry only has value if a current, successful module is not
+    // rewritten on every visit. Preserve the user's demo state until a newer
+    // canonical version is shipped or they explicitly choose Reset.
+    if (registryAvailable && !moduleNeedsUpgrade(module.key)) {
+      moduleRuns.push({
+        key: module.key,
+        targetVersion: module.version,
+        status: "ready",
+        warnings: [],
+      });
+      continue;
+    }
+
     const warningStart = seedWarnings.length;
     try {
       await adapters[module.key]();
