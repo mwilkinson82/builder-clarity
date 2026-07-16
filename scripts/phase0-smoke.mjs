@@ -2569,6 +2569,7 @@ await expectContains(
     /EstimateAssemblyOutputSource/,
     /estimate_takeoff_assembly_output_links/,
     /estimate_takeoff_assemblies/,
+    /takeoff_measurement_id/,
     /measurementByAssemblyId/,
     /assembly_output_source: assemblySources\.get\(line\.id\) \?\? null/,
   ],
