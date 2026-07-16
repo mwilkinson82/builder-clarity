@@ -99,6 +99,8 @@ import {
   writeFirstRunLauncherDone,
 } from "@/components/estimates/EstimateFirstRunLauncher";
 import { EstimateQuantitySourceReview } from "@/components/estimates/EstimateQuantitySourceReview";
+import { EstimateReviewGate } from "@/components/estimates/EstimateReviewGate";
+import { buildEstimateReviewGate } from "@/lib/estimate-review-gate";
 import {
   quantitySourceIssueLabel,
   type EstimateQuantitySourceReview as EstimateQuantitySourceReviewData,
@@ -504,6 +506,10 @@ export function EstimateWorkspace({
     }
     return issues;
   }, [quantitySourceReview.items]);
+  const estimateReviewGate = useMemo(
+    () => buildEstimateReviewGate({ lines: orderedLines, quantitySourceReview }),
+    [orderedLines, quantitySourceReview],
+  );
 
   useEffect(() => {
     if (!pendingGridFocus) return;
@@ -844,10 +850,16 @@ export function EstimateWorkspace({
             isSheetExpanded ? "flex min-h-0 flex-col" : ""
           }`}
         >
+          {!isMasterSheet && orderedLines.length > 0 && (
+            <EstimateReviewGate estimateId={estimate.id} review={estimateReviewGate} />
+          )}
           {!isMasterSheet && (
             <EstimateQuantitySourceReview estimateId={estimate.id} review={quantitySourceReview} />
           )}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline bg-surface px-4 py-3">
+          <div
+            id="estimate-line-items"
+            className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline bg-surface px-4 py-3"
+          >
             <div>
               <h2 className="font-serif text-2xl">
                 {isMasterSheet ? "Master Sheet Lines" : "Line Items"}
