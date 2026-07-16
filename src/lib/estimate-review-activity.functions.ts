@@ -107,7 +107,7 @@ function normalizeState(
 
 export const getEstimateReviewActivityState = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .validator((input: { estimate_id: string }) =>
+  .inputValidator((input: { estimate_id: string }) =>
     z.object({ estimate_id: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
@@ -169,7 +169,7 @@ const recordActivityInput = z.object({
 
 export const recordEstimateReviewActivity = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: z.input<typeof recordActivityInput>) => recordActivityInput.parse(input))
+  .inputValidator((input: z.input<typeof recordActivityInput>) => recordActivityInput.parse(input))
   .handler(async ({ data, context }) => {
     const result = await dynamicClient(context.supabase).rpc("record_estimate_review_activity", {
       p_estimate_id: data.estimate_id,
