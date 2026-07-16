@@ -5,6 +5,7 @@
 //     error logger plugins, and sandbox detection (port/host/strictPort).
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { loadEnv } from "vite";
 
@@ -17,8 +18,33 @@ const serverEnv = loadEnv(
 );
 Object.assign(process.env, serverEnv);
 
+function resolveCommitSha() {
+  const candidates = [
+    process.env.VITE_COMMIT_SHA,
+    process.env.LOVABLE_COMMIT_SHA,
+    process.env.GITHUB_SHA,
+    process.env.CF_PAGES_COMMIT_SHA,
+  ];
+  const suppliedSha = candidates.find((value) => /^[0-9a-f]{7,40}$/i.test(value?.trim() ?? ""));
+  if (suppliedSha) return suppliedSha.trim();
+
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+const commitSha = resolveCommitSha();
+
 export default defineConfig({
   vite: {
+    define: {
+      "import.meta.env.VITE_COMMIT_SHA": JSON.stringify(commitSha),
+    },
     resolve: {
       alias: {
         "entities/lib/decode.js": path.resolve(

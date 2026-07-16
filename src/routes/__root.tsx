@@ -18,6 +18,7 @@ const SITE_TITLE = "Overwatch | IOR Project Management for Contractors";
 const SITE_DESCRIPTION =
   "Overwatch is the IOR operating record for contractors: schedule, risk, billing, change orders, daily reports, and gross profit visibility in one project command center.";
 const SITE_IMAGE = `${SITE_URL}/og-overwatch.png`;
+const APP_COMMIT_SHA = (import.meta.env.VITE_COMMIT_SHA as string | undefined)?.trim();
 
 function NotFoundComponent() {
   return (
@@ -153,7 +154,11 @@ function RootShell({ children }: { children: ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body>
+      <body
+        data-commit-sha={
+          APP_COMMIT_SHA && APP_COMMIT_SHA !== "unknown" ? APP_COMMIT_SHA : undefined
+        }
+      >
         {children}
         <Scripts />
       </body>
