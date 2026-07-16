@@ -3211,6 +3211,7 @@ export type Database = {
           override_reason: string
           plan_sheet_id: string
           quantity: number
+          scope_brief_review_id: string | null
           tool_type: string
           unit: string
           updated_at: string
@@ -3244,6 +3245,7 @@ export type Database = {
           override_reason?: string
           plan_sheet_id: string
           quantity?: number
+          scope_brief_review_id?: string | null
           tool_type: string
           unit: string
           updated_at?: string
@@ -3277,6 +3279,7 @@ export type Database = {
           override_reason?: string
           plan_sheet_id?: string
           quantity?: number
+          scope_brief_review_id?: string | null
           tool_type?: string
           unit?: string
           updated_at?: string
@@ -3316,6 +3319,13 @@ export type Database = {
             columns: ["plan_sheet_id"]
             isOneToOne: false
             referencedRelation: "estimate_plan_sheets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_measurements_scope_brief_review_id_fkey"
+            columns: ["scope_brief_review_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_scope_brief_reviews"
             referencedColumns: ["id"]
           },
         ]
