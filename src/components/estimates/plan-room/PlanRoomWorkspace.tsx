@@ -4839,6 +4839,7 @@ export function PlanRoomWorkspace({
                   estimateId={estimate.id}
                   measurement={selectedMeasurement}
                   scopeItems={measurementScopeItems}
+                  lineItems={lineItems}
                 />
                 <div className="space-y-1.5">
                   <Label>Takeoff label</Label>

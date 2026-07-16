@@ -1,7 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Calculator, CheckCircle2, ChevronDown, ShieldCheck } from "lucide-react";
+import {
+  Bot,
+  Calculator,
+  CheckCircle2,
+  ChevronDown,
+  Link2,
+  RefreshCw,
+  ShieldCheck,
+  Unlink,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,9 +27,12 @@ import {
 } from "@/components/ui/select";
 import {
   getTakeoffAssembly,
+  handoffTakeoffAssemblyOutput,
   proposeTakeoffAssemblyInputs,
   saveTakeoffAssembly,
+  unlinkTakeoffAssemblyOutput,
 } from "@/lib/plan-room-assembly.functions";
+import type { EstimateLineItemRow } from "@/lib/estimates.functions";
 import type { MeasurementScopeQueueItem } from "@/lib/plan-room-measurement-scope";
 import type { TakeoffMeasurementRow } from "@/lib/plan-room.functions";
 import {
@@ -34,6 +46,7 @@ import {
   type TakeoffAssemblyTemplateId,
 } from "@/lib/takeoff-assembly";
 import { cn } from "@/lib/utils";
+import { LinkOrCreatePicker } from "./TakeoffClassify";
 
 interface AssemblyReviewResult {
   operation_id: string;
@@ -45,6 +58,11 @@ interface AssemblyReviewResult {
   citations: TakeoffAssemblyCitation[];
   proposals: TakeoffAssemblyInputProposal[];
 }
+
+type AssemblyOutputDestination =
+  | { type: "existing"; estimate_line_item_id: string }
+  | { type: "library"; library_item_id: string }
+  | { type: "label"; description: string };
 
 const assemblyStatusLabel = (status: TakeoffAssemblyStatus | undefined) => {
   if (status === "confirmed") return "Estimator confirmed";
@@ -60,15 +78,19 @@ export function TakeoffAssemblyWorkbench({
   estimateId,
   measurement,
   scopeItems,
+  lineItems,
 }: {
   estimateId: string;
   measurement: TakeoffMeasurementRow;
   scopeItems: MeasurementScopeQueueItem[];
+  lineItems: EstimateLineItemRow[];
 }) {
   const qc = useQueryClient();
   const getAssemblyFn = useServerFn(getTakeoffAssembly);
   const saveAssemblyFn = useServerFn(saveTakeoffAssembly);
   const proposeInputsFn = useServerFn(proposeTakeoffAssemblyInputs);
+  const handoffOutputFn = useServerFn(handoffTakeoffAssemblyOutput);
+  const unlinkOutputFn = useServerFn(unlinkTakeoffAssemblyOutput);
   const compatibleTemplates = useMemo(
     () => takeoffAssemblyTemplatesForUnit(measurement.unit),
     [measurement.unit],
@@ -80,6 +102,7 @@ export function TakeoffAssemblyWorkbench({
   const [inputDrafts, setInputDrafts] = useState<Record<string, string>>({});
   const [confirmedKeys, setConfirmedKeys] = useState<string[]>([]);
   const [review, setReview] = useState<AssemblyReviewResult | null>(null);
+  const [activeOutputKey, setActiveOutputKey] = useState<string | null>(null);
 
   const assemblyQuery = useQuery({
     queryKey: ["takeoff-assembly", estimateId, measurement.id],
@@ -90,10 +113,13 @@ export function TakeoffAssemblyWorkbench({
     enabled: compatibleTemplates.length > 0,
   });
   const assembly = assemblyQuery.data?.assembly ?? null;
+  const outputLinks = assemblyQuery.data?.output_links ?? [];
+  const outputHandoffReady = assemblyQuery.data?.output_handoff_ready !== false;
   const template = templateId ? takeoffAssemblyTemplate(templateId) : null;
 
   useEffect(() => {
     const saved = assemblyQuery.data?.assembly;
+    setActiveOutputKey(null);
     const nextTemplate =
       saved?.template_id ?? compatibleTemplates[0]?.id ?? ("" as TakeoffAssemblyTemplateId | "");
     setTemplateId(nextTemplate);
@@ -188,11 +214,8 @@ export function TakeoffAssemblyWorkbench({
         },
       });
     },
-    onSuccess: ({ assembly: saved }, status) => {
-      qc.setQueryData(["takeoff-assembly", estimateId, measurement.id], {
-        assembly: saved,
-        ready: true,
-      });
+    onSuccess: (_result, status) => {
+      void qc.invalidateQueries({ queryKey: ["takeoff-assembly", estimateId, measurement.id] });
       toast.success(
         status === "confirmed"
           ? "Assembly confirmed from the trusted takeoff and estimator inputs."
@@ -224,6 +247,63 @@ export function TakeoffAssemblyWorkbench({
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Cited requirements were not reviewed"),
+  });
+
+  const handoffMutation = useMutation({
+    mutationFn: ({
+      outputKey,
+      destination,
+    }: {
+      outputKey: string;
+      destination: AssemblyOutputDestination;
+    }) => {
+      if (!assembly || assembly.status !== "confirmed") {
+        throw new Error("Confirm every assembly input before sending an output to the estimate.");
+      }
+      return handoffOutputFn({
+        data: {
+          estimate_id: estimateId,
+          assembly_id: assembly.id,
+          output_key: outputKey,
+          destination,
+        },
+      });
+    },
+    onSuccess: ({ link }) => {
+      setActiveOutputKey(null);
+      void qc.invalidateQueries({ queryKey: ["takeoff-assembly", estimateId, measurement.id] });
+      void qc.invalidateQueries({ queryKey: ["estimate", estimateId] });
+      void qc.invalidateQueries({ queryKey: ["estimates"] });
+      toast.success(
+        `${formattedAssemblyQuantity(link.output_quantity, link.output_unit)} sent to the selected estimate row.`,
+      );
+    },
+    onError: (error) =>
+      toast.error(
+        error instanceof Error ? error.message : "Assembly output did not reach the estimate",
+      ),
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: (outputKey: string) => {
+      if (!assembly) throw new Error("Save the assembly before detaching an output.");
+      return unlinkOutputFn({
+        data: {
+          estimate_id: estimateId,
+          assembly_id: assembly.id,
+          output_key: outputKey,
+        },
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["takeoff-assembly", estimateId, measurement.id] });
+      void qc.invalidateQueries({ queryKey: ["estimate", estimateId] });
+      toast.success(
+        "Assembly source detached. The estimate row keeps its quantity as a manual value.",
+      );
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Assembly output did not detach"),
   });
 
   if (compatibleTemplates.length === 0) {
@@ -510,6 +590,150 @@ export function TakeoffAssemblyWorkbench({
                 </p>
               )}
             </div>
+
+            {assembly?.status === "confirmed" && (
+              <div className="space-y-2" data-testid="takeoff-assembly-output-handoff">
+                <div>
+                  <p className="text-xs font-medium text-foreground">Send confirmed outputs</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    You choose the destination and pricing. One confirmed output can feed one
+                    matching-unit estimate row; nothing is sent automatically.
+                  </p>
+                </div>
+                {!outputHandoffReady ? (
+                  <p className="rounded-md border border-dashed border-hairline px-3 py-2 text-xs text-muted-foreground">
+                    Estimate handoff is waiting for its Lovable database migration.
+                  </p>
+                ) : (
+                  assembly.derived_outputs.map((output) => {
+                    const link = outputLinks.find(
+                      (candidate) => candidate.output_key === output.key,
+                    );
+                    const linkedLine = link
+                      ? lineItems.find((line) => line.id === link.estimate_line_item_id)
+                      : null;
+                    const pickerOpen = activeOutputKey === output.key;
+                    return (
+                      <div
+                        key={output.key}
+                        className="rounded-md border border-hairline bg-surface px-3 py-2"
+                        data-testid={`takeoff-assembly-output-${output.key}`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-foreground">{output.label}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {formattedAssemblyQuantity(output.quantity, output.unit)} · saved from{" "}
+                              {assembly.formula_version}
+                            </p>
+                            {link && (
+                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                {link.status === "stale" ? "Needs resync" : "Synced"} ·{" "}
+                                {linkedLine?.description ?? "Estimate row unavailable"}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {link ? (
+                              <>
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    link.status === "stale" &&
+                                      "border-warning/40 bg-warning/10 text-warning",
+                                  )}
+                                >
+                                  {link.status === "stale" ? "Review change" : "Estimate linked"}
+                                </Badge>
+                                {link.status === "stale" && linkedLine && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 gap-1 px-2 text-[10px]"
+                                    disabled={handoffMutation.isPending || unlinkMutation.isPending}
+                                    onClick={() =>
+                                      handoffMutation.mutate({
+                                        outputKey: output.key,
+                                        destination: {
+                                          type: "existing",
+                                          estimate_line_item_id: linkedLine.id,
+                                        },
+                                      })
+                                    }
+                                  >
+                                    <RefreshCw className="h-3 w-3" /> Resync
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 gap-1 px-2 text-[10px]"
+                                  disabled={handoffMutation.isPending || unlinkMutation.isPending}
+                                  onClick={() => unlinkMutation.mutate(output.key)}
+                                >
+                                  <Unlink className="h-3 w-3" /> Detach
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 gap-1.5 px-2 text-[10px]"
+                                disabled={handoffMutation.isPending || unlinkMutation.isPending}
+                                onClick={() =>
+                                  setActiveOutputKey((current) =>
+                                    current === output.key ? null : output.key,
+                                  )
+                                }
+                              >
+                                <Link2 className="h-3 w-3" />
+                                {pickerOpen ? "Close" : "Send to estimate"}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        {!link && pickerOpen && (
+                          <div className="mt-2 border-t border-hairline pt-2">
+                            <LinkOrCreatePicker
+                              lineItems={lineItems}
+                              takeoffUnit={output.unit}
+                              defaultQuery={output.label}
+                              strictUnit
+                              compact
+                              pending={handoffMutation.isPending}
+                              onPickRow={(lineId) =>
+                                handoffMutation.mutate({
+                                  outputKey: output.key,
+                                  destination: {
+                                    type: "existing",
+                                    estimate_line_item_id: lineId,
+                                  },
+                                })
+                              }
+                              onPickLibraryItem={(item) =>
+                                handoffMutation.mutate({
+                                  outputKey: output.key,
+                                  destination: { type: "library", library_item_id: item.id },
+                                })
+                              }
+                              onCreateFromLabel={(description) =>
+                                handoffMutation.mutate({
+                                  outputKey: output.key,
+                                  destination: { type: "label", description },
+                                })
+                              }
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
 
             {sourceCitations.length > 0 && (
               <div className="space-y-1.5" data-testid="takeoff-assembly-citations">

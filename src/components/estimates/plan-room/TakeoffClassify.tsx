@@ -30,6 +30,7 @@ export function LinkOrCreatePicker({
   pending = false,
   compact = false,
   fillHeight = false,
+  strictUnit = false,
 }: {
   lineItems: EstimateLineItemRow[];
   takeoffUnit: string;
@@ -39,6 +40,9 @@ export function LinkOrCreatePicker({
   onCreateFromLabel: (label: string) => void;
   pending?: boolean;
   compact?: boolean;
+  // Assembly outputs cannot use the takeoff sync override. Hide incompatible
+  // destinations so one deterministic unit can never be relabeled as another.
+  strictUnit?: boolean;
   // Fill the parent flex column: the results list takes the remaining height
   // and scrolls internally while the search input stays pinned.
   fillHeight?: boolean;
@@ -52,14 +56,22 @@ export function LinkOrCreatePicker({
   }, [query]);
 
   const libraryQuery = useQuery({
-    queryKey: ["classify-library-search", debouncedQuery],
-    queryFn: () => searchLibraryFn({ data: { query: debouncedQuery, limit: compact ? 4 : 8 } }),
+    queryKey: ["classify-library-search", debouncedQuery, takeoffUnit, strictUnit, compact],
+    queryFn: () =>
+      searchLibraryFn({
+        data: {
+          query: debouncedQuery,
+          unit: strictUnit ? takeoffUnit : "",
+          limit: compact ? 4 : 8,
+        },
+      }),
     enabled: debouncedQuery.trim().length >= 2,
   });
 
   const normalizedQuery = query.trim().toLowerCase();
   const matchingRows = lineItems
     .filter((line) => {
+      if (strictUnit && !takeoffUnitsCompatible(takeoffUnit, line.unit)) return false;
       if (!normalizedQuery) return true;
       return [line.cost_code, line.description, line.scope_group, line.unit]
         .join(" ")
@@ -67,7 +79,9 @@ export function LinkOrCreatePicker({
         .includes(normalizedQuery);
     })
     .slice(0, compact ? 4 : 8);
-  const libraryItems = libraryQuery.data?.items ?? [];
+  const libraryItems = (libraryQuery.data?.items ?? [])
+    .filter((item) => !strictUnit || takeoffUnitsCompatible(takeoffUnit, item.unit))
+    .slice(0, compact ? 4 : 8);
 
   return (
     <div
@@ -92,6 +106,11 @@ export function LinkOrCreatePicker({
             : "max-h-56 space-y-1 overflow-y-auto"
         }
       >
+        {strictUnit && (
+          <p className="px-1 text-[10px] text-muted-foreground">
+            Only estimate rows and cost items priced per {takeoffUnit} are shown.
+          </p>
+        )}
         {matchingRows.length > 0 && (
           <>
             <p className="eyebrow px-1">Estimate rows</p>

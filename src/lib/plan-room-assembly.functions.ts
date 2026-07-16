@@ -16,6 +16,7 @@ import {
   computeApiCostCents,
   creditBalance,
 } from "@/lib/credits/credits-domain";
+import { recalculateEstimateTotalsInternal } from "@/lib/estimates.functions";
 import {
   TAKEOFF_ASSEMBLY_FORMULA_VERSION,
   calculateTakeoffAssembly,
@@ -24,6 +25,7 @@ import {
   type TakeoffAssemblyCitation,
   type TakeoffAssemblyInputProposal,
   type TakeoffAssemblyOutput,
+  type TakeoffAssemblyOutputLinkRow,
   type TakeoffAssemblyRow,
   type TakeoffAssemblyStatus,
   type TakeoffAssemblyTemplateId,
@@ -58,6 +60,23 @@ const assemblyReviewInput = z.object({
   template_id: templateIdSchema,
 });
 
+const assemblyOutputHandoffInput = z.object({
+  estimate_id: z.string().uuid(),
+  assembly_id: z.string().uuid(),
+  output_key: z.string().trim().min(1).max(100),
+  destination: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("existing"), estimate_line_item_id: z.string().uuid() }),
+    z.object({ type: z.literal("library"), library_item_id: z.string().uuid() }),
+    z.object({ type: z.literal("label"), description: z.string().trim().min(1).max(500) }),
+  ]),
+});
+
+const unlinkAssemblyOutputInput = z.object({
+  estimate_id: z.string().uuid(),
+  assembly_id: z.string().uuid(),
+  output_key: z.string().trim().min(1).max(100),
+});
+
 function isAssemblySchemaPending(error: DynamicSupabaseError | null | undefined) {
   const message = error?.message?.toLowerCase() ?? "";
   return Boolean(
@@ -69,6 +88,20 @@ function isAssemblySchemaPending(error: DynamicSupabaseError | null | undefined)
       message.includes("estimate_takeoff_assemblies") ||
       message.includes("save_estimate_takeoff_assembly") ||
       message.includes("ai_assembly_assumptions")),
+  );
+}
+
+function isAssemblyOutputHandoffPending(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return Boolean(
+    error &&
+    (error.code === "42P01" ||
+      error.code === "PGRST202" ||
+      error.code === "PGRST204" ||
+      error.code === "PGRST205" ||
+      message.includes("estimate_takeoff_assembly_output_links") ||
+      message.includes("handoff_estimate_takeoff_assembly_output") ||
+      message.includes("unlink_estimate_takeoff_assembly_output")),
   );
 }
 
@@ -176,6 +209,29 @@ function normalizeAssembly(row: Record<string, unknown>): TakeoffAssemblyRow {
   };
 }
 
+function normalizeOutputLink(row: Record<string, unknown>): TakeoffAssemblyOutputLinkRow {
+  const unit = str(row.output_unit).toUpperCase();
+  return {
+    id: str(row.id),
+    estimate_id: str(row.estimate_id),
+    assembly_id: str(row.assembly_id),
+    output_key: str(row.output_key),
+    estimate_line_item_id: str(row.estimate_line_item_id),
+    formula_version: str(row.formula_version, TAKEOFF_ASSEMBLY_FORMULA_VERSION),
+    output_label: str(row.output_label),
+    output_unit: (["LF", "SF", "CY", "EA", "HR"].includes(unit) ? unit : "EA") as
+      "LF" | "SF" | "CY" | "EA" | "HR",
+    output_quantity: num(row.output_quantity),
+    status: str(row.status) === "stale" ? "stale" : "current",
+    linked_by: row.linked_by == null ? null : str(row.linked_by),
+    linked_at: str(row.linked_at),
+    last_synced_at: str(row.last_synced_at),
+    stale_at: row.stale_at == null ? null : str(row.stale_at),
+    created_at: str(row.created_at),
+    updated_at: str(row.updated_at),
+  };
+}
+
 export const getTakeoffAssembly = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { estimate_id: string; takeoff_measurement_id: string }) =>
@@ -189,11 +245,38 @@ export const getTakeoffAssembly = createServerFn({ method: "GET" })
       .eq("estimate_id", data.estimate_id)
       .eq("takeoff_measurement_id", data.takeoff_measurement_id)
       .maybeSingle();
-    if (isAssemblySchemaPending(result.error)) return { assembly: null, ready: false };
+    if (isAssemblySchemaPending(result.error)) {
+      return {
+        assembly: null,
+        output_links: [],
+        ready: false,
+        output_handoff_ready: false,
+      };
+    }
     if (result.error) throw new Error(result.error.message);
+    const assembly = result.data ? normalizeAssembly(result.data as Record<string, unknown>) : null;
+    if (!assembly) {
+      return { assembly: null, output_links: [], ready: true, output_handoff_ready: true };
+    }
+    const linksResult = await dynamicTable(
+      context.supabase,
+      "estimate_takeoff_assembly_output_links",
+    )
+      .select("*")
+      .eq("estimate_id", data.estimate_id)
+      .eq("assembly_id", assembly.id)
+      .order("updated_at", { ascending: false });
+    if (isAssemblyOutputHandoffPending(linksResult.error)) {
+      return { assembly, output_links: [], ready: true, output_handoff_ready: false };
+    }
+    if (linksResult.error) throw new Error(linksResult.error.message);
     return {
-      assembly: result.data ? normalizeAssembly(result.data as Record<string, unknown>) : null,
+      assembly,
+      output_links: ((linksResult.data ?? []) as Record<string, unknown>[]).map(
+        normalizeOutputLink,
+      ),
       ready: true,
+      output_handoff_ready: true,
     };
   });
 
@@ -236,6 +319,58 @@ export const saveTakeoffAssembly = createServerFn({ method: "POST" })
     const row = (result.data ?? [])[0];
     if (!row) throw new Error("Assembly did not save.");
     return { assembly: normalizeAssembly(row) };
+  });
+
+export const handoffTakeoffAssemblyOutput = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof assemblyOutputHandoffInput>) =>
+    assemblyOutputHandoffInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await requireEstimateManager(context.supabase, data.estimate_id);
+    const destination = data.destination;
+    const result = await (context.supabase as unknown as DynamicRpcClient).rpc(
+      "handoff_estimate_takeoff_assembly_output",
+      {
+        p_assembly_id: data.assembly_id,
+        p_output_key: data.output_key,
+        p_destination_type: destination.type,
+        p_estimate_line_item_id:
+          destination.type === "existing" ? destination.estimate_line_item_id : null,
+        p_library_item_id: destination.type === "library" ? destination.library_item_id : null,
+        p_label: destination.type === "label" ? destination.description : null,
+      },
+    );
+    if (isAssemblyOutputHandoffPending(result.error)) {
+      throw new Error("Assembly output handoff is waiting for its Lovable database migration.");
+    }
+    if (result.error) throw new Error(result.error.message);
+    const row = (result.data ?? [])[0];
+    if (!row) throw new Error("Assembly output did not reach the estimate row.");
+    await recalculateEstimateTotalsInternal(context, data.estimate_id);
+    return { link: normalizeOutputLink(row) };
+  });
+
+export const unlinkTakeoffAssemblyOutput = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof unlinkAssemblyOutputInput>) =>
+    unlinkAssemblyOutputInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await requireEstimateManager(context.supabase, data.estimate_id);
+    const result = await (
+      context.supabase as unknown as {
+        rpc(name: string, args: Record<string, unknown>): Promise<DynamicSupabaseResult<string>>;
+      }
+    ).rpc("unlink_estimate_takeoff_assembly_output", {
+      p_assembly_id: data.assembly_id,
+      p_output_key: data.output_key,
+    });
+    if (isAssemblyOutputHandoffPending(result.error)) {
+      throw new Error("Assembly output handoff is waiting for its Lovable database migration.");
+    }
+    if (result.error) throw new Error(result.error.message);
+    return { estimate_line_item_id: str(result.data) };
   });
 
 function isMissingMonthlyGrantRpc(error: DynamicSupabaseError | null | undefined) {

@@ -5,6 +5,7 @@ export type TakeoffAssemblyTemplateId =
 
 export type TakeoffAssemblyGeometryUnit = "LF" | "SF";
 export type TakeoffAssemblyStatus = "draft" | "confirmed" | "stale";
+export type TakeoffAssemblyOutputLinkStatus = "current" | "stale";
 
 export interface TakeoffAssemblyInputDefinition {
   key: string;
@@ -78,6 +79,25 @@ export interface TakeoffAssemblyRow {
   confirmed_by: string | null;
   confirmed_at: string | null;
   created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TakeoffAssemblyOutputLinkRow {
+  id: string;
+  estimate_id: string;
+  assembly_id: string;
+  output_key: string;
+  estimate_line_item_id: string;
+  formula_version: string;
+  output_label: string;
+  output_unit: TakeoffAssemblyOutput["unit"];
+  output_quantity: number;
+  status: TakeoffAssemblyOutputLinkStatus;
+  linked_by: string | null;
+  linked_at: string;
+  last_synced_at: string;
+  stale_at: string | null;
   created_at: string;
   updated_at: string;
 }
