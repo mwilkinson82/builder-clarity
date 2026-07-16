@@ -95,6 +95,156 @@ export type Database = {
           },
         ]
       }
+      ai_symbol_library_examples: {
+        Row: {
+          accepted_count: number
+          created_at: string
+          created_by: string | null
+          embedding: Json
+          exemplar_storage_path: string
+          id: string
+          library_item_id: string
+          organization_id: string
+          rejected_count: number
+          source_ai_operation_id: string | null
+          source_estimate_id: string | null
+          source_plan_sheet_id: string | null
+          source_point: Json
+          source_point_key: string
+        }
+        Insert: {
+          accepted_count: number
+          created_at?: string
+          created_by?: string | null
+          embedding: Json
+          exemplar_storage_path: string
+          id?: string
+          library_item_id: string
+          organization_id: string
+          rejected_count?: number
+          source_ai_operation_id?: string | null
+          source_estimate_id?: string | null
+          source_plan_sheet_id?: string | null
+          source_point: Json
+          source_point_key: string
+        }
+        Update: {
+          accepted_count?: number
+          created_at?: string
+          created_by?: string | null
+          embedding?: Json
+          exemplar_storage_path?: string
+          id?: string
+          library_item_id?: string
+          organization_id?: string
+          rejected_count?: number
+          source_ai_operation_id?: string | null
+          source_estimate_id?: string | null
+          source_plan_sheet_id?: string | null
+          source_point?: Json
+          source_point_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_symbol_library_examples_library_item_id_fkey"
+            columns: ["library_item_id"]
+            isOneToOne: false
+            referencedRelation: "ai_symbol_library_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_examples_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_examples_source_ai_operation_id_fkey"
+            columns: ["source_ai_operation_id"]
+            isOneToOne: false
+            referencedRelation: "ai_operations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_examples_source_estimate_id_fkey"
+            columns: ["source_estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_examples_source_plan_sheet_id_fkey"
+            columns: ["source_plan_sheet_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sheets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_symbol_library_items: {
+        Row: {
+          active: boolean
+          cost_library_item_id: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          label: string
+          last_used_at: string | null
+          normalized_label: string
+          organization_id: string
+          trade: string
+          unit: string
+          updated_at: string
+          use_count: number
+        }
+        Insert: {
+          active?: boolean
+          cost_library_item_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label: string
+          last_used_at?: string | null
+          normalized_label: string
+          organization_id: string
+          trade?: string
+          unit?: string
+          updated_at?: string
+          use_count?: number
+        }
+        Update: {
+          active?: boolean
+          cost_library_item_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label?: string
+          last_used_at?: string | null
+          normalized_label?: string
+          organization_id?: string
+          trade?: string
+          unit?: string
+          updated_at?: string
+          use_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_symbol_library_items_cost_library_item_id_fkey"
+            columns: ["cost_library_item_id"]
+            isOneToOne: false
+            referencedRelation: "cost_library_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       app_super_admins: {
         Row: {
           created_at: string
@@ -8018,6 +8168,26 @@ export type Database = {
       role_preset_capabilities: {
         Args: { p_role: Database["public"]["Enums"]["account_role"] }
         Returns: Json
+      }
+      save_ai_symbol_library_example: {
+        Args: {
+          p_accepted_count: number
+          p_ai_operation_id: string
+          p_cost_library_item_id: string
+          p_embedding: Json
+          p_estimate_id: string
+          p_exemplar_storage_path: string
+          p_label: string
+          p_plan_sheet_id: string
+          p_rejected_count: number
+          p_source_point: Json
+          p_trade: string
+          p_unit: string
+        }
+        Returns: {
+          example_id: string
+          library_item_id: string
+        }[]
       }
       save_estimate_plan_revision_decisions: {
         Args: { p_decisions: Json; p_revision_plan_set_id: string }
