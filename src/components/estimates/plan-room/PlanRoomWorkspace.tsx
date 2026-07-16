@@ -2180,14 +2180,12 @@ export function PlanRoomWorkspace({
   };
 
   const openScopeBriefEvidenceMutation = useMutation({
-    mutationFn: async ({
-      item,
-      action,
-    }: {
+    mutationFn: async (request: {
       item: PlanScopeBriefItem;
       action?: PlanScopeBriefNextAction;
       review?: PlanScopeBriefReview;
     }) => {
+      const { item, action } = request;
       const sheet = sheets.find((candidate) => candidate.id === item.plan_sheet_id);
       const planSet = planSets.find((candidate) => candidate.id === sheet?.plan_set_id);
       if (!sheet || !planSet) throw new Error("The cited drawing sheet is no longer available.");
@@ -2205,7 +2203,11 @@ export function PlanRoomWorkspace({
           "The cited note could not be located on the drawing. Rebuild the Scope Brief before starting review.",
         );
       }
-      return { item, action, review, anchor };
+      // Preserve the exact accepted review through the asynchronous evidence
+      // lookup. Dropping it here closes the brief without opening the routed
+      // workbench, because the downstream handoff deliberately requires both
+      // an action and its durable estimator decision.
+      return { ...request, anchor };
     },
     onSuccess: ({ item, action, review, anchor }) => {
       setSelectedSheetId(item.plan_sheet_id);

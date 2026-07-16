@@ -2376,6 +2376,7 @@ await expectContains(
     /action === "count_review"/,
     /setAiAssistScope\("sheet"\)/,
     /The cited note could not be located on the drawing/,
+    /return \{ \.\.\.request, anchor \}/,
     /action === "length_review" \|\| action === "area_review"/,
     /Complete two Scale Assurance checks before drawing the takeoff/,
     /you remain responsible for every endpoint/,
