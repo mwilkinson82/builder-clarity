@@ -2681,6 +2681,31 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/estimates/EstimateReviewActivity.tsx",
+  [
+    /Estimate Sign-off/,
+    /Any later change makes the sign-off\s+stale/,
+    /not an AI certification/,
+    /estimate-signoff-submit/,
+    /Recent sign-off activity/,
+  ],
+  "estimate sign-off keeps estimator accountability, stale-state meaning, and history visible",
+);
+
+await expectContains(
+  "src/components/estimates/EstimateWorkspace.tsx",
+  [
+    /<EstimateReviewActivity/,
+    /estimateReleaseNeedsOverride/,
+    /override_export_csv/,
+    /override_export_pdf/,
+    /override_push_project/,
+    /Record Override & Continue/,
+  ],
+  "estimate exports and project push require current sign-off or an audited reason",
+);
+
+await expectContains(
   "src/lib/takeoff-assembly.ts",
   [
     /assembly-engine-v1/,
@@ -3047,6 +3072,25 @@ expectSql(
     /notify pgrst, 'reload schema'/i,
   ],
   "takeoff trust migration versions scales, invalidates dependent work, records AI review, and refreshes the API schema",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.estimate_review_activities/i,
+    /activity_type in[\s\S]*'signoff'[\s\S]*'override_export_csv'[\s\S]*'override_push_project'/i,
+    /grant select on table public\.estimate_review_activities to authenticated/i,
+    /create policy estimate_review_activities_team_select/i,
+    /using \(public\.can_read_estimate\(estimate_id\)\)/i,
+    /create or replace function public\.build_estimate_review_snapshot/i,
+    /create or replace function public\.get_estimate_review_state/i,
+    /create or replace function public\.record_estimate_review_activity/i,
+    /not public\.can_manage_estimate\(p_estimate_id\)/i,
+    /resolve every blocking review item before signing off this estimate/i,
+    /revoke all on function public\.record_estimate_review_activity\(uuid, text, text\) from public/i,
+    /notify pgrst, 'reload schema'/i,
+  ],
+  "estimate sign-off is append-only, manager-authored, snapshot-bound, RLS-readable, and override-audited",
 );
 
 expectSql(

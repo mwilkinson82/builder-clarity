@@ -99,7 +99,16 @@ import {
   writeFirstRunLauncherDone,
 } from "@/components/estimates/EstimateFirstRunLauncher";
 import { EstimateQuantitySourceReview } from "@/components/estimates/EstimateQuantitySourceReview";
+import { EstimateReviewActivity } from "@/components/estimates/EstimateReviewActivity";
 import { EstimateReviewGate } from "@/components/estimates/EstimateReviewGate";
+import {
+  estimateReleaseNeedsOverride,
+  type EstimateReviewActivityType,
+} from "@/lib/estimate-review-activity";
+import {
+  getEstimateReviewActivityState,
+  recordEstimateReviewActivity,
+} from "@/lib/estimate-review-activity.functions";
 import { buildEstimateReviewGate } from "@/lib/estimate-review-gate";
 import {
   quantitySourceIssueLabel,
@@ -153,6 +162,7 @@ type GridCellProps = {
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
 };
 type CostApplyMode = "row" | "material" | "labor";
+type EstimateReleaseAction = "export_csv" | "export_pdf" | "push_project";
 
 interface EstimateWorkspaceProps {
   estimate: EstimateRow;
@@ -192,6 +202,18 @@ const safeFileName = (value: string, ext: string) =>
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "") || "estimate"
   }.${ext}`;
+
+const releaseActivityType: Record<EstimateReleaseAction, EstimateReviewActivityType> = {
+  export_csv: "override_export_csv",
+  export_pdf: "override_export_pdf",
+  push_project: "override_push_project",
+};
+
+const releaseActionLabel: Record<EstimateReleaseAction, string> = {
+  export_csv: "export this estimate as CSV",
+  export_pdf: "export this estimate as PDF",
+  push_project: "push this estimate to the project",
+};
 
 // Delegates to the shared safe download path (delayed blob-URL revoke —
 // synchronous revoke cancels the download in Safari/iOS).
@@ -309,6 +331,8 @@ export function EstimateWorkspace({
   const convertToSovFn = useServerFn(convertEstimateToSOV);
   const convertToProjectFn = useServerFn(convertEstimateToProject);
   const saveDefaultsFn = useServerFn(saveEstimateMarkupDefaults);
+  const loadReviewActivityFn = useServerFn(getEstimateReviewActivityState);
+  const recordReviewActivityFn = useServerFn(recordEstimateReviewActivity);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState(estimate.name);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -319,6 +343,8 @@ export function EstimateWorkspace({
   const [pasteText, setPasteText] = useState("");
   const [importRows, setImportRows] = useState<EstimateLineImportRow[]>([]);
   const [importSource, setImportSource] = useState("");
+  const [releaseAction, setReleaseAction] = useState<EstimateReleaseAction | null>(null);
+  const [releaseOverrideReason, setReleaseOverrideReason] = useState("");
   const [pendingGridFocus, setPendingGridFocus] = useState<{
     rowIndex: number;
     colIndex: number;
@@ -337,7 +363,11 @@ export function EstimateWorkspace({
     return () => document.removeEventListener("keydown", exitExpandedSheet);
   }, [importOpen, isSheetExpanded]);
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["estimate", estimate.id] });
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["estimate", estimate.id] }),
+      qc.invalidateQueries({ queryKey: ["estimate-review-activity", estimate.id] }),
+    ]);
 
   const updateEstimateMutation = useMutation({
     mutationFn: (payload: UpdateEstimatePayload) => updateEstimateFn({ data: payload }),
@@ -448,10 +478,6 @@ export function EstimateWorkspace({
   const pushMutation = useMutation({
     mutationFn: async () => {
       if (estimate.project_id) {
-        const confirmed = window.confirm(
-          "Push this estimate into the linked project and replace its current cost buckets?",
-        );
-        if (!confirmed) return { project_id: estimate.project_id };
         await convertToSovFn({
           data: { estimate_id: estimate.id, project_id: estimate.project_id },
         });
@@ -510,6 +536,14 @@ export function EstimateWorkspace({
     () => buildEstimateReviewGate({ lines: orderedLines, quantitySourceReview }),
     [orderedLines, quantitySourceReview],
   );
+  const reviewActivityQuery = useQuery({
+    queryKey: ["estimate-review-activity", estimate.id],
+    queryFn: () => loadReviewActivityFn({ data: { estimate_id: estimate.id } }),
+    enabled: !isMasterSheet && orderedLines.length > 0,
+  });
+
+  const refreshReviewActivity = () =>
+    qc.invalidateQueries({ queryKey: ["estimate-review-activity", estimate.id] });
 
   useEffect(() => {
     if (!pendingGridFocus) return;
@@ -666,6 +700,64 @@ export function EstimateWorkspace({
     downloadPdfBytes(bytes, safeFileName(estimate.name, "pdf"));
   };
 
+  const executeReleaseAction = (action: EstimateReleaseAction) => {
+    if (action === "export_csv") {
+      exportCsv();
+      return;
+    }
+    if (action === "export_pdf") {
+      void exportPdf();
+      return;
+    }
+    pushMutation.mutate();
+  };
+
+  const requestReleaseAction = (action: EstimateReleaseAction) => {
+    if (
+      action === "push_project" &&
+      estimate.project_id &&
+      !window.confirm(
+        "Push this estimate into the linked project and replace its current cost buckets?",
+      )
+    ) {
+      return;
+    }
+
+    const reviewState = reviewActivityQuery.data;
+    if (!reviewState?.ready) {
+      toast.error(
+        "Estimator sign-off is not ready yet. Confirm the database migration, then retry.",
+      );
+      return;
+    }
+    if (!estimateReleaseNeedsOverride(reviewState)) {
+      executeReleaseAction(action);
+      return;
+    }
+    setReleaseOverrideReason("");
+    setReleaseAction(action);
+  };
+
+  const releaseOverrideMutation = useMutation({
+    mutationFn: ({ action, reason }: { action: EstimateReleaseAction; reason: string }) =>
+      recordReviewActivityFn({
+        data: {
+          estimate_id: estimate.id,
+          activity_type: releaseActivityType[action],
+          note: reason,
+        },
+      }),
+    onSuccess: async (_result, variables) => {
+      await refreshReviewActivity();
+      setReleaseAction(null);
+      setReleaseOverrideReason("");
+      toast.warning("Release override recorded in the estimate review history.");
+      executeReleaseAction(variables.action);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Release override did not save"),
+  });
+
   const estimateGridClass = isSheetExpanded
     ? "min-w-[1180px] table-fixed"
     : "min-w-[1450px] table-fixed";
@@ -806,10 +898,18 @@ export function EstimateWorkspace({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={exportCsv}>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        isMasterSheet ? exportCsv() : requestReleaseAction("export_csv")
+                      }
+                    >
                       <FileDown className="h-4 w-4" /> CSV
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={exportPdf}>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        isMasterSheet ? void exportPdf() : requestReleaseAction("export_pdf")
+                      }
+                    >
                       <FileDown className="h-4 w-4" /> PDF
                     </DropdownMenuItem>
                   </DropdownMenuContent>
@@ -821,7 +921,9 @@ export function EstimateWorkspace({
                     isMasterSheet ? "Create a project estimate from this master sheet" : undefined
                   }
                   onClick={() =>
-                    isMasterSheet ? duplicateMutation.mutate(true) : pushMutation.mutate()
+                    isMasterSheet
+                      ? duplicateMutation.mutate(true)
+                      : requestReleaseAction("push_project")
                   }
                   disabled={
                     isMasterSheet
@@ -851,7 +953,15 @@ export function EstimateWorkspace({
           }`}
         >
           {!isMasterSheet && orderedLines.length > 0 && (
-            <EstimateReviewGate estimateId={estimate.id} review={estimateReviewGate} />
+            <>
+              <EstimateReviewGate estimateId={estimate.id} review={estimateReviewGate} />
+              <EstimateReviewActivity
+                estimateId={estimate.id}
+                state={reviewActivityQuery.data}
+                loading={reviewActivityQuery.isLoading || reviewActivityQuery.isFetching}
+                onChanged={refreshReviewActivity}
+              />
+            </>
           )}
           {!isMasterSheet && (
             <EstimateQuantitySourceReview estimateId={estimate.id} review={quantitySourceReview} />
@@ -1086,6 +1196,81 @@ export function EstimateWorkspace({
               disabled={deleteEstimateMutation.isPending}
             >
               {isMasterSheet ? "Delete Master Sheet" : "Delete Estimate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={releaseAction !== null}
+        onOpenChange={(open) => {
+          if (!open && !releaseOverrideMutation.isPending) {
+            setReleaseAction(null);
+            setReleaseOverrideReason("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-xl" data-testid="estimate-release-override-dialog">
+          <DialogHeaderV2
+            eyebrow="Release control"
+            title={
+              reviewActivityQuery.data?.status === "stale"
+                ? "This sign-off is stale"
+                : "This estimate is not signed off"
+            }
+            description={
+              releaseAction
+                ? `You can ${releaseActionLabel[releaseAction]} only after recording why it should proceed without a current estimator sign-off.`
+                : undefined
+            }
+          />
+          <div className="space-y-2 py-2">
+            <div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-[11px] leading-5 text-warning">
+              This override is retained with your name, timestamp, current total, review counts, and
+              the exact estimate snapshot. It does not sign off the estimate.
+            </div>
+            <Label htmlFor="estimate-release-override-reason">Reason to proceed</Label>
+            <Textarea
+              id="estimate-release-override-reason"
+              value={releaseOverrideReason}
+              onChange={(event) => setReleaseOverrideReason(event.target.value)}
+              rows={4}
+              maxLength={2000}
+              placeholder="Explain the business reason, review performed, and remaining risk."
+              data-testid="estimate-release-override-reason"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              Minimum 10 characters. Resolve blockers and record a current sign-off whenever
+              possible.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReleaseAction(null);
+                setReleaseOverrideReason("");
+              }}
+              disabled={releaseOverrideMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!releaseAction) return;
+                releaseOverrideMutation.mutate({
+                  action: releaseAction,
+                  reason: releaseOverrideReason,
+                });
+              }}
+              disabled={
+                !releaseAction ||
+                releaseOverrideReason.trim().length < 10 ||
+                releaseOverrideMutation.isPending
+              }
+              data-testid="estimate-release-override-submit"
+            >
+              {releaseOverrideMutation.isPending ? "Recording…" : "Record Override & Continue"}
             </Button>
           </DialogFooter>
         </DialogContent>
