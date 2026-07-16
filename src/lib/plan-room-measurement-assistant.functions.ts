@@ -24,6 +24,14 @@ import { latestPlanScopeCoverageRecords } from "@/lib/plan-scope-coverage";
 const sourceLineSchema = z.object({
   line_number: z.string().regex(/^L\d{3}$/),
   text: z.string().trim().min(1).max(500),
+  anchor: z
+    .object({
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+      width: z.number().positive().max(1),
+      height: z.number().positive().max(1),
+    })
+    .optional(),
 });
 
 const sheetImageSchema = z.object({
@@ -54,6 +62,46 @@ const analyzeMeasurementNotesInput = z
       });
     }
   });
+
+const measurementPlanResponseJsonSchema = {
+  name: "estimator_measurement_plan",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      suggestions: {
+        type: "array",
+        maxItems: 12,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            label: { type: "string" },
+            tool: { type: "string", enum: ["linear", "area"] },
+            source_line: { type: "string" },
+            source_excerpt: { type: "string" },
+            guide_points: {
+              type: ["array", "null"],
+              minItems: 2,
+              maxItems: 16,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  x: { type: "number", minimum: 0, maximum: 1 },
+                  y: { type: "number", minimum: 0, maximum: 1 },
+                },
+                required: ["x", "y"],
+              },
+            },
+          },
+          required: ["label", "tool", "source_line", "source_excerpt", "guide_points"],
+        },
+      },
+    },
+    required: ["suggestions"],
+  },
+};
 
 function isMissingMonthlyGrantRpc(error: DynamicSupabaseError | null | undefined) {
   const message = error?.message?.toLowerCase() ?? "";
@@ -101,9 +149,11 @@ Safety and evidence rules:
 - Suggest only scope directly supported by notes, legends, finish descriptions, or schedules.
 - Ignore title-block administration, project addresses, generic code statements, revision text, isolated dimensions, and symbol counts.
 - Use tool "linear" for traceable length (unit LF) and tool "area" for traceable surface/footprint (unit SF).
-- When the visible drawing clearly supports the cited scope, add guide_points as an approximate route or perimeter. Coordinates are normalized to the entire supplied image: x=0 is left, x=1 is right, y=0 is top, y=1 is bottom.
-- Linear guide_points need 2-16 ordered points along the likely visible run. Area guide_points need 3-16 ordered perimeter corners. Do not close an area by repeating its first point.
-- guide_points are location hints only. Do not claim they are snapped, scaled, complete, or accurate. Omit guide_points whenever the location or boundary is ambiguous.
+- Each source line may include an anchor locating its printed text on the same full-sheet image. Anchor x/y/width/height are normalized image coordinates with y=0 at the top. Use that only to orient yourself; the guide should point to the related drawing scope, not merely box the note text.
+- After finding cited scope, make a second visual pass to localize where the estimator should inspect it. When you can identify a reasonable drawing region, return guide_points. These are deliberately approximate visual highlights, not measurement geometry.
+- Linear guide_points need 2-16 ordered points following the likely visible run. Area guide_points need 3-16 ordered corners. A simple conservative four-corner bounding region is acceptable when the exact perimeter is not defensible. Do not close an area by repeating its first point.
+- Do not omit guide_points merely because they are not precise enough to measure. Precision is not their purpose. Return null only when you cannot reasonably localize the cited scope on the supplied image.
+- guide_points are location hints only. Do not claim they are snapped, scaled, complete, or accurate.
 - Never turn a room name such as RESTROOM or OFFICE into area scope by itself.
 - Never turn a countable object such as an access panel, door, fixture, device, or piece of equipment into area scope.
 - Return no suggestion instead of guessing. Maximum 12 suggestions.
@@ -111,7 +161,7 @@ Safety and evidence rules:
 Return strict JSON only:
 {"suggestions":[{"label":"short label using only scope words from the cited line","tool":"linear|area","source_line":"L001","source_excerpt":"exact words from the cited line","guide_points":[{"x":0.1,"y":0.2},{"x":0.4,"y":0.2}]}]}
 
-Do not return a summary, rationale, warnings, quantities, or any keys not shown. The application creates its own evidence-grounded explanation.
+guide_points is required by the response schema: return an array when the scope can be localized and null when it cannot. Do not return a summary, rationale, warnings, quantities, or any keys not shown. The application creates its own evidence-grounded explanation.
 
 DRAWING_TEXT_JSON_START
 ${evidence}
@@ -173,7 +223,7 @@ export const analyzePlanSheetMeasurementNotes = createServerFn({ method: "POST" 
     analyzeMeasurementNotesInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { isVisionConfigured, resolveVisionModel } =
+    const { isVisionConfigured, resolveMeasurementVisionModel } =
       await import("@/lib/ai-takeoff/vision.server");
     if (!isVisionConfigured()) {
       throw new Error(
@@ -235,7 +285,7 @@ export const analyzePlanSheetMeasurementNotes = createServerFn({ method: "POST" 
     }
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const requestedModel = resolveVisionModel();
+    const requestedModel = resolveMeasurementVisionModel();
     const requestContext = {
       sheet_number: data.sheet_number,
       sheet_name: data.sheet_name,
@@ -294,8 +344,8 @@ export const analyzePlanSheetMeasurementNotes = createServerFn({ method: "POST" 
     }
 
     try {
-      const { callVision } = await import("@/lib/ai-takeoff/vision.server");
-      const response = await callVision({
+      const { callMeasurementGuideVision } = await import("@/lib/ai-takeoff/vision.server");
+      const response = await callMeasurementGuideVision({
         instruction: measurementPlanPrompt({
           sheetNumber: data.sheet_number,
           sheetName: data.sheet_name,
@@ -304,7 +354,8 @@ export const analyzePlanSheetMeasurementNotes = createServerFn({ method: "POST" 
           imageHeight: data.sheet_image.height_px,
         }),
         images: [{ base64: data.sheet_image.base64, mediaType: data.sheet_image.media_type }],
-        maxTokens: 1200,
+        maxTokens: 5000,
+        responseJsonSchema: measurementPlanResponseJsonSchema,
       });
       const plan = parseMeasurementAssistantPlan(response.text, data.source_lines);
       const { error: finishError } = await dynamicTable(supabaseAdmin, "ai_operations")

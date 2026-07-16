@@ -15,6 +15,8 @@ export interface MeasurementVisualGuide {
 export interface MeasurementSourceLine {
   line_number: string;
   text: string;
+  /** Optional normalized location of the printed evidence on the full sheet. */
+  anchor?: MeasurementEvidenceAnchor;
 }
 
 export interface MeasurementAssistantSuggestion {

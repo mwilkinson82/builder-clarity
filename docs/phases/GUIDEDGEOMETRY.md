@@ -18,18 +18,24 @@ The estimator remains responsible for:
 
 1. **Review Notes** extracts selectable PDF notes and renders a bounded full-sheet
    image before any AI credit is charged.
-2. The vision provider returns cited LF/SF suggestions. It may include normalized
-   guide points only when it can visually locate the scope.
-3. The application independently validates every guide. Out-of-bounds,
+2. Each cited line carries its normalized printed-text anchor into the review so
+   the model can reconcile the note with the same full-sheet image.
+3. When OpenAI is configured, this single quality-first review uses the Responses
+   API, `gpt-5.6-sol` by default, original image detail, and a strict JSON schema.
+   The high-volume symbol-count workflow keeps its separate fast model path.
+4. The vision provider returns cited LF/SF suggestions. It may include normalized
+   guide points only when it can visually locate the scope. A bounded inspection
+   region is valid; it is intentionally not a measured perimeter.
+5. The application independently validates every guide. Out-of-bounds,
    degenerate, oversized, and self-intersecting geometry is discarded while the
    cited checklist item can remain.
-4. Valid hints render as numbered dashed routes or regions on the drawing.
-5. Clicking a hint opens the estimator review bar. The estimator can inspect the
+6. Valid hints render as numbered dashed routes or regions on the drawing.
+7. Clicking a hint opens the estimator review bar. The estimator can inspect the
    cited note, label the scope, accept it into the durable scope queue, reject it,
    or save it for later.
-6. **Start trusted trace** arms the existing linear or area tool. The AI guide is
+8. **Start trusted trace** arms the existing linear or area tool. The AI guide is
    not copied into the takeoff. The estimator places every trusted point.
-7. The server recalculates quantity from the estimator geometry, verified sheet
+9. The server recalculates quantity from the estimator geometry, verified sheet
    scale, and current scale revision. The durable scope-queue record links the
    AI operation, estimator decision, and completed takeoff.
 

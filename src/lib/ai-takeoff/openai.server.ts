@@ -4,6 +4,7 @@
 // dynamic import inside server-function handlers (or vision.server.ts) only.
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_RESPONSES_API_URL = "https://api.openai.com/v1/responses";
 // Default vision model — gpt-4o, OpenAI's fast (non-reasoning) multimodal model.
 // A live A-100 test showed gpt-5.5 (a reasoning model) spends 2-3 min PER tile
 // call; a scan is ~20 tile calls + verify, i.e. 30-60 min — unusable. gpt-4o
@@ -71,6 +72,118 @@ export interface OpenAiVisionResult {
   model: string;
 }
 
+export type OpenAiImageDetail = "low" | "high" | "original" | "auto";
+export type OpenAiReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface OpenAiJsonSchemaFormat {
+  name: string;
+  schema: Record<string, unknown>;
+}
+
+function responsesText(payload: {
+  output?: Array<{
+    type?: string;
+    content?: Array<{ type?: string; text?: string; refusal?: string }>;
+  }>;
+}) {
+  const outputText = (payload.output ?? [])
+    .filter((item) => item.type === "message")
+    .flatMap((item) => item.content ?? [])
+    .filter((item) => item.type === "output_text" && typeof item.text === "string")
+    .map((item) => item.text as string)
+    .join("\n")
+    .trim();
+  if (outputText) return outputText;
+  const refusal = (payload.output ?? [])
+    .flatMap((item) => item.content ?? [])
+    .find((item) => item.type === "refusal" && typeof item.refusal === "string")?.refusal;
+  if (refusal) throw new Error(`The OpenAI model refused the drawing review: ${refusal}`);
+  throw new Error("The OpenAI model returned no drawing-review output.");
+}
+
+async function callOpenAiResponsesVision({
+  apiKey,
+  model,
+  instruction,
+  images,
+  maxTokens,
+  imageDetail,
+  reasoningEffort,
+  responseJsonSchema,
+  timeoutMs,
+}: {
+  apiKey: string;
+  model: string;
+  instruction: string;
+  images: OpenAiImageInput[];
+  maxTokens: number;
+  imageDetail: OpenAiImageDetail;
+  reasoningEffort: OpenAiReasoningEffort;
+  responseJsonSchema?: OpenAiJsonSchemaFormat;
+  timeoutMs: number;
+}): Promise<OpenAiVisionResult> {
+  const content: Array<Record<string, unknown>> = [
+    { type: "input_text", text: instruction },
+    ...images.map((image) => ({
+      type: "input_image",
+      image_url: `data:${image.mediaType};base64,${image.base64}`,
+      detail: imageDetail,
+    })),
+  ];
+  const requestBody: Record<string, unknown> = {
+    model,
+    input: [{ role: "user", content }],
+    max_output_tokens: maxTokens,
+    reasoning: { effort: reasoningEffort },
+    store: false,
+  };
+  if (responseJsonSchema) {
+    requestBody.text = {
+      format: {
+        type: "json_schema",
+        name: responseJsonSchema.name,
+        strict: true,
+        schema: responseJsonSchema.schema,
+      },
+    };
+  }
+
+  const response = await fetchWithTimeout(
+    OPENAI_RESPONSES_API_URL,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    },
+    timeoutMs,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      error?: { message?: string };
+    } | null;
+    const detail = body?.error?.message || `HTTP ${response.status}`;
+    throw new Error(`The OpenAI model call failed: ${detail}`);
+  }
+
+  const payload = (await response.json()) as {
+    model?: string;
+    output?: Array<{
+      type?: string;
+      content?: Array<{ type?: string; text?: string; refusal?: string }>;
+    }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
+  return {
+    text: responsesText(payload),
+    inputTokens: Math.max(0, Math.round(Number(payload.usage?.input_tokens ?? 0))),
+    outputTokens: Math.max(0, Math.round(Number(payload.usage?.output_tokens ?? 0))),
+    model: payload.model?.trim() || model,
+  };
+}
+
 /**
  * Send images + a text instruction to the configured OpenAI vision model and
  * return the text plus token usage. Mirrors callAnthropicVision so the two are
@@ -81,10 +194,28 @@ export async function callOpenAiVision(input: {
   instruction: string;
   images: OpenAiImageInput[];
   maxTokens?: number;
+  api?: "chat_completions" | "responses";
+  imageDetail?: OpenAiImageDetail;
+  reasoningEffort?: OpenAiReasoningEffort;
+  responseJsonSchema?: OpenAiJsonSchemaFormat;
+  timeoutMs?: number;
 }): Promise<OpenAiVisionResult> {
   const apiKey = requireOpenAiApiKey();
   const model = input.model?.trim() || resolveOpenAiModel();
   const reasoning = isReasoningModel(model);
+  if (input.api === "responses") {
+    return callOpenAiResponsesVision({
+      apiKey,
+      model,
+      instruction: input.instruction,
+      images: input.images,
+      maxTokens: Math.max(input.maxTokens ?? 4000, reasoning ? 3000 : 1),
+      imageDetail: input.imageDetail ?? "auto",
+      reasoningEffort: input.reasoningEffort ?? "low",
+      responseJsonSchema: input.responseJsonSchema,
+      timeoutMs: input.timeoutMs ?? OPENAI_CALL_TIMEOUT_MS,
+    });
+  }
   // OpenAI takes images as data URLs in the same message as the instruction.
   const content: Array<Record<string, unknown>> = input.images.map((image) => ({
     type: "image_url",
