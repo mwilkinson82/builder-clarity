@@ -6,6 +6,7 @@ import type { KeyboardEvent } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  Calculator,
   CheckCircle2,
   ChevronDown,
   Copy,
@@ -1304,6 +1305,18 @@ function EstimateLineRow({
             data-testid="line-takeoff-link"
           >
             <PencilRuler className="h-3 w-3" /> Takeoff
+          </Link>
+        )}
+        {line.quantity_source === "assembly" && (
+          <Link
+            to="/estimates/$estimateId/plan-room"
+            params={{ estimateId: estimate.id }}
+            search={{}}
+            className="mt-1 flex items-center justify-end gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+            title="This quantity came from an estimator-confirmed assembly output in Plan Room."
+            data-testid="line-assembly-link"
+          >
+            <Calculator className="h-3 w-3" /> Assembly
           </Link>
         )}
       </TableCell>

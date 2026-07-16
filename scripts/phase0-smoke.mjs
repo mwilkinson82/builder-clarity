@@ -2009,8 +2009,9 @@ await expectContains(
     /deleteEstimate/,
     /folder:\s*estimateFolderSchema\.optional/,
     /recalculateEstimateTotalsInternal/,
+    /takeoffUnitsCompatible\(data\.unit, item\.unit\)/,
   ],
-  "estimating server functions import contractor costs, protect system rows, seed Harbor samples, folder estimates, delete estimates, and create blank rows in bulk",
+  "estimating server functions import contractor costs, protect system rows, unit-filter assembly destinations, seed Harbor samples, folder estimates, delete estimates, and create blank rows in bulk",
 );
 
 await expectContains(
@@ -2520,8 +2521,11 @@ await expectContains(
     /No estimate impact/,
     /Confirm assembly/,
     /takeoff-assembly-citations/,
+    /Send confirmed outputs/,
+    /nothing is sent automatically/,
+    /strictUnit/,
   ],
-  "assembly workbench makes estimator confirmation, formula provenance, citations, and no-impact state visible",
+  "assembly workbench makes estimator confirmation, provenance, citations, and explicit output handoff visible",
 );
 
 await expectContains(
@@ -2533,9 +2537,30 @@ await expectContains(
     /can_manage_estimate/,
     /calculateTakeoffAssembly/,
     /save_estimate_takeoff_assembly/,
+    /handoffTakeoffAssemblyOutput/,
+    /unlinkTakeoffAssemblyOutput/,
+    /recalculateEstimateTotalsInternal/,
     /failAndRefundAssemblyReview/,
   ],
   "assembly assistance extracts only cited inputs, meters and audits AI, and sends authoritative saves through the database",
+);
+
+await expectContains(
+  "supabase/migrations/20260716051641_assembly_output_handoff.sql",
+  [
+    /CREATE TABLE IF NOT EXISTS public\.estimate_takeoff_assembly_output_links/,
+    /CREATE TABLE IF NOT EXISTS public\.estimate_takeoff_assembly_output_link_events/,
+    /quantity_source IN \('manual', 'takeoff', 'assembly'\)/,
+    /handoff_estimate_takeoff_assembly_output/,
+    /unlink_estimate_takeoff_assembly_output/,
+    /Assembly output and estimate row units must match/,
+    /This row has a hand-entered quantity/,
+    /tg_stale_assembly_output_links_from_assembly/,
+    /tg_stale_assembly_output_links_from_line/,
+    /GRANT SELECT ON TABLE public\.estimate_takeoff_assembly_output_links TO authenticated/,
+    /NOTIFY pgrst, 'reload schema'/,
+  ],
+  "assembly-output handoff is least-privilege, unit-checked, anti-clobber, stale-aware, and audited",
 );
 
 await expectContains(

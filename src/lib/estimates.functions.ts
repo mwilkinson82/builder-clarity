@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { findHarborDemoProject, harborDemoSeedAction } from "@/lib/demo-seed";
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "@/lib/estimate-seed-data";
 import type { Json } from "@/integrations/supabase/types";
+import { takeoffUnitsCompatible } from "@/lib/plan-room-math";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -142,7 +143,7 @@ export interface EstimateRow {
   opportunity_name?: string;
 }
 
-export type LineQuantitySource = "manual" | "takeoff";
+export type LineQuantitySource = "manual" | "takeoff" | "assembly";
 
 export interface EstimateLineItemRow {
   id: string;
@@ -155,6 +156,8 @@ export interface EstimateLineItemRow {
   quantity_source: LineQuantitySource;
   takeoff_quantity: number | null;
   takeoff_synced_at: string | null;
+  assembly_output_quantity: number | null;
+  assembly_output_synced_at: string | null;
   material_unit_cost_cents: number;
   labor_unit_cost_cents: number;
   material_extended_cents: number;
@@ -342,9 +345,18 @@ const normalizeLineItem = (row: Record<string, unknown>): EstimateLineItemRow =>
     description: str(row.description),
     unit: str(row.unit),
     quantity,
-    quantity_source: str(row.quantity_source) === "takeoff" ? "takeoff" : "manual",
+    quantity_source:
+      str(row.quantity_source) === "takeoff"
+        ? "takeoff"
+        : str(row.quantity_source) === "assembly"
+          ? "assembly"
+          : "manual",
     takeoff_quantity: row.takeoff_quantity == null ? null : num(row.takeoff_quantity),
     takeoff_synced_at: row.takeoff_synced_at == null ? null : str(row.takeoff_synced_at),
+    assembly_output_quantity:
+      row.assembly_output_quantity == null ? null : num(row.assembly_output_quantity),
+    assembly_output_synced_at:
+      row.assembly_output_synced_at == null ? null : str(row.assembly_output_synced_at),
     material_unit_cost_cents: material,
     labor_unit_cost_cents: labor,
     material_extended_cents: Math.round(num(row.material_extended_cents, quantity * material)),
@@ -761,7 +773,7 @@ async function getNextLineSortOrder(context: { supabase: unknown }, estimateId: 
   );
 }
 
-async function recalculateEstimateTotalsInternal(
+export async function recalculateEstimateTotalsInternal(
   context: { supabase: unknown },
   estimateId: string,
 ) {
@@ -857,6 +869,7 @@ const listCostLibraryInput = z.object({
 const searchCostLibraryInput = z.object({
   query: z.string().max(120),
   csi_division: z.string().max(8).optional().default(""),
+  unit: z.string().max(16).optional().default(""),
   limit: z.number().int().min(1).max(50).optional().default(20),
   region_multiplier: z.number().min(0).max(10).optional().default(1),
 });
@@ -1890,6 +1903,7 @@ export const searchCostLibrary = createServerFn({ method: "GET" })
     if (error) throw new Error(error.message);
     const items = ((rows ?? []) as Record<string, unknown>[])
       .map((row) => normalizeLibraryItem(row, data.region_multiplier))
+      .filter((item) => !data.unit || takeoffUnitsCompatible(data.unit, item.unit))
       .map((item) => ({ item, score: scoreLibraryItem(item, data.query) }))
       .filter(({ score }) => score > 0 || data.query.trim().length === 0)
       .sort((a, b) => b.score - a.score || a.item.description.localeCompare(b.item.description))
