@@ -98,6 +98,12 @@ import {
   readFirstRunLauncherDone,
   writeFirstRunLauncherDone,
 } from "@/components/estimates/EstimateFirstRunLauncher";
+import { EstimateQuantitySourceReview } from "@/components/estimates/EstimateQuantitySourceReview";
+import {
+  quantitySourceIssueLabel,
+  type EstimateQuantitySourceReview as EstimateQuantitySourceReviewData,
+  type EstimateQuantitySourceReviewItem,
+} from "@/lib/estimate-quantity-source-review";
 
 type EstimatePatch = Partial<
   Pick<
@@ -149,6 +155,7 @@ type CostApplyMode = "row" | "material" | "labor";
 interface EstimateWorkspaceProps {
   estimate: EstimateRow;
   lineItems: EstimateLineItemRow[];
+  quantitySourceReview: EstimateQuantitySourceReviewData;
   totals: EstimateTotalsBreakdown;
   regions: EstimateRegion[];
   companyName?: string;
@@ -282,6 +289,7 @@ async function downloadMasterEstimateWorkbook() {
 export function EstimateWorkspace({
   estimate,
   lineItems,
+  quantitySourceReview,
   totals,
   regions,
   companyName = "Company",
@@ -483,6 +491,19 @@ export function EstimateWorkspace({
     () => [...lineItems].sort((a, b) => a.sort_order - b.sort_order),
     [lineItems],
   );
+  const takeoffIssueByLineId = useMemo(() => {
+    const issues = new Map<string, EstimateQuantitySourceReviewItem>();
+    for (const item of quantitySourceReview.items) {
+      if (
+        item.source_type === "takeoff" &&
+        item.estimate_line_item_id &&
+        !issues.has(item.estimate_line_item_id)
+      ) {
+        issues.set(item.estimate_line_item_id, item);
+      }
+    }
+    return issues;
+  }, [quantitySourceReview.items]);
 
   useEffect(() => {
     if (!pendingGridFocus) return;
@@ -823,6 +844,9 @@ export function EstimateWorkspace({
             isSheetExpanded ? "flex min-h-0 flex-col" : ""
           }`}
         >
+          {!isMasterSheet && (
+            <EstimateQuantitySourceReview estimateId={estimate.id} review={quantitySourceReview} />
+          )}
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline bg-surface px-4 py-3">
             <div>
               <h2 className="font-serif text-2xl">
@@ -973,6 +997,7 @@ export function EstimateWorkspace({
                             key={line.id}
                             estimate={estimate}
                             line={line}
+                            takeoffIssue={takeoffIssueByLineId.get(line.id)}
                             index={index}
                             onUpdate={(patch) => updateLineMutation.mutate({ id: line.id, patch })}
                             onDelete={() => deleteLineMutation.mutate(line.id)}
@@ -1093,6 +1118,7 @@ export function EstimateWorkspace({
 function EstimateLineRow({
   estimate,
   line,
+  takeoffIssue,
   index,
   onUpdate,
   onDelete,
@@ -1104,6 +1130,7 @@ function EstimateLineRow({
 }: {
   estimate: EstimateRow;
   line: EstimateLineItemRow;
+  takeoffIssue?: EstimateQuantitySourceReviewItem;
   index: number;
   onUpdate: (patch: UpdateLinePayload["patch"]) => void;
   onDelete: () => void;
@@ -1303,12 +1330,23 @@ function EstimateLineRow({
           <Link
             to="/estimates/$estimateId/plan-room"
             params={{ estimateId: estimate.id }}
-            search={{ line: line.id }}
-            className="mt-1 flex items-center justify-end gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-            title="This quantity came from the Plan Room takeoff. Open its sheet and measurement."
+            search={takeoffIssue ? { measurement: takeoffIssue.measurement_id } : { line: line.id }}
+            className={`mt-1 flex items-center justify-end gap-1 text-[11px] hover:text-foreground ${
+              takeoffIssue ? "text-warning" : "text-muted-foreground"
+            }`}
+            title={
+              takeoffIssue
+                ? `${quantitySourceIssueLabel(takeoffIssue.status)}. Review this markup before relying on the worksheet quantity.`
+                : "This quantity came from the Plan Room takeoff. Open its sheet and measurement."
+            }
             data-testid="line-takeoff-link"
           >
-            <PencilRuler className="h-3 w-3" /> Takeoff
+            {takeoffIssue ? (
+              <AlertTriangle className="h-3 w-3" />
+            ) : (
+              <PencilRuler className="h-3 w-3" />
+            )}
+            {takeoffIssue ? "Takeoff needs review" : "Takeoff"}
           </Link>
         )}
         {assemblySource ? (

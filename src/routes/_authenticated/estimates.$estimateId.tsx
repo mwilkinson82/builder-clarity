@@ -84,6 +84,7 @@ function EstimateDetailPage() {
     <EstimateWorkspace
       estimate={estimateQuery.data.estimate}
       lineItems={estimateQuery.data.line_items}
+      quantitySourceReview={estimateQuery.data.quantity_source_review}
       totals={estimateQuery.data.totals}
       regions={regionsQuery.data?.regions ?? []}
       companyName={companyContextQuery.data?.name || "Company"}
