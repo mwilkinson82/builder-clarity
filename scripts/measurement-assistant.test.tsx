@@ -547,6 +547,68 @@ describe("guided measurement planning", () => {
     ]);
   });
 
+  it("classifies from the displayed citation instead of hidden line text or bad discipline metadata", () => {
+    const sheetId = "44444444-4444-4444-8444-444444444444";
+    const brief = parsePlanScopeBrief({
+      raw: JSON.stringify({
+        items: [
+          {
+            trade: "Other",
+            review_kind: "assembly",
+            scope_label: "single ply roof",
+            plan_sheet_id: sheetId,
+            source_line: "L020",
+            source_excerpt: "SINGLE PLY ROOF",
+          },
+          {
+            trade: "Other",
+            review_kind: "area",
+            scope_label: "single ply roof",
+            plan_sheet_id: sheetId,
+            source_line: "L020",
+            source_excerpt: "SINGLE PLY ROOF",
+          },
+          {
+            trade: "Other",
+            review_kind: "count",
+            scope_label: "fire extinguisher",
+            plan_sheet_id: sheetId,
+            source_line: "L021",
+            source_excerpt: "FIRE EXTINGUISHER",
+          },
+        ],
+      }),
+      sourceSheets: [
+        {
+          plan_sheet_id: sheetId,
+          sheet_number: "A-000",
+          sheet_name: "GENERAL NOTES",
+          discipline: "Plumbing / Metals",
+          source_lines: [
+            {
+              line_number: "L020",
+              text: "SINGLE PLY ROOF CONSTRUCTION OVER METAL DECK",
+            },
+            {
+              line_number: "L021",
+              text: "FIRE EXTINGUISHER PLUMBING SYMBOL SCHEDULE",
+            },
+          ],
+        },
+      ],
+      totalSheetCount: 1,
+    });
+
+    expect(brief.items).toHaveLength(2);
+    expect(brief.items.map((item) => [item.scope_label, item.trade, item.review_kind])).toEqual([
+      ["single ply roof", "Envelope / Roofing", "area"],
+      ["fire extinguisher", "Fire Protection", "count"],
+    ]);
+    expect(brief.warnings).toEqual([
+      "1 AI prompt was omitted because its label or citation was not supported by the supplied drawing text.",
+    ]);
+  });
+
   it("prefers the just-saved assessment until refreshed server data catches up", () => {
     const persisted: ScaleAssessmentRow = {
       id: "persisted",
