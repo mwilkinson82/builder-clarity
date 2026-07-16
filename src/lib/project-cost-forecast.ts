@@ -4,6 +4,7 @@ import {
   type BudgetChangeOrderAllocationLike,
   type BudgetChangeOrderLike,
 } from "./budget-ledger.ts";
+import { applySelfPerformToBuckets } from "./daily-wip.ts";
 
 export type ProjectSubCostByBucket = ReadonlyMap<
   string,
@@ -32,14 +33,17 @@ export function summarizeProjectCostForecast({
   changeOrders = [],
   changeOrderAllocations = [],
   subCostByBucket = new Map(),
+  selfPerformByBucket = new Map(),
 }: {
   buckets: readonly BudgetBucketLike[];
   changeOrders?: readonly BudgetChangeOrderLike[];
   changeOrderAllocations?: readonly BudgetChangeOrderAllocationLike[];
   subCostByBucket?: ProjectSubCostByBucket;
+  selfPerformByBucket?: ReadonlyMap<string, number>;
 }): ProjectCostForecastSummary {
+  const ledgerBuckets = applySelfPerformToBuckets(buckets, selfPerformByBucket);
   const totals = computeBudgetLedger(
-    buckets,
+    ledgerBuckets,
     [],
     [],
     changeOrders,
