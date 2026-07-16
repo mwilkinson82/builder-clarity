@@ -1,7 +1,8 @@
 import { cosineSimilarity, type EmbeddingVector } from "./embedding-match/embedding-match-domain";
 import type { EmbeddingCluster } from "./embedding-match/embedding-cluster-domain";
 
-export const DEFAULT_SYMBOL_LIBRARY_MATCH_THRESHOLD = 0.8;
+export const DEFAULT_SYMBOL_LIBRARY_MATCH_THRESHOLD = 0.9;
+export const DEFAULT_SYMBOL_LIBRARY_MEMBER_MATCH_THRESHOLD = 0.95;
 
 export interface SymbolLibraryExample {
   itemId: string;
@@ -38,21 +39,39 @@ export function resolveSymbolLibrarySuggestions({
   embeddings,
   examples,
   threshold = DEFAULT_SYMBOL_LIBRARY_MATCH_THRESHOLD,
+  memberThreshold = DEFAULT_SYMBOL_LIBRARY_MEMBER_MATCH_THRESHOLD,
 }: {
   clusters: EmbeddingCluster[];
   embeddings: EmbeddingVector[];
   examples: SymbolLibraryExample[];
   threshold?: number;
+  memberThreshold?: number;
 }): SymbolLibrarySuggestion[] {
-  if (!(threshold > 0 && threshold <= 1)) return [];
+  if (!(threshold > 0 && threshold <= 1) || !(memberThreshold > 0 && memberThreshold <= 1)) {
+    return [];
+  }
   const suggestions: SymbolLibrarySuggestion[] = [];
   clusters.forEach((cluster, clusterIndex) => {
     const medoid = embeddings[cluster.medoidIndex];
     if (!medoid) return;
+    const memberEmbeddings = cluster.memberIndexes.flatMap((index) => {
+      const embedding = embeddings[index];
+      return embedding ? [embedding] : [];
+    });
+    if (memberEmbeddings.length === 0) return;
     let best: SymbolLibraryExample | null = null;
     let bestScore = -1;
     for (const example of examples) {
-      const score = cosineSimilarity(medoid, example.embedding);
+      const representativeScore = cosineSimilarity(medoid, example.embedding);
+      const strongestMemberScore = Math.max(
+        ...memberEmbeddings.map((embedding) => cosineSimilarity(embedding, example.embedding)),
+      );
+
+      // A single broad CLIP similarity is not enough to name construction
+      // symbols safely. Require both a strong cluster-wide representative and
+      // a near-exact member before surfacing the estimator-approved label.
+      if (strongestMemberScore < memberThreshold) continue;
+      const score = (representativeScore + strongestMemberScore) / 2;
       if (score > bestScore) {
         best = example;
         bestScore = score;

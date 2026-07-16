@@ -179,8 +179,9 @@ export function SymbolDiscoveryPanel({
             {result.libraryExampleCount > 0 && (
               <p className="rounded-md border border-hairline bg-muted px-2 py-1.5 text-xs text-muted-foreground">
                 Compared with {result.libraryExampleCount} estimator-approved company example
-                {result.libraryExampleCount === 1 ? "" : "s"}. Suggested labels still require
-                confirmation.
+                {result.libraryExampleCount === 1 ? "" : "s"}. Labels appear only when both the
+                repeated group and a near-exact member clear the high-confidence checks. Every
+                suggestion still requires confirmation.
               </p>
             )}
 
@@ -259,7 +260,7 @@ export function SymbolDiscoveryPanel({
                 {suggestion && (
                   <div className="rounded-md border border-clay/30 bg-clay/5 px-2 py-1.5 text-xs">
                     Company library suggests <strong>{suggestion.label}</strong> at{" "}
-                    {Math.round(suggestion.score * 100)}% visual similarity. Confirm it below.
+                    {Math.round(suggestion.score * 100)}% combined group evidence. Confirm it below.
                   </div>
                 )}
                 <div className="space-y-1.5">

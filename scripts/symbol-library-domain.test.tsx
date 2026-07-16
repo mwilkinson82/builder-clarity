@@ -16,6 +16,12 @@ import {
 const unit = (size: number, index: number) =>
   Array.from({ length: size }, (_, current) => (current === index ? 1 : 0));
 
+const atCosine = (score: number) => [
+  score,
+  Math.sqrt(1 - score * score),
+  ...Array.from({ length: 62 }, () => 0),
+];
+
 describe("AI symbol identification library", () => {
   it("suggests only a high-confidence estimator-approved label", () => {
     const embeddings = [unit(64, 0), unit(64, 1), unit(64, 2)];
@@ -51,6 +57,38 @@ describe("AI symbol identification library", () => {
     expect(parseSymbolEmbedding([1, 2, 3])).toBeNull();
     expect(parseSymbolEmbedding([...unit(64, 0).slice(0, 63), Number.NaN])).toBeNull();
     expect(parseSymbolEmbedding(unit(64, 0))).toHaveLength(64);
+  });
+
+  it("requires representative and near-exact member evidence before suggesting a label", () => {
+    const embeddings = [atCosine(0.81), atCosine(0.84), atCosine(0.83), unit(64, 0)];
+    const suggestions = resolveSymbolLibrarySuggestions({
+      clusters: [
+        { memberIndexes: [0, 1], medoidIndex: 0, cohesion: 0.85 },
+        { memberIndexes: [2, 3], medoidIndex: 2, cohesion: 0.85 },
+      ],
+      embeddings,
+      examples: [
+        {
+          itemId: "brush",
+          label: "Mechanical Brush",
+          trade: "Equipment",
+          unit: "EA",
+          costLibraryItemId: null,
+          embedding: unit(64, 0),
+        },
+      ],
+      threshold: 0.9,
+      memberThreshold: 0.95,
+    });
+
+    expect(suggestions).toEqual([
+      expect.objectContaining({
+        clusterIndex: 1,
+        itemId: "brush",
+        label: "Mechanical Brush",
+        score: 0.915,
+      }),
+    ]);
   });
 
   it("renders keyboard-addressable dashed proposals separately from accepted counts", () => {
