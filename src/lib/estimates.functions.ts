@@ -145,6 +145,20 @@ export interface EstimateRow {
 
 export type LineQuantitySource = "manual" | "takeoff" | "assembly";
 
+export interface EstimateAssemblyOutputSource {
+  link_id: string;
+  assembly_id: string;
+  measurement_id: string;
+  output_key: string;
+  output_label: string;
+  output_unit: string;
+  output_quantity: number;
+  formula_version: string;
+  status: "current" | "stale";
+  last_synced_at: string;
+  stale_at: string | null;
+}
+
 export interface EstimateLineItemRow {
   id: string;
   estimate_id: string;
@@ -158,6 +172,7 @@ export interface EstimateLineItemRow {
   takeoff_synced_at: string | null;
   assembly_output_quantity: number | null;
   assembly_output_synced_at: string | null;
+  assembly_output_source: EstimateAssemblyOutputSource | null;
   material_unit_cost_cents: number;
   labor_unit_cost_cents: number;
   material_extended_cents: number;
@@ -357,6 +372,7 @@ const normalizeLineItem = (row: Record<string, unknown>): EstimateLineItemRow =>
       row.assembly_output_quantity == null ? null : num(row.assembly_output_quantity),
     assembly_output_synced_at:
       row.assembly_output_synced_at == null ? null : str(row.assembly_output_synced_at),
+    assembly_output_source: null,
     material_unit_cost_cents: material,
     labor_unit_cost_cents: labor,
     material_extended_cents: Math.round(num(row.material_extended_cents, quantity * material)),
@@ -753,6 +769,71 @@ async function loadEstimateLines(context: { supabase: unknown }, estimateId: str
     .order("sort_order", { ascending: true });
   if (error) throw new Error(error.message);
   return ((data ?? []) as Record<string, unknown>[]).map(normalizeLineItem);
+}
+
+function isMissingAssemblyOutputSourceRelation(error: DynamicSupabaseError | null) {
+  const message = error?.message.toLowerCase() ?? "";
+  return (
+    error?.code === "42P01" ||
+    error?.code === "PGRST205" ||
+    message.includes("estimate_takeoff_assembly_output_links") ||
+    message.includes("schema cache")
+  );
+}
+
+async function loadAssemblyOutputSources(
+  context: { supabase: unknown },
+  estimateId: string,
+): Promise<Map<string, EstimateAssemblyOutputSource>> {
+  const { data, error } = await dynamicTable(
+    context.supabase,
+    "estimate_takeoff_assembly_output_links",
+  )
+    .select(
+      "id,assembly_id,output_key,estimate_line_item_id,formula_version,output_label,output_unit,output_quantity,status,last_synced_at,stale_at",
+    )
+    .eq("estimate_id", estimateId);
+
+  if (error) {
+    if (isMissingAssemblyOutputSourceRelation(error)) return new Map();
+    throw new Error(error.message);
+  }
+
+  const links = (data ?? []) as Record<string, unknown>[];
+  const assemblyIds = Array.from(new Set(links.map((row) => str(row.assembly_id)).filter(Boolean)));
+  const measurementByAssemblyId = new Map<string, string>();
+
+  if (assemblyIds.length > 0) {
+    const assembliesResult = await dynamicTable(context.supabase, "estimate_takeoff_assemblies")
+      .select("id,measurement_id")
+      .in("id", assemblyIds);
+    if (assembliesResult.error) throw new Error(assembliesResult.error.message);
+    for (const row of (assembliesResult.data ?? []) as Record<string, unknown>[]) {
+      measurementByAssemblyId.set(str(row.id), str(row.measurement_id));
+    }
+  }
+
+  const sources = new Map<string, EstimateAssemblyOutputSource>();
+  for (const row of links) {
+    const estimateLineItemId = str(row.estimate_line_item_id);
+    const assemblyId = str(row.assembly_id);
+    const measurementId = measurementByAssemblyId.get(assemblyId) ?? "";
+    if (!estimateLineItemId || !assemblyId || !measurementId) continue;
+    sources.set(estimateLineItemId, {
+      link_id: str(row.id),
+      assembly_id: assemblyId,
+      measurement_id: measurementId,
+      output_key: str(row.output_key),
+      output_label: str(row.output_label),
+      output_unit: str(row.output_unit),
+      output_quantity: num(row.output_quantity),
+      formula_version: str(row.formula_version),
+      status: str(row.status) === "stale" ? "stale" : "current",
+      last_synced_at: str(row.last_synced_at),
+      stale_at: row.stale_at == null ? null : str(row.stale_at),
+    });
+  }
+  return sources;
 }
 
 async function getNextLineSortOrder(context: { supabase: unknown }, estimateId: string) {
@@ -1471,8 +1552,13 @@ export const getEstimate = createServerFn({ method: "GET" })
     const estimate = await loadEstimate(context, data.id);
     await ensureCostLibrarySeeded(context, estimate.organization_id);
     const line_items = await loadEstimateLines(context, data.id);
+    const assemblySources = await loadAssemblyOutputSources(context, data.id);
+    const tracedLineItems = line_items.map((line) => ({
+      ...line,
+      assembly_output_source: assemblySources.get(line.id) ?? null,
+    }));
     const totals = calculateEstimateTotals(estimate, line_items);
-    return { estimate, line_items, totals };
+    return { estimate, line_items: tracedLineItems, totals };
   });
 
 export const createEstimate = createServerFn({ method: "POST" })

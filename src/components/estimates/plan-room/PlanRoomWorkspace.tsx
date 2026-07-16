@@ -247,6 +247,8 @@ interface PlanRoomWorkspaceProps {
   // Estimate line to focus on load: selects its first takeoff measurement
   // and that measurement's sheet (used by the estimate grid takeoff badge).
   focusLineItemId?: string;
+  // Exact takeoff to focus on load (used by estimate-grid assembly source traces).
+  focusMeasurementId?: string;
   // First-run launcher handoff: open the drawing upload flow on arrival when
   // the estimate has no real drawing set yet.
   autoOpenUpload?: boolean;
@@ -264,11 +266,12 @@ export function PlanRoomWorkspace({
   schemaReady = true,
   schemaMessage = "",
   focusLineItemId = "",
+  focusMeasurementId = "",
   autoOpenUpload = false,
 }: PlanRoomWorkspaceProps) {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const focusLineAppliedRef = useRef(false);
+  const focusTargetAppliedRef = useRef(false);
   const autoUploadTriggeredRef = useRef(false);
   const thumbBackfillRef = useRef<Set<string>>(new Set());
   const pendingPointsRef = useRef<Point[]>([]);
@@ -783,13 +786,16 @@ export function PlanRoomWorkspace({
   }, [currentSheet, estimate.id, selectedSheetId]);
 
   useEffect(() => {
-    if (!focusLineItemId || focusLineAppliedRef.current) return;
-    const measurement = measurements.find((item) => item.estimate_line_item_id === focusLineItemId);
+    if (focusTargetAppliedRef.current) return;
+    if (!focusMeasurementId && !focusLineItemId) return;
+    const measurement = focusMeasurementId
+      ? measurements.find((item) => item.id === focusMeasurementId)
+      : measurements.find((item) => item.estimate_line_item_id === focusLineItemId);
     if (!measurement) return;
-    focusLineAppliedRef.current = true;
+    focusTargetAppliedRef.current = true;
     setSelectedMeasurementId(measurement.id);
     setSelectedSheetId(measurement.plan_sheet_id);
-  }, [focusLineItemId, measurements]);
+  }, [focusLineItemId, focusMeasurementId, measurements]);
 
   useEffect(() => {
     const raw = readCockpitPanelLayoutStorage();
