@@ -106,7 +106,7 @@ export function PlanScopeBriefPanel({
   evidencePending: boolean;
   onGenerate: () => void;
   onOpenEvidence: (item: PlanScopeBriefItem) => void;
-  onStartAction: (item: PlanScopeBriefItem, action: PlanScopeBriefNextAction) => void;
+  onStartAction: (item: PlanScopeBriefItem, review: PlanScopeBriefReview) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<BriefFilter>("all");
@@ -444,7 +444,7 @@ export function PlanScopeBriefPanel({
                                           data-testid={`scope-brief-start-${item.id}`}
                                           onClick={() => {
                                             setOpen(false);
-                                            onStartAction(item, decision.next_action);
+                                            onStartAction(item, decision);
                                           }}
                                         >
                                           {planScopeBriefStartActionLabel(decision.next_action)}

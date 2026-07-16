@@ -96,7 +96,7 @@ import {
 import { analyzePlanSheetMeasurementNotes } from "@/lib/plan-room-measurement-assistant.functions";
 import { generatePlanScopeBrief } from "@/lib/plan-scope-brief.functions";
 import type { PlanScopeBriefItem } from "@/lib/plan-scope-brief";
-import type { PlanScopeBriefNextAction } from "@/lib/plan-scope-brief-review";
+import type { PlanScopeBriefNextAction, PlanScopeBriefReview } from "@/lib/plan-scope-brief-review";
 import {
   analyzeAcceptedPlanRevisionScope,
   type PlanRevisionMatchRow,
@@ -332,7 +332,7 @@ export function PlanRoomWorkspace({
     useState<MeasurementScopeQueueItem | null>(null);
   const [pendingScopeBriefAction, setPendingScopeBriefAction] = useState<{
     item: PlanScopeBriefItem;
-    action: PlanScopeBriefNextAction;
+    review: PlanScopeBriefReview;
   } | null>(null);
   const [pdfPageMetrics, setPdfPageMetrics] = useState<{
     widthPoints: number;
@@ -2186,6 +2186,7 @@ export function PlanRoomWorkspace({
     }: {
       item: PlanScopeBriefItem;
       action?: PlanScopeBriefNextAction;
+      review?: PlanScopeBriefReview;
     }) => {
       const sheet = sheets.find((candidate) => candidate.id === item.plan_sheet_id);
       const planSet = planSets.find((candidate) => candidate.id === sheet?.plan_set_id);
@@ -2204,9 +2205,9 @@ export function PlanRoomWorkspace({
           "The cited note could not be located on the drawing. Rebuild the Scope Brief before starting review.",
         );
       }
-      return { item, action, anchor };
+      return { item, action, review, anchor };
     },
-    onSuccess: ({ item, action, anchor }) => {
+    onSuccess: ({ item, action, review, anchor }) => {
       setSelectedSheetId(item.plan_sheet_id);
       showMeasurementEvidence({
         sheetId: item.plan_sheet_id,
@@ -2214,7 +2215,7 @@ export function PlanRoomWorkspace({
         label: item.scope_label,
         anchor,
       });
-      if (action) setPendingScopeBriefAction({ item, action });
+      if (action && review) setPendingScopeBriefAction({ item, review });
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "The cited sheet could not open"),
@@ -2881,7 +2882,8 @@ export function PlanRoomWorkspace({
     openSheet,
     onTakeoffsChanged: invalidate,
   });
-  const { openPanel: openAiAssistPanel, setScope: setAiAssistScope } = aiAssist;
+  const { openScopeBriefReview: openAiAssistScopeBriefReview, setScope: setAiAssistScope } =
+    aiAssist;
 
   useEffect(() => {
     if (
@@ -2891,7 +2893,8 @@ export function PlanRoomWorkspace({
       return;
     }
 
-    const { item, action } = pendingScopeBriefAction;
+    const { item, review } = pendingScopeBriefAction;
+    const action = review.next_action;
     setPendingScopeBriefAction(null);
     setMeasurementLabel(item.scope_label);
     setPendingPoints([]);
@@ -2908,7 +2911,14 @@ export function PlanRoomWorkspace({
       setMeasurementSourceNote("");
       setTool("select");
       setAiAssistScope("sheet");
-      openAiAssistPanel();
+      openAiAssistScopeBriefReview({
+        reviewId: review.id,
+        version: review.version,
+        label: item.scope_label,
+        sheetNumber: item.sheet_number,
+        sourceLine: item.source_line,
+        sourceExcerpt: item.source_excerpt,
+      });
       toast.info(
         "Count workbench opened on the cited sheet. Identify one accepted symbol, then start the scan when you are ready.",
       );
@@ -2962,7 +2972,7 @@ export function PlanRoomWorkspace({
     currentSheet?.id,
     currentSheetScaleStatus,
     isCockpitMode,
-    openAiAssistPanel,
+    openAiAssistScopeBriefReview,
     pendingScopeBriefAction,
     setAiAssistScope,
   ]);
@@ -3611,8 +3621,12 @@ export function PlanRoomWorkspace({
             evidencePending={openScopeBriefEvidenceMutation.isPending}
             onGenerate={() => scopeBriefMutation.mutate()}
             onOpenEvidence={(item) => openScopeBriefEvidenceMutation.mutate({ item })}
-            onStartAction={(item, action) =>
-              openScopeBriefEvidenceMutation.mutate({ item, action })
+            onStartAction={(item, review) =>
+              openScopeBriefEvidenceMutation.mutate({
+                item,
+                action: review.next_action,
+                review,
+              })
             }
           />
 

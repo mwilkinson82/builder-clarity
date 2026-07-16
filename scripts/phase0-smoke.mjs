@@ -2385,6 +2385,41 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/estimates/plan-room/AiAssistPanel.tsx",
+  [
+    /Started from Scope Brief/,
+    /This source locks the scan to the cited sheet/,
+    /disabled=\{Boolean\(ai\.scopeBriefSource\)\}/,
+    /Cited handoffs cannot expand into a multi-sheet scan/,
+  ],
+  "cited count handoffs keep their human decision visible and cannot broaden scan scope",
+);
+
+await expectContains(
+  "src/lib/ai-takeoff/ai-takeoff.functions.ts",
+  [
+    /scope_brief_review_id: z\.string\(\)\.uuid\(\)\.optional\(\)/,
+    /loadScopeBriefCountRequestContext/,
+    /scopeBriefCountReviewSourceError/,
+    /request_context: requestContext/,
+    /before charging/,
+  ],
+  "count scans rebuild cited Scope Brief provenance server-side before charging",
+);
+
+await expectContains(
+  "src/lib/ai-takeoff/ai-count-source-provenance.ts",
+  [
+    /review\.id !== latestReviewId/,
+    /review\.status !== "accepted" \|\| review\.next_action !== "count_review"/,
+    /sheetIds\.length !== 1 \|\| sheetIds\[0\] !== review\.plan_sheet_id/,
+    /source_kind: "scope_brief"/,
+    /scope_brief_review_version/,
+  ],
+  "Scope Brief count provenance rejects stale routes and binds one cited sheet",
+);
+
+await expectContains(
   "src/lib/plan-scope-brief-review.functions.ts",
   [
     /estimate_scope_brief_reviews/,

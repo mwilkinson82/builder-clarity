@@ -319,6 +319,43 @@ the earlier releases.
 This stage needs no database migration. It routes the existing append-only action register into
 the already constrained estimator workbenches.
 
+## Stage 10 — Cited count-operation provenance
+
+- When Count review starts from a kept Scope Brief decision, show that exact decision, sheet, line,
+  excerpt, and version inside AI Assist before a scan can begin.
+- Lock a cited handoff to its one cited sheet. It cannot be expanded into an all-sheet scan.
+- Send only the immutable Scope Brief review id to the count-scan server. Before charging, the
+  server reloads the RLS-readable review and verifies it is still the latest accepted Count review
+  for the same estimate and cited sheet.
+- Rebuild the source envelope on the server and retain it in the existing
+  `ai_operations.request_context`. Do not trust client-supplied labels, citations, versions, plan
+  set ids, or source operation ids.
+- Keep the existing human controls unchanged: the estimator still chooses an accepted count marker
+  as the exemplar, explicitly starts the scan, and accepts, rejects, or nudges every proposed mark.
+- Any accepted takeoff continues to point to the AI operation, creating a durable trace from the
+  count geometry to the scan and then to the current human Scope Brief decision.
+
+### Stage 10 release gate
+
+1. Start the kept Crystal Carwash exterior-light Count review and confirm AI Assist shows
+   `A-300 · L066`, the cited excerpt, and decision version before an exemplar is selected.
+2. Confirm the scope selector is locked to This sheet and no AI operation or credit is created by
+   opening or closing the cited workbench.
+3. Change the Scope Brief decision after opening the workbench and confirm the server rejects the
+   stale review before charging or scanning.
+4. Restore the current kept Count review, select an estimator-created exterior-light exemplar, and
+   explicitly start one cited scan. Confirm the completed operation retains the server-rebuilt
+   Scope Brief source envelope.
+5. Accept one proposal and confirm the takeoff points to that operation and its note identifies the
+   cited Scope Brief decision; reject the remaining proposals to keep QA quantities controlled.
+6. Open AI Assist directly from the toolbar and confirm the prior Scope Brief source is cleared and
+   the normal estimator-chosen scan scope is available.
+7. Confirm no source handoff changes scale, creates an estimate row, links a takeoff, or changes
+   Harbor's `$1,606,137` total.
+
+This stage needs no database migration. It uses the existing JSONB operation context and existing
+takeoff-to-operation provenance link.
+
 ## Kill criteria
 
 Stop expansion if the live Harbor review shows uncited suggestions, repeated irrelevant title-block

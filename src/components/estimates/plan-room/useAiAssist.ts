@@ -80,6 +80,7 @@ import {
   type DetectionExemplarImage,
 } from "./aiDetectionRender";
 import { clamp01, tileLocalToSheetPoint } from "@/lib/ai-takeoff/coord-transforms";
+import type { AiCountScopeBriefSource } from "@/lib/ai-takeoff/ai-count-source-provenance";
 import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomShared";
 
 export type AiAssistPhase = "idle" | "scanning" | "review";
@@ -169,6 +170,7 @@ export function useAiAssist({
   const [pickingExemplar, setPickingExemplar] = useState(false);
   const [exemplar, setExemplar] = useState<AiExemplar | null>(null);
   const [scope, setScope] = useState<AiScanScope>("sheet");
+  const [scopeBriefSource, setScopeBriefSource] = useState<AiCountScopeBriefSource | null>(null);
   const [scanProgress, setScanProgress] = useState<AiScanProgress | null>(null);
   const [scanError, setScanError] = useState("");
   const [proposals, setProposals] = useState<AiCountProposal[]>([]);
@@ -265,8 +267,16 @@ export function useAiAssist({
   );
 
   const openPanel = useCallback(() => {
+    setScopeBriefSource(null);
     setOpen(true);
     // Re-arm the teaching flow each open, keeping any exemplar already picked.
+    setScanError("");
+  }, []);
+
+  const openScopeBriefReview = useCallback((source: AiCountScopeBriefSource) => {
+    setScopeBriefSource(source);
+    setScope("sheet");
+    setOpen(true);
     setScanError("");
   }, []);
 
@@ -341,6 +351,7 @@ export function useAiAssist({
       setProposals([]);
       setReviewIndex(0);
       setReviewOverride(null);
+      setScopeBriefSource(null);
       aiMeasurementsRef.current = new Map();
       if (accepted > 0) {
         onTakeoffsChanged();
@@ -412,6 +423,7 @@ export function useAiAssist({
         data: {
           estimate_id: estimateId,
           sheet_ids: targetSheets.map((sheet) => sheet.id),
+          scope_brief_review_id: scopeBriefSource?.reviewId,
         },
       });
       operationIdRef.current = begin.operationId;
@@ -1104,6 +1116,7 @@ export function useAiAssist({
     recordSummaryFn,
     scanTileFn,
     sheetById,
+    scopeBriefSource,
     targetSheets,
     verifyCandidateFn,
   ]);
@@ -1194,7 +1207,14 @@ export function useAiAssist({
               waste_pct: reviewOverride ? 0 : (exemplar?.wastePct ?? 0),
               color: reviewOverride?.color || exemplar?.color || "#d97706",
               geometry: geometryFromPoints(points, viewSize),
-              notes: `AI-assisted count — sheet ${sheetTag}. Every point was reviewed and accepted by hand.`,
+              notes: [
+                `AI-assisted count — sheet ${sheetTag}. Every point was reviewed and accepted by hand.`,
+                scopeBriefSource
+                  ? `Started from Scope Brief ${scopeBriefSource.sheetNumber || sheetTag} ${scopeBriefSource.sourceLine}, decision v${scopeBriefSource.version}.`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
               created_by_ai: true,
               ai_operation_id: lastOperationId,
               ai_proposal_source: Array.from(acceptedSources).sort().join("+").slice(0, 32),
@@ -1251,6 +1271,7 @@ export function useAiAssist({
       exemplar,
       lastOperationId,
       reviewOverride,
+      scopeBriefSource,
       sheetById,
       updateMeasurementFn,
       viewSize,
@@ -1266,6 +1287,7 @@ export function useAiAssist({
       setProposals([]);
       setReviewIndex(0);
       setReviewOverride(null);
+      setScopeBriefSource(null);
       aiMeasurementsRef.current = new Map();
       if (accepted > 0) {
         onTakeoffsChanged();
@@ -1490,6 +1512,7 @@ export function useAiAssist({
         return 0;
       }
       setReviewOverride({ label: input.label, color: input.color });
+      setScopeBriefSource(null);
       if (input.operationId) setLastOperationId(input.operationId);
       aiMeasurementsRef.current = new Map();
       setProposals(sortProposalsForReview(seeded));
@@ -1516,6 +1539,7 @@ export function useAiAssist({
   return {
     open,
     openPanel,
+    openScopeBriefReview,
     closePanel,
     phase,
     pickingExemplar,
@@ -1524,6 +1548,7 @@ export function useAiAssist({
     exemplarPreview,
     clearExemplar: () => setExemplar(null),
     scope,
+    scopeBriefSource,
     setScope,
     targetSheetCount: targetSheets.length,
     quoteCredits,
