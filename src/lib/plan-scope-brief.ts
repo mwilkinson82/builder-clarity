@@ -177,7 +177,7 @@ function labelIsSupported(label: string, line: string) {
 
 function reviewKindIsSupported(reviewKind: PlanScopeBriefReviewKind, line: string) {
   if (reviewKind === "count") {
-    return /\b(?:door|window|fixture|device|equipment|fan|receptacle|switch|light|diffuser|register|sink|toilet|lavatory|accessor|panel|symbol|schedule)\b/i.test(
+    return /\b(?:door|window|fixture|device|equipment|fan|receptacle|switch|light|diffuser|register|sink|toilet|lavatory|accessor|panel|symbol|schedule|extinguisher)\b/i.test(
       line,
     );
   }
@@ -205,46 +205,51 @@ function reviewKindIsSupported(reviewKind: PlanScopeBriefReviewKind, line: strin
 }
 
 function inferredTrade(line: string, discipline: string): PlanScopeBriefTrade {
-  const evidence = `${line} ${discipline}`;
-  if (/\b(?:fire alarm|sprinkler|fire protection|standpipe)\b/i.test(evidence)) {
+  // The quoted excerpt is the estimator-visible evidence, so it must control
+  // the trade label. Sheet-discipline metadata is only a last-resort fallback;
+  // a bad title-block classification cannot override explicit note language.
+  if (/\b(?:fire alarm|sprinkler|fire protection|standpipe|fire extinguisher)\b/i.test(line)) {
     return "Fire Protection";
   }
-  if (/\b(?:plumbing|toilet|lavatory|sink|sanitary|domestic water|drain|sewer)\b/i.test(evidence)) {
+  if (/\b(?:plumbing|toilet|lavatory|sink|sanitary|domestic water|drain|sewer)\b/i.test(line)) {
     return "Plumbing";
   }
-  if (/\b(?:mechanical|hvac|duct|diffuser|register|air handling|fan)\b/i.test(evidence)) {
+  if (/\b(?:mechanical|hvac|duct|diffuser|register|air handling|fan)\b/i.test(line)) {
     return "Mechanical";
   }
   if (
-    /\b(?:electrical|lighting|light fixture|receptacle|switch|conduit|panelboard)\b/i.test(evidence)
+    /\b(?:electrical|lighting|light fixture|receptacle|switch|conduit|panelboard)\b/i.test(line)
   ) {
     return "Electrical";
   }
-  if (
-    /\b(?:site|civil|grading|paving|curb|sidewalk|landscape|excavat|stormwater)\b/i.test(evidence)
-  ) {
+  if (/\b(?:site|civil|grading|paving|curb|sidewalk|landscape|excavat|stormwater)\b/i.test(line)) {
     return "Site / Civil";
   }
-  if (
-    /\b(?:concrete|masonry|block|brick|rebar|reinforc|footing|foundation|slab)\b/i.test(evidence)
-  ) {
+  if (/\b(?:concrete|masonry|block|brick|rebar|reinforc|footing|foundation|slab)\b/i.test(line)) {
     return "Concrete / Masonry";
   }
-  if (/\b(?:steel|metal|wood|lumber|framing|truss|joist|sheath)\b/i.test(evidence)) {
+  if (/\b(?:steel|metal|wood|lumber|framing|truss|joist|sheath)\b/i.test(line)) {
     return "Metals / Wood";
   }
   if (
-    /\b(?:roof|membrane|flashing|waterproof|insulation|siding|exterior cladding)\b/i.test(evidence)
+    /\b(?:roof|roofing|membrane|flashing|waterproof|insulation|siding|exterior cladding)\b/i.test(
+      line,
+    )
   ) {
     return "Envelope / Roofing";
   }
-  if (/\b(?:door|frame|jamb|window|glazing|hardware)\b/i.test(evidence)) return "Openings";
-  if (/\b(?:floor finish|ceiling|paint|coating|tile|drywall|gwb|countertop)\b/i.test(evidence)) {
+  if (/\b(?:door|frame|jamb|window|glazing|hardware)\b/i.test(line)) return "Openings";
+  if (/\b(?:floor finish|ceiling|paint|coating|tile|drywall|gwb|countertop)\b/i.test(line)) {
     return "Finishes";
   }
-  if (/\b(?:equipment|furnishing|casework|cabinet|accessor)\b/i.test(evidence)) {
+  if (/\b(?:equipment|furnishing|casework|cabinet|accessor)\b/i.test(line)) {
     return "Equipment / Furnishings";
   }
+  if (/\b(?:fire protection|fire alarm|sprinkler)\b/i.test(discipline)) return "Fire Protection";
+  if (/\bplumbing\b/i.test(discipline)) return "Plumbing";
+  if (/\b(?:mechanical|hvac)\b/i.test(discipline)) return "Mechanical";
+  if (/\belectrical\b/i.test(discipline)) return "Electrical";
+  if (/\b(?:site|civil|landscape)\b/i.test(discipline)) return "Site / Civil";
   if (/\b(?:general|architectural)\b/i.test(discipline)) return "General Requirements";
   return "Other";
 }
@@ -323,7 +328,7 @@ export function parsePlanScopeBrief({
       !labelIsSupported(scopeLabel, line) ||
       !trades.has(trade) ||
       !reviewKinds.has(reviewKind) ||
-      !reviewKindIsSupported(reviewKind as PlanScopeBriefReviewKind, line)
+      !reviewKindIsSupported(reviewKind as PlanScopeBriefReviewKind, excerpt)
     ) {
       continue;
     }
@@ -333,7 +338,7 @@ export function parsePlanScopeBrief({
     const typedReviewKind = reviewKind as PlanScopeBriefReviewKind;
     items.push({
       id: `scope-brief-${stableKey(dedupeKey)}`,
-      trade: inferredTrade(line, sheet.discipline),
+      trade: inferredTrade(excerpt, sheet.discipline),
       review_kind: typedReviewKind,
       scope_label: scopeLabel,
       plan_sheet_id: sheetId,
