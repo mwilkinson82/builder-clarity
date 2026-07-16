@@ -81,7 +81,7 @@ function renderToCanvas(
   return page.render({ canvas, canvasContext: context, viewport }).promise.then(() => canvas);
 }
 
-function canvasToBase64Png(canvas: HTMLCanvasElement): string {
+export function canvasToBase64Png(canvas: HTMLCanvasElement): string {
   const dataUrl = canvas.toDataURL("image/png");
   const commaIndex = dataUrl.indexOf(",");
   if (commaIndex < 0) throw new Error("Scan image could not be encoded.");

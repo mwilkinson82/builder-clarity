@@ -3,6 +3,7 @@ import {
   Clock3,
   ListPlus,
   LocateFixed,
+  MapPinned,
   RefreshCcw,
   Ruler,
   ScanText,
@@ -32,10 +33,12 @@ export function MeasurementAssistantPanel({
   queueItemBySuggestionId,
   duplicateCountBySuggestionId,
   activeEvidenceSourceLine,
+  activeGuideSuggestionId,
   decisionPending,
   onAnalyze,
   onPrepare,
   onShowEvidence,
+  onShowGuide,
   onDecision,
   onClear,
 }: {
@@ -48,10 +51,12 @@ export function MeasurementAssistantPanel({
   queueItemBySuggestionId: Record<string, MeasurementScopeQueueItem | undefined>;
   duplicateCountBySuggestionId: Record<string, number>;
   activeEvidenceSourceLine: string;
+  activeGuideSuggestionId: string;
   decisionPending: boolean;
   onAnalyze: () => void;
   onPrepare: (suggestion: MeasurementAssistantSuggestion) => void;
   onShowEvidence: (suggestion: MeasurementAssistantSuggestion) => void;
+  onShowGuide: (suggestion: MeasurementAssistantSuggestion) => void;
   onDecision: (
     suggestion: MeasurementAssistantSuggestion,
     status: MeasurementScopeDecisionStatus,
@@ -59,6 +64,7 @@ export function MeasurementAssistantPanel({
   onClear: () => void;
 }) {
   const completed = new Set(completedSuggestionIds);
+  const guideCount = plan?.suggestions.filter((suggestion) => suggestion.guide).length ?? 0;
   return (
     <div className="border-b border-hairline pb-4" data-testid="measurement-assistant-panel">
       <div className="flex items-start justify-between gap-3">
@@ -110,6 +116,7 @@ export function MeasurementAssistantPanel({
         <div className="mt-4 space-y-3" data-testid="measurement-assistant-results">
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
             <Badge variant="secondary">{plan.suggestions.length} suggestions</Badge>
+            {guideCount > 0 && <Badge variant="outline">{guideCount} marked on drawing</Badge>}
             <span>{plan.source_line_count} extracted lines reviewed</span>
             <span>
               {plan.credits_charged === 0
@@ -180,6 +187,20 @@ export function MeasurementAssistantPanel({
                         </blockquote>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1.5">
+                        {suggestion.guide && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={
+                              activeGuideSuggestionId === suggestion.id ? "secondary" : "ghost"
+                            }
+                            className="h-7 gap-1 px-2 text-[10px]"
+                            onClick={() => onShowGuide(suggestion)}
+                            data-testid={`measurement-suggestion-guide-${suggestion.id}`}
+                          >
+                            <MapPinned className="h-3 w-3" /> Markup
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           size="sm"
@@ -226,7 +247,7 @@ export function MeasurementAssistantPanel({
                           className="gap-1.5"
                           onClick={() =>
                             queueItem?.status === "accepted"
-                              ? onPrepare(suggestion)
+                              ? onPrepare({ ...suggestion, label: queueItem.label })
                               : onDecision(suggestion, "accepted")
                           }
                           disabled={isCompleted || decisionPending}

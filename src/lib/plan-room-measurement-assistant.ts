@@ -1,6 +1,17 @@
 export type MeasurementAssistantTool = "linear" | "area";
 export type MeasurementEvidenceStrength = "direct" | "review";
 
+export interface MeasurementGuidePoint {
+  x: number;
+  y: number;
+}
+
+export interface MeasurementVisualGuide {
+  kind: "linear_route" | "area_region";
+  points: MeasurementGuidePoint[];
+  source: "ai_visual_hint";
+}
+
 export interface MeasurementSourceLine {
   line_number: string;
   text: string;
@@ -15,6 +26,11 @@ export interface MeasurementAssistantSuggestion {
   source_excerpt: string;
   rationale: string;
   evidence_strength: MeasurementEvidenceStrength;
+  /**
+   * A visual routing hint only. These points are never used to calculate or
+   * persist a quantity; the estimator must place the trusted geometry.
+   */
+  guide?: MeasurementVisualGuide;
 }
 
 export interface MeasurementAssistantPlan {
@@ -51,6 +67,7 @@ export interface MeasurementSourceEvidence extends MeasurementSourceLine {
 }
 
 export const MEASUREMENT_EVIDENCE_TIMEOUT_MS = 25_000;
+export const MEASUREMENT_GUIDE_LONG_EDGE_PX = 1_800;
 
 export async function withMeasurementEvidenceTimeout<T>(
   operation: Promise<T>,
@@ -81,6 +98,129 @@ const clean = (value: unknown, max: number) =>
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
+
+const guidePoint = (value: unknown): MeasurementGuidePoint | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const x = Number(raw.x);
+  const y = Number(raw.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) {
+    return null;
+  }
+  return { x, y };
+};
+
+const pointDistance = (a: MeasurementGuidePoint, b: MeasurementGuidePoint) =>
+  Math.hypot(a.x - b.x, a.y - b.y);
+
+const signedArea = (points: MeasurementGuidePoint[]) =>
+  points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0) / 2;
+
+const orientation = (
+  a: MeasurementGuidePoint,
+  b: MeasurementGuidePoint,
+  c: MeasurementGuidePoint,
+) => (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+
+const pointOnSegment = (
+  start: MeasurementGuidePoint,
+  end: MeasurementGuidePoint,
+  point: MeasurementGuidePoint,
+) =>
+  point.x >= Math.min(start.x, end.x) - 1e-9 &&
+  point.x <= Math.max(start.x, end.x) + 1e-9 &&
+  point.y >= Math.min(start.y, end.y) - 1e-9 &&
+  point.y <= Math.max(start.y, end.y) + 1e-9;
+
+const segmentsCross = (
+  a: MeasurementGuidePoint,
+  b: MeasurementGuidePoint,
+  c: MeasurementGuidePoint,
+  d: MeasurementGuidePoint,
+) => {
+  const first = orientation(a, b, c);
+  const second = orientation(a, b, d);
+  const third = orientation(c, d, a);
+  const fourth = orientation(c, d, b);
+  if (first * second < 0 && third * fourth < 0) return true;
+  if (Math.abs(first) <= 1e-9 && pointOnSegment(a, b, c)) return true;
+  if (Math.abs(second) <= 1e-9 && pointOnSegment(a, b, d)) return true;
+  if (Math.abs(third) <= 1e-9 && pointOnSegment(c, d, a)) return true;
+  return Math.abs(fourth) <= 1e-9 && pointOnSegment(c, d, b);
+};
+
+const areaGuideSelfIntersects = (points: MeasurementGuidePoint[]) => {
+  for (let left = 0; left < points.length; left += 1) {
+    const leftNext = (left + 1) % points.length;
+    for (let right = left + 1; right < points.length; right += 1) {
+      const rightNext = (right + 1) % points.length;
+      if (
+        left === right ||
+        leftNext === right ||
+        rightNext === left ||
+        (left === 0 && rightNext === 0)
+      ) {
+        continue;
+      }
+      if (segmentsCross(points[left], points[leftNext], points[right], points[rightNext])) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+/**
+ * Accept only bounded, visible, non-degenerate guide geometry. A malformed
+ * model hint is omitted while its cited scope suggestion can still survive.
+ */
+export function parseMeasurementVisualGuide(
+  value: unknown,
+  tool: MeasurementAssistantTool,
+): MeasurementVisualGuide | null {
+  const object =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const rawPoints = Array.isArray(value)
+    ? value
+    : Array.isArray(object?.points)
+      ? object.points
+      : [];
+  if (rawPoints.length < (tool === "linear" ? 2 : 3) || rawPoints.length > 16) return null;
+
+  const points: MeasurementGuidePoint[] = [];
+  for (const rawPoint of rawPoints) {
+    const point = guidePoint(rawPoint);
+    if (!point) return null;
+    if (points.length === 0 || pointDistance(points.at(-1)!, point) >= 0.004) points.push(point);
+  }
+  if (tool === "area" && points.length > 3 && pointDistance(points[0], points.at(-1)!) < 0.004) {
+    points.pop();
+  }
+  if (points.length < (tool === "linear" ? 2 : 3)) return null;
+
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const width = Math.max(...xs) - Math.min(...xs);
+  const height = Math.max(...ys) - Math.min(...ys);
+  if (Math.hypot(width, height) < 0.025) return null;
+
+  if (tool === "linear") {
+    const routeLength = points
+      .slice(1)
+      .reduce((sum, point, index) => sum + pointDistance(points[index], point), 0);
+    if (routeLength < 0.03) return null;
+    return { kind: "linear_route", points, source: "ai_visual_hint" };
+  }
+
+  if (width < 0.01 || height < 0.01 || Math.abs(signedArea(points)) < 0.0001) return null;
+  if (areaGuideSelfIntersects(points)) return null;
+  return { kind: "area_region", points, source: "ai_visual_hint" };
+}
 
 const normalizedText = (value: string) =>
   value
@@ -341,6 +481,7 @@ export function parseMeasurementAssistantPlan(
   const rawSuggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
   const seen = new Set<string>();
   const suggestions: MeasurementAssistantSuggestion[] = [];
+  let invalidGuideCount = 0;
 
   for (const [index, value] of rawSuggestions.entries()) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
@@ -364,6 +505,9 @@ export function parseMeasurementAssistantPlan(
     const dedupeKey = `${tool}:${normalizedText(label)}:${sourceLine}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
+    const guideCandidate = item.guide_points ?? item.guide;
+    const guide = guideCandidate == null ? null : parseMeasurementVisualGuide(guideCandidate, tool);
+    if (guideCandidate != null && !guide) invalidGuideCount += 1;
     suggestions.push({
       id: `measurement-suggestion-${index + 1}`,
       label,
@@ -373,16 +517,24 @@ export function parseMeasurementAssistantPlan(
       source_excerpt: excerpt,
       rationale: measurementSuggestionRationale(tool),
       evidence_strength: "review",
+      ...(guide ? { guide } : {}),
     });
     if (suggestions.length >= 12) break;
   }
 
   const rejectedCount = Math.max(0, rawSuggestions.length - suggestions.length);
-  const warnings = rejectedCount
-    ? [
-        `${rejectedCount} AI suggestion${rejectedCount === 1 ? " was" : "s were"} omitted because the cited note did not support the proposed scope or measurement tool.`,
-      ]
-    : [];
+  const warnings = [
+    ...(rejectedCount
+      ? [
+          `${rejectedCount} AI suggestion${rejectedCount === 1 ? " was" : "s were"} omitted because the cited note did not support the proposed scope or measurement tool.`,
+        ]
+      : []),
+    ...(invalidGuideCount
+      ? [
+          `${invalidGuideCount} drawing location hint${invalidGuideCount === 1 ? " was" : "s were"} omitted because the proposed geometry was not usable.`,
+        ]
+      : []),
+  ];
 
   return {
     summary: measurementAssistantPlanSummary(suggestions),

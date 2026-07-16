@@ -2,6 +2,7 @@ import {
   measurementAssistantPlanSummary,
   measurementSuggestionRationale,
   parseMeasurementAssistantPlan,
+  parseMeasurementVisualGuide,
   type MeasurementAssistantPlan,
   type MeasurementAssistantSuggestion,
   type MeasurementSourceLine,
@@ -44,6 +45,7 @@ function normalizedStoredSuggestion(
   const sourceLine = clean(item.source_line, 12).toUpperCase();
   const sourceExcerpt = clean(item.source_excerpt, 260);
   if (!label || !/^L\d{3}$/.test(sourceLine) || sourceExcerpt.length < 3) return null;
+  const guide = parseMeasurementVisualGuide(item.guide ?? item.guide_points, tool);
   return {
     id: clean(item.id, 120) || `measurement-suggestion-${index + 1}`,
     label,
@@ -53,6 +55,7 @@ function normalizedStoredSuggestion(
     source_excerpt: sourceExcerpt,
     rationale: measurementSuggestionRationale(tool),
     evidence_strength: "review",
+    ...(guide ? { guide } : {}),
   };
 }
 

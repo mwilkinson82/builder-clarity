@@ -2277,6 +2277,35 @@ await expectContains(
 );
 
 await expectContains(
+  "src/lib/plan-room-measurement-assistant.ts",
+  [
+    /parseMeasurementVisualGuide/,
+    /areaGuideSelfIntersects/,
+    /ai_visual_hint/,
+    /proposed geometry was not usable/,
+  ],
+  "measurement visual guides fail closed on malformed and self-intersecting geometry",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/MeasurementGuideReviewBar.tsx",
+  [
+    /AI location hint/,
+    /cannot feed the estimate/,
+    /Accept markup/,
+    /Start trusted trace/,
+    /verify scale first/,
+  ],
+  "measurement guide review keeps labeling, acceptance, scale, and quantity authority with the estimator",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/PdfSheetViewer.tsx",
+  [/MeasurementGuideLayer/, /measurementGuideSuggestions/, /onMeasurementGuideSelect/],
+  "plan canvas renders selectable AI routes and regions as a separate hint layer",
+);
+
+await expectContains(
   "src/components/estimates/plan-room/MeasurementAssistantPanel.tsx",
   [/Reading drawing notes/, /motion-reduce:animate-none/],
   "measurement note review names its pending state and honors reduced motion",

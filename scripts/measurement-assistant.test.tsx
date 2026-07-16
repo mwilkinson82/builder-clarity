@@ -2,11 +2,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MeasurementAssistantPanel } from "@/components/estimates/plan-room/MeasurementAssistantPanel";
+import { MeasurementGuideLayer } from "@/components/estimates/plan-room/MeasurementGuideLayer";
+import { MeasurementGuideReviewBar } from "@/components/estimates/plan-room/MeasurementGuideReviewBar";
 import {
   groupPdfMeasurementText,
   groupPdfMeasurementEvidence,
   measurementAssistantTakeoffNote,
   parseMeasurementAssistantPlan,
+  parseMeasurementVisualGuide,
   sourceExcerptIsSupported,
   withMeasurementEvidenceTimeout,
   type MeasurementAssistantPlanResult,
@@ -151,6 +154,97 @@ describe("guided measurement planning", () => {
     expect(sourceExcerptIsSupported(sourceLines[0].text, "GWB AT CORRIDOR WALLS")).toBe(true);
     expect(measurementAssistantTakeoffNote(plan.suggestions[0])).toContain(
       "Geometry and final quantity placed by the estimator.",
+    );
+  });
+
+  it("keeps bounded visual guides as non-quantity routing hints", () => {
+    const sourceLines = [
+      { line_number: "L001", text: "PROVIDE CONTINUOUS GWB AT CORRIDOR WALLS" },
+      { line_number: "L002", text: "EPOXY FLOOR FINISH IN MECHANICAL ROOM" },
+    ];
+    const plan = parseMeasurementAssistantPlan(
+      JSON.stringify({
+        suggestions: [
+          {
+            label: "continuous GWB corridor walls",
+            tool: "linear",
+            source_line: "L001",
+            source_excerpt: "CONTINUOUS GWB AT CORRIDOR WALLS",
+            guide_points: [
+              { x: 0.12, y: 0.25 },
+              { x: 0.42, y: 0.25 },
+              { x: 0.42, y: 0.58 },
+            ],
+          },
+          {
+            label: "epoxy floor finish",
+            tool: "area",
+            source_line: "L002",
+            source_excerpt: "EPOXY FLOOR FINISH IN MECHANICAL ROOM",
+            guide_points: [
+              { x: 0.58, y: 0.3 },
+              { x: 0.78, y: 0.3 },
+              { x: 0.78, y: 0.55 },
+              { x: 0.58, y: 0.55 },
+            ],
+          },
+        ],
+      }),
+      sourceLines,
+    );
+
+    expect(plan.suggestions.map((suggestion) => suggestion.guide?.kind)).toEqual([
+      "linear_route",
+      "area_region",
+    ]);
+    expect(plan.suggestions[0].guide?.source).toBe("ai_visual_hint");
+    expect(plan.warnings).toEqual([]);
+  });
+
+  it("keeps cited scope but discards unsafe or degenerate visual geometry", () => {
+    expect(
+      parseMeasurementVisualGuide(
+        [
+          { x: 0.1, y: 0.1 },
+          { x: 1.2, y: 0.1 },
+        ],
+        "linear",
+      ),
+    ).toBeNull();
+    expect(
+      parseMeasurementVisualGuide(
+        [
+          { x: 0.2, y: 0.2 },
+          { x: 0.6, y: 0.6 },
+          { x: 0.2, y: 0.6 },
+          { x: 0.6, y: 0.2 },
+        ],
+        "area",
+      ),
+    ).toBeNull();
+
+    const plan = parseMeasurementAssistantPlan(
+      JSON.stringify({
+        suggestions: [
+          {
+            label: "continuous GWB corridor walls",
+            tool: "linear",
+            source_line: "L001",
+            source_excerpt: "CONTINUOUS GWB AT CORRIDOR WALLS",
+            guide_points: [
+              { x: 0.2, y: 0.2 },
+              { x: 0.205, y: 0.205 },
+            ],
+          },
+        ],
+      }),
+      [{ line_number: "L001", text: "CONTINUOUS GWB AT CORRIDOR WALLS" }],
+    );
+
+    expect(plan.suggestions).toHaveLength(1);
+    expect(plan.suggestions[0].guide).toBeUndefined();
+    expect(plan.warnings).toContain(
+      "1 drawing location hint was omitted because the proposed geometry was not usable.",
     );
   });
 
@@ -726,6 +820,14 @@ const result: MeasurementAssistantPlanResult = {
       source_excerpt: "CONTINUOUS GWB AT CORRIDOR WALLS",
       rationale: "Trace the corridor wall run.",
       evidence_strength: "direct",
+      guide: {
+        kind: "linear_route",
+        source: "ai_visual_hint",
+        points: [
+          { x: 0.2, y: 0.3 },
+          { x: 0.7, y: 0.3 },
+        ],
+      },
     },
   ],
 };
@@ -786,10 +888,12 @@ it("shows source evidence and hands the chosen scope back to the estimator", () 
         queueItemBySuggestionId={{ "measurement-suggestion-1": queuedScope }}
         duplicateCountBySuggestionId={{ "measurement-suggestion-1": 2 }}
         activeEvidenceSourceLine=""
+        activeGuideSuggestionId=""
         decisionPending={false}
         onAnalyze={() => {}}
         onPrepare={prepare}
         onShowEvidence={showEvidence}
+        onShowGuide={() => {}}
         onDecision={() => {}}
         onClear={() => {}}
       />,
@@ -809,4 +913,70 @@ it("shows source evidence and hands the chosen scope back to the estimator", () 
   );
   act(() => start!.click());
   expect(prepare).toHaveBeenCalledWith(result.suggestions[0]);
+});
+
+it("renders drawing guides as selectable dashed hints", () => {
+  const select = vi.fn();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() =>
+    root!.render(
+      <svg viewBox="0 0 1000 700">
+        <MeasurementGuideLayer
+          suggestions={result.suggestions}
+          activeSuggestionId=""
+          viewSize={{ width: 1000, height: 700 }}
+          onSelect={select}
+        />
+      </svg>,
+    ),
+  );
+
+  const guide = container.querySelector<SVGGElement>(
+    '[data-testid="measurement-guide-measurement-suggestion-1"]',
+  );
+  expect(guide).not.toBeNull();
+  expect(
+    container
+      .querySelector('[data-testid="measurement-guide-path-measurement-suggestion-1"]')
+      ?.getAttribute("stroke-dasharray"),
+  ).toBe("7 6");
+  act(() => guide!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  expect(select).toHaveBeenCalledWith("measurement-suggestion-1");
+});
+
+it("requires estimator acceptance before a visual hint can start a trusted trace", () => {
+  const start = vi.fn();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() =>
+    root!.render(
+      <MeasurementGuideReviewBar
+        suggestion={result.suggestions[0]}
+        label="Corridor GWB walls"
+        queueStatus="accepted"
+        scaleVerified
+        pending={false}
+        onLabelChange={() => {}}
+        onShowEvidence={() => {}}
+        onAccept={() => {}}
+        onReject={() => {}}
+        onStartTrace={start}
+        onClose={() => {}}
+      />,
+    ),
+  );
+
+  expect(container.textContent).toContain("cannot feed the estimate");
+  expect(container.textContent).toContain("Estimator accepted");
+  expect(
+    container.querySelector<HTMLInputElement>('[data-testid="measurement-guide-label"]')?.disabled,
+  ).toBe(true);
+  const startButton = container.querySelector<HTMLButtonElement>(
+    '[data-testid="measurement-guide-start"]',
+  );
+  act(() => startButton!.click());
+  expect(start).toHaveBeenCalledOnce();
 });
