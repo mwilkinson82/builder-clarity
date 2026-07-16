@@ -24,6 +24,12 @@ import {
 } from "@/lib/plan-scope-coverage";
 import { parsePlanScopeBrief, selectPlanScopeBriefSourceLines } from "@/lib/plan-scope-brief";
 import {
+  defaultScopeBriefNextAction,
+  latestPlanScopeBriefReviews,
+  planScopeBriefReviewDraftError,
+  type PlanScopeBriefReview,
+} from "@/lib/plan-scope-brief-review";
+import {
   resolveScaleAssessmentForSheet,
   type ScaleAssessmentRow,
 } from "@/lib/plan-room-scale-assurance";
@@ -607,6 +613,58 @@ describe("guided measurement planning", () => {
     expect(brief.warnings).toEqual([
       "1 AI prompt was omitted because its label or citation was not supported by the supplied drawing text.",
     ]);
+  });
+
+  it("keeps the newest append-only Scope Brief decision and requires auditable overrides", () => {
+    const baseReview: PlanScopeBriefReview = {
+      id: "11111111-1111-4111-8111-111111111111",
+      estimate_id: "22222222-2222-4222-8222-222222222222",
+      plan_set_id: "33333333-3333-4333-8333-333333333333",
+      ai_operation_id: "44444444-4444-4444-8444-444444444444",
+      item_id: "scope-brief-cited1",
+      version: 1,
+      trade: "Electrical",
+      review_kind: "count",
+      scope_label: "exterior light fixture",
+      plan_sheet_id: "55555555-5555-4555-8555-555555555555",
+      source_line: "L021",
+      source_excerpt: "EXTERIOR LIGHT FIXTURE",
+      status: "deferred",
+      next_action: "count_review",
+      review_notes: "",
+      reviewed_by: "66666666-6666-4666-8666-666666666666",
+      reviewed_by_name: "Estimator",
+      reviewed_at: "2026-07-16T00:00:00.000Z",
+      created_at: "2026-07-16T00:00:00.000Z",
+    };
+    const latestReview: PlanScopeBriefReview = {
+      ...baseReview,
+      id: "77777777-7777-4777-8777-777777777777",
+      version: 2,
+      status: "accepted",
+      reviewed_at: "2026-07-16T00:05:00.000Z",
+    };
+
+    expect(latestPlanScopeBriefReviews([latestReview, baseReview]).get(baseReview.item_id)).toEqual(
+      latestReview,
+    );
+    expect(defaultScopeBriefNextAction("count")).toBe("count_review");
+    expect(
+      planScopeBriefReviewDraftError({
+        status: "accepted",
+        nextAction: "pricing_review",
+        defaultAction: "count_review",
+        notes: "",
+      }),
+    ).toBe("Explain why the next action differs from the cited review type.");
+    expect(
+      planScopeBriefReviewDraftError({
+        status: "excluded",
+        nextAction: "none",
+        defaultAction: "count_review",
+        notes: "Covered by owner",
+      }),
+    ).toBeNull();
   });
 
   it("prefers the just-saved assessment until refreshed server data catches up", () => {
