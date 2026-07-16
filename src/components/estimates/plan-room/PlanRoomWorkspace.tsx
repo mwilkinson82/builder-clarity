@@ -96,6 +96,7 @@ import {
 import { analyzePlanSheetMeasurementNotes } from "@/lib/plan-room-measurement-assistant.functions";
 import { generatePlanScopeBrief } from "@/lib/plan-scope-brief.functions";
 import type { PlanScopeBriefItem } from "@/lib/plan-scope-brief";
+import type { PlanScopeBriefNextAction } from "@/lib/plan-scope-brief-review";
 import {
   analyzeAcceptedPlanRevisionScope,
   type PlanRevisionMatchRow,
@@ -313,6 +314,8 @@ export function PlanRoomWorkspace({
   const [measurementAssistantPlan, setMeasurementAssistantPlan] =
     useState<MeasurementAssistantPlanResult | null>(null);
   const [preparedMeasurementSuggestionId, setPreparedMeasurementSuggestionId] = useState("");
+  const [preparedMeasurementSuggestion, setPreparedMeasurementSuggestion] =
+    useState<MeasurementAssistantSuggestion | null>(null);
   const [completedMeasurementSuggestionIds, setCompletedMeasurementSuggestionIds] = useState<
     string[]
   >([]);
@@ -327,6 +330,10 @@ export function PlanRoomWorkspace({
   const [preparedMeasurementScopeItemId, setPreparedMeasurementScopeItemId] = useState("");
   const [pendingMeasurementScopeStart, setPendingMeasurementScopeStart] =
     useState<MeasurementScopeQueueItem | null>(null);
+  const [pendingScopeBriefAction, setPendingScopeBriefAction] = useState<{
+    item: PlanScopeBriefItem;
+    action: PlanScopeBriefNextAction;
+  } | null>(null);
   const [pdfPageMetrics, setPdfPageMetrics] = useState<{
     widthPoints: number;
     heightPoints: number;
@@ -494,6 +501,7 @@ export function PlanRoomWorkspace({
     setScaleVerifiedAtOverride(undefined);
     setMeasurementAssistantPlan(null);
     setPreparedMeasurementSuggestionId("");
+    setPreparedMeasurementSuggestion(null);
     setCompletedMeasurementSuggestionIds([]);
     setMeasurementSourceNote("");
     setMeasurementEvidenceAnchors({});
@@ -991,9 +999,10 @@ export function PlanRoomWorkspace({
       const label =
         measurementLabel.trim() || line?.description || `${toolLabel(measurementTool)} takeoff`;
       const unit = unitFor(measurementTool, line);
-      const preparedSuggestion = measurementAssistantPlan?.suggestions.find(
-        (suggestion) => suggestion.id === preparedMeasurementSuggestionId,
-      );
+      const preparedSuggestion =
+        preparedMeasurementSuggestion?.id === preparedMeasurementSuggestionId
+          ? preparedMeasurementSuggestion
+          : null;
       const preparedNote =
         preparedSuggestion?.tool === measurementTool && preparedSuggestion.label === label
           ? measurementSourceNote
@@ -1051,17 +1060,18 @@ export function PlanRoomWorkspace({
         snapshot: snapshotFromMeasurement(result.measurement),
       });
       if (variables.measurementTool !== "count") setTool("select");
-      const completedSuggestion = measurementAssistantPlan?.suggestions.find(
-        (suggestion) =>
-          suggestion.id === preparedMeasurementSuggestionId &&
-          suggestion.tool === variables.measurementTool &&
-          suggestion.label === result.measurement.label,
-      );
+      const completedSuggestion =
+        preparedMeasurementSuggestion?.id === preparedMeasurementSuggestionId &&
+        preparedMeasurementSuggestion.tool === variables.measurementTool &&
+        preparedMeasurementSuggestion.label === result.measurement.label
+          ? preparedMeasurementSuggestion
+          : null;
       if (completedSuggestion) {
         setCompletedMeasurementSuggestionIds((current) =>
           current.includes(completedSuggestion.id) ? current : [...current, completedSuggestion.id],
         );
         setPreparedMeasurementSuggestionId("");
+        setPreparedMeasurementSuggestion(null);
         setMeasurementSourceNote("");
       }
       if (result.measurementScopeItemId) {
@@ -2044,6 +2054,7 @@ export function PlanRoomWorkspace({
       setMeasurementAssistantPlan(plan);
       setMeasurementEvidenceAnchors(anchors);
       setPreparedMeasurementSuggestionId("");
+      setPreparedMeasurementSuggestion(null);
       setPreparedMeasurementScopeItemId("");
       setCompletedMeasurementSuggestionIds([]);
       setMeasurementSourceNote("");
@@ -2084,6 +2095,7 @@ export function PlanRoomWorkspace({
       });
       setMeasurementEvidenceAnchors(anchors);
       setPreparedMeasurementSuggestionId("");
+      setPreparedMeasurementSuggestion(null);
       setPreparedMeasurementScopeItemId("");
       setCompletedMeasurementSuggestionIds([]);
       setMeasurementSourceNote("");
@@ -2168,7 +2180,13 @@ export function PlanRoomWorkspace({
   };
 
   const openScopeBriefEvidenceMutation = useMutation({
-    mutationFn: async (item: PlanScopeBriefItem) => {
+    mutationFn: async ({
+      item,
+      action,
+    }: {
+      item: PlanScopeBriefItem;
+      action?: PlanScopeBriefNextAction;
+    }) => {
       const sheet = sheets.find((candidate) => candidate.id === item.plan_sheet_id);
       const planSet = planSets.find((candidate) => candidate.id === sheet?.plan_set_id);
       if (!sheet || !planSet) throw new Error("The cited drawing sheet is no longer available.");
@@ -2180,9 +2198,15 @@ export function PlanRoomWorkspace({
         fileUrl,
         pageNumber: sheet.page_number,
       });
-      return { item, anchor: evidence.anchors[item.source_line] ?? null };
+      const anchor = evidence.anchors[item.source_line] ?? null;
+      if (action && !anchor) {
+        throw new Error(
+          "The cited note could not be located on the drawing. Rebuild the Scope Brief before starting review.",
+        );
+      }
+      return { item, action, anchor };
     },
-    onSuccess: ({ item, anchor }) => {
+    onSuccess: ({ item, action, anchor }) => {
       setSelectedSheetId(item.plan_sheet_id);
       showMeasurementEvidence({
         sheetId: item.plan_sheet_id,
@@ -2190,6 +2214,7 @@ export function PlanRoomWorkspace({
         label: item.scope_label,
         anchor,
       });
+      if (action) setPendingScopeBriefAction({ item, action });
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "The cited sheet could not open"),
@@ -2228,6 +2253,7 @@ export function PlanRoomWorkspace({
     setMeasurementLabel(suggestion.label);
     setMeasurementSourceNote(measurementAssistantTakeoffNote(suggestion));
     setPreparedMeasurementSuggestionId(suggestion.id);
+    setPreparedMeasurementSuggestion(suggestion);
     setPendingPoints([]);
     setCalibrationPoints([]);
     setSelectedMeasurementId("");
@@ -2855,6 +2881,91 @@ export function PlanRoomWorkspace({
     openSheet,
     onTakeoffsChanged: invalidate,
   });
+  const { openPanel: openAiAssistPanel, setScope: setAiAssistScope } = aiAssist;
+
+  useEffect(() => {
+    if (
+      !pendingScopeBriefAction ||
+      currentSheet?.id !== pendingScopeBriefAction.item.plan_sheet_id
+    ) {
+      return;
+    }
+
+    const { item, action } = pendingScopeBriefAction;
+    setPendingScopeBriefAction(null);
+    setMeasurementLabel(item.scope_label);
+    setPendingPoints([]);
+    setCalibrationPoints([]);
+    setSelectedMeasurementId("");
+    if (isCockpitMode) {
+      setCockpitPanels((current) => ({ ...current, tools: true }));
+    }
+
+    if (action === "count_review") {
+      setPreparedMeasurementSuggestionId("");
+      setPreparedMeasurementSuggestion(null);
+      setPreparedMeasurementScopeItemId("");
+      setMeasurementSourceNote("");
+      setTool("select");
+      setAiAssistScope("sheet");
+      openAiAssistPanel();
+      toast.info(
+        "Count workbench opened on the cited sheet. Identify one accepted symbol, then start the scan when you are ready.",
+      );
+      return;
+    }
+
+    if (action === "length_review" || action === "area_review") {
+      const suggestion: MeasurementAssistantSuggestion = {
+        id: `scope-brief-${item.id}`,
+        label: item.scope_label,
+        tool: action === "length_review" ? "linear" : "area",
+        unit: action === "length_review" ? "LF" : "SF",
+        source_line: item.source_line,
+        source_excerpt: item.source_excerpt,
+        rationale: item.estimator_prompt,
+        evidence_strength: "direct",
+      };
+      setPreparedMeasurementSuggestionId(suggestion.id);
+      setPreparedMeasurementSuggestion(suggestion);
+      setPreparedMeasurementScopeItemId("");
+      setMeasurementSourceNote(measurementAssistantTakeoffNote(suggestion));
+      if (currentSheetScaleStatus !== "verified") {
+        setTool("select");
+        toast.warning(
+          "Cited scope prepared. Complete two Scale Assurance checks before drawing the takeoff.",
+        );
+        return;
+      }
+      setTool(suggestion.tool);
+      toast.info(
+        suggestion.tool === "linear"
+          ? "Cited length scope prepared. Trace the run; you remain responsible for every endpoint."
+          : "Cited area scope prepared. Trace the perimeter; you remain responsible for every point.",
+      );
+      return;
+    }
+
+    setPreparedMeasurementSuggestionId("");
+    setPreparedMeasurementSuggestion(null);
+    setPreparedMeasurementScopeItemId("");
+    setMeasurementSourceNote("");
+    setTool("select");
+    toast.info(
+      action === "assembly_review"
+        ? "Cited sheet opened. Select a trusted takeoff, then confirm assembly inputs in the Selected Takeoff panel."
+        : action === "pricing_review"
+          ? "Cited sheet opened. Review the evidence, then price the intended estimate row manually."
+          : "Cited sheet opened for scope coordination. Resolve ownership before changing the estimate.",
+    );
+  }, [
+    currentSheet?.id,
+    currentSheetScaleStatus,
+    isCockpitMode,
+    openAiAssistPanel,
+    pendingScopeBriefAction,
+    setAiAssistScope,
+  ]);
   // Symbol discovery (SYMBOLDISCOVERY Stage 0): QA-flagged via ?aiDiscover=1.
   const symbolDiscovery = useSymbolDiscovery({
     estimateId: estimate.id,
@@ -3499,7 +3610,10 @@ export function PlanRoomWorkspace({
             progress={scopeBriefProgress}
             evidencePending={openScopeBriefEvidenceMutation.isPending}
             onGenerate={() => scopeBriefMutation.mutate()}
-            onOpenEvidence={(item) => openScopeBriefEvidenceMutation.mutate(item)}
+            onOpenEvidence={(item) => openScopeBriefEvidenceMutation.mutate({ item })}
+            onStartAction={(item, action) =>
+              openScopeBriefEvidenceMutation.mutate({ item, action })
+            }
           />
 
           <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
@@ -3987,6 +4101,7 @@ export function PlanRoomWorkspace({
                 onClear={() => {
                   setMeasurementAssistantPlan(null);
                   setPreparedMeasurementSuggestionId("");
+                  setPreparedMeasurementSuggestion(null);
                   setPreparedMeasurementScopeItemId("");
                   setCompletedMeasurementSuggestionIds([]);
                   setMeasurementSourceNote("");

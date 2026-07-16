@@ -26,7 +26,9 @@ import { parsePlanScopeBrief, selectPlanScopeBriefSourceLines } from "@/lib/plan
 import {
   defaultScopeBriefNextAction,
   latestPlanScopeBriefReviews,
+  planScopeBriefReviewIsActionable,
   planScopeBriefReviewDraftError,
+  planScopeBriefStartActionLabel,
   type PlanScopeBriefReview,
 } from "@/lib/plan-scope-brief-review";
 import {
@@ -648,7 +650,11 @@ describe("guided measurement planning", () => {
     expect(latestPlanScopeBriefReviews([latestReview, baseReview]).get(baseReview.item_id)).toEqual(
       latestReview,
     );
+    expect(planScopeBriefReviewIsActionable(baseReview)).toBe(false);
+    expect(planScopeBriefReviewIsActionable(latestReview)).toBe(true);
     expect(defaultScopeBriefNextAction("count")).toBe("count_review");
+    expect(planScopeBriefStartActionLabel("count_review")).toBe("Start count review");
+    expect(planScopeBriefStartActionLabel("length_review")).toBe("Prepare length takeoff");
     expect(
       planScopeBriefReviewDraftError({
         status: "accepted",
