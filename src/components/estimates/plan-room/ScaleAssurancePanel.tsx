@@ -170,7 +170,7 @@ export function ScaleAssurancePanel({
             data-testid="verify-scale-check"
           >
             <Check className="h-3.5 w-3.5" />
-            {drafts.length === 0 ? "Record First" : "Record & Assess"}
+            {drafts.length === 0 ? "Record Check 1" : "Record Check 2 & Verify"}
           </Button>
         </div>
         <FeetInchesHint value={verifyFeet} onAccept={onVerifyFeetChange} />

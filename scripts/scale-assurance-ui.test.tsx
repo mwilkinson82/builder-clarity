@@ -109,7 +109,7 @@ test("records the second check only when endpoints and a labeled distance are re
   );
   const button = container!.querySelector<HTMLButtonElement>('[data-testid="verify-scale-check"]');
   expect(button?.disabled).toBe(false);
-  expect(button?.textContent).toContain("Record & Assess");
+  expect(button?.textContent).toContain("Record Check 2 & Verify");
   act(() => button!.click());
   expect(record).toHaveBeenCalledOnce();
 });

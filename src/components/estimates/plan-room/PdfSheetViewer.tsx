@@ -370,9 +370,11 @@ export function PlanCanvas({
   draftCommand,
   draftUnit,
   draftActionDisabled,
+  draftEditor,
   onFinishDraft,
   onFinishRun,
   onAbandonDraft,
+  onCancelDraft,
   finishPopover,
   finishPopoverAnchor,
   onFinishPopoverDismiss,
@@ -419,12 +421,14 @@ export function PlanCanvas({
   draftCommand: DraftCommandStatus | null;
   draftUnit: string;
   draftActionDisabled: boolean;
+  draftEditor?: ReactNode;
   onFinishDraft: () => void;
   // Finishes an in-progress linear/area/count run with the vertices placed so
   // far (double-click, Enter, right-click closeout).
   onFinishRun?: () => void;
   // Abandons the in-progress run entirely (Esc).
   onAbandonDraft?: () => void;
+  onCancelDraft?: () => void;
   // Post-finish classification popover, anchored near the final markup point.
   // Portaled to the document root (above every floating panel) with Radix
   // collision handling so it always fits fully on screen.
@@ -537,7 +541,8 @@ export function PlanCanvas({
   const zoomWindowClickBlockRef = useRef(false);
   const geometryEditClickBlockRef = useRef(false);
   const hasRevisionOverlay = Boolean(overlayPlanSet && overlaySheet);
-  const overlayBlendMode = overlayMode === "compare" ? "multiply" : "normal";
+  const overlayBlendMode = overlayMode === "ghost" ? "normal" : "multiply";
+  const redlineActive = hasRevisionOverlay && overlayMode === "redline";
   const selectedMeasurement =
     measurements.find((measurement) => measurement.id === selectedMeasurementId) ?? null;
 
@@ -1580,6 +1585,8 @@ export function PlanCanvas({
           }
           disabled={draftActionDisabled}
           onFinishDraft={onFinishDraft}
+          editor={draftEditor}
+          onCancel={onCancelDraft}
         />
       )}
 
@@ -1619,18 +1626,22 @@ export function PlanCanvas({
       )}
 
       {isCockpitMode && draftCommand && (
-        <div className="pointer-events-none absolute bottom-4 left-4 z-30 w-[min(560px,calc(100vw-2rem))]">
-          <TakeoffDraftHud
-            draftCommand={draftCommand}
-            activePointCount={
-              tool === "calibrate" || tool === "verify"
-                ? calibrationPoints.length
-                : pendingPoints.length
-            }
-            disabled={draftActionDisabled}
-            onFinishDraft={onFinishDraft}
-            className="pointer-events-auto"
-          />
+        <div className="pointer-events-none absolute inset-x-3 bottom-20 z-50 flex justify-center">
+          <div className="w-[min(680px,calc(100vw-2rem))]">
+            <TakeoffDraftHud
+              draftCommand={draftCommand}
+              activePointCount={
+                tool === "calibrate" || tool === "verify"
+                  ? calibrationPoints.length
+                  : pendingPoints.length
+              }
+              disabled={draftActionDisabled}
+              onFinishDraft={onFinishDraft}
+              editor={draftEditor}
+              onCancel={onCancelDraft}
+              className="pointer-events-auto"
+            />
+          </div>
         </div>
       )}
 
@@ -1675,41 +1686,64 @@ export function PlanCanvas({
               height: `${Math.max(1, viewSize.height * zoom)}px`,
             }}
           >
-            {planSet?.sample_key === "harbor-residence" || !planSet?.file_path ? (
-              <SamplePlanBackground sheet={sheet} viewSize={viewSize} />
-            ) : planSet.file_mime_type === "application/pdf" ? (
-              <canvas ref={canvasRef} className="absolute inset-0 h-full w-full bg-white" />
-            ) : signedUrl ? (
-              <img
-                ref={imageRef}
-                src={signedUrl}
-                alt={sheet?.sheet_name || "Plan sheet"}
-                className="absolute inset-0 h-full w-full object-contain"
-                onLoad={() => {
-                  const img = imageRef.current;
-                  if (!img) return;
-                  const ratio = img.naturalWidth / Math.max(1, img.naturalHeight);
-                  const width = Math.min(1600, Math.max(960, img.naturalWidth));
-                  setRenderQuality({
-                    label: "Image source",
-                    details: `${img.naturalWidth.toLocaleString()} x ${img.naturalHeight.toLocaleString()} uploaded image source.`,
-                  });
-                  onViewSizeChange({ width, height: Math.round(width / ratio) });
-                }}
-              />
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center bg-surface text-sm text-muted-foreground">
-                Loading drawing...
-              </div>
-            )}
+            <svg aria-hidden className="absolute h-0 w-0">
+              <defs>
+                <filter id="revision-new-green" colorInterpolationFilters="sRGB">
+                  <feColorMatrix
+                    type="matrix"
+                    values="0.194 0.654 0.066 0 0.086  0.077 0.258 0.026 0 0.639  0.151 0.508 0.051 0 0.290  0 0 0 1 0"
+                  />
+                </filter>
+                <filter id="revision-old-red" colorInterpolationFilters="sRGB">
+                  <feColorMatrix
+                    type="matrix"
+                    values="0.053 0.179 0.018 0 0.750  0.181 0.608 0.061 0 0.150  0.187 0.629 0.064 0 0.120  0 0 0 1 0"
+                  />
+                </filter>
+              </defs>
+            </svg>
+            <div
+              className="absolute inset-0"
+              data-testid={redlineActive ? "plan-revision-new-layer" : undefined}
+              style={redlineActive ? { filter: "url(#revision-new-green)" } : undefined}
+            >
+              {planSet?.sample_key === "harbor-residence" || !planSet?.file_path ? (
+                <SamplePlanBackground sheet={sheet} viewSize={viewSize} />
+              ) : planSet.file_mime_type === "application/pdf" ? (
+                <canvas ref={canvasRef} className="absolute inset-0 h-full w-full bg-white" />
+              ) : signedUrl ? (
+                <img
+                  ref={imageRef}
+                  src={signedUrl}
+                  alt={sheet?.sheet_name || "Plan sheet"}
+                  className="absolute inset-0 h-full w-full object-contain"
+                  onLoad={() => {
+                    const img = imageRef.current;
+                    if (!img) return;
+                    const ratio = img.naturalWidth / Math.max(1, img.naturalHeight);
+                    const width = Math.min(1600, Math.max(960, img.naturalWidth));
+                    setRenderQuality({
+                      label: "Image source",
+                      details: `${img.naturalWidth.toLocaleString()} x ${img.naturalHeight.toLocaleString()} uploaded image source.`,
+                    });
+                    onViewSizeChange({ width, height: Math.round(width / ratio) });
+                  }}
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center bg-surface text-sm text-muted-foreground">
+                  Loading drawing...
+                </div>
+              )}
+            </div>
 
             {overlayPlanSet && overlaySheet && (
               <div
                 className="pointer-events-none absolute inset-0"
                 data-testid="plan-revision-overlay-layer"
                 style={{
-                  opacity: Math.min(0.9, Math.max(0.2, overlayOpacity / 100)),
+                  opacity: redlineActive ? 1 : Math.min(0.9, Math.max(0.2, overlayOpacity / 100)),
                   mixBlendMode: overlayBlendMode,
+                  filter: redlineActive ? "url(#revision-old-red)" : undefined,
                 }}
               >
                 <PlanSheetOverlayLayer
@@ -1718,6 +1752,21 @@ export function PlanCanvas({
                   viewSize={viewSize}
                   zoom={zoom}
                 />
+              </div>
+            )}
+
+            {redlineActive && (
+              <div
+                className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-3 rounded-full border border-hairline bg-card/95 px-3 py-1.5 text-[11px] shadow-sm backdrop-blur"
+                data-testid="plan-revision-redline-legend"
+              >
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-success" /> New / revised
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-danger" /> Prior / removed
+                </span>
+                <span className="text-muted-foreground">Dark = unchanged</span>
               </div>
             )}
 

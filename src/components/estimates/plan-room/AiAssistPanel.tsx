@@ -235,7 +235,7 @@ export function AiAssistPanel({
         <div className="flex items-center gap-1.5 text-sm font-semibold">
           <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
           <img src="/favicon.svg" alt="" aria-hidden className="h-4 w-4" />
-          AI Assist
+          AI Markups
         </div>
         <div className="flex items-center gap-1.5">
           <CreditBalanceChip balance={balance} loading={ai.creditSummaryLoading} />
@@ -272,8 +272,8 @@ export function AiAssistPanel({
               {AI_ASSIST_NOT_CONFIGURED_MESSAGE}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              AI counting needs an Anthropic API key on the server before it can scan drawings. Ask
-              your Overwatch admin to add ANTHROPIC_API_KEY.
+              AI markup review needs a configured vision provider before it can inspect drawings.
+              Ask your Overwatch admin to configure the estimating AI provider.
             </p>
           </div>
         ) : schemaPending ? (
@@ -517,7 +517,7 @@ export function AiAssistPanel({
                   data-testid="ai-discover-symbols"
                 >
                   <Sparkles className="h-3.5 w-3.5" />
-                  Mark and identify symbols
+                  Let AI mark repeated symbols
                 </Button>
               </>
             )}

@@ -116,7 +116,7 @@ export function SymbolDiscoveryPanel({
           <p className="eyebrow">AI markup review</p>
           <h2 className="flex items-center gap-1.5 font-serif text-lg">
             <ScanSearch className="h-4 w-4" />
-            Identify drawing symbols
+            Label AI-marked symbols
           </h2>
         </div>
         <Button
@@ -161,8 +161,9 @@ export function SymbolDiscoveryPanel({
           <div className="space-y-3">
             <div className="flex items-start justify-between gap-3">
               <p className="text-xs text-muted-foreground">
-                {result.candidateCount} possible marks grouped into {groups.length} repeated symbol
-                {groups.length === 1 ? "" : "s"}. Dashed marks are proposals only.
+                AI marked {result.candidateCount} possible locations and grouped them into{" "}
+                {groups.length} repeated symbol{groups.length === 1 ? "" : "s"}. Click a dashed
+                group, tell Overwatch what it represents, then approve only the correct instances.
               </p>
               <Button
                 type="button"

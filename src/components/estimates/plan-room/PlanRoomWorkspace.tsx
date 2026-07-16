@@ -42,7 +42,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtUSD } from "@/lib/format";
@@ -181,7 +180,6 @@ import {
   geometryFromPoints,
   geometryPoints,
   measurementMatchesTakeoffLayers,
-  planSetStatusLabel,
   readCockpitPanelLayoutStorage,
   readLastViewedSheetStorage,
   safeReportFileName,
@@ -211,12 +209,10 @@ import {
   getPdfPageCount,
   processPlanSetSheets,
 } from "./PdfSheetViewer";
-import { FeetInchesHint } from "./TakeoffTools";
-import { TakeoffTools } from "./TakeoffTools";
+import { FeetInchesHint, TakeoffTools } from "./TakeoffTools";
 import { SyncConflictDialog, TakeoffWorksheet, type SyncConflictState } from "./TakeoffWorksheet";
 import { LinkOrCreatePicker, TakeoffFinishPopover } from "./TakeoffClassify";
 import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
-import { PlanRevisionReviewPanel } from "./PlanRevisionReviewPanel";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
 import { MeasurementAssistantPanel } from "./MeasurementAssistantPanel";
@@ -229,10 +225,13 @@ import {
   extractPdfMeasurementEvidence,
   extractPdfPlanScopeBriefEvidence,
 } from "./pdfMeasurementText";
+
 import { canvasToBase64Png, renderDetectionSheet } from "./aiDetectionRender";
 import { FlagIssueButton } from "../FlagIssueButton";
 import type { PlanScopeCoverageRecord } from "@/lib/plan-scope-coverage";
-
+import { CommandCenterToolsNav, type CommandCenterToolsView } from "./CommandCenterToolsNav";
+import { ScaleDraftEditor } from "./ScaleDraftEditor";
+import { PlanRevisionOverlayPanel } from "./PlanRevisionOverlayPanel";
 interface PlanRoomWorkspaceProps {
   estimate: EstimateRow;
   lineItems: EstimateLineItemRow[];
@@ -410,9 +409,10 @@ export function PlanRoomWorkspace({
     Record<CockpitPanelKey, CockpitPanelLayout>
   >(DEFAULT_COCKPIT_PANEL_LAYOUTS);
   const [cockpitChromeVisible, setCockpitChromeVisible] = useState(true);
+  const [cockpitToolsView, setCockpitToolsView] = useState<CommandCenterToolsView>("measure");
   const [overlaySheetId, setOverlaySheetId] = useState("");
   const [overlayOpacity, setOverlayOpacity] = useState(65);
-  const [overlayMode, setOverlayMode] = useState<RevisionOverlayMode>("compare");
+  const [overlayMode, setOverlayMode] = useState<RevisionOverlayMode>("redline");
   const [selectedMeasurementId, setSelectedMeasurementId] = useState("");
   const [sheetSearch, setSheetSearch] = useState("");
   const [sheetFilter, setSheetFilter] = useState<SheetFilterMode>("all");
@@ -437,7 +437,13 @@ export function PlanRoomWorkspace({
   // survive sheet switches within the session and reset on reload.
   const [undoStacks, setUndoStacks] = useState<Record<string, TakeoffUndoStack>>({});
   const [undoBusy, setUndoBusy] = useState(false);
-
+  useEffect(() => {
+    if (!isCockpitMode || tool === "select") return;
+    setCockpitToolsView("measure");
+  }, [isCockpitMode, tool]);
+  useEffect(() => {
+    if (isCockpitMode && selectedMeasurementId) setCockpitToolsView("review");
+  }, [isCockpitMode, selectedMeasurementId]);
   const currentSheet = useMemo(
     () => sheets.find((sheet) => sheet.id === selectedSheetId) ?? sheets[0] ?? null,
     [selectedSheetId, sheets],
@@ -1146,9 +1152,10 @@ export function PlanRoomWorkspace({
       if (!currentSheet) throw new Error("Choose a plan sheet first.");
       return updateSheetFn({ data: { sheet_id: currentSheet.id, patch } });
     },
-    onSuccess: () => {
+    onSuccess: (_result, patch) => {
       toast.success("Sheet updated");
       setCalibrationPoints([]);
+      if (patch.scale_feet_per_pixel != null) setTool("select");
       invalidate();
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Sheet did not save"),
@@ -2499,13 +2506,6 @@ export function PlanRoomWorkspace({
     if (tool === "calibrate" || tool === "verify") {
       const next = [...calibrationPoints, point].slice(-2);
       setCalibrationPoints(next);
-      if (next.length === 2) {
-        toast.info(
-          tool === "calibrate"
-            ? "Enter the known distance, then save scale."
-            : "Enter the labeled dimension, then check the scale.",
-        );
-      }
       return;
     }
 
@@ -3386,7 +3386,10 @@ export function PlanRoomWorkspace({
     backendReady,
     draftCommand,
     activeDraftPointCount,
-    setTool,
+    setTool: (nextTool: ToolMode) => {
+      setTool(nextTool);
+      if (isCockpitMode && nextTool !== "select") setCockpitToolsView("measure");
+    },
     setPendingPoints,
     setCalibrationPoints,
     finishDraft,
@@ -3398,7 +3401,11 @@ export function PlanRoomWorkspace({
     canRedo: canRedoTakeoff,
     onUndo: undoTakeoff,
     onRedo: redoTakeoff,
-    onOpenAiAssist: () => (aiAssist.open ? aiAssist.closePanel() : aiAssist.openPanel()),
+    onOpenAiAssist: () => {
+      setCockpitToolsView("ai");
+      if (aiAssist.open) aiAssist.closePanel();
+      else aiAssist.openPanel();
+    },
     aiAssistOpen: aiAssist.open,
   };
   const takeoffToolButtons = <TakeoffTools {...takeoffToolsProps} compact={false} />;
@@ -3819,100 +3826,24 @@ export function PlanRoomWorkspace({
             }
           />
 
-          <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Layers className="h-4 w-4" /> Revision Overlay
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Compare another sheet over the current drawing before you trust or update quantities.
-            </p>
-            <div className="mt-3 space-y-3">
-              <PlanRevisionReviewPanel
-                estimateId={estimate.id}
-                currentPlanSet={currentPlanSet}
-                currentSheet={currentSheet}
-                planSets={planSets}
-                sheets={sheets}
-                processingIdentity={postProcessingPlanSetId === currentPlanSet?.id}
-                onUseOverlay={setOverlaySheetId}
-                onReviewRevisionNotes={reviewAcceptedRevisionNotes}
-              />
-
-              <Select
-                value={overlaySheetId || "none"}
-                onValueChange={(value) => setOverlaySheetId(value === "none" ? "" : value)}
-              >
-                <SelectTrigger data-testid="plan-revision-overlay-select">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No overlay</SelectItem>
-                  {revisionSheetOptions.map(({ sheet, planSet }) => (
-                    <SelectItem key={sheet.id} value={sheet.id}>
-                      {sheetDisplayName(sheet, planSet).slice(0, 90)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {overlaySheet && overlayPlanSet ? (
-                <div className="rounded-md border border-hairline bg-surface p-3 text-xs">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-foreground">
-                        {sheetDisplayName(overlaySheet, overlayPlanSet)}
-                      </p>
-                      <p className="mt-1 text-muted-foreground">
-                        Showing at {overlayOpacity}% opacity.
-                      </p>
-                    </div>
-                    <Badge variant="outline">{planSetStatusLabel(overlayPlanSet.status)}</Badge>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-3 text-xs text-muted-foreground">
-                  Upload a revision set, then choose the matching sheet here to compare changes.
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2" data-testid="plan-revision-mode-controls">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={overlayMode === "compare" ? "default" : "outline"}
-                  onClick={() => setOverlayMode("compare")}
-                  disabled={!overlaySheet}
-                >
-                  Compare
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={overlayMode === "ghost" ? "default" : "outline"}
-                  onClick={() => setOverlayMode("ghost")}
-                  disabled={!overlaySheet}
-                >
-                  Ghost
-                </Button>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label className="text-xs">Overlay opacity</Label>
-                  <span className="text-xs text-muted-foreground">{overlayOpacity}%</span>
-                </div>
-                <Slider
-                  min={20}
-                  max={90}
-                  step={5}
-                  value={[overlayOpacity]}
-                  onValueChange={(value) => setOverlayOpacity(value[0] ?? 65)}
-                  disabled={!overlaySheet}
-                  data-testid="plan-revision-opacity"
-                />
-              </div>
-            </div>
-          </section>
+          <PlanRevisionOverlayPanel
+            estimateId={estimate.id}
+            currentPlanSet={currentPlanSet}
+            currentSheet={currentSheet}
+            planSets={planSets}
+            sheets={sheets}
+            processingIdentity={postProcessingPlanSetId === currentPlanSet?.id}
+            overlaySheetId={overlaySheetId}
+            overlaySheet={overlaySheet}
+            overlayPlanSet={overlayPlanSet}
+            overlayMode={overlayMode}
+            overlayOpacity={overlayOpacity}
+            revisionSheetOptions={revisionSheetOptions}
+            onOverlaySheetChange={setOverlaySheetId}
+            onOverlayModeChange={setOverlayMode}
+            onOverlayOpacityChange={setOverlayOpacity}
+            onReviewRevisionNotes={reviewAcceptedRevisionNotes}
+          />
 
           <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
             <div className="flex items-center gap-2 text-sm font-medium">
@@ -4095,12 +4026,28 @@ export function PlanRoomWorkspace({
             draftActionDisabled={
               !backendReady ||
               !draftCommand?.ready ||
+              (tool === "calibrate" && !parseFeetInches(calibrationFeet)) ||
+              (tool === "verify" && !parseFeetInches(verifyFeet)) ||
               createMeasurementMutation.isPending ||
               updateSheetMutation.isPending
+            }
+            draftEditor={
+              <ScaleDraftEditor
+                tool={tool}
+                calibrationFeet={calibrationFeet}
+                verifyFeet={verifyFeet}
+                onCalibrationFeetChange={setCalibrationFeet}
+                onVerifyFeetChange={setVerifyFeet}
+              />
             }
             onFinishDraft={finishDraft}
             onFinishRun={finishRunFromCanvas}
             onAbandonDraft={abandonDraftRun}
+            onCancelDraft={() => {
+              setPendingPoints([]);
+              setCalibrationPoints([]);
+              setTool("select");
+            }}
             finishPopoverAnchor={finishPopover?.anchor ?? null}
             onFinishPopoverDismiss={() => setFinishPopover(null)}
             finishPopover={
@@ -4291,864 +4238,914 @@ export function PlanRoomWorkspace({
               }
             />
           )}
-          <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="font-serif text-xl">Takeoff Setup</h2>
-                <p className="text-xs text-muted-foreground">
-                  Label each measurement so the source is obvious later.
-                </p>
-              </div>
-              <Target className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <div className="mt-4 space-y-3">
-              <MeasurementAssistantPanel
-                plan={measurementAssistantPlan}
-                pending={measurementAssistantMutation.isPending}
-                canAnalyze={Boolean(
-                  backendReady &&
-                  currentSheet &&
-                  currentPlanSet?.file_mime_type === "application/pdf" &&
-                  currentPlanSet.file_path,
-                )}
-                scaleVerified={currentSheetScaleStatus === "verified"}
-                preparedSuggestionId={preparedMeasurementSuggestionId}
-                completedSuggestionIds={completedMeasurementSuggestionIds}
-                queueItemBySuggestionId={queueItemBySuggestionId}
-                duplicateCountBySuggestionId={duplicateCountBySuggestionId}
-                activeEvidenceSourceLine={
-                  measurementEvidenceFocus?.sheetId === currentSheet?.id
-                    ? measurementEvidenceFocus.sourceLine
-                    : ""
-                }
-                activeGuideSuggestionId={activeMeasurementGuideId}
-                decisionPending={measurementScopeDecisionMutation.isPending}
-                onAnalyze={() => measurementAssistantMutation.mutate(undefined)}
-                onPrepare={(suggestion) => {
-                  setPreparedMeasurementScopeItemId(
-                    queueItemBySuggestionId[suggestion.id]?.id ?? "",
-                  );
-                  prepareMeasurementSuggestion(suggestion);
-                }}
-                onShowEvidence={(suggestion) => {
-                  if (!currentSheet) return;
-                  showMeasurementEvidence({
-                    sheetId: currentSheet.id,
-                    sourceLine: suggestion.source_line,
-                    label: suggestion.label,
-                    anchor: measurementEvidenceAnchors[suggestion.source_line] ?? null,
-                  });
-                }}
-                onShowGuide={selectMeasurementGuide}
-                onDecision={decideMeasurementSuggestion}
-                onClear={() => {
-                  setMeasurementAssistantPlan(null);
-                  setActiveMeasurementGuideId("");
-                  setMeasurementGuideLabel("");
-                  setPreparedMeasurementSuggestionId("");
-                  setPreparedMeasurementSuggestion(null);
-                  setPreparedScopeBriefTakeoff(null);
-                  setPreparedMeasurementScopeItemId("");
-                  setCompletedMeasurementSuggestionIds([]);
-                  setMeasurementSourceNote("");
-                  setMeasurementEvidenceAnchors({});
-                }}
-              />
-              <MeasurementScopeQueuePanel
-                items={measurementScopeItems}
-                sheets={sheets}
-                measurements={measurements}
-                lineItems={lineItems}
-                ready={
-                  measurementScopeQueueQuery.isPending ||
-                  measurementScopeQueueQuery.data?.ready !== false
-                }
-                pending={measurementScopeDecisionMutation.isPending}
-                onLocate={(item) =>
-                  showMeasurementEvidence({
-                    sheetId: item.plan_sheet_id,
-                    sourceLine: item.source_line,
-                    label: item.label,
-                    anchor: item.source_anchor,
-                  })
-                }
-                onStart={startMeasurementScopeItem}
-                onDecision={decideMeasurementScopeItem}
-              />
-              <div className="space-y-1.5">
-                <Label>Takeoff label</Label>
-                <Input
-                  value={measurementLabel}
-                  onChange={(event) => setMeasurementLabel(event.target.value)}
-                  placeholder="e.g. Slab-on-grade area"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Markup color</Label>
-                <div className="flex gap-2">
-                  {TAKEOFF_COLORS.map((color) => (
-                    <button
-                      key={color}
-                      type="button"
-                      title={color}
-                      onClick={() => setTakeoffColor(color)}
-                      className={`h-8 w-8 rounded border ${
-                        takeoffColor === color ? "border-foreground" : "border-hairline"
-                      }`}
-                      style={{ backgroundColor: color }}
-                    />
-                  ))}
+          {isCockpitMode && (
+            <CommandCenterToolsNav value={cockpitToolsView} onChange={setCockpitToolsView} />
+          )}
+          {(!isCockpitMode || cockpitToolsView === "ai" || cockpitToolsView === "measure") && (
+            <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-serif text-xl">
+                    {isCockpitMode && cockpitToolsView === "ai" ? "AI & Scope" : "Measure"}
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    {isCockpitMode && cockpitToolsView === "ai"
+                      ? "Review AI-drawn proposals and route accepted scope into estimator-controlled work."
+                      : "Set the label, color, and trusted drawing scale before measuring."}
+                  </p>
                 </div>
+                <Target className="h-4 w-4 text-muted-foreground" />
               </div>
-              <Separator />
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label>Set drawing scale</Label>
-                  {currentSheetScaleStatus === "verified" ? (
-                    <Badge variant="secondary" data-testid="scale-status-verified">
-                      Scale verified
-                    </Badge>
-                  ) : currentSheetScaleStatus === "unverified" ? (
-                    <Badge variant="outline" data-testid="scale-status-unverified">
-                      Set, not verified
-                    </Badge>
+              <div className="mt-4 space-y-3">
+                {(!isCockpitMode || cockpitToolsView === "ai") && (
+                  <>
+                    <MeasurementAssistantPanel
+                      plan={measurementAssistantPlan}
+                      pending={measurementAssistantMutation.isPending}
+                      canAnalyze={Boolean(
+                        backendReady &&
+                        currentSheet &&
+                        currentPlanSet?.file_mime_type === "application/pdf" &&
+                        currentPlanSet.file_path,
+                      )}
+                      scaleVerified={currentSheetScaleStatus === "verified"}
+                      preparedSuggestionId={preparedMeasurementSuggestionId}
+                      completedSuggestionIds={completedMeasurementSuggestionIds}
+                      queueItemBySuggestionId={queueItemBySuggestionId}
+                      duplicateCountBySuggestionId={duplicateCountBySuggestionId}
+                      activeEvidenceSourceLine={
+                        measurementEvidenceFocus?.sheetId === currentSheet?.id
+                          ? measurementEvidenceFocus.sourceLine
+                          : ""
+                      }
+                      activeGuideSuggestionId={activeMeasurementGuideId}
+                      decisionPending={measurementScopeDecisionMutation.isPending}
+                      onAnalyze={() => measurementAssistantMutation.mutate(undefined)}
+                      onPrepare={(suggestion) => {
+                        setPreparedMeasurementScopeItemId(
+                          queueItemBySuggestionId[suggestion.id]?.id ?? "",
+                        );
+                        prepareMeasurementSuggestion(suggestion);
+                      }}
+                      onShowEvidence={(suggestion) => {
+                        if (!currentSheet) return;
+                        showMeasurementEvidence({
+                          sheetId: currentSheet.id,
+                          sourceLine: suggestion.source_line,
+                          label: suggestion.label,
+                          anchor: measurementEvidenceAnchors[suggestion.source_line] ?? null,
+                        });
+                      }}
+                      onShowGuide={selectMeasurementGuide}
+                      onDecision={decideMeasurementSuggestion}
+                      onClear={() => {
+                        setMeasurementAssistantPlan(null);
+                        setActiveMeasurementGuideId("");
+                        setMeasurementGuideLabel("");
+                        setPreparedMeasurementSuggestionId("");
+                        setPreparedMeasurementSuggestion(null);
+                        setPreparedScopeBriefTakeoff(null);
+                        setPreparedMeasurementScopeItemId("");
+                        setCompletedMeasurementSuggestionIds([]);
+                        setMeasurementSourceNote("");
+                        setMeasurementEvidenceAnchors({});
+                      }}
+                    />
+                    <MeasurementScopeQueuePanel
+                      items={measurementScopeItems}
+                      sheets={sheets}
+                      measurements={measurements}
+                      lineItems={lineItems}
+                      ready={
+                        measurementScopeQueueQuery.isPending ||
+                        measurementScopeQueueQuery.data?.ready !== false
+                      }
+                      pending={measurementScopeDecisionMutation.isPending}
+                      onLocate={(item) =>
+                        showMeasurementEvidence({
+                          sheetId: item.plan_sheet_id,
+                          sourceLine: item.source_line,
+                          label: item.label,
+                          anchor: item.source_anchor,
+                        })
+                      }
+                      onStart={startMeasurementScopeItem}
+                      onDecision={decideMeasurementScopeItem}
+                    />
+                  </>
+                )}
+                {(!isCockpitMode || cockpitToolsView === "measure") && (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label>Takeoff label</Label>
+                      <Input
+                        value={measurementLabel}
+                        onChange={(event) => setMeasurementLabel(event.target.value)}
+                        placeholder="e.g. Slab-on-grade area"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Markup color</Label>
+                      <div className="flex gap-2">
+                        {TAKEOFF_COLORS.map((color) => (
+                          <button
+                            key={color}
+                            type="button"
+                            title={color}
+                            onClick={() => setTakeoffColor(color)}
+                            className={`h-8 w-8 rounded border ${
+                              takeoffColor === color ? "border-foreground" : "border-hairline"
+                            }`}
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <Separator />
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label>Set drawing scale</Label>
+                        {currentSheetScaleStatus === "verified" ? (
+                          <Badge variant="secondary" data-testid="scale-status-verified">
+                            Scale verified
+                          </Badge>
+                        ) : currentSheetScaleStatus === "unverified" ? (
+                          <Badge variant="outline" data-testid="scale-status-unverified">
+                            Set, not verified
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" data-testid="scale-status-none">
+                            Needed
+                          </Badge>
+                        )}
+                      </div>
+                      {pdfPageMetrics ? (
+                        <div className="space-y-2" data-testid="stated-scale-presets">
+                          <p className="text-xs text-muted-foreground">
+                            The drawing states its scale in the title block? Pick it here — no
+                            clicking needed on vector PDFs.
+                          </p>
+                          <Select value={statedPresetId} onValueChange={setStatedPresetId}>
+                            <SelectTrigger
+                              aria-label="Stated scale"
+                              data-testid="stated-scale-select"
+                            >
+                              <SelectValue placeholder='Stated scale, e.g. 1/4" = 1&apos;-0"' />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ARCHITECTURAL_SCALE_PRESETS.map((preset) => (
+                                <SelectItem key={preset.id} value={preset.id}>
+                                  {preset.label}
+                                </SelectItem>
+                              ))}
+                              {ENGINEERING_SCALE_PRESETS.map((preset) => (
+                                <SelectItem key={preset.id} value={preset.id}>
+                                  {preset.label}
+                                </SelectItem>
+                              ))}
+                              <SelectItem value="custom">Custom stated scale...</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {statedPresetId === "custom" && (
+                            <div
+                              className="grid grid-cols-[1fr_auto_1fr] items-center gap-2"
+                              data-testid="stated-scale-custom"
+                            >
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={customStatedInches}
+                                onChange={(event) => setCustomStatedInches(event.target.value)}
+                                placeholder={"Paper inches"}
+                                aria-label="Stated paper inches"
+                              />
+                              <span className="text-xs text-muted-foreground">inches =</span>
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={customStatedFeet}
+                                onChange={(event) => setCustomStatedFeet(event.target.value)}
+                                placeholder="Real feet"
+                                aria-label="Stated real feet"
+                              />
+                            </div>
+                          )}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full gap-1.5"
+                            onClick={applyStatedScale}
+                            disabled={
+                              !backendReady || !statedPresetId || updateSheetMutation.isPending
+                            }
+                            data-testid="stated-scale-apply"
+                          >
+                            <Save className="h-3.5 w-3.5" /> Use Stated Scale
+                          </Button>
+                          {applyToSetOffer && (
+                            <div
+                              className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs"
+                              data-testid="stated-scale-apply-to-set"
+                            >
+                              <p className="text-muted-foreground">
+                                {applyToSetOffer.count} more sheet
+                                {applyToSetOffer.count === 1 ? "" : "s"} in this set still need a
+                                scale.
+                              </p>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="mt-2 w-full"
+                                onClick={() => applyToSetMutation.mutate(applyToSetOffer)}
+                                disabled={applyToSetMutation.isPending}
+                                data-testid="stated-scale-apply-to-set-button"
+                              >
+                                {applyToSetMutation.isPending
+                                  ? "Applying to set..."
+                                  : `Apply ${applyToSetOffer.label} to all unscaled sheets`}
+                              </Button>
+                            </div>
+                          )}
+                          <Separator />
+                        </div>
+                      ) : (
+                        <p
+                          className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground"
+                          data-testid="stated-scale-unavailable"
+                        >
+                          This sheet has no PDF page dimensions, so stated-scale presets are off.
+                          Calibrate with two points on a known dimension instead.
+                        </p>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        Or calibrate: click both ends of a known dimension on the drawing, type the
+                        real distance, then save the sheet scale.
+                      </p>
+                      <div
+                        className="grid grid-cols-3 gap-1"
+                        data-testid="calibration-distance-presets"
+                      >
+                        {QUICK_CALIBRATION_FEET.map((feet) => (
+                          <Button
+                            key={feet}
+                            type="button"
+                            size="sm"
+                            variant={calibrationFeet === String(feet) ? "default" : "outline"}
+                            className="h-8 px-1 text-xs"
+                            onClick={() => setCalibrationFeet(String(feet))}
+                            data-testid={`calibration-distance-${feet}`}
+                          >
+                            {feet}'
+                          </Button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-[1fr_auto] gap-2">
+                        <Input
+                          value={calibrationFeet}
+                          onChange={(event) => setCalibrationFeet(event.target.value)}
+                          placeholder={`Feet & inches, e.g. 12' 6"`}
+                          aria-label="Known distance in feet and inches"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="gap-1.5"
+                          onClick={saveScale}
+                          disabled={!backendReady || updateSheetMutation.isPending}
+                        >
+                          <Save className="h-3.5 w-3.5" /> Save
+                        </Button>
+                      </div>
+                      <FeetInchesHint value={calibrationFeet} onAccept={setCalibrationFeet} />
+                      {Boolean(currentSheet?.scale_feet_per_pixel) && (
+                        <ScaleAssurancePanel
+                          sheet={{ ...currentSheet, scale_verified_at: effectiveScaleVerifiedAt }}
+                          latestAssessment={latestScaleAssessment}
+                          drafts={scaleCheckDrafts}
+                          tool={tool}
+                          selectedPointCount={calibrationPoints.length}
+                          verifyFeet={verifyFeet}
+                          backendReady={backendReady}
+                          scaleAssuranceReady={scaleAssuranceReady}
+                          pending={
+                            scaleAssessmentMutation.isPending || scaleCorrectionMutation.isPending
+                          }
+                          onVerifyFeetChange={setVerifyFeet}
+                          onStartCheck={() => {
+                            setCalibrationPoints([]);
+                            setTool("verify");
+                          }}
+                          onRecordCheck={checkScale}
+                          onResetChecks={resetScaleChecks}
+                        />
+                      )}
+                      <div className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
+                        {tool === "calibrate" ? (
+                          <span>{calibrationPoints.length}/2 calibration points selected.</span>
+                        ) : tool === "verify" ? (
+                          <span>{calibrationPoints.length}/2 check points selected.</span>
+                        ) : currentSheet?.scale_feet_per_pixel ? (
+                          <span>
+                            Scale locked at {currentSheet.scale_feet_per_pixel.toFixed(4)} feet per
+                            drawing pixel.
+                            {currentSheet.scale_source === "stated" && !effectiveScaleVerifiedAt
+                              ? " From stated scale — complete two assurance checks."
+                              : ""}
+                          </span>
+                        ) : (
+                          <span>
+                            Scale is needed before linear or area quantities can calculate.
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
+          )}
+
+          {(!isCockpitMode || cockpitToolsView === "review") && (
+            <section
+              className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+              data-testid="takeoff-layer-controls"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-serif text-xl">Plan Markup Layers</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Show or hide markups on this sheet without deleting any takeoffs.
+                  </p>
+                </div>
+                <Layers className="mt-0.5 h-4 w-4 text-muted-foreground" />
+              </div>
+              <div
+                className="mt-4 rounded-md border border-hairline bg-surface px-3 py-2 text-xs"
+                data-testid="takeoff-layer-summary"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-foreground">
+                    Showing {visibleSheetMeasurements.length} of {sheetMeasurements.length} marks
+                  </span>
+                  {hiddenSheetMeasurementCount > 0 ? (
+                    <Badge variant="outline">{hiddenSheetMeasurementCount} hidden</Badge>
                   ) : (
-                    <Badge variant="outline" data-testid="scale-status-none">
-                      Needed
-                    </Badge>
+                    <Badge variant="secondary">All visible</Badge>
                   )}
                 </div>
-                {pdfPageMetrics ? (
-                  <div className="space-y-2" data-testid="stated-scale-presets">
-                    <p className="text-xs text-muted-foreground">
-                      The drawing states its scale in the title block? Pick it here — no clicking
-                      needed on vector PDFs.
-                    </p>
-                    <Select value={statedPresetId} onValueChange={setStatedPresetId}>
-                      <SelectTrigger aria-label="Stated scale" data-testid="stated-scale-select">
-                        <SelectValue placeholder='Stated scale, e.g. 1/4" = 1&apos;-0"' />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ARCHITECTURAL_SCALE_PRESETS.map((preset) => (
-                          <SelectItem key={preset.id} value={preset.id}>
-                            {preset.label}
-                          </SelectItem>
-                        ))}
-                        {ENGINEERING_SCALE_PRESETS.map((preset) => (
-                          <SelectItem key={preset.id} value={preset.id}>
-                            {preset.label}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="custom">Custom stated scale...</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {statedPresetId === "custom" && (
-                      <div
-                        className="grid grid-cols-[1fr_auto_1fr] items-center gap-2"
-                        data-testid="stated-scale-custom"
-                      >
-                        <Input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={customStatedInches}
-                          onChange={(event) => setCustomStatedInches(event.target.value)}
-                          placeholder={"Paper inches"}
-                          aria-label="Stated paper inches"
-                        />
-                        <span className="text-xs text-muted-foreground">inches =</span>
-                        <Input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={customStatedFeet}
-                          onChange={(event) => setCustomStatedFeet(event.target.value)}
-                          placeholder="Real feet"
-                          aria-label="Stated real feet"
-                        />
-                      </div>
-                    )}
-                    <Button
+                <p className="mt-1 text-muted-foreground">
+                  Use this when dense sheets need less noise. The worksheet still keeps every
+                  takeoff.
+                </p>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => setAllTakeoffLayersVisible(true)}
+                  disabled={allTakeoffLayersVisible}
+                  data-testid="takeoff-layer-show-all"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Show All
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => setAllTakeoffLayersVisible(false)}
+                  disabled={noTakeoffLayersVisible}
+                  data-testid="takeoff-layer-hide-all"
+                >
+                  <EyeOff className="h-3.5 w-3.5" />
+                  Hide All
+                </Button>
+              </div>
+              <div className="mt-3 space-y-2" data-testid="takeoff-layer-toggle-list">
+                {TAKEOFF_LAYER_KEYS.map((key) => {
+                  const visible = takeoffLayerVisibility[key];
+                  const copy = TAKEOFF_LAYER_COPY[key];
+                  return (
+                    <button
+                      key={key}
                       type="button"
-                      variant="outline"
-                      className="w-full gap-1.5"
-                      onClick={applyStatedScale}
-                      disabled={!backendReady || !statedPresetId || updateSheetMutation.isPending}
-                      data-testid="stated-scale-apply"
+                      className={cn(
+                        "flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-xs transition",
+                        visible
+                          ? "border-primary/30 bg-primary/5"
+                          : "border-hairline bg-surface/70 text-muted-foreground",
+                      )}
+                      onClick={() => toggleTakeoffLayer(key)}
+                      data-testid={TAKEOFF_LAYER_TEST_IDS[key]}
+                      aria-pressed={visible}
                     >
-                      <Save className="h-3.5 w-3.5" /> Use Stated Scale
-                    </Button>
-                    {applyToSetOffer && (
-                      <div
-                        className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs"
-                        data-testid="stated-scale-apply-to-set"
+                      <span className="flex min-w-0 items-center gap-2">
+                        {visible ? (
+                          <Eye className="h-3.5 w-3.5 shrink-0" />
+                        ) : (
+                          <EyeOff className="h-3.5 w-3.5 shrink-0" />
+                        )}
+                        <span className="min-w-0">
+                          <span className="block font-medium text-foreground">{copy.label}</span>
+                          <span className="block truncate text-muted-foreground">
+                            {copy.detail}
+                          </span>
+                        </span>
+                      </span>
+                      <Badge variant={visible ? "secondary" : "outline"}>
+                        {takeoffLayerCounts[key]}
+                      </Badge>
+                    </button>
+                  );
+                })}
+              </div>
+              {sheetColorsInUse.length > 0 && (
+                <div className="mt-3" data-testid="takeoff-color-visibility">
+                  <p className="eyebrow">Colors on this sheet</p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    {sheetColorsInUse.map((color) => {
+                      const hidden = hiddenTakeoffColors.includes(color);
+                      return (
+                        <button
+                          key={color}
+                          type="button"
+                          className={cn(
+                            "h-7 w-7 rounded border transition",
+                            hidden ? "border-hairline opacity-25" : "border-foreground/40",
+                          )}
+                          style={{ backgroundColor: color }}
+                          title={
+                            hidden
+                              ? "Show this color's markups on the sheet"
+                              : "Hide this color's markups on the sheet"
+                          }
+                          aria-pressed={!hidden}
+                          onClick={() =>
+                            setHiddenTakeoffColors((current) =>
+                              hidden
+                                ? current.filter((item) => item !== color)
+                                : [...current, color],
+                            )
+                          }
+                          data-testid="takeoff-color-chip"
+                        />
+                      );
+                    })}
+                    {hiddenTakeoffColors.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setHiddenTakeoffColors([])}
+                        data-testid="takeoff-color-show-all"
                       >
-                        <p className="text-muted-foreground">
-                          {applyToSetOffer.count} more sheet
-                          {applyToSetOffer.count === 1 ? "" : "s"} in this set still need a scale.
-                        </p>
+                        Show all colors
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {(!isCockpitMode || cockpitToolsView === "review") && (
+            <ReadinessPanel
+              sheets={sheets}
+              measurements={measurements}
+              unscaledSheets={unscaledSheets}
+              unlinkedMeasurements={unlinkedMeasurements}
+              calculationIssues={calculationIssues}
+              linkedCount={linkedCount}
+              hiddenSheetMeasurementCount={hiddenSheetMeasurementCount}
+              sheetMeasurements={sheetMeasurements}
+              visibleSheetMeasurements={visibleSheetMeasurements}
+              openFirstUnscaledSheet={openFirstUnscaledSheet}
+              showUnlinkedTakeoffs={showUnlinkedTakeoffs}
+              reviewCalculationIssues={() => {
+                const firstIssue = calculationIssues[0];
+                if (!firstIssue) return;
+                setSelectedSheetId(firstIssue.plan_sheet_id);
+                setSelectedMeasurementId(firstIssue.id);
+              }}
+              setAllTakeoffLayersVisible={setAllTakeoffLayersVisible}
+            />
+          )}
+
+          {(!isCockpitMode || cockpitToolsView === "review") && (
+            <section
+              className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+              data-testid="selected-takeoff-inspector"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-serif text-xl">Selected Takeoff</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Click a markup or worksheet item to inspect and clean up its source.
+                  </p>
+                </div>
+                {selectedMeasurement && (
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                    {selectedMeasurement.created_by_ai && (
+                      <Badge
+                        variant="outline"
+                        className="gap-1 border-warning/30 bg-warning/10 text-warning"
+                        title="Counted with AI Assist — every point was reviewed and accepted by hand."
+                        data-testid="takeoff-inspector-ai-chip"
+                      >
+                        AI-assisted
+                      </Badge>
+                    )}
+                    <Badge
+                      variant={
+                        selectedMeasurement.calculation_status === "current"
+                          ? "secondary"
+                          : "outline"
+                      }
+                      className={cn(
+                        selectedMeasurement.calculation_status !== "current" &&
+                          "border-warning/40 bg-warning/10 text-warning",
+                      )}
+                      data-testid="takeoff-inspector-trust-chip"
+                    >
+                      {selectedMeasurement.calculation_status === "current" &&
+                      selectedMeasurement.calculation_method === "manual_override"
+                        ? "Approved override"
+                        : takeoffTrustLabel(selectedMeasurement.calculation_status)}
+                    </Badge>
+                    <Badge variant="secondary">
+                      {toolLabel(selectedMeasurement.tool_type)} ·{" "}
+                      {formatQty(selectedMeasurement.quantity, selectedMeasurement.unit)}
+                    </Badge>
+                  </div>
+                )}
+              </div>
+              {selectedMeasurement ? (
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-md border border-hairline bg-surface p-3 text-xs text-muted-foreground">
+                    <p className="font-medium text-foreground">
+                      {selectedMeasurementSheet
+                        ? `${selectedMeasurementSheet.sheet_number} ${selectedMeasurementSheet.sheet_name}`.trim()
+                        : "Unknown sheet"}
+                    </p>
+                    <p className="mt-1">
+                      Estimate row: {selectedMeasurementLine?.description || "Not linked yet"}
+                    </p>
+                    <p className="mt-2" data-testid="selected-takeoff-edit-guidance">
+                      Geometry: drag the white points on the plan to refine this takeoff. Quantity
+                      recalculates and syncs to the linked estimate row when saved.
+                    </p>
+                    <p className="mt-1" data-testid="selected-takeoff-calculation-source">
+                      Quantity source: {selectedMeasurement.calculation_method.replaceAll("_", " ")}
+                      {selectedMeasurement.calculation_scale_revision
+                        ? ` · scale revision ${selectedMeasurement.calculation_scale_revision}`
+                        : " · scale independent"}
+                    </p>
+                    {selectedMeasurement.calculation_status !== "current" && (
+                      <div className="mt-3 flex items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-2 text-foreground">
+                        <span>
+                          {selectedMeasurement.calculation_status === "unverified_scale"
+                            ? "Complete two Scale Assurance checks before sending its length or area to the estimate."
+                            : "Recalculate this sheet from its saved geometry before sending quantities to the estimate."}
+                        </span>
                         <Button
                           type="button"
                           size="sm"
                           variant="outline"
-                          className="mt-2 w-full"
-                          onClick={() => applyToSetMutation.mutate(applyToSetOffer)}
-                          disabled={applyToSetMutation.isPending}
-                          data-testid="stated-scale-apply-to-set-button"
+                          className="h-8 shrink-0"
+                          onClick={() =>
+                            recalculateSheetMutation.mutate(selectedMeasurement.plan_sheet_id)
+                          }
+                          disabled={recalculateSheetMutation.isPending}
+                          data-testid="selected-takeoff-recalculate-sheet"
                         >
-                          {applyToSetMutation.isPending
-                            ? "Applying to set..."
-                            : `Apply ${applyToSetOffer.label} to all unscaled sheets`}
+                          Recalculate sheet
                         </Button>
                       </div>
                     )}
-                    <Separator />
                   </div>
-                ) : (
-                  <p
-                    className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground"
-                    data-testid="stated-scale-unavailable"
-                  >
-                    This sheet has no PDF page dimensions, so stated-scale presets are off.
-                    Calibrate with two points on a known dimension instead.
-                  </p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Or calibrate: click both ends of a known dimension on the drawing, type the real
-                  distance, then save the sheet scale.
-                </p>
-                <div className="grid grid-cols-3 gap-1" data-testid="calibration-distance-presets">
-                  {QUICK_CALIBRATION_FEET.map((feet) => (
-                    <Button
-                      key={feet}
-                      type="button"
-                      size="sm"
-                      variant={calibrationFeet === String(feet) ? "default" : "outline"}
-                      className="h-8 px-1 text-xs"
-                      onClick={() => setCalibrationFeet(String(feet))}
-                      data-testid={`calibration-distance-${feet}`}
-                    >
-                      {feet}'
-                    </Button>
-                  ))}
-                </div>
-                <div className="grid grid-cols-[1fr_auto] gap-2">
-                  <Input
-                    value={calibrationFeet}
-                    onChange={(event) => setCalibrationFeet(event.target.value)}
-                    placeholder={`Feet & inches, e.g. 12' 6"`}
-                    aria-label="Known distance in feet and inches"
+                  <TakeoffAssemblyWorkbench
+                    estimateId={estimate.id}
+                    measurement={selectedMeasurement}
+                    scopeItems={measurementScopeItems}
+                    lineItems={lineItems}
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="gap-1.5"
-                    onClick={saveScale}
-                    disabled={!backendReady || updateSheetMutation.isPending}
-                  >
-                    <Save className="h-3.5 w-3.5" /> Save
-                  </Button>
-                </div>
-                <FeetInchesHint value={calibrationFeet} onAccept={setCalibrationFeet} />
-                {Boolean(currentSheet?.scale_feet_per_pixel) && (
-                  <ScaleAssurancePanel
-                    sheet={{ ...currentSheet, scale_verified_at: effectiveScaleVerifiedAt }}
-                    latestAssessment={latestScaleAssessment}
-                    drafts={scaleCheckDrafts}
-                    tool={tool}
-                    selectedPointCount={calibrationPoints.length}
-                    verifyFeet={verifyFeet}
-                    backendReady={backendReady}
-                    scaleAssuranceReady={scaleAssuranceReady}
-                    pending={scaleAssessmentMutation.isPending || scaleCorrectionMutation.isPending}
-                    onVerifyFeetChange={setVerifyFeet}
-                    onStartCheck={() => {
-                      setCalibrationPoints([]);
-                      setTool("verify");
-                    }}
-                    onRecordCheck={checkScale}
-                    onResetChecks={resetScaleChecks}
-                  />
-                )}
-                <div className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
-                  {tool === "calibrate" ? (
-                    <span>{calibrationPoints.length}/2 calibration points selected.</span>
-                  ) : tool === "verify" ? (
-                    <span>{calibrationPoints.length}/2 check points selected.</span>
-                  ) : currentSheet?.scale_feet_per_pixel ? (
-                    <span>
-                      Scale locked at {currentSheet.scale_feet_per_pixel.toFixed(4)} feet per
-                      drawing pixel.
-                      {currentSheet.scale_source === "stated" && !effectiveScaleVerifiedAt
-                        ? " From stated scale — complete two assurance checks."
-                        : ""}
-                    </span>
-                  ) : (
-                    <span>Scale is needed before linear or area quantities can calculate.</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section
-            className="rounded-lg border border-hairline bg-card p-4 shadow-card"
-            data-testid="takeoff-layer-controls"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-serif text-xl">Plan Markup Layers</h2>
-                <p className="text-xs text-muted-foreground">
-                  Show or hide markups on this sheet without deleting any takeoffs.
-                </p>
-              </div>
-              <Layers className="mt-0.5 h-4 w-4 text-muted-foreground" />
-            </div>
-            <div
-              className="mt-4 rounded-md border border-hairline bg-surface px-3 py-2 text-xs"
-              data-testid="takeoff-layer-summary"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium text-foreground">
-                  Showing {visibleSheetMeasurements.length} of {sheetMeasurements.length} marks
-                </span>
-                {hiddenSheetMeasurementCount > 0 ? (
-                  <Badge variant="outline">{hiddenSheetMeasurementCount} hidden</Badge>
-                ) : (
-                  <Badge variant="secondary">All visible</Badge>
-                )}
-              </div>
-              <p className="mt-1 text-muted-foreground">
-                Use this when dense sheets need less noise. The worksheet still keeps every takeoff.
-              </p>
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                onClick={() => setAllTakeoffLayersVisible(true)}
-                disabled={allTakeoffLayersVisible}
-                data-testid="takeoff-layer-show-all"
-              >
-                <Eye className="h-3.5 w-3.5" />
-                Show All
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                onClick={() => setAllTakeoffLayersVisible(false)}
-                disabled={noTakeoffLayersVisible}
-                data-testid="takeoff-layer-hide-all"
-              >
-                <EyeOff className="h-3.5 w-3.5" />
-                Hide All
-              </Button>
-            </div>
-            <div className="mt-3 space-y-2" data-testid="takeoff-layer-toggle-list">
-              {TAKEOFF_LAYER_KEYS.map((key) => {
-                const visible = takeoffLayerVisibility[key];
-                const copy = TAKEOFF_LAYER_COPY[key];
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className={cn(
-                      "flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-xs transition",
-                      visible
-                        ? "border-primary/30 bg-primary/5"
-                        : "border-hairline bg-surface/70 text-muted-foreground",
-                    )}
-                    onClick={() => toggleTakeoffLayer(key)}
-                    data-testid={TAKEOFF_LAYER_TEST_IDS[key]}
-                    aria-pressed={visible}
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      {visible ? (
-                        <Eye className="h-3.5 w-3.5 shrink-0" />
-                      ) : (
-                        <EyeOff className="h-3.5 w-3.5 shrink-0" />
-                      )}
-                      <span className="min-w-0">
-                        <span className="block font-medium text-foreground">{copy.label}</span>
-                        <span className="block truncate text-muted-foreground">{copy.detail}</span>
-                      </span>
-                    </span>
-                    <Badge variant={visible ? "secondary" : "outline"}>
-                      {takeoffLayerCounts[key]}
-                    </Badge>
-                  </button>
-                );
-              })}
-            </div>
-            {sheetColorsInUse.length > 0 && (
-              <div className="mt-3" data-testid="takeoff-color-visibility">
-                <p className="eyebrow">Colors on this sheet</p>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  {sheetColorsInUse.map((color) => {
-                    const hidden = hiddenTakeoffColors.includes(color);
-                    return (
-                      <button
-                        key={color}
-                        type="button"
-                        className={cn(
-                          "h-7 w-7 rounded border transition",
-                          hidden ? "border-hairline opacity-25" : "border-foreground/40",
-                        )}
-                        style={{ backgroundColor: color }}
-                        title={
-                          hidden
-                            ? "Show this color's markups on the sheet"
-                            : "Hide this color's markups on the sheet"
-                        }
-                        aria-pressed={!hidden}
-                        onClick={() =>
-                          setHiddenTakeoffColors((current) =>
-                            hidden ? current.filter((item) => item !== color) : [...current, color],
-                          )
-                        }
-                        data-testid="takeoff-color-chip"
-                      />
-                    );
-                  })}
-                  {hiddenTakeoffColors.length > 0 && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => setHiddenTakeoffColors([])}
-                      data-testid="takeoff-color-show-all"
-                    >
-                      Show all colors
-                    </Button>
-                  )}
-                </div>
-              </div>
-            )}
-          </section>
-
-          <ReadinessPanel
-            sheets={sheets}
-            measurements={measurements}
-            unscaledSheets={unscaledSheets}
-            unlinkedMeasurements={unlinkedMeasurements}
-            calculationIssues={calculationIssues}
-            linkedCount={linkedCount}
-            hiddenSheetMeasurementCount={hiddenSheetMeasurementCount}
-            sheetMeasurements={sheetMeasurements}
-            visibleSheetMeasurements={visibleSheetMeasurements}
-            openFirstUnscaledSheet={openFirstUnscaledSheet}
-            showUnlinkedTakeoffs={showUnlinkedTakeoffs}
-            reviewCalculationIssues={() => {
-              const firstIssue = calculationIssues[0];
-              if (!firstIssue) return;
-              setSelectedSheetId(firstIssue.plan_sheet_id);
-              setSelectedMeasurementId(firstIssue.id);
-            }}
-            setAllTakeoffLayersVisible={setAllTakeoffLayersVisible}
-          />
-
-          <section
-            className="rounded-lg border border-hairline bg-card p-4 shadow-card"
-            data-testid="selected-takeoff-inspector"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="font-serif text-xl">Selected Takeoff</h2>
-                <p className="text-xs text-muted-foreground">
-                  Click a markup or worksheet item to inspect and clean up its source.
-                </p>
-              </div>
-              {selectedMeasurement && (
-                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                  {selectedMeasurement.created_by_ai && (
-                    <Badge
-                      variant="outline"
-                      className="gap-1 border-warning/30 bg-warning/10 text-warning"
-                      title="Counted with AI Assist — every point was reviewed and accepted by hand."
-                      data-testid="takeoff-inspector-ai-chip"
-                    >
-                      AI-assisted
-                    </Badge>
-                  )}
-                  <Badge
-                    variant={
-                      selectedMeasurement.calculation_status === "current" ? "secondary" : "outline"
-                    }
-                    className={cn(
-                      selectedMeasurement.calculation_status !== "current" &&
-                        "border-warning/40 bg-warning/10 text-warning",
-                    )}
-                    data-testid="takeoff-inspector-trust-chip"
-                  >
-                    {selectedMeasurement.calculation_status === "current" &&
-                    selectedMeasurement.calculation_method === "manual_override"
-                      ? "Approved override"
-                      : takeoffTrustLabel(selectedMeasurement.calculation_status)}
-                  </Badge>
-                  <Badge variant="secondary">
-                    {toolLabel(selectedMeasurement.tool_type)} ·{" "}
-                    {formatQty(selectedMeasurement.quantity, selectedMeasurement.unit)}
-                  </Badge>
-                </div>
-              )}
-            </div>
-            {selectedMeasurement ? (
-              <div className="mt-4 space-y-3">
-                <div className="rounded-md border border-hairline bg-surface p-3 text-xs text-muted-foreground">
-                  <p className="font-medium text-foreground">
-                    {selectedMeasurementSheet
-                      ? `${selectedMeasurementSheet.sheet_number} ${selectedMeasurementSheet.sheet_name}`.trim()
-                      : "Unknown sheet"}
-                  </p>
-                  <p className="mt-1">
-                    Estimate row: {selectedMeasurementLine?.description || "Not linked yet"}
-                  </p>
-                  <p className="mt-2" data-testid="selected-takeoff-edit-guidance">
-                    Geometry: drag the white points on the plan to refine this takeoff. Quantity
-                    recalculates and syncs to the linked estimate row when saved.
-                  </p>
-                  <p className="mt-1" data-testid="selected-takeoff-calculation-source">
-                    Quantity source: {selectedMeasurement.calculation_method.replaceAll("_", " ")}
-                    {selectedMeasurement.calculation_scale_revision
-                      ? ` · scale revision ${selectedMeasurement.calculation_scale_revision}`
-                      : " · scale independent"}
-                  </p>
-                  {selectedMeasurement.calculation_status !== "current" && (
-                    <div className="mt-3 flex items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-2 text-foreground">
-                      <span>
-                        {selectedMeasurement.calculation_status === "unverified_scale"
-                          ? "Complete two Scale Assurance checks before sending its length or area to the estimate."
-                          : "Recalculate this sheet from its saved geometry before sending quantities to the estimate."}
-                      </span>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-8 shrink-0"
-                        onClick={() =>
-                          recalculateSheetMutation.mutate(selectedMeasurement.plan_sheet_id)
-                        }
-                        disabled={recalculateSheetMutation.isPending}
-                        data-testid="selected-takeoff-recalculate-sheet"
-                      >
-                        Recalculate sheet
-                      </Button>
-                    </div>
-                  )}
-                </div>
-                <TakeoffAssemblyWorkbench
-                  estimateId={estimate.id}
-                  measurement={selectedMeasurement}
-                  scopeItems={measurementScopeItems}
-                  lineItems={lineItems}
-                />
-                <div className="space-y-1.5">
-                  <Label>Takeoff label</Label>
-                  <Input
-                    value={selectedMeasurementDraft.label}
-                    onChange={(event) =>
-                      setSelectedMeasurementDraft((draft) => ({
-                        ...draft,
-                        label: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_92px]">
                   <div className="space-y-1.5">
-                    <Label>Measured quantity</Label>
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                    <Label>Takeoff label</Label>
+                    <Input
+                      value={selectedMeasurementDraft.label}
+                      onChange={(event) =>
+                        setSelectedMeasurementDraft((draft) => ({
+                          ...draft,
+                          label: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_92px]">
+                    <div className="space-y-1.5">
+                      <Label>Measured quantity</Label>
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={selectedMeasurementDraft.quantity}
+                          onChange={(event) =>
+                            setSelectedMeasurementDraft((draft) => ({
+                              ...draft,
+                              quantity: event.target.value,
+                            }))
+                          }
+                          data-testid="selected-takeoff-quantity-input"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={recalculateSelectedMeasurement}
+                          disabled={updateMeasurementMutation.isPending}
+                          data-testid="selected-takeoff-recalculate"
+                        >
+                          Recalc
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Override only when field judgment beats the markup. Recalc returns to
+                        drawing geometry.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Unit</Label>
                       <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={selectedMeasurementDraft.quantity}
+                        value={selectedMeasurementDraft.unit}
                         onChange={(event) =>
                           setSelectedMeasurementDraft((draft) => ({
                             ...draft,
-                            quantity: event.target.value,
+                            unit: event.target.value,
                           }))
                         }
-                        data-testid="selected-takeoff-quantity-input"
+                        data-testid="selected-takeoff-unit-input"
                       />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={recalculateSelectedMeasurement}
-                        disabled={updateMeasurementMutation.isPending}
-                        data-testid="selected-takeoff-recalculate"
-                      >
-                        Recalc
-                      </Button>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Override only when field judgment beats the markup. Recalc returns to drawing
-                      geometry.
-                    </p>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label>Unit</Label>
-                    <Input
-                      value={selectedMeasurementDraft.unit}
-                      onChange={(event) =>
-                        setSelectedMeasurementDraft((draft) => ({
-                          ...draft,
-                          unit: event.target.value,
-                        }))
-                      }
-                      data-testid="selected-takeoff-unit-input"
-                    />
-                  </div>
-                </div>
-                {(Math.abs(
-                  Number(selectedMeasurementDraft.quantity || 0) - selectedMeasurement.quantity,
-                ) > 0.00005 ||
-                  selectedMeasurement.calculation_method === "manual_override") && (
-                  <div className="space-y-1.5">
-                    <Label>Override reason</Label>
-                    <Textarea
-                      rows={2}
-                      value={selectedMeasurementDraft.overrideReason}
-                      onChange={(event) =>
-                        setSelectedMeasurementDraft((draft) => ({
-                          ...draft,
-                          overrideReason: event.target.value,
-                        }))
-                      }
-                      placeholder="Example: field-verified dimension supersedes the printed plan."
-                      data-testid="selected-takeoff-override-reason"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Manual quantities are allowed, but the estimator's reason stays in the audit
-                      trail.
-                    </p>
-                  </div>
-                )}
-                <div className="space-y-1.5">
-                  <Label>Markup color</Label>
-                  <div className="flex flex-wrap gap-2" data-testid="selected-takeoff-color-picker">
-                    {TAKEOFF_COLORS.map((color) => (
-                      <button
-                        key={color}
-                        type="button"
-                        title={color}
-                        onClick={() =>
+                  {(Math.abs(
+                    Number(selectedMeasurementDraft.quantity || 0) - selectedMeasurement.quantity,
+                  ) > 0.00005 ||
+                    selectedMeasurement.calculation_method === "manual_override") && (
+                    <div className="space-y-1.5">
+                      <Label>Override reason</Label>
+                      <Textarea
+                        rows={2}
+                        value={selectedMeasurementDraft.overrideReason}
+                        onChange={(event) =>
                           setSelectedMeasurementDraft((draft) => ({
                             ...draft,
-                            color,
+                            overrideReason: event.target.value,
                           }))
                         }
-                        className={`h-8 w-8 rounded border ${
-                          selectedMeasurementDraft.color === color
-                            ? "border-foreground"
-                            : "border-hairline"
-                        }`}
-                        style={{ backgroundColor: color }}
+                        placeholder="Example: field-verified dimension supersedes the printed plan."
+                        data-testid="selected-takeoff-override-reason"
                       />
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Notes</Label>
-                  <Textarea
-                    rows={3}
-                    value={selectedMeasurementDraft.notes}
-                    onChange={(event) =>
-                      setSelectedMeasurementDraft((draft) => ({
-                        ...draft,
-                        notes: event.target.value,
-                      }))
-                    }
-                    placeholder="Add assumptions, sheet notes, or scope clarifications."
-                  />
-                </div>
-                <div className="space-y-2">
-                  {selectedMeasurementLine ? (
+                      <p className="text-xs text-muted-foreground">
+                        Manual quantities are allowed, but the estimator's reason stays in the audit
+                        trail.
+                      </p>
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <Label>Markup color</Label>
                     <div
-                      className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs"
-                      data-testid="selected-takeoff-row-link"
+                      className="flex flex-wrap gap-2"
+                      data-testid="selected-takeoff-color-picker"
                     >
-                      <span className="min-w-0 truncate">
-                        Linked:{" "}
-                        {selectedMeasurementLine.cost_code
-                          ? `${selectedMeasurementLine.cost_code} · `
-                          : ""}
-                        {selectedMeasurementLine.description.slice(0, 50)} · per{" "}
-                        {selectedMeasurementLine.unit}
-                      </span>
+                      {TAKEOFF_COLORS.map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          title={color}
+                          onClick={() =>
+                            setSelectedMeasurementDraft((draft) => ({
+                              ...draft,
+                              color,
+                            }))
+                          }
+                          className={`h-8 w-8 rounded border ${
+                            selectedMeasurementDraft.color === color
+                              ? "border-foreground"
+                              : "border-hairline"
+                          }`}
+                          style={{ backgroundColor: color }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Notes</Label>
+                    <Textarea
+                      rows={3}
+                      value={selectedMeasurementDraft.notes}
+                      onChange={(event) =>
+                        setSelectedMeasurementDraft((draft) => ({
+                          ...draft,
+                          notes: event.target.value,
+                        }))
+                      }
+                      placeholder="Add assumptions, sheet notes, or scope clarifications."
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    {selectedMeasurementLine ? (
+                      <div
+                        className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs"
+                        data-testid="selected-takeoff-row-link"
+                      >
+                        <span className="min-w-0 truncate">
+                          Linked:{" "}
+                          {selectedMeasurementLine.cost_code
+                            ? `${selectedMeasurementLine.cost_code} · `
+                            : ""}
+                          {selectedMeasurementLine.description.slice(0, 50)} · per{" "}
+                          {selectedMeasurementLine.unit}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 shrink-0 px-2 text-xs"
+                          onClick={() =>
+                            updateMeasurementMutation.mutate({
+                              id: selectedMeasurement.id,
+                              patch: { estimate_line_item_id: null },
+                            })
+                          }
+                          data-testid="selected-takeoff-unlink"
+                        >
+                          Unlink
+                        </Button>
+                      </div>
+                    ) : (
+                      <div data-testid="selected-takeoff-row-link">
+                        <LinkOrCreatePicker
+                          lineItems={lineItems}
+                          takeoffUnit={selectedMeasurement.unit}
+                          onPickRow={(lineId) =>
+                            linkMeasurementToRow(selectedMeasurement.id, lineId)
+                          }
+                          onPickLibraryItem={(item) =>
+                            classifyTakeoffMutation.mutate({
+                              measurementIds: [selectedMeasurement.id],
+                              source: { type: "library", library_item_id: item.id },
+                            })
+                          }
+                          onCreateFromLabel={(label) =>
+                            classifyTakeoffMutation.mutate({
+                              measurementIds: [selectedMeasurement.id],
+                              source: {
+                                type: "label",
+                                description: label,
+                                unit: selectedMeasurement.unit,
+                              },
+                            })
+                          }
+                          pending={classifyTakeoffMutation.isPending}
+                          compact
+                        />
+                      </div>
+                    )}
+                    {selectedMeasurementLine &&
+                      !takeoffUnitsCompatible(
+                        selectedMeasurement.unit,
+                        selectedMeasurementLine.unit,
+                      ) && (
+                        <p
+                          className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs"
+                          data-testid="selected-takeoff-unit-mismatch"
+                        >
+                          This takeoff measures {unitLongName(selectedMeasurement.unit)}, but the
+                          row is priced per {unitLongName(selectedMeasurementLine.unit)}. Sync will
+                          ask before mixing them.
+                        </p>
+                      )}
+                    <div className="grid grid-cols-2 gap-2">
                       <Button
                         type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 shrink-0 px-2 text-xs"
-                        onClick={() =>
-                          updateMeasurementMutation.mutate({
-                            id: selectedMeasurement.id,
-                            patch: { estimate_line_item_id: null },
-                          })
-                        }
-                        data-testid="selected-takeoff-unlink"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={saveSelectedMeasurement}
+                        disabled={updateMeasurementMutation.isPending}
+                        data-testid="selected-takeoff-save-details"
                       >
-                        Unlink
+                        <Save className="h-3.5 w-3.5" /> Save Details
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={() => deleteMeasurementMutation.mutate(selectedMeasurement.id)}
+                        disabled={deleteMeasurementMutation.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-danger" /> Delete
                       </Button>
                     </div>
-                  ) : (
-                    <div data-testid="selected-takeoff-row-link">
-                      <LinkOrCreatePicker
-                        lineItems={lineItems}
-                        takeoffUnit={selectedMeasurement.unit}
-                        onPickRow={(lineId) => linkMeasurementToRow(selectedMeasurement.id, lineId)}
-                        onPickLibraryItem={(item) =>
-                          classifyTakeoffMutation.mutate({
-                            measurementIds: [selectedMeasurement.id],
-                            source: { type: "library", library_item_id: item.id },
-                          })
+                    {selectedMeasurement.calculation_status === "current" &&
+                      selectedMeasurementLine &&
+                      (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0 && (
+                        <p
+                          className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-foreground"
+                          data-testid="selected-takeoff-linked-trust-warning"
+                        >
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                          Another takeoff feeding this estimate row needs review before the row can
+                          sync.
+                        </p>
+                      )}
+                    {selectedMeasurementLine ? (
+                      <Button
+                        size="sm"
+                        className="w-full gap-1.5"
+                        onClick={() =>
+                          syncLineMutation.mutate({ lineId: selectedMeasurementLine.id })
                         }
-                        onCreateFromLabel={(label) =>
-                          classifyTakeoffMutation.mutate({
-                            measurementIds: [selectedMeasurement.id],
-                            source: {
-                              type: "label",
-                              description: label,
-                              unit: selectedMeasurement.unit,
-                            },
-                          })
+                        disabled={
+                          syncLineMutation.isPending ||
+                          (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
                         }
-                        pending={classifyTakeoffMutation.isPending}
-                        compact
-                      />
-                    </div>
-                  )}
-                  {selectedMeasurementLine &&
-                    !takeoffUnitsCompatible(
-                      selectedMeasurement.unit,
-                      selectedMeasurementLine.unit,
-                    ) && (
-                      <p
-                        className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs"
-                        data-testid="selected-takeoff-unit-mismatch"
+                        title={
+                          takeoffSyncBlockReason(selectedMeasurement.calculation_status) ||
+                          ((lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
+                            ? "Another takeoff feeding this estimate row must be reviewed before sending."
+                            : "Send this takeoff total to the estimate.")
+                        }
+                        data-testid="selected-takeoff-sync"
                       >
-                        This takeoff measures {unitLongName(selectedMeasurement.unit)}, but the row
-                        is priced per {unitLongName(selectedMeasurementLine.unit)}. Sync will ask
-                        before mixing them.
+                        <Link2 className="h-3.5 w-3.5" />
+                        Send This Takeoff Total to Estimate
+                      </Button>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Link this takeoff to an estimate row before sending quantity.
                       </p>
                     )}
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="gap-1.5"
-                      onClick={saveSelectedMeasurement}
-                      disabled={updateMeasurementMutation.isPending}
-                      data-testid="selected-takeoff-save-details"
-                    >
-                      <Save className="h-3.5 w-3.5" /> Save Details
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="gap-1.5"
-                      onClick={() => deleteMeasurementMutation.mutate(selectedMeasurement.id)}
-                      disabled={deleteMeasurementMutation.isPending}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-danger" /> Delete
-                    </Button>
                   </div>
-                  {selectedMeasurement.calculation_status === "current" &&
-                    selectedMeasurementLine &&
-                    (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0 && (
-                      <p
-                        className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-foreground"
-                        data-testid="selected-takeoff-linked-trust-warning"
-                      >
-                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
-                        Another takeoff feeding this estimate row needs review before the row can
-                        sync.
-                      </p>
-                    )}
-                  {selectedMeasurementLine ? (
-                    <Button
-                      size="sm"
-                      className="w-full gap-1.5"
-                      onClick={() =>
-                        syncLineMutation.mutate({ lineId: selectedMeasurementLine.id })
-                      }
-                      disabled={
-                        syncLineMutation.isPending ||
-                        (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
-                      }
-                      title={
-                        takeoffSyncBlockReason(selectedMeasurement.calculation_status) ||
-                        ((lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
-                          ? "Another takeoff feeding this estimate row must be reviewed before sending."
-                          : "Send this takeoff total to the estimate.")
-                      }
-                      data-testid="selected-takeoff-sync"
-                    >
-                      <Link2 className="h-3.5 w-3.5" />
-                      Send This Takeoff Total to Estimate
-                    </Button>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      Link this takeoff to an estimate row before sending quantity.
-                    </p>
-                  )}
                 </div>
-              </div>
-            ) : (
-              <div className="mt-4 rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
-                No takeoff selected. Use Select, then click a markup on the plan or a worksheet
-                item.
-              </div>
-            )}
-          </section>
+              ) : (
+                <div className="mt-4 rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
+                  No takeoff selected. Use Select, then click a markup on the plan or a worksheet
+                  item.
+                </div>
+              )}
+            </section>
+          )}
 
-          <TakeoffWorksheet
-            measurements={measurements}
-            totalMeasured={totalMeasured}
-            copyTakeoffSummary={copyTakeoffSummary}
-            downloadTakeoffCsv={downloadTakeoffCsv}
-            takeoffSummaryFallback={takeoffSummaryFallback}
-            takeoffSearch={takeoffSearch}
-            setTakeoffSearch={setTakeoffSearch}
-            takeoffFilter={takeoffFilter}
-            setTakeoffFilter={setTakeoffFilter}
-            sheetMeasurements={sheetMeasurements}
-            linkedCount={linkedCount}
-            visibleMeasurements={visibleMeasurements}
-            lineItems={lineItems}
-            sheets={sheets}
-            selectedMeasurementId={selectedMeasurementId}
-            selectMeasurement={selectMeasurement}
-            deleteMeasurementMutation={deleteMeasurementMutation}
-            updateMeasurementMutation={updateMeasurementMutation}
-            syncLineMutation={syncLineMutation}
-            lineTotals={lineTotals}
-            linkMeasurement={linkMeasurementToRow}
-            classifyMeasurement={(measurementId, source) =>
-              classifyTakeoffMutation.mutate({ measurementIds: [measurementId], source })
-            }
-            linkMeasurements={(measurementIds, lineId) =>
-              linkGroupMutation.mutate({ measurementIds, lineId })
-            }
-            classifyMeasurements={(measurementIds, source) =>
-              classifyTakeoffMutation.mutate({ measurementIds, source })
-            }
-            detachMeasurement={detachMeasurementFromGroup}
-            classifyPending={classifyTakeoffMutation.isPending}
-            onBuildFromTakeoffs={
-              unlinkedMeasurements.length > 0 ? openBuildFromTakeoffs : undefined
-            }
-            buildPending={buildFromTakeoffsMutation.isPending}
-            onReviewMatches={takeoffMatchSuggestions.length > 0 ? openMatchProposals : undefined}
-            matchCount={takeoffMatchSuggestions.length}
-          />
+          {(!isCockpitMode || cockpitToolsView === "worksheet") && (
+            <TakeoffWorksheet
+              measurements={measurements}
+              totalMeasured={totalMeasured}
+              copyTakeoffSummary={copyTakeoffSummary}
+              downloadTakeoffCsv={downloadTakeoffCsv}
+              takeoffSummaryFallback={takeoffSummaryFallback}
+              takeoffSearch={takeoffSearch}
+              setTakeoffSearch={setTakeoffSearch}
+              takeoffFilter={takeoffFilter}
+              setTakeoffFilter={setTakeoffFilter}
+              sheetMeasurements={sheetMeasurements}
+              linkedCount={linkedCount}
+              visibleMeasurements={visibleMeasurements}
+              lineItems={lineItems}
+              sheets={sheets}
+              selectedMeasurementId={selectedMeasurementId}
+              selectMeasurement={selectMeasurement}
+              deleteMeasurementMutation={deleteMeasurementMutation}
+              updateMeasurementMutation={updateMeasurementMutation}
+              syncLineMutation={syncLineMutation}
+              lineTotals={lineTotals}
+              linkMeasurement={linkMeasurementToRow}
+              classifyMeasurement={(measurementId, source) =>
+                classifyTakeoffMutation.mutate({ measurementIds: [measurementId], source })
+              }
+              linkMeasurements={(measurementIds, lineId) =>
+                linkGroupMutation.mutate({ measurementIds, lineId })
+              }
+              classifyMeasurements={(measurementIds, source) =>
+                classifyTakeoffMutation.mutate({ measurementIds, source })
+              }
+              detachMeasurement={detachMeasurementFromGroup}
+              classifyPending={classifyTakeoffMutation.isPending}
+              onBuildFromTakeoffs={
+                unlinkedMeasurements.length > 0 ? openBuildFromTakeoffs : undefined
+              }
+              buildPending={buildFromTakeoffsMutation.isPending}
+              onReviewMatches={takeoffMatchSuggestions.length > 0 ? openMatchProposals : undefined}
+              matchCount={takeoffMatchSuggestions.length}
+            />
+          )}
           {isCockpitMode && (
             <div
               className="sticky bottom-0 ml-auto h-5 w-5 cursor-nwse-resize touch-none rounded-tl-md border-l border-t border-hairline bg-surface/90"

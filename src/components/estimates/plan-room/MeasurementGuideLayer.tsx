@@ -51,14 +51,14 @@ export function MeasurementGuideLayer({
             key={suggestion.id}
             role="button"
             tabIndex={0}
-            aria-label={`Review AI location hint for ${suggestion.label}`}
+            aria-label={`Review AI-drawn scope markup for ${suggestion.label}`}
             aria-pressed={active}
             onClick={select}
             onKeyDown={onKeyDown}
             className="cursor-pointer outline-none focus-visible:[&>path]:stroke-foreground"
             data-testid={`measurement-guide-${suggestion.id}`}
           >
-            <title>{suggestion.label} — AI location hint, not measured</title>
+            <title>{suggestion.label} — AI-drawn scope markup, not measured</title>
             <path
               d={path}
               fill="none"

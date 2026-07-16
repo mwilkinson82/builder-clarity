@@ -18,7 +18,7 @@ import { downloadTextFile as downloadTextFileShared } from "@/lib/download-file"
 // "ruler" is a question, not a takeoff: quick two-point (or chained) distance
 // checks that are never persisted and never reach the worksheet.
 export type ToolMode = "select" | "calibrate" | "verify" | "ruler" | TakeoffToolType;
-export type RevisionOverlayMode = "compare" | "ghost";
+export type RevisionOverlayMode = "redline" | "compare" | "ghost";
 export type CockpitPanelKey = "drawings" | "tools";
 export type CockpitPanelAnchor = "left" | "right";
 export type CockpitPanelLayout = {
@@ -691,7 +691,7 @@ export function draftCommandFor({
           ? "Type the labeled dimension, then record this assurance check."
           : "Click both ends of a printed dimension. Two checks are required.",
       ready: points.length === 2 && spanPx > 0 && (sheet?.scale_feet_per_pixel ?? 0) > 0,
-      actionLabel: "Check Scale",
+      actionLabel: "Record Check",
     };
   }
 

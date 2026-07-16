@@ -35,7 +35,7 @@ export function MeasurementGuideReviewBar({
   return (
     <section
       className="w-[min(760px,calc(100vw-2rem))] rounded-lg border border-hairline bg-card/95 p-3 shadow-nav backdrop-blur"
-      aria-label={`Review AI location hint for ${suggestion.label}`}
+      aria-label={`Review AI-drawn scope markup for ${suggestion.label}`}
       data-testid="measurement-guide-review"
     >
       <div className="flex items-start gap-3">
@@ -48,7 +48,7 @@ export function MeasurementGuideReviewBar({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="eyebrow">AI location hint</span>
+            <span className="eyebrow">AI-drawn scope markup</span>
             <Badge variant="outline">{suggestion.unit}</Badge>
             <Badge variant="outline">Not measured</Badge>
             {queueStatus && (
@@ -64,9 +64,10 @@ export function MeasurementGuideReviewBar({
             )}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            The dashed {suggestion.tool === "linear" ? "route" : "region"} only points you toward
-            likely scope. It cannot feed the estimate. Your snapped trace and verified sheet scale
-            create the quantity.
+            AI traced this dashed {suggestion.tool === "linear" ? "route" : "region"} as a visual
+            proposal from the cited note and drawing image. It cannot feed the estimate. Confirm
+            what it represents, then create the trusted quantity with your snapped trace and
+            verified sheet scale.
           </p>
           <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
             <Input
