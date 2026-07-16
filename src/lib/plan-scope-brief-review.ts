@@ -62,6 +62,20 @@ export const planScopeBriefNextActionLabel = (action: PlanScopeBriefNextAction) 
     none: "No next action",
   })[action];
 
+export const planScopeBriefStartActionLabel = (action: PlanScopeBriefNextAction) =>
+  ({
+    count_review: "Start count review",
+    length_review: "Prepare length takeoff",
+    area_review: "Prepare area takeoff",
+    assembly_review: "Open assembly review",
+    pricing_review: "Open pricing review",
+    scope_coordination: "Open coordination review",
+    none: "No review action",
+  })[action];
+
+export const planScopeBriefReviewIsActionable = (review: PlanScopeBriefReview) =>
+  review.status === "accepted" && review.next_action !== "none";
+
 /**
  * Reviews are append-only. Keep the newest version for each stable cited item
  * while leaving all earlier rows available to the audit trail.

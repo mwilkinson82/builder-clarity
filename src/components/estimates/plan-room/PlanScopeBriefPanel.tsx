@@ -40,8 +40,10 @@ import {
   latestPlanScopeBriefReviews,
   PLAN_SCOPE_BRIEF_NEXT_ACTIONS,
   planScopeBriefNextActionLabel,
+  planScopeBriefReviewIsActionable,
   planScopeBriefReviewDraftError,
   planScopeBriefReviewStatusLabel,
+  planScopeBriefStartActionLabel,
   type PlanScopeBriefNextAction,
   type PlanScopeBriefReview,
   type PlanScopeBriefReviewStatus,
@@ -95,6 +97,7 @@ export function PlanScopeBriefPanel({
   evidencePending,
   onGenerate,
   onOpenEvidence,
+  onStartAction,
 }: {
   estimateId: string;
   planSet: PlanSetRow | null;
@@ -103,6 +106,7 @@ export function PlanScopeBriefPanel({
   evidencePending: boolean;
   onGenerate: () => void;
   onOpenEvidence: (item: PlanScopeBriefItem) => void;
+  onStartAction: (item: PlanScopeBriefItem, action: PlanScopeBriefNextAction) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<BriefFilter>("all");
@@ -431,6 +435,22 @@ export function PlanScopeBriefPanel({
                                       ) : null}
                                     </div>
                                     <div className="grid gap-1.5">
+                                      {decision && planScopeBriefReviewIsActionable(decision) ? (
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          className="gap-1.5"
+                                          disabled={evidencePending}
+                                          data-testid={`scope-brief-start-${item.id}`}
+                                          onClick={() => {
+                                            setOpen(false);
+                                            onStartAction(item, decision.next_action);
+                                          }}
+                                        >
+                                          {planScopeBriefStartActionLabel(decision.next_action)}
+                                          <ArrowRight className="h-3.5 w-3.5" />
+                                        </Button>
+                                      ) : null}
                                       <Button
                                         type="button"
                                         size="sm"

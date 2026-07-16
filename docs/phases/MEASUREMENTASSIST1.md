@@ -283,6 +283,42 @@ the earlier releases.
 7. Open each cited sheet and confirm no decision creates geometry, changes scale, starts paid AI,
    adds a takeoff, links an estimate row, or changes Harbor's `$1,606,137` total.
 
+## Stage 9 — Estimator action handoff
+
+- Give only a currently Kept Scope Brief decision an explicit Start review control. Later and
+  Excluded decisions retain their evidence but cannot enter active work accidentally.
+- Always open and highlight the exact cited sheet before routing the estimator into another tool.
+- Count review opens the existing AI Assist count workbench on that one sheet. It does not choose an
+  exemplar, start a scan, spend a credit, or accept a proposed count.
+- Length and area review preload the cited label and evidence into the existing takeoff tool. The
+  estimator still places every point, and the tool remains locked until the cited sheet passes both
+  Scale Assurance checks.
+- Assembly review requires the estimator to select an existing trusted takeoff before confirming
+  formula inputs. Pricing and coordination routes open the evidence with guidance; they do not
+  create or modify an estimate row.
+- Preserve the existing count, measurement, assembly, pricing, quantity-trust, and estimate-sync
+  paths. This handoff is navigation and preparation only, not a new write model.
+
+### Stage 9 release gate
+
+1. On Crystal Carwash, confirm only the Kept exterior-light decision shows Start count review;
+   Later fire-extinguisher and Excluded concrete-pad decisions must not show an active-work control.
+2. Start exterior-light count review and confirm A-300 opens with its cited note highlighted, the
+   label is preloaded, AI Assist is scoped to this sheet, and no scan starts until the estimator
+   explicitly begins it.
+3. Change a supported cited item to Length review and confirm its sheet opens, LF is prepared, and
+   an unverified scale keeps drawing locked behind the two-check assurance workflow.
+4. Repeat for Area review and confirm SF is prepared without drawing a perimeter or creating a
+   takeoff.
+5. Confirm assembly, pricing, and coordination routes provide truthful next-step guidance and do
+   not imply that a downstream record already exists.
+6. Refresh and confirm the handoff created no additional Scope Brief review version, no takeoff,
+   no AI operation or credit charge, no estimate-row link, and no estimate change.
+7. Confirm Harbor remains exactly `$1,606,137`.
+
+This stage needs no database migration. It routes the existing append-only action register into
+the already constrained estimator workbenches.
+
 ## Kill criteria
 
 Stop expansion if the live Harbor review shows uncited suggestions, repeated irrelevant title-block

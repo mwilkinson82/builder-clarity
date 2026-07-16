@@ -2363,8 +2363,25 @@ await expectContains(
     /Exclude/,
     /does not measure, count, price, link, or change\s+the estimate/i,
     /Saving creates version/,
+    /planScopeBriefReviewIsActionable/,
+    /planScopeBriefStartActionLabel/,
+    /onStartAction/,
   ],
   "scope brief records explicit estimator decisions without presenting them as completed work",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/PlanRoomWorkspace.tsx",
+  [
+    /action === "count_review"/,
+    /setAiAssistScope\("sheet"\)/,
+    /The cited note could not be located on the drawing/,
+    /action === "length_review" \|\| action === "area_review"/,
+    /Complete two Scale Assurance checks before drawing the takeoff/,
+    /you remain responsible for every endpoint/,
+    /you remain responsible for every point/,
+  ],
+  "kept Scope Brief actions route into existing human-controlled review tools without creating quantity",
 );
 
 await expectContains(
