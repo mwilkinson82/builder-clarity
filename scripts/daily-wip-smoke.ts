@@ -242,6 +242,36 @@ const row = (over: Partial<Parameters<typeof rowWorkInPlace>[0]> = {}) => ({
     true,
     "a shared SOV quantity is never attributed to multiple subs as if each owned all units",
   );
+
+  const selectedMeasureWithAncillaryUnits = subcontractProductionBenchmarks(
+    [
+      entries[0],
+      {
+        ...entries[0],
+        id: "d-ancillary",
+        quantity: 25,
+        unit: "EA",
+      },
+    ],
+    buckets,
+    new Map([[subCommitmentKey("atlas", "drywall")!, 120_000]]),
+    new Map([
+      [
+        subCommitmentKey("atlas", "drywall")!,
+        { plannedQuantity: 24_000, unit: "SF", benchmarkLaborRate: 110 },
+      ],
+    ]),
+  )[0];
+  assert.equal(
+    selectedMeasureWithAncillaryUnits.buyoutUnitCost,
+    5,
+    "an explicitly selected production measure remains comparable when the field retains ancillary units",
+  );
+  assert.equal(
+    selectedMeasureWithAncillaryUnits.installedQuantity,
+    entries[0].quantity,
+    "only field quantities matching the selected measure feed the production comparison",
+  );
 }
 
 // Backfilled cumulative progress is checked against both chronological neighbors.
