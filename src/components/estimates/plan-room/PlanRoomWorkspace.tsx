@@ -316,6 +316,10 @@ export function PlanRoomWorkspace({
   const [preparedMeasurementSuggestionId, setPreparedMeasurementSuggestionId] = useState("");
   const [preparedMeasurementSuggestion, setPreparedMeasurementSuggestion] =
     useState<MeasurementAssistantSuggestion | null>(null);
+  const [preparedScopeBriefTakeoff, setPreparedScopeBriefTakeoff] = useState<{
+    reviewId: string;
+    suggestionId: string;
+  } | null>(null);
   const [completedMeasurementSuggestionIds, setCompletedMeasurementSuggestionIds] = useState<
     string[]
   >([]);
@@ -502,6 +506,7 @@ export function PlanRoomWorkspace({
     setMeasurementAssistantPlan(null);
     setPreparedMeasurementSuggestionId("");
     setPreparedMeasurementSuggestion(null);
+    setPreparedScopeBriefTakeoff(null);
     setCompletedMeasurementSuggestionIds([]);
     setMeasurementSourceNote("");
     setMeasurementEvidenceAnchors({});
@@ -864,6 +869,7 @@ export function PlanRoomWorkspace({
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["plan-room", estimate.id] });
+    qc.invalidateQueries({ queryKey: ["plan-scope-brief-work-operations", estimate.id] });
     qc.invalidateQueries({ queryKey: ["estimate", estimate.id] });
     qc.invalidateQueries({ queryKey: ["estimates"] });
   };
@@ -897,6 +903,7 @@ export function PlanRoomWorkspace({
     color: measurement.color,
     geometry: measurement.geometry,
     notes: measurement.notes,
+    scope_brief_review_id: measurement.scope_brief_review_id,
   });
 
   const recordTakeoffCommand = (sheetId: string, command: TakeoffCommand) => {
@@ -1007,6 +1014,13 @@ export function PlanRoomWorkspace({
         preparedSuggestion?.tool === measurementTool && preparedSuggestion.label === label
           ? measurementSourceNote
           : "";
+      const scopeBriefTakeoff = preparedScopeBriefTakeoff;
+      const scopeBriefReviewId =
+        preparedNote &&
+        scopeBriefTakeoff &&
+        scopeBriefTakeoff.suggestionId === preparedSuggestion?.id
+          ? scopeBriefTakeoff.reviewId
+          : null;
       // Label-match inheritance (beta batch 2): finishing into an existing
       // group inherits its estimate-row link, library item, and color —
       // unless the takeoff was explicitly aimed at a row in the tools panel.
@@ -1027,6 +1041,7 @@ export function PlanRoomWorkspace({
           color: joinedGroup ? joinedGroup.color : takeoffColor,
           geometry: geometryFromPoints(points, viewSize),
           notes: preparedNote || (line ? "Quantity produced from Plan Room takeoff." : ""),
+          scope_brief_review_id: scopeBriefReviewId,
         },
       });
       return {
@@ -1072,6 +1087,7 @@ export function PlanRoomWorkspace({
         );
         setPreparedMeasurementSuggestionId("");
         setPreparedMeasurementSuggestion(null);
+        setPreparedScopeBriefTakeoff(null);
         setMeasurementSourceNote("");
       }
       if (result.measurementScopeItemId) {
@@ -2055,6 +2071,7 @@ export function PlanRoomWorkspace({
       setMeasurementEvidenceAnchors(anchors);
       setPreparedMeasurementSuggestionId("");
       setPreparedMeasurementSuggestion(null);
+      setPreparedScopeBriefTakeoff(null);
       setPreparedMeasurementScopeItemId("");
       setCompletedMeasurementSuggestionIds([]);
       setMeasurementSourceNote("");
@@ -2096,6 +2113,7 @@ export function PlanRoomWorkspace({
       setMeasurementEvidenceAnchors(anchors);
       setPreparedMeasurementSuggestionId("");
       setPreparedMeasurementSuggestion(null);
+      setPreparedScopeBriefTakeoff(null);
       setPreparedMeasurementScopeItemId("");
       setCompletedMeasurementSuggestionIds([]);
       setMeasurementSourceNote("");
@@ -2253,6 +2271,7 @@ export function PlanRoomWorkspace({
   };
 
   const prepareMeasurementSuggestion = (suggestion: MeasurementAssistantSuggestion) => {
+    setPreparedScopeBriefTakeoff(null);
     setMeasurementLabel(suggestion.label);
     setMeasurementSourceNote(measurementAssistantTakeoffNote(suggestion));
     setPreparedMeasurementSuggestionId(suggestion.id);
@@ -2909,6 +2928,7 @@ export function PlanRoomWorkspace({
     if (action === "count_review") {
       setPreparedMeasurementSuggestionId("");
       setPreparedMeasurementSuggestion(null);
+      setPreparedScopeBriefTakeoff(null);
       setPreparedMeasurementScopeItemId("");
       setMeasurementSourceNote("");
       setTool("select");
@@ -2940,6 +2960,7 @@ export function PlanRoomWorkspace({
       };
       setPreparedMeasurementSuggestionId(suggestion.id);
       setPreparedMeasurementSuggestion(suggestion);
+      setPreparedScopeBriefTakeoff({ reviewId: review.id, suggestionId: suggestion.id });
       setPreparedMeasurementScopeItemId("");
       setMeasurementSourceNote(measurementAssistantTakeoffNote(suggestion));
       if (currentSheetScaleStatus !== "verified") {
@@ -2960,6 +2981,7 @@ export function PlanRoomWorkspace({
 
     setPreparedMeasurementSuggestionId("");
     setPreparedMeasurementSuggestion(null);
+    setPreparedScopeBriefTakeoff(null);
     setPreparedMeasurementScopeItemId("");
     setMeasurementSourceNote("");
     setTool("select");
@@ -3618,6 +3640,7 @@ export function PlanRoomWorkspace({
           <PlanScopeBriefPanel
             estimateId={estimate.id}
             planSet={currentPlanSet}
+            measurements={measurements}
             pending={scopeBriefMutation.isPending}
             progress={scopeBriefProgress}
             evidencePending={openScopeBriefEvidenceMutation.isPending}
@@ -4097,7 +4120,7 @@ export function PlanRoomWorkspace({
                     : ""
                 }
                 decisionPending={measurementScopeDecisionMutation.isPending}
-                onAnalyze={() => measurementAssistantMutation.mutate()}
+                onAnalyze={() => measurementAssistantMutation.mutate(undefined)}
                 onPrepare={(suggestion) => {
                   setPreparedMeasurementScopeItemId(
                     queueItemBySuggestionId[suggestion.id]?.id ?? "",
@@ -4118,6 +4141,7 @@ export function PlanRoomWorkspace({
                   setMeasurementAssistantPlan(null);
                   setPreparedMeasurementSuggestionId("");
                   setPreparedMeasurementSuggestion(null);
+                  setPreparedScopeBriefTakeoff(null);
                   setPreparedMeasurementScopeItemId("");
                   setCompletedMeasurementSuggestionIds([]);
                   setMeasurementSourceNote("");

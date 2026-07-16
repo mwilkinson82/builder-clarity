@@ -94,6 +94,7 @@ function measurement(
     ai_review_action: null,
     ai_reviewed_by: null,
     ai_reviewed_at: null,
+    scope_brief_review_id: null,
     created_at: "2026-07-15T00:00:00.000Z",
     updated_at: "2026-07-15T00:00:00.000Z",
   };

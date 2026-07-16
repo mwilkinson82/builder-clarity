@@ -356,6 +356,43 @@ the already constrained estimator workbenches.
 This stage needs no database migration. It uses the existing JSONB operation context and existing
 takeoff-to-operation provenance link.
 
+## Stage 11 — Decision-to-work provenance and status
+
+- Show a deterministic downstream status beside every current Scope Brief decision: Ready to
+  start, AI review in progress, Review complete with no accepted takeoff, Takeoff recorded,
+  Takeoff needs review, or Earlier decision has work.
+- Derive status from the existing immutable review rows, count `ai_operations`, and actual takeoff
+  records. Do not create a second task table or let a UI click declare work complete.
+- Keep count provenance on the existing server-built AI operation context and takeoff operation
+  link. Add one immutable review foreign key only to estimator-drawn LF/SF takeoffs.
+- Validate the LF/SF link twice: the server checks the current RLS-readable decision before insert,
+  and a database trigger independently requires the same estimate, cited sheet, latest Kept
+  decision, and matching Length/Area route.
+- When a decision changes after work exists, retain the old provenance and warn that the earlier
+  decision has work. Do not silently relabel the takeoff as belonging to the new review version.
+- Name the recorded quantity and whether it is linked to an estimate row without implying that an
+  unlinked takeoff changed the estimate.
+
+### Stage 11 release gate
+
+1. Apply `20260716025000_scope_brief_takeoff_provenance.sql` only through Lovable and verify the
+   nullable foreign key, partial index, validation trigger, and PostgREST schema reload.
+2. Confirm direct Data API inserts reject cross-estimate, cross-sheet, stale, deferred, excluded,
+   Count, and wrong-tool review links; updates cannot replace or clear existing provenance.
+3. On a current Kept Length or Area decision, prepare the cited tool, draw the takeoff, and confirm
+   the saved measurement points to that exact review id only after the server-owned quantity saves.
+4. Refresh and confirm the current decision shows Takeoff recorded, its deterministic quantity,
+   and linked/unlinked state from the real measurement row.
+5. Change the decision after work exists and confirm the new version shows Earlier decision has
+   work while the historical takeoff remains attached to the earlier immutable review.
+6. For Count review, confirm a pending/succeeded/failed cited operation changes status without a
+   second provenance column or a new task record, and accepted count geometry remains linked
+   through `ai_operation_id`.
+7. Change sheet scale so a cited LF/SF takeoff becomes stale and confirm the status reads Takeoff
+   needs review rather than complete.
+8. Confirm opening, closing, and status refresh do not create an AI operation, spend a credit,
+   create geometry, link an estimate row, or change Harbor's `$1,606,137` total.
+
 ## Kill criteria
 
 Stop expansion if the live Harbor review shows uncited suggestions, repeated irrelevant title-block

@@ -21,6 +21,11 @@ import {
   type RecordScaleAssessmentResult,
   type ScaleAssessmentRow,
 } from "@/lib/plan-room-scale-assurance";
+import { scopeBriefTakeoffSourceError } from "@/lib/plan-scope-brief-work";
+import type {
+  PlanScopeBriefNextAction,
+  PlanScopeBriefReviewStatus,
+} from "@/lib/plan-scope-brief-review";
 import type { Json } from "@/integrations/supabase/types";
 
 type DynamicSupabaseError = { code?: string; message: string };
@@ -173,6 +178,7 @@ export interface TakeoffMeasurementRow {
   ai_review_action: "accepted" | "nudged" | null;
   ai_reviewed_by: string | null;
   ai_reviewed_at: string | null;
+  scope_brief_review_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -273,6 +279,7 @@ const normalizeTakeoffMeasurement = (row: Record<string, unknown>): TakeoffMeasu
       : null,
   ai_reviewed_by: row.ai_reviewed_by == null ? null : str(row.ai_reviewed_by),
   ai_reviewed_at: row.ai_reviewed_at == null ? null : str(row.ai_reviewed_at),
+  scope_brief_review_id: row.scope_brief_review_id == null ? null : str(row.scope_brief_review_id),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
 });
@@ -654,13 +661,16 @@ const measurementInput = z.object({
   ai_confidence: z.number().min(0).max(1).nullable().optional(),
   ai_original_geometry: z.unknown().nullable().optional(),
   ai_review_action: z.enum(["accepted", "nudged"]).nullable().optional(),
+  scope_brief_review_id: z.string().uuid().nullable().optional(),
 });
 
 const updateMeasurementInput = z
   .object({
     id: z.string().uuid(),
     recalculate_from_geometry: z.boolean().optional().default(false),
-    patch: measurementInput.omit({ estimate_id: true, plan_sheet_id: true }).partial(),
+    patch: measurementInput
+      .omit({ estimate_id: true, plan_sheet_id: true, scope_brief_review_id: true })
+      .partial(),
   })
   .refine(
     (input) => input.recalculate_from_geometry || Object.keys(input.patch).length > 0,
@@ -1101,12 +1111,78 @@ function calculatedTakeoffPayload(calculation: ReturnType<typeof calculateAuthor
   };
 }
 
+function isMissingScopeBriefTakeoffProvenanceColumn(
+  error: DynamicSupabaseError | null | undefined,
+) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return Boolean(
+    error &&
+    (error.code === "42703" ||
+      error.code === "PGRST204" ||
+      message.includes("scope_brief_review_id")),
+  );
+}
+
+async function validateScopeBriefTakeoffSource({
+  context,
+  reviewId,
+  estimateId,
+  sheetId,
+  tool,
+}: {
+  context: { supabase: unknown };
+  reviewId: string;
+  estimateId: string;
+  sheetId: string;
+  tool: TakeoffToolType;
+}) {
+  const reviewResult = await dynamicTable(context.supabase, "estimate_scope_brief_reviews")
+    .select("id,estimate_id,item_id,plan_sheet_id,status,next_action")
+    .eq("id", reviewId)
+    .maybeSingle();
+  if (reviewResult.error) throw new Error(reviewResult.error.message);
+  if (!reviewResult.data) throw new Error("The cited Scope Brief decision was not found.");
+  const row = reviewResult.data as Record<string, unknown>;
+  const review = {
+    id: str(row.id),
+    estimate_id: str(row.estimate_id),
+    item_id: str(row.item_id),
+    plan_sheet_id: str(row.plan_sheet_id),
+    status: str(row.status) as PlanScopeBriefReviewStatus,
+    next_action: str(row.next_action) as PlanScopeBriefNextAction,
+  };
+  const latestResult = (await dynamicTable(context.supabase, "estimate_scope_brief_reviews")
+    .select("id")
+    .eq("estimate_id", review.estimate_id)
+    .eq("item_id", review.item_id)
+    .order("version", { ascending: false })
+    .limit(1)) as DynamicSupabaseResult<Array<{ id: string }>>;
+  if (latestResult.error) throw new Error(latestResult.error.message);
+  const sourceError = scopeBriefTakeoffSourceError({
+    review,
+    latestReviewId: latestResult.data?.[0]?.id ?? "",
+    estimateId,
+    sheetId,
+    tool,
+  });
+  if (sourceError) throw new Error(sourceError);
+}
+
 export const createTakeoffMeasurement = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof measurementInput>) => measurementInput.parse(input))
   .handler(async ({ data, context }) => {
     await loadEstimate(context, data.estimate_id);
     const sheet = await loadMeasurementSheet(context, data.plan_sheet_id, data.estimate_id);
+    if (data.scope_brief_review_id) {
+      await validateScopeBriefTakeoffSource({
+        context,
+        reviewId: data.scope_brief_review_id,
+        estimateId: data.estimate_id,
+        sheetId: data.plan_sheet_id,
+        tool: data.tool_type,
+      });
+    }
     const calculation = calculateAuthoritativeTakeoff({
       tool: data.tool_type,
       geometry: data.geometry,
@@ -1136,6 +1212,7 @@ export const createTakeoffMeasurement = createServerFn({ method: "POST" })
       ai_review_action: data.created_by_ai ? (data.ai_review_action ?? "accepted") : null,
       ai_reviewed_by: data.created_by_ai ? context.userId : null,
       ai_reviewed_at: data.created_by_ai ? new Date().toISOString() : null,
+      scope_brief_review_id: data.scope_brief_review_id ?? null,
     };
     let { data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
       .insert(insertPayload)
@@ -1143,8 +1220,22 @@ export const createTakeoffMeasurement = createServerFn({ method: "POST" })
       .single();
     // Pre-migration fallback: before the created_by_ai column lands, human
     // takeoffs keep saving exactly as they always have.
+    if (error && isMissingScopeBriefTakeoffProvenanceColumn(error)) {
+      if (data.scope_brief_review_id) {
+        throw new Error(
+          "Scope Brief takeoff status is waiting for its Lovable database migration.",
+        );
+      }
+      const legacyPayload = { ...insertPayload };
+      delete legacyPayload.scope_brief_review_id;
+      ({ data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+        .insert(legacyPayload)
+        .select("*")
+        .single());
+    }
     if (error && (isMissingCreatedByAiColumn(error) || isMissingTakeoffTrustColumn(error))) {
       const legacyPayload = withoutTakeoffTrustColumns(insertPayload);
+      delete legacyPayload.scope_brief_review_id;
       if (isMissingCreatedByAiColumn(error)) delete legacyPayload.created_by_ai;
       ({ data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
         .insert(legacyPayload)

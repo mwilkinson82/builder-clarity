@@ -2421,6 +2421,44 @@ await expectContains(
 );
 
 await expectContains(
+  "src/lib/plan-room.functions.ts",
+  [
+    /scope_brief_review_id: z\.string\(\)\.uuid\(\)\.nullable\(\)\.optional\(\)/,
+    /validateScopeBriefTakeoffSource/,
+    /scopeBriefTakeoffSourceError/,
+    /scope_brief_review_id: data\.scope_brief_review_id \?\? null/,
+    /waiting for its Lovable database migration/,
+  ],
+  "manual LF/SF takeoffs validate and retain their exact Scope Brief review provenance",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/PlanScopeBriefPanel.tsx",
+  [
+    /getPlanScopeBriefWorkOperations/,
+    /derivePlanScopeBriefWorkStatus/,
+    /scopeBriefWorkStatusLabel/,
+    /scopeBriefWorkStatusDetail/,
+    /scope-brief-work-/,
+  ],
+  "Scope Brief derives visible downstream work state from operations and real takeoffs",
+);
+
+await expectContains(
+  "supabase/migrations/20260716025000_scope_brief_takeoff_provenance.sql",
+  [
+    /ADD COLUMN IF NOT EXISTS scope_brief_review_id uuid/,
+    /REFERENCES public\.estimate_scope_brief_reviews\(id\) ON DELETE RESTRICT/,
+    /Scope Brief takeoff provenance is immutable/,
+    /v_latest_review_id IS DISTINCT FROM v_review\.id/,
+    /NEW\.tool_type = 'count'/,
+    /v_review\.next_action <> v_expected_action/,
+    /NOTIFY pgrst, 'reload schema'/,
+  ],
+  "Scope Brief takeoff provenance is immutable and independently validated in Postgres",
+);
+
+await expectContains(
   "src/lib/plan-scope-brief-review.functions.ts",
   [
     /estimate_scope_brief_reviews/,

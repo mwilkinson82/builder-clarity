@@ -1150,6 +1150,7 @@ const undoSnapshot = (overrides = {}) => ({
   color: "#1b7a6e",
   geometry: { points: [] },
   notes: "",
+  scope_brief_review_id: null,
   ...overrides,
 });
 

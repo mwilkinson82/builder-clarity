@@ -169,6 +169,7 @@ const persistedMeasurement = (
   },
   notes: "",
   created_by_ai: false,
+  scope_brief_review_id: null,
   created_at: "2026-07-04T12:00:00Z",
   updated_at: "2026-07-04T12:00:00Z",
   ...overrides,

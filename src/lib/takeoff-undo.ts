@@ -24,6 +24,7 @@ export type TakeoffSnapshot = {
   color: string;
   geometry: unknown;
   notes: string;
+  scope_brief_review_id: string | null;
 };
 
 export type TakeoffUpdatePatch = Partial<
