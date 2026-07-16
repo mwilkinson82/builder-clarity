@@ -136,6 +136,7 @@ export function SyncConflictDialog({
 }
 
 export function TakeoffWorksheet({
+  expanded = false,
   measurements,
   totalMeasured,
   copyTakeoffSummary,
@@ -167,6 +168,7 @@ export function TakeoffWorksheet({
   onReviewMatches,
   matchCount = 0,
 }: {
+  expanded?: boolean;
   measurements: TakeoffMeasurementRow[];
   totalMeasured: number;
   copyTakeoffSummary: () => void;
@@ -254,8 +256,21 @@ export function TakeoffWorksheet({
   );
 
   return (
-    <>
-      <section className="rounded-lg border border-hairline bg-card shadow-card">
+    <div
+      className={cn(
+        expanded
+          ? "grid h-full min-h-0 w-full flex-1 gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.7fr)]"
+          : "space-y-4",
+      )}
+      data-testid="takeoff-worksheet-layout"
+      data-layout={expanded ? "expanded" : "panel"}
+    >
+      <section
+        className={cn(
+          "rounded-lg border border-hairline bg-card shadow-card",
+          expanded && "flex min-h-0 flex-col overflow-hidden",
+        )}
+      >
         <div className="border-b border-hairline bg-surface px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
@@ -354,7 +369,7 @@ export function TakeoffWorksheet({
             />
           </div>
           <div
-            className="mt-2 grid grid-cols-2 gap-1.5 text-xs"
+            className={cn("mt-2 grid grid-cols-2 gap-1.5 text-xs", expanded && "sm:grid-cols-4")}
             data-testid="takeoff-filter-controls"
           >
             {[
@@ -443,7 +458,14 @@ export function TakeoffWorksheet({
             {" Selecting one opens its sheet and centers the markup."}
           </p>
         </div>
-        <div className="max-h-[520px] space-y-3 overflow-y-auto p-3">
+        <div
+          className={cn(
+            "overflow-y-auto p-3",
+            expanded
+              ? "grid min-h-0 flex-1 auto-rows-min gap-3 2xl:grid-cols-2"
+              : "max-h-[520px] space-y-3",
+          )}
+        >
           {measurements.length === 0 ? (
             <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
               No takeoffs yet. Choose a tool, click the plan, and link the result to an estimate
@@ -653,7 +675,12 @@ export function TakeoffWorksheet({
         </div>
       </section>
 
-      <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
+      <section
+        className={cn(
+          "rounded-lg border border-hairline bg-card p-4 shadow-card",
+          expanded && "min-h-0 overflow-y-auto",
+        )}
+      >
         <h2 className="font-serif text-xl">Estimate Sync</h2>
         <div className="mt-3 space-y-2">
           {lineItems
@@ -702,6 +729,6 @@ export function TakeoffWorksheet({
           )}
         </div>
       </section>
-    </>
+    </div>
   );
 }

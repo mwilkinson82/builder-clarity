@@ -12,6 +12,7 @@ import {
   Eye,
   EyeOff,
   FileUp,
+  CircleHelp,
   Layers,
   Link2,
   Maximize2,
@@ -194,6 +195,7 @@ import {
   type CockpitPanelInteraction,
   type CockpitPanelKey,
   type CockpitPanelLayout,
+  type CockpitPanelPresentation,
   type Point,
   type RevisionOverlayMode,
   type SheetFilterMode,
@@ -212,7 +214,8 @@ import {
 import { FeetInchesHint, TakeoffTools } from "./TakeoffTools";
 import { SyncConflictDialog, TakeoffWorksheet, type SyncConflictState } from "./TakeoffWorksheet";
 import { LinkOrCreatePicker, TakeoffFinishPopover } from "./TakeoffClassify";
-import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
+import { SheetSidebar } from "./SheetSidebar";
+import { CockpitFloatingPanelHeader } from "./CockpitFloatingPanelHeader";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
 import { MeasurementAssistantPanel } from "./MeasurementAssistantPanel";
@@ -228,6 +231,9 @@ import {
 
 import { canvasToBase64Png, renderDetectionSheet } from "./aiDetectionRender";
 import { FlagIssueButton } from "../FlagIssueButton";
+import { EstimatorActivationDialog } from "./EstimatorActivationDialog";
+import { EstimatorActivationChecklist } from "./EstimatorActivationChecklist";
+import { useEstimatorActivation } from "./useEstimatorActivation";
 import type { PlanScopeCoverageRecord } from "@/lib/plan-scope-coverage";
 import { CommandCenterToolsNav, type CommandCenterToolsView } from "./CommandCenterToolsNav";
 import { ScaleDraftEditor } from "./ScaleDraftEditor";
@@ -400,16 +406,22 @@ export function PlanRoomWorkspace({
   } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [postProcessingPlanSetId, setPostProcessingPlanSetId] = useState("");
-  const [isCockpitMode, setIsCockpitMode] = useState(false);
+  // The Plan Room is the Command Center. Contractors should not have to open
+  // the route and then discover a second button before reaching the workbench.
+  const [isCockpitMode, setIsCockpitMode] = useState(true);
   const [cockpitPanels, setCockpitPanels] = useState<Record<CockpitPanelKey, boolean>>({
-    drawings: false,
-    tools: false,
+    drawings: true,
+    tools: true,
   });
   const [cockpitPanelLayouts, setCockpitPanelLayouts] = useState<
     Record<CockpitPanelKey, CockpitPanelLayout>
   >(DEFAULT_COCKPIT_PANEL_LAYOUTS);
+  const [cockpitPanelPresentations, setCockpitPanelPresentations] = useState<
+    Record<CockpitPanelKey, CockpitPanelPresentation>
+  >({ drawings: "windowed", tools: "windowed" });
   const [cockpitChromeVisible, setCockpitChromeVisible] = useState(true);
   const [cockpitToolsView, setCockpitToolsView] = useState<CommandCenterToolsView>("measure");
+  const estimatorActivation = useEstimatorActivation(estimate.id);
   const [overlaySheetId, setOverlaySheetId] = useState("");
   const [overlayOpacity, setOverlayOpacity] = useState(65);
   const [overlayMode, setOverlayMode] = useState<RevisionOverlayMode>("redline");
@@ -558,10 +570,10 @@ export function PlanRoomWorkspace({
     () =>
       sheets
         .filter((sheet) => sheet.id !== currentSheet?.id)
-        .map((sheet) => ({
-          sheet,
-          planSet: planSets.find((planSet) => planSet.id === sheet.plan_set_id) ?? null,
-        }))
+        .flatMap((sheet) => {
+          const planSet = planSets.find((candidate) => candidate.id === sheet.plan_set_id);
+          return planSet ? [{ sheet, planSet }] : [];
+        })
         .sort((a, b) => {
           const sameA = a.sheet.sheet_number === currentSheet?.sheet_number ? 0 : 1;
           const sameB = b.sheet.sheet_number === currentSheet?.sheet_number ? 0 : 1;
@@ -3190,10 +3202,45 @@ export function PlanRoomWorkspace({
     if (!nextItem) return;
     openSheet(nextItem.sheet.id);
   };
-  const toggleCockpitPanel = (panel: CockpitPanelKey) =>
-    setCockpitPanels((current) => ({ ...current, [panel]: !current[panel] }));
-  const showCockpitPanels = () => setCockpitPanels({ drawings: true, tools: true });
-  const hideCockpitPanels = () => setCockpitPanels({ drawings: false, tools: false });
+  const restoreCockpitPanel = (panel: CockpitPanelKey) => {
+    setCockpitPanelPresentations((current) => ({ ...current, [panel]: "windowed" }));
+    setCockpitPanels((current) => ({ ...current, [panel]: true }));
+  };
+  const minimizeCockpitPanel = (panel: CockpitPanelKey) => {
+    setCockpitPanelPresentations((current) => ({ ...current, [panel]: "windowed" }));
+    setCockpitPanels((current) => ({ ...current, [panel]: false }));
+  };
+  const toggleCockpitPanel = (panel: CockpitPanelKey) => {
+    if (cockpitPanels[panel]) minimizeCockpitPanel(panel);
+    else restoreCockpitPanel(panel);
+  };
+  const showCockpitPanels = () => {
+    setCockpitPanelPresentations({ drawings: "windowed", tools: "windowed" });
+    setCockpitPanels({ drawings: true, tools: true });
+  };
+  const hideCockpitPanels = () => {
+    setCockpitPanelPresentations({ drawings: "windowed", tools: "windowed" });
+    setCockpitPanels({ drawings: false, tools: false });
+  };
+  const maximizeCockpitPanel = (panel: CockpitPanelKey) => {
+    const otherPanel: CockpitPanelKey = panel === "drawings" ? "tools" : "drawings";
+    setCockpitPanelPresentations((current) => ({
+      ...current,
+      [panel]: "maximized",
+      [otherPanel]: "windowed",
+    }));
+    setCockpitPanels((current) => ({ ...current, [panel]: true, [otherPanel]: false }));
+    setCockpitChromeVisible(true);
+  };
+  const toggleCockpitPanelMaximize = (panel: CockpitPanelKey) => {
+    if (cockpitPanelPresentations[panel] === "maximized") restoreCockpitPanel(panel);
+    else maximizeCockpitPanel(panel);
+  };
+  const selectCockpitToolsView = (view: CommandCenterToolsView) => {
+    setCockpitToolsView(view);
+    setCockpitPanels((current) => ({ ...current, tools: true }));
+    if (view === "worksheet") maximizeCockpitPanel("tools");
+  };
   // Panels must stay below the floating command deck. The deck wraps to extra
   // rows on narrow viewports, so measure its real footprint when it is in the
   // DOM and only fall back to the chrome constant when it is not measurable.
@@ -3262,6 +3309,18 @@ export function PlanRoomWorkspace({
     return () => window.removeEventListener("resize", reclampCockpitPanels);
   }, [clampCockpitPanelLayout, isCockpitMode]);
   const cockpitPanelStyle = (panel: CockpitPanelKey): CSSProperties => {
+    if (cockpitPanelPresentations[panel] === "maximized") {
+      const topGap = cockpitPanelTopGap();
+      return {
+        top: topGap,
+        right: COCKPIT_PANEL_EDGE_GAP,
+        bottom: COCKPIT_PANEL_EDGE_GAP,
+        left: COCKPIT_PANEL_EDGE_GAP,
+        width: "auto",
+        height: "auto",
+        maxHeight: "none",
+      };
+    }
     const layout = clampCockpitPanelLayout(cockpitPanelLayouts[panel]);
     const style: CSSProperties = {
       top: layout.y,
@@ -3278,10 +3337,13 @@ export function PlanRoomWorkspace({
     return style;
   };
   const cockpitPanelLayoutLabel = (panel: CockpitPanelKey) => {
+    if (cockpitPanelPresentations[panel] === "maximized") {
+      return "Full workspace · Restore to move or resize";
+    }
     const layout = cockpitPanelLayouts[panel];
     return `${Math.round(layout.width)} x ${Math.round(layout.height)} · ${
       layout.x === null ? `docked ${layout.anchor}` : "custom position"
-    }`;
+    } · drag in any direction`;
   };
   const resetCockpitPanelLayout = (panel: CockpitPanelKey) =>
     setCockpitPanelLayouts((current) => ({
@@ -3292,6 +3354,7 @@ export function PlanRoomWorkspace({
     panel: CockpitPanelKey,
     event: ReactPointerEvent<HTMLDivElement>,
   ) => {
+    if (cockpitPanelPresentations[panel] === "maximized") return;
     const panelElement = event.currentTarget.closest<HTMLElement>("[data-cockpit-panel-key]");
     const parent = mainRef.current;
     if (!panelElement || !parent) return;
@@ -3354,6 +3417,7 @@ export function PlanRoomWorkspace({
     panel: CockpitPanelKey,
     event: ReactPointerEvent<HTMLDivElement>,
   ) => {
+    if (cockpitPanelPresentations[panel] === "maximized") return;
     const panelElement = event.currentTarget.closest<HTMLElement>("[data-cockpit-panel-key]");
     const parent = mainRef.current;
     if (!panelElement || !parent) return;
@@ -3380,6 +3444,46 @@ export function PlanRoomWorkspace({
     event.currentTarget.setPointerCapture(event.pointerId);
     event.stopPropagation();
     event.preventDefault();
+  };
+  const openActivationDrawings = () => {
+    if (sheets.length === 0) fileInputRef.current?.click();
+    restoreCockpitPanel("drawings");
+  };
+  const openActivationScale = () => {
+    restoreCockpitPanel("tools");
+    setCockpitToolsView("measure");
+    setTool(currentSheet?.scale_feet_per_pixel ? "verify" : "calibrate");
+    setPendingPoints([]);
+    setCalibrationPoints([]);
+  };
+  const openActivationAiMarkups = () => {
+    restoreCockpitPanel("tools");
+    setCockpitToolsView("ai");
+    if (!aiAssist.open) aiAssist.openPanel();
+  };
+  const openActivationWorksheet = () => selectCockpitToolsView("worksheet");
+  const startGuidedActivation = () => {
+    const preferredMeasurement =
+      measurements.find((measurement) => measurement.created_by_ai) ?? measurements[0];
+    const preferredSheet =
+      sheets.find((sheet) => sheet.id === preferredMeasurement?.plan_sheet_id) ??
+      sheets.find((sheet) => Boolean(sheet.scale_verified_at)) ??
+      sheets[0];
+    if (preferredSheet) openSheet(preferredSheet.id);
+    else fileInputRef.current?.click();
+    showCockpitPanels();
+    setCockpitToolsView("ai");
+    estimatorActivation.choose("guided");
+  };
+  const startTakeoffActivation = () => {
+    if (sheets.length === 0) fileInputRef.current?.click();
+    showCockpitPanels();
+    setCockpitToolsView("measure");
+    estimatorActivation.choose("takeoff");
+  };
+  const startRevisionActivation = () => {
+    maximizeCockpitPanel("drawings");
+    estimatorActivation.choose("revision");
   };
   const takeoffToolsProps = {
     tool,
@@ -3524,6 +3628,18 @@ export function PlanRoomWorkspace({
         </Badge>
       </div>
       <Separator orientation="vertical" className="mx-1 hidden h-6 lg:block" />
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 px-2"
+        title="Open the getting-started workflow"
+        onClick={estimatorActivation.openWelcome}
+        data-testid="estimator-activation-open"
+      >
+        <CircleHelp className="h-3.5 w-3.5" />
+        <span className="hidden 2xl:inline">Getting started</span>
+      </Button>
       {(!cockpitPanels.drawings || !cockpitPanels.tools) && (
         <Button
           type="button"
@@ -3590,21 +3706,6 @@ export function PlanRoomWorkspace({
       >
         <Maximize2 className="h-3.5 w-3.5" />
       </Button>
-      <Button
-        size="icon"
-        variant="outline"
-        className="h-8 w-8"
-        onClick={() => {
-          setIsCockpitMode(false);
-          hideCockpitPanels();
-          setCockpitChromeVisible(true);
-        }}
-        title="Exit command center"
-        aria-label="Exit command center"
-        data-testid="plan-command-center-toggle"
-      >
-        <Minimize2 className="h-3.5 w-3.5" />
-      </Button>
       <FlagIssueButton compact getContext={flagIssueContext} />
       <input
         ref={fileInputRef}
@@ -3634,6 +3735,14 @@ export function PlanRoomWorkspace({
       )}
       data-testid="plan-room-workspace"
     >
+      <EstimatorActivationDialog
+        open={estimatorActivation.welcomeOpen}
+        hasDrawings={sheets.length > 0}
+        onGuidedExample={startGuidedActivation}
+        onStartTakeoff={startTakeoffActivation}
+        onCompareRevisions={startRevisionActivation}
+        onSkip={estimatorActivation.hide}
+      />
       {isCockpitMode ? (
         !cockpitChromeVisible && (
           <div className="pointer-events-none absolute right-3 top-3 z-50">
@@ -3734,10 +3843,13 @@ export function PlanRoomWorkspace({
 
         <aside
           className={cn(
-            "min-w-0 space-y-4",
+            "min-w-0",
+            !isCockpitMode && "space-y-4",
             isCockpitMode &&
               (cockpitPanels.drawings
-                ? "absolute z-40 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
+                ? cockpitPanelPresentations.drawings === "maximized"
+                  ? "absolute z-50 grid auto-rows-min gap-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur xl:grid-cols-2 2xl:grid-cols-3"
+                  : "absolute z-40 space-y-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}
           style={
@@ -3752,17 +3864,15 @@ export function PlanRoomWorkspace({
               closeTestId="plan-cockpit-drawings-close"
               dragTestId="plan-cockpit-drawings-drag"
               resetTestId="plan-cockpit-drawings-reset"
+              maximizeTestId="plan-cockpit-drawings-maximize"
               layoutLabel={cockpitPanelLayoutLabel("drawings")}
+              maximized={cockpitPanelPresentations.drawings === "maximized"}
               onMoveStart={(event) => beginCockpitPanelMove("drawings", event)}
               onMove={moveCockpitPanel}
               onMoveEnd={endCockpitPanelInteraction}
               onReset={() => resetCockpitPanelLayout("drawings")}
-              onClose={() =>
-                setCockpitPanels((current) => ({
-                  ...current,
-                  drawings: false,
-                }))
-              }
+              onToggleMaximize={() => toggleCockpitPanelMaximize("drawings")}
+              onClose={() => minimizeCockpitPanel("drawings")}
             />
           )}
           <SheetSidebar
@@ -3896,7 +4006,7 @@ export function PlanRoomWorkspace({
               </div>
             )}
           </section>
-          {isCockpitMode && (
+          {isCockpitMode && cockpitPanelPresentations.drawings !== "maximized" && (
             <div
               className="sticky bottom-0 ml-auto h-5 w-5 cursor-nwse-resize touch-none rounded-tl-md border-l border-t border-hairline bg-surface/90"
               title="Resize drawing controls panel"
@@ -4209,10 +4319,15 @@ export function PlanRoomWorkspace({
 
         <aside
           className={cn(
-            "min-w-0 space-y-4",
+            "min-w-0",
+            !isCockpitMode && "space-y-4",
             isCockpitMode &&
               (cockpitPanels.tools
-                ? "absolute z-40 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
+                ? cockpitPanelPresentations.tools === "maximized"
+                  ? cockpitToolsView === "worksheet"
+                    ? "absolute z-50 flex flex-col gap-2 overflow-hidden rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
+                    : "absolute z-50 flex flex-col gap-2 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
+                  : "absolute z-40 space-y-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}
           style={isCockpitMode && cockpitPanels.tools ? cockpitPanelStyle("tools") : undefined}
@@ -4225,21 +4340,32 @@ export function PlanRoomWorkspace({
               closeTestId="plan-cockpit-tools-close"
               dragTestId="plan-cockpit-tools-drag"
               resetTestId="plan-cockpit-tools-reset"
+              maximizeTestId="plan-cockpit-tools-maximize"
               layoutLabel={cockpitPanelLayoutLabel("tools")}
+              maximized={cockpitPanelPresentations.tools === "maximized"}
               onMoveStart={(event) => beginCockpitPanelMove("tools", event)}
               onMove={moveCockpitPanel}
               onMoveEnd={endCockpitPanelInteraction}
               onReset={() => resetCockpitPanelLayout("tools")}
-              onClose={() =>
-                setCockpitPanels((current) => ({
-                  ...current,
-                  tools: false,
-                }))
-              }
+              onToggleMaximize={() => toggleCockpitPanelMaximize("tools")}
+              onClose={() => minimizeCockpitPanel("tools")}
+            />
+          )}
+          {estimatorActivation.checklistVisible && (
+            <EstimatorActivationChecklist
+              hasDrawings={sheets.length > 0}
+              scaleVerified={currentSheetScaleStatus === "verified"}
+              hasTakeoff={measurements.length > 0}
+              hasLinkedTakeoff={linkedCount > 0}
+              onOpenDrawings={openActivationDrawings}
+              onVerifyScale={openActivationScale}
+              onOpenAiMarkups={openActivationAiMarkups}
+              onOpenWorksheet={openActivationWorksheet}
+              onHide={estimatorActivation.hide}
             />
           )}
           {isCockpitMode && (
-            <CommandCenterToolsNav value={cockpitToolsView} onChange={setCockpitToolsView} />
+            <CommandCenterToolsNav value={cockpitToolsView} onChange={selectCockpitToolsView} />
           )}
           {(!isCockpitMode || cockpitToolsView === "ai" || cockpitToolsView === "measure") && (
             <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
@@ -5106,6 +5232,7 @@ export function PlanRoomWorkspace({
 
           {(!isCockpitMode || cockpitToolsView === "worksheet") && (
             <TakeoffWorksheet
+              expanded={isCockpitMode && cockpitPanelPresentations.tools === "maximized"}
               measurements={measurements}
               totalMeasured={totalMeasured}
               copyTakeoffSummary={copyTakeoffSummary}
@@ -5146,7 +5273,7 @@ export function PlanRoomWorkspace({
               matchCount={takeoffMatchSuggestions.length}
             />
           )}
-          {isCockpitMode && (
+          {isCockpitMode && cockpitPanelPresentations.tools !== "maximized" && (
             <div
               className="sticky bottom-0 ml-auto h-5 w-5 cursor-nwse-resize touch-none rounded-tl-md border-l border-t border-hairline bg-surface/90"
               title="Resize takeoff tools panel"

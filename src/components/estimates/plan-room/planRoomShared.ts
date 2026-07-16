@@ -21,6 +21,7 @@ export type ToolMode = "select" | "calibrate" | "verify" | "ruler" | TakeoffTool
 export type RevisionOverlayMode = "redline" | "compare" | "ghost";
 export type CockpitPanelKey = "drawings" | "tools";
 export type CockpitPanelAnchor = "left" | "right";
+export type CockpitPanelPresentation = "windowed" | "maximized";
 export type CockpitPanelLayout = {
   anchor: CockpitPanelAnchor;
   x: number | null;
@@ -230,21 +231,24 @@ export const COCKPIT_PANEL_MAX_WIDTH = 540;
 export const COCKPIT_PANEL_MIN_HEIGHT = 280;
 export const COCKPIT_PANEL_MAX_HEIGHT = 920;
 export const COCKPIT_CHROME_PANEL_TOP_GAP = 72;
-export const COCKPIT_PANEL_LAYOUT_STORAGE_KEY = "overwatch.plan-room.cockpit-panels.v2";
+// v3 intentionally resets the original nearly-viewport-height defaults. Those
+// layouts technically supported Y movement, but had no free vertical space to
+// move into, so contractors experienced the panels as horizontal-only.
+export const COCKPIT_PANEL_LAYOUT_STORAGE_KEY = "overwatch.plan-room.cockpit-panels.v3";
 export const DEFAULT_COCKPIT_PANEL_LAYOUTS: Record<CockpitPanelKey, CockpitPanelLayout> = {
   drawings: {
     anchor: "left",
     x: null,
     y: COCKPIT_CHROME_PANEL_TOP_GAP,
     width: 360,
-    height: 680,
+    height: 500,
   },
   tools: {
     anchor: "right",
     x: null,
     y: COCKPIT_CHROME_PANEL_TOP_GAP,
     width: 390,
-    height: 720,
+    height: 520,
   },
 };
 

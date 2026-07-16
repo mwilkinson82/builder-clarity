@@ -50,7 +50,10 @@ export function PlanRevisionOverlayPanel({
   onReviewRevisionNotes: (match: PlanRevisionMatchRow) => Promise<RevisionScopeAssistantResult>;
 }) {
   return (
-    <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
+    <section
+      className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+      data-testid="plan-revision-overlay-panel"
+    >
       <div className="flex items-center gap-2 text-sm font-medium">
         <Layers className="h-4 w-4" /> Revision Overlay
       </div>
