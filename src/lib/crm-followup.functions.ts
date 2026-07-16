@@ -481,6 +481,12 @@ export const createCrmValueAsset = createServerFn({ method: "POST" })
     if (data.source_type !== "upload") {
       const parsed = z.string().url().safeParse(externalUrl);
       if (!parsed.success) throw new Error("Enter a valid resource URL.");
+      if (data.source_type === "google_drive") {
+        const host = new URL(externalUrl).hostname.toLowerCase();
+        if (host !== "drive.google.com" && host !== "docs.google.com") {
+          throw new Error("Use a Google Drive or Google Docs sharing link for this resource.");
+        }
+      }
     }
     const inserted = await table(context.supabase, "crm_value_assets")
       .insert({

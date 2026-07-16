@@ -196,7 +196,10 @@ export const ACTIVE_STAGE_SHORT_LABELS: Record<PipelineStage, string> = {
 export interface PipelineMetricsSummary {
   activeCount: number;
   weighted: number;
+  weightedGp: number;
   avgGp: number;
+  pricedCount: number;
+  marginReadyCount: number;
   dueThisWeek: number;
   winRate: number;
   totalPursuit: number;
@@ -211,6 +214,8 @@ export function computePipelineMetrics(
   const active = opportunities.filter(
     (opportunity) => ACTIVE_STAGES.includes(opportunity.stage) && !opportunity.archived,
   );
+  const priced = active.filter((opportunity) => opportunity.estimated_contract > 0);
+  const marginReady = priced.filter((opportunity) => opportunity.estimated_cost > 0);
   const weighted = active.reduce(
     (total, opportunity) =>
       total + opportunity.estimated_contract * (opportunity.probability / 100),
@@ -220,11 +225,27 @@ export function computePipelineMetrics(
     (total, opportunity) => total + opportunity.estimated_contract,
     0,
   );
+  const marginContract = marginReady.reduce(
+    (total, opportunity) => total + opportunity.estimated_contract,
+    0,
+  );
   const avgGp =
-    active.length === 0
+    marginContract === 0
       ? 0
-      : active.reduce((total, opportunity) => total + opportunity.estimated_gp_pct, 0) /
-        active.length;
+      : (marginReady.reduce(
+          (total, opportunity) =>
+            total + (opportunity.estimated_contract - opportunity.estimated_cost),
+          0,
+        ) /
+          marginContract) *
+        100;
+  const weightedGp = marginReady.reduce(
+    (total, opportunity) =>
+      total +
+      (opportunity.estimated_contract - opportunity.estimated_cost) *
+        (opportunity.probability / 100),
+    0,
+  );
   const dueThisWeek = active.filter((opportunity) => {
     const days = opportunity.days_until_bid_due;
     return days !== null && days >= 0 && days <= 7;
@@ -251,12 +272,21 @@ export function computePipelineMetrics(
   return {
     activeCount: active.length,
     weighted,
+    weightedGp,
     avgGp,
+    pricedCount: priced.length,
+    marginReadyCount: marginReady.length,
     dueThisWeek,
     winRate,
     totalPursuit,
     stageCounts,
   };
+}
+
+export function opportunityPricingState(opportunity: PipelineOpportunityRow) {
+  const priced = opportunity.estimated_contract > 0;
+  const marginReady = priced && opportunity.estimated_cost > 0;
+  return { priced, marginReady };
 }
 
 // The bid-timing chip shown on kanban cards and the "Bids due" rail. Reads the
