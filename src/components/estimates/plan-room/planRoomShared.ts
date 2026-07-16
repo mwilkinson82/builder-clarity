@@ -230,6 +230,7 @@ export const COCKPIT_PANEL_MIN_WIDTH = 280;
 export const COCKPIT_PANEL_MAX_WIDTH = 540;
 export const COCKPIT_PANEL_MIN_HEIGHT = 280;
 export const COCKPIT_PANEL_MAX_HEIGHT = 920;
+export const COCKPIT_PANEL_MOVE_RESERVE = 120;
 export const COCKPIT_CHROME_PANEL_TOP_GAP = 72;
 // v3 intentionally resets the original nearly-viewport-height defaults. Those
 // layouts technically supported Y movement, but had no free vertical space to
