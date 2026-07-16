@@ -16,6 +16,7 @@ production only.
 ## Commands
 
 ```bash
+npm run video:install
 npm run video:studio
 npm run video:captions
 npm run test:onboarding-video
@@ -41,8 +42,9 @@ selecting another supported model.
 After narration is generated, render with narration enabled:
 
 ```bash
-npx remotion render video/index.ts Harbor-01-Operating-Loop \
-  public/onboarding/harbor/lesson-01-overwatch-operating-loop.mp4 \
+npm --prefix video exec -- remotion render index.ts Harbor-01-Operating-Loop \
+  ../public/onboarding/harbor/lesson-01-overwatch-operating-loop.mp4 \
+  --public-dir=../public \
   --props='{"includeNarration":true}'
 ```
 
