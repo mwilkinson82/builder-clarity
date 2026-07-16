@@ -517,7 +517,7 @@ export function AiAssistPanel({
                   data-testid="ai-discover-symbols"
                 >
                   <Sparkles className="h-3.5 w-3.5" />
-                  Discover symbols (preview)
+                  Mark and identify symbols
                 </Button>
               </>
             )}

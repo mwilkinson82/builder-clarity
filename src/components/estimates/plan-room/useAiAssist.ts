@@ -143,6 +143,18 @@ export interface UseAiAssistArgs {
   onTakeoffsChanged: () => void;
 }
 
+export interface AiExternalReviewOutcome {
+  accepted: Array<{
+    sheetId: string;
+    x: number;
+    y: number;
+    originalX: number;
+    originalY: number;
+  }>;
+  rejectedCount: number;
+  discardedCount: number;
+}
+
 export function useAiAssist({
   estimateId,
   sheets,
@@ -181,7 +193,13 @@ export function useAiAssist({
   const [reviewOverride, setReviewOverride] = useState<{
     label: string;
     color?: string;
+    unit: string;
+    estimateLineItemId: string | null;
+    libraryItemId: string | null;
   } | null>(null);
+  const externalReviewCompletionRef = useRef<((outcome: AiExternalReviewOutcome) => void) | null>(
+    null,
+  );
   const [reviewIndex, setReviewIndex] = useState(0);
   const [isAccepting, setIsAccepting] = useState(false);
   // Survives scan completion so the diagnostics view can open on it.
@@ -344,6 +362,25 @@ export function useAiAssist({
     };
   }, [exemplar, sheetById, planSetById]);
 
+  const notifyExternalReviewComplete = useCallback((finalProposals: AiCountProposal[]) => {
+    const completion = externalReviewCompletionRef.current;
+    externalReviewCompletionRef.current = null;
+    if (!completion) return;
+    completion({
+      accepted: finalProposals
+        .filter((proposal) => proposal.status === "accepted")
+        .map((proposal) => ({
+          sheetId: proposal.sheetId,
+          x: proposal.x,
+          y: proposal.y,
+          originalX: proposal.originalX ?? proposal.x,
+          originalY: proposal.originalY ?? proposal.y,
+        })),
+      rejectedCount: finalProposals.filter((proposal) => proposal.status === "rejected").length,
+      discardedCount: finalProposals.filter((proposal) => proposal.status === "pending").length,
+    });
+  }, []);
+
   const endReview = useCallback(
     (options: { silent?: boolean } = {}) => {
       const accepted = proposals.filter((p) => p.status === "accepted").length;
@@ -353,6 +390,7 @@ export function useAiAssist({
       setReviewOverride(null);
       setScopeBriefSource(null);
       aiMeasurementsRef.current = new Map();
+      notifyExternalReviewComplete(proposals);
       if (accepted > 0) {
         onTakeoffsChanged();
         if (!options.silent) {
@@ -362,7 +400,7 @@ export function useAiAssist({
         }
       }
     },
-    [onTakeoffsChanged, proposals],
+    [notifyExternalReviewComplete, onTakeoffsChanged, proposals],
   );
 
   const runScan = useCallback(async () => {
@@ -1198,11 +1236,15 @@ export function useAiAssist({
               plan_sheet_id: sheetId,
               // Externally-seeded reviews (a labeled discovery cluster) have
               // no exemplar; their override supplies the label/color instead.
-              estimate_line_item_id: reviewOverride ? null : (exemplar?.estimateLineItemId ?? null),
-              library_item_id: reviewOverride ? null : (exemplar?.libraryItemId ?? null),
+              estimate_line_item_id: reviewOverride
+                ? reviewOverride.estimateLineItemId
+                : (exemplar?.estimateLineItemId ?? null),
+              library_item_id: reviewOverride
+                ? reviewOverride.libraryItemId
+                : (exemplar?.libraryItemId ?? null),
               tool_type: "count",
               label: reviewOverride?.label || exemplar?.label || "AI-assisted count",
-              unit: exemplar?.unit || "EA",
+              unit: reviewOverride?.unit || exemplar?.unit || "EA",
               quantity: points.length,
               waste_pct: reviewOverride ? 0 : (exemplar?.wastePct ?? 0),
               color: reviewOverride?.color || exemplar?.color || "#d97706",
@@ -1289,6 +1331,7 @@ export function useAiAssist({
       setReviewOverride(null);
       setScopeBriefSource(null);
       aiMeasurementsRef.current = new Map();
+      notifyExternalReviewComplete(finalProposals);
       if (accepted > 0) {
         onTakeoffsChanged();
         toast.success(
@@ -1298,7 +1341,7 @@ export function useAiAssist({
         toast.info("Review finished — no proposals were accepted.");
       }
     },
-    [onTakeoffsChanged],
+    [notifyExternalReviewComplete, onTakeoffsChanged],
   );
 
   const acceptActiveProposal = useCallback(async () => {
@@ -1475,9 +1518,13 @@ export function useAiAssist({
     (input: {
       label: string;
       color?: string;
+      unit?: string;
+      estimateLineItemId?: string | null;
+      libraryItemId?: string | null;
       operationId?: string | null;
       radius: SheetRadius;
       points: Array<{ sheetId: string; x: number; y: number }>;
+      onComplete?: (outcome: AiExternalReviewOutcome) => void;
     }): number => {
       const bySheet = new Map<string, Array<{ x: number; y: number }>>();
       for (const point of input.points) {
@@ -1511,7 +1558,14 @@ export function useAiAssist({
         toast.info("Every symbol in this group is already counted on the sheet.");
         return 0;
       }
-      setReviewOverride({ label: input.label, color: input.color });
+      setReviewOverride({
+        label: input.label,
+        color: input.color,
+        unit: input.unit || "EA",
+        estimateLineItemId: input.estimateLineItemId ?? null,
+        libraryItemId: input.libraryItemId ?? null,
+      });
+      externalReviewCompletionRef.current = input.onComplete ?? null;
       setScopeBriefSource(null);
       if (input.operationId) setLastOperationId(input.operationId);
       aiMeasurementsRef.current = new Map();

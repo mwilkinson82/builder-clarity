@@ -41,7 +41,7 @@ the core flow, and no per-tile VLM pass at all.
   config, not code. AITAKEOFF14's lesson is binding: green synthetic
   fixtures prove structure, only the REAL A-100 result gates a stage.
 
-## Stage 0 — see the library before building the product (this PR)
+## Stage 0 — see the library before building the product (shipped)
 
 - Pure module `embedding-cluster-domain.ts`: deterministic greedy
   average-linkage agglomerative clustering over cosine similarity;
@@ -50,22 +50,23 @@ the core flow, and no per-tile VLM pass at all.
 - Server fn `discoverSheetSymbols` (own file): auth → charge 1 credit
   (failure refunds) → embed candidate crops via replicate.server →
   cluster SERVER-SIDE → return `{clusters: [{memberIndexes, medoidIndex,
-  cohesion}]}` — vectors never ship to the client.
-- QA flag `?aiDiscover=1` (ai-engine-flag pattern; sticky per session).
-  "Discover symbols" action: render sheet → detectCandidatePeaks → crop
-  base64s → server fn → cluster grid dialog (member crops per cluster,
-  counts, cohesion). Production users unaffected without the flag.
+cohesion}]}` — vectors never ship to the client.
+- "Mark and identify symbols" action: render sheet → detectCandidatePeaks →
+  crop base64s → server fn → grouped canvas proposals with member crops,
+  counts, and cohesion.
 - GATE (eyes on A-100, post-merge): a brush cluster containing MOST of the
   ~12–15 brushes, junk self-segregated into ignorable clusters.
   KILL-CRITERIA: if CLIP clusters junk → swap embed model (env) and re-QA;
   if discovery cannot surface the brush group at all → STOP, no Stage 1 UI
   gets built on a broken front half.
 
-## Stage 1 — the library flow (only after Stage 0 passes on A-100)
+## Stage 1 — the library flow (shipped)
 
-Cluster cards → estimator labels or ignores → labeled members become review
-ghosts (existing accept/reject/nudge bar, existing measurement write path) →
-counted. Ignoring junk clusters costs nothing.
+Canvas proposals → estimator clicks a mark → labels or ignores its visual
+group → labeled members become review ghosts (existing accept/reject/nudge
+bar, existing measurement write path) → counted. The estimator may choose an
+existing estimate row before review; accepted counts still use its normal
+unit, trust, and quantity-sync gates. Ignoring junk clusters costs nothing.
 
 ## Stage 2 — recall top-up
 
@@ -73,10 +74,18 @@ Seed the template engine from the labeled cluster's cleanest member (best
 mean cosine to its own cluster) to catch packed/missed instances; union +
 dedupe through the existing canonical radius path.
 
-## Stage 3 — the flywheel (parked until 0–2 are real)
+## Stage 3 — the flywheel (shipped foundation)
 
-Labeled groups persist per org (library), pre-matching future sheets. This is
-the co-pilot moat; do not start it early.
+Only a group with at least one estimator-accepted count persists per org.
+The accepted crop is embedded and stored as a private example; later discovery
+runs compare their cluster medoids to those accepted examples and may prefill a
+company-library label. Suggestions never auto-label, auto-accept, or write a
+quantity. Rejected-only and ignored groups never enter the library.
+
+The public tables are SELECT-only with organization RLS. A manager-validated
+RPC rebuilds estimate, sheet, AI-operation, storage-path, and cost-library
+provenance before accepting an example. The source takeoff remains the
+authoritative record of which points the estimator accepted.
 
 ## Non-negotiables
 
