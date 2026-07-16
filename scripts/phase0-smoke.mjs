@@ -2355,6 +2355,29 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/estimates/plan-room/PlanScopeBriefPanel.tsx",
+  [
+    /Human estimator decision/,
+    /Keep/,
+    /Later/,
+    /Exclude/,
+    /does not measure, count, price, link, or change\s+the estimate/i,
+    /Saving creates version/,
+  ],
+  "scope brief records explicit estimator decisions without presenting them as completed work",
+);
+
+await expectContains(
+  "src/lib/plan-scope-brief-review.functions.ts",
+  [
+    /estimate_scope_brief_reviews/,
+    /save_estimate_scope_brief_review/,
+    /Scope Brief decisions are waiting for their Lovable database migration/,
+  ],
+  "scope brief action register reads durable reviews and writes through one narrow RPC",
+);
+
+await expectContains(
   "src/components/estimates/plan-room/TakeoffAssemblyWorkbench.tsx",
   [
     /Assembly Workbench/,
@@ -2773,6 +2796,26 @@ expectSql(
     /notify pgrst, 'reload schema'/i,
   ],
   "estimator scope brief migration registers the audited operation and credit reason without a new write surface",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.estimate_scope_brief_reviews/i,
+    /status in \('accepted', 'deferred', 'excluded'\)/i,
+    /grant select on table public\.estimate_scope_brief_reviews to authenticated/i,
+    /create policy estimate_scope_brief_reviews_team_select/i,
+    /create or replace function public\.save_estimate_scope_brief_review/i,
+    /operation_type <> 'ai_scope_brief'/i,
+    /not public\.can_manage_estimate\(v_operation\.estimate_id\)/i,
+    /the cited prompt is not retained in this completed scope brief/i,
+    /explain why this cited scope is excluded/i,
+    /explain why the next action differs from the cited review type/i,
+    /security definer[\s\S]*set search_path = ''/i,
+    /revoke all on function public\.save_estimate_scope_brief_review[\s\S]*from public, anon/i,
+    /notify pgrst, 'reload schema'/i,
+  ],
+  "scope brief decisions are append-only, operation-bound, manager-authored, and read-only through the Data API",
 );
 
 expectSql(

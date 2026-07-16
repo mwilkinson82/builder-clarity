@@ -253,6 +253,36 @@ This stage needs no new database migration. It reads the existing `ai_operations
 `estimate_measurement_scope_items` decision queue, both already constrained and RLS-protected by
 the earlier releases.
 
+## Stage 8 — Scope Brief action register
+
+- Turn each cited plan-set Scope Brief prompt into a human review decision: Keep, Later, or Exclude.
+- Store every decision as a new immutable version so changing a disposition never erases who made
+  the earlier decision or why.
+- Default the next action from the cited review type—count, length, area, assembly, pricing, or
+  coordination—but let the estimator override that route only with an explanatory note.
+- Require a reason before excluding cited scope.
+- Rebuild evidence fields inside a manager-only database RPC from the completed `ai_scope_brief`
+  operation. Do not trust client-supplied labels, citations, trade classifications, or sheet IDs.
+- Keep the review table SELECT-only through the Data API. The register records intent; it never
+  creates geometry, quantities, takeoffs, assemblies, prices, links, or estimate rows.
+
+### Stage 8 release gate
+
+1. Apply `20260716013211_estimator_scope_action_register.sql` only through Lovable.
+2. Verify authenticated users receive SELECT only, anon receives no table access, and the save RPC
+   rejects unauthenticated users and users without `can_manage_estimate`.
+3. Confirm the RPC rejects a forged prompt ID, a prompt from another AI operation, an incomplete
+   operation, an unsupported action, an action override without a note, and an exclusion without a
+   reason.
+4. On Crystal Carwash, Keep the exterior light fixture for Count review, defer the fire extinguisher,
+   and exclude the concrete-pad coordination prompt with a reason.
+5. Refresh and confirm all three decisions, reviewer identity, timestamp, next action, and version
+   remain visible beside their exact citations.
+6. Change one decision and confirm the new version appears as current while the prior version
+   remains queryable for audit.
+7. Open each cited sheet and confirm no decision creates geometry, changes scale, starts paid AI,
+   adds a takeoff, links an estimate row, or changes Harbor's `$1,606,137` total.
+
 ## Kill criteria
 
 Stop expansion if the live Harbor review shows uncited suggestions, repeated irrelevant title-block
