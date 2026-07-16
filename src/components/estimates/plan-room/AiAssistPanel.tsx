@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
+  BookOpenCheck,
   ChevronsUpDown,
   Coins,
   GripHorizontal,
@@ -283,6 +284,26 @@ export function AiAssistPanel({
           <>
             <p className="text-xs text-muted-foreground">{AI_ASSIST_FIRST_RUN_MESSAGE}</p>
 
+            {ai.scopeBriefSource ? (
+              <div
+                className="mt-3 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs"
+                data-testid="ai-scope-brief-source"
+              >
+                <div className="flex items-center gap-1.5 font-medium text-foreground">
+                  <BookOpenCheck className="h-3.5 w-3.5 text-primary" /> Started from Scope Brief
+                </div>
+                <p className="mt-1 text-foreground">
+                  {ai.scopeBriefSource.label} · {ai.scopeBriefSource.sheetNumber || "Cited sheet"}{" "}
+                  {ai.scopeBriefSource.sourceLine} · decision v{ai.scopeBriefSource.version}
+                </p>
+                <p className="mt-1 text-muted-foreground">“{ai.scopeBriefSource.sourceExcerpt}”</p>
+                <p className="mt-1 text-muted-foreground">
+                  This source locks the scan to the cited sheet. You still choose the exemplar and
+                  approve every match.
+                </p>
+              </div>
+            ) : null}
+
             <Separator className="my-3" />
 
             <div className="space-y-2">
@@ -348,6 +369,7 @@ export function AiAssistPanel({
               <Label className="text-xs font-medium">Where to look</Label>
               <Select
                 value={ai.scope}
+                disabled={Boolean(ai.scopeBriefSource)}
                 onValueChange={(value) => ai.setScope(value === "all" ? "all" : "sheet")}
               >
                 <SelectTrigger className="h-8" data-testid="ai-scope-select">
@@ -361,6 +383,11 @@ export function AiAssistPanel({
                   </SelectItem>
                 </SelectContent>
               </Select>
+              {ai.scopeBriefSource ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Cited handoffs cannot expand into a multi-sheet scan.
+                </p>
+              ) : null}
             </div>
 
             <p

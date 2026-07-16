@@ -211,6 +211,22 @@ function Host({ measurements }: { measurements: TakeoffMeasurementRow[] }) {
       <button type="button" data-testid="open-ai-panel" onClick={ai.openPanel}>
         AI assist
       </button>
+      <button
+        type="button"
+        data-testid="open-cited-ai-panel"
+        onClick={() =>
+          ai.openScopeBriefReview({
+            reviewId: "99999999-9999-4999-8999-999999999999",
+            version: 7,
+            label: "exterior light fixture",
+            sheetNumber: "A-300",
+            sourceLine: "L066",
+            sourceExcerpt: "EXTERIOR LIGHT FIXTURE",
+          })
+        }
+      >
+        Cited AI assist
+      </button>
       <PlanCanvas
         planSet={persistedPlanSet}
         sheet={persistedSheet}
@@ -318,6 +334,30 @@ test("fresh load: clicking a persisted count marker arms the exemplar", async ()
   const label = document.querySelector('[data-testid="ai-exemplar-label"]');
   expect(label?.textContent, "exemplar label rendered in the AI panel").toBe("Mechanical Brush");
   expect(successToast).toHaveBeenCalledWith("Exemplar set: Mechanical Brush");
+});
+
+test("a cited count handoff stays visible and sheet-scoped until a normal panel open", async () => {
+  await mountHost([persistedCount]);
+  const citedButton = document.querySelector<HTMLButtonElement>(
+    '[data-testid="open-cited-ai-panel"]',
+  );
+  expect(citedButton).toBeTruthy();
+  act(() => citedButton!.click());
+
+  const source = document.querySelector('[data-testid="ai-scope-brief-source"]');
+  expect(source?.textContent).toContain("exterior light fixture");
+  expect(source?.textContent).toContain("A-300 L066");
+  expect(source?.textContent).toContain("decision v7");
+  expect(
+    document.querySelector<HTMLButtonElement>('[data-testid="ai-scope-select"]')?.disabled,
+  ).toBe(true);
+
+  const ordinaryButton = document.querySelector<HTMLButtonElement>('[data-testid="open-ai-panel"]');
+  act(() => ordinaryButton!.click());
+  expect(document.querySelector('[data-testid="ai-scope-brief-source"]')).toBeNull();
+  expect(
+    document.querySelector<HTMLButtonElement>('[data-testid="ai-scope-select"]')?.disabled,
+  ).toBe(false);
 });
 
 test("fresh load: a persisted linear marker still hits the count-only guard", async () => {

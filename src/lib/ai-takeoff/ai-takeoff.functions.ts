@@ -45,6 +45,11 @@ import {
   resolveTemplateMatchThreshold,
 } from "@/lib/ai-takeoff/template-match/template-match-domain";
 import {
+  scopeBriefCountRequestContext,
+  scopeBriefCountReviewSourceError,
+  type ScopeBriefCountReviewSource,
+} from "@/lib/ai-takeoff/ai-count-source-provenance";
+import {
   sheetNorm,
   tileLocalToSheetPoint,
   type DetectionTileFrame,
@@ -158,7 +163,48 @@ async function markOperationFailed(admin: unknown, operation: AiOperationRow, me
 const beginScanInput = z.object({
   estimate_id: z.string().uuid(),
   sheet_ids: z.array(z.string().uuid()).min(1).max(200),
+  scope_brief_review_id: z.string().uuid().optional(),
 });
+
+async function loadScopeBriefCountRequestContext({
+  client,
+  reviewId,
+  estimateId,
+  sheetIds,
+}: {
+  client: unknown;
+  reviewId: string;
+  estimateId: string;
+  sheetIds: string[];
+}) {
+  const reviewResult = await dynamicTable(client, "estimate_scope_brief_reviews")
+    .select(
+      "id,estimate_id,plan_set_id,ai_operation_id,item_id,version,scope_label,plan_sheet_id,source_line,source_excerpt,status,next_action",
+    )
+    .eq("id", reviewId)
+    .maybeSingle();
+  if (reviewResult.error) throw new Error(reviewResult.error.message);
+  if (!reviewResult.data) {
+    throw new Error("The cited Scope Brief decision was not found.");
+  }
+  const review = reviewResult.data as ScopeBriefCountReviewSource;
+  const latestResult = (await dynamicTable(client, "estimate_scope_brief_reviews")
+    .select("id")
+    .eq("estimate_id", review.estimate_id)
+    .eq("item_id", review.item_id)
+    .order("version", { ascending: false })
+    .limit(1)) as DynamicSupabaseResult<Array<{ id: string }>>;
+  if (latestResult.error) throw new Error(latestResult.error.message);
+  const latestReviewId = latestResult.data?.[0]?.id ?? "";
+  const sourceError = scopeBriefCountReviewSourceError({
+    review,
+    latestReviewId,
+    estimateId,
+    sheetIds,
+  });
+  if (sourceError) throw new Error(sourceError);
+  return scopeBriefCountRequestContext(review);
+}
 
 /**
  * Pre-checks the credit balance, charges 1 credit per sheet up front, and
@@ -204,6 +250,18 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
     if ((sheetsResult.data?.length ?? 0) !== sheetIds.length) {
       throw new Error("One of the selected sheets does not belong to this estimate.");
     }
+
+    // A cited handoff carries only the immutable review row id. Rebuild the
+    // source envelope from the current, RLS-readable decision before charging
+    // a credit. A stale route or a broader sheet scope fails closed.
+    const requestContext = data.scope_brief_review_id
+      ? await loadScopeBriefCountRequestContext({
+          client: context.supabase,
+          reviewId: data.scope_brief_review_id,
+          estimateId: data.estimate_id,
+          sheetIds,
+        })
+      : {};
 
     const quote = quoteScanCredits(sheetIds.length);
 
@@ -268,6 +326,7 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
         sheet_ids: sheetIds,
         model_used: model,
         credits_charged: chargedCredits,
+        request_context: requestContext,
         status: "pending",
       })
       .select("*")
