@@ -2212,10 +2212,9 @@ await expectContains(
     /absolute inset-0 grid-cols-1 overflow-hidden p-0/,
     /Clean view/,
     /CockpitFloatingPanelHeader/,
-    /Revision Overlay/,
-    /plan-revision-overlay-select/,
-    /plan-revision-opacity/,
-    /plan-revision-mode-controls/,
+    /PlanRevisionOverlayPanel/,
+    /CommandCenterToolsNav/,
+    /ScaleDraftEditor/,
     /Selected Takeoff/,
     /selected-takeoff-inspector/,
     /selected-takeoff-edit-guidance/,
@@ -2240,6 +2239,45 @@ await expectContains(
     /Plan Room backend is still coming online/,
   ],
   "plan room workspace supports upload, zoom, scale, takeoff tools, source markup, and estimate sync (PlanRoomWorkspace shell)",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/CommandCenterToolsNav.tsx",
+  [
+    /plan-cockpit-tools-tabs/,
+    /plan-cockpit-tools-tab-\$\{view\.value\}/,
+    /AI & Scope/,
+    /Worksheet/,
+  ],
+  "command center tools are split into task-focused estimator workspaces",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/ScaleDraftEditor.tsx",
+  [/scale-draft-distance-input/, /Known real distance/, /Printed dimension/],
+  "scale calibration keeps its required distance input beside the drawing action",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/PlanRevisionOverlayPanel.tsx",
+  [
+    /Revision Overlay/,
+    /PlanRevisionReviewPanel/,
+    /PlanRevisionModeControls/,
+    /plan-revision-overlay-select/,
+  ],
+  "revision pairing, visual comparison, and estimator impact review share one focused panel",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/PlanRevisionModeControls.tsx",
+  [
+    /plan-revision-mode-controls/,
+    /plan-revision-redline-mode/,
+    /Red \/ Green/,
+    /plan-revision-opacity/,
+  ],
+  "revision review exposes explicit red-green, compare, and ghost modes",
 );
 
 await expectContains(
@@ -2304,7 +2342,7 @@ await expectContains(
 await expectContains(
   "src/components/estimates/plan-room/MeasurementGuideReviewBar.tsx",
   [
-    /AI location hint/,
+    /AI-drawn scope markup/,
     /cannot feed the estimate/,
     /Accept markup/,
     /Start trusted trace/,
@@ -2857,6 +2895,10 @@ await expectContains(
     /pdfRenderWidth/,
     /cursor-grab/,
     /plan-revision-overlay-layer/,
+    /plan-revision-new-layer/,
+    /plan-revision-redline-legend/,
+    /revision-new-green/,
+    /revision-old-red/,
     /pdfjs-dist\/build\/pdf\.worker\.min\.mjs\?url/,
     /HARBOR RESIDENCE/,
   ],
@@ -2871,6 +2913,7 @@ await expectContains(
     /data-takeoff-linked/,
     /takeoff-draft-hud/,
     /takeoff-draft-live-quantity/,
+    /takeoff-draft-hud-cancel/,
     /takeoff-draft-point-label/,
     /takeoff-draft-segment-label/,
     /takeoff-draft-command-label/,

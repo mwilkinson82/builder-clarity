@@ -1,4 +1,8 @@
-import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+} from "react";
 import {
   Check,
   DraftingCompass,
@@ -119,13 +123,13 @@ export function TakeoffTools({
             !aiAssistOpen && "border-clay bg-clay/[0.06] text-clay",
             compact && "h-8 px-2 text-xs",
           )}
-          title="AI Assist — count one symbol, let AI find the rest"
+          title="AI Markups — identify repeated symbols or find more like an accepted example"
           data-testid="takeoff-tool-ai-assist"
           disabled={!backendReady}
           onClick={onOpenAiAssist}
         >
           <img src="/favicon.svg" alt="" aria-hidden className="h-3.5 w-3.5" />
-          <span className={cn(compact && "hidden 2xl:inline")}>AI Assist</span>
+          <span className={cn(compact && "hidden 2xl:inline")}>AI Markups</span>
         </Button>
       )}
       {draftCommand && draftCommand.actionLabel && (
@@ -209,12 +213,16 @@ export function TakeoffDraftHud({
   activePointCount,
   disabled,
   onFinishDraft,
+  editor,
+  onCancel,
   className,
 }: {
   draftCommand: DraftCommandStatus | null;
   activePointCount: number;
   disabled: boolean;
   onFinishDraft: () => void;
+  editor?: ReactNode;
+  onCancel?: () => void;
   className?: string;
 }) {
   if (!draftCommand) return null;
@@ -239,19 +247,33 @@ export function TakeoffDraftHud({
         </div>
         <p className="mt-1 text-xs text-muted-foreground">{draftCommand.detail}</p>
       </div>
-      {draftCommand.actionLabel && (
-        <Button
-          type="button"
-          size="sm"
-          className="gap-1.5 self-center"
-          onClick={onFinishDraft}
-          disabled={!draftCommand.ready || disabled}
-          data-testid="takeoff-draft-hud-finish"
-        >
-          <Check className="h-3.5 w-3.5" />
-          {draftCommand.actionLabel}
-        </Button>
-      )}
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+        {editor}
+        {onCancel && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={onCancel}
+            data-testid="takeoff-draft-hud-cancel"
+          >
+            Cancel
+          </Button>
+        )}
+        {draftCommand.actionLabel && (
+          <Button
+            type="button"
+            size="sm"
+            className="gap-1.5 self-center"
+            onClick={onFinishDraft}
+            disabled={!draftCommand.ready || disabled}
+            data-testid="takeoff-draft-hud-finish"
+          >
+            <Check className="h-3.5 w-3.5" />
+            {draftCommand.actionLabel}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
