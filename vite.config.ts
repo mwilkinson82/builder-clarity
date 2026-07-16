@@ -18,6 +18,8 @@ const serverEnv = loadEnv(
 );
 Object.assign(process.env, serverEnv);
 
+const GITHUB_MAIN_REF = "https://github.com/mwilkinson82/builder-clarity.git";
+
 function resolveCommitSha() {
   const candidates = [
     process.env.VITE_COMMIT_SHA,
@@ -32,9 +34,20 @@ function resolveCommitSha() {
     return execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: process.cwd(),
       encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
     }).trim();
   } catch {
-    return "unknown";
+    try {
+      const remoteRef = execFileSync("git", ["ls-remote", GITHUB_MAIN_REF, "refs/heads/main"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 10_000,
+      }).trim();
+      const remoteSha = remoteRef.split(/\s+/, 1)[0];
+      return /^[0-9a-f]{40}$/i.test(remoteSha) ? remoteSha : "unknown";
+    } catch {
+      return "unknown";
+    }
   }
 }
 
