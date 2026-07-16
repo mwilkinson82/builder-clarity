@@ -805,11 +805,11 @@ async function loadAssemblyOutputSources(
 
   if (assemblyIds.length > 0) {
     const assembliesResult = await dynamicTable(context.supabase, "estimate_takeoff_assemblies")
-      .select("id,measurement_id")
+      .select("id,takeoff_measurement_id")
       .in("id", assemblyIds);
     if (assembliesResult.error) throw new Error(assembliesResult.error.message);
     for (const row of (assembliesResult.data ?? []) as Record<string, unknown>[]) {
-      measurementByAssemblyId.set(str(row.id), str(row.measurement_id));
+      measurementByAssemblyId.set(str(row.id), str(row.takeoff_measurement_id));
     }
   }
 
