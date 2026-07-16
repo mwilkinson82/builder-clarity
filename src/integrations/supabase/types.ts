@@ -1412,6 +1412,282 @@ export type Database = {
           },
         ]
       }
+      crm_followup_enrollments: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          opportunity_id: string
+          organization_id: string
+          owner_user_id: string | null
+          paused_at: string | null
+          playbook_id: string
+          started_at: string
+          status: string
+          stop_reason: string
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          opportunity_id: string
+          organization_id: string
+          owner_user_id?: string | null
+          paused_at?: string | null
+          playbook_id: string
+          started_at?: string
+          status?: string
+          stop_reason?: string
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          opportunity_id?: string
+          organization_id?: string
+          owner_user_id?: string | null
+          paused_at?: string | null
+          playbook_id?: string
+          started_at?: string
+          status?: string
+          stop_reason?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_followup_enrollments_opportunity_id_organization_id_fkey"
+            columns: ["opportunity_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_opportunities"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "crm_followup_enrollments_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_followup_enrollments_playbook_id_organization_id_fkey"
+            columns: ["playbook_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "crm_followup_playbooks"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      crm_followup_playbook_steps: {
+        Row: {
+          active: boolean
+          body_template: string
+          channel: string
+          created_at: string
+          created_by: string | null
+          day_offset: number
+          default_asset_id: string | null
+          id: string
+          organization_id: string
+          playbook_id: string
+          purpose: string
+          require_review: boolean
+          step_order: number
+          subject_template: string
+          title: string
+          updated_at: string
+          value_angle: string
+        }
+        Insert: {
+          active?: boolean
+          body_template?: string
+          channel?: string
+          created_at?: string
+          created_by?: string | null
+          day_offset?: number
+          default_asset_id?: string | null
+          id?: string
+          organization_id: string
+          playbook_id: string
+          purpose?: string
+          require_review?: boolean
+          step_order: number
+          subject_template?: string
+          title: string
+          updated_at?: string
+          value_angle?: string
+        }
+        Update: {
+          active?: boolean
+          body_template?: string
+          channel?: string
+          created_at?: string
+          created_by?: string | null
+          day_offset?: number
+          default_asset_id?: string | null
+          id?: string
+          organization_id?: string
+          playbook_id?: string
+          purpose?: string
+          require_review?: boolean
+          step_order?: number
+          subject_template?: string
+          title?: string
+          updated_at?: string
+          value_angle?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_followup_playbook_steps_default_asset_id_organization__fkey"
+            columns: ["default_asset_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "crm_value_assets"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "crm_followup_playbook_steps_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_followup_playbook_steps_playbook_id_organization_id_fkey"
+            columns: ["playbook_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "crm_followup_playbooks"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      crm_followup_playbooks: {
+        Row: {
+          active: boolean
+          audience: string
+          created_at: string
+          created_by: string | null
+          description: string
+          id: string
+          is_system: boolean
+          name: string
+          organization_id: string
+          system_key: string
+          trigger_stage: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          audience?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          is_system?: boolean
+          name: string
+          organization_id: string
+          system_key?: string
+          trigger_stage?: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          audience?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          is_system?: boolean
+          name?: string
+          organization_id?: string
+          system_key?: string
+          trigger_stage?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_followup_playbooks_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_value_assets: {
+        Row: {
+          approved_for_external: boolean
+          archived: boolean
+          audience: string
+          content_type: string
+          created_at: string
+          created_by: string | null
+          description: string
+          external_url: string
+          id: string
+          organization_id: string
+          original_file_name: string
+          pipeline_stage: string
+          size_bytes: number
+          source_type: string
+          storage_path: string
+          tags: string[]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          approved_for_external?: boolean
+          archived?: boolean
+          audience?: string
+          content_type?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          external_url?: string
+          id?: string
+          organization_id: string
+          original_file_name?: string
+          pipeline_stage?: string
+          size_bytes?: number
+          source_type?: string
+          storage_path?: string
+          tags?: string[]
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          approved_for_external?: boolean
+          archived?: boolean
+          audience?: string
+          content_type?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          external_url?: string
+          id?: string
+          organization_id?: string
+          original_file_name?: string
+          pipeline_stage?: string
+          size_bytes?: number
+          source_type?: string
+          storage_path?: string
+          tags?: string[]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_value_assets_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_reports: {
         Row: {
           attachment_bytes: number
@@ -2586,6 +2862,98 @@ export type Database = {
           },
           {
             foreignKeyName: "estimate_scale_assessments_plan_sheet_id_fkey"
+            columns: ["plan_sheet_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sheets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_scope_brief_reviews: {
+        Row: {
+          ai_operation_id: string
+          created_at: string
+          estimate_id: string
+          id: string
+          item_id: string
+          next_action: string
+          plan_set_id: string
+          plan_sheet_id: string
+          review_kind: string
+          review_notes: string
+          reviewed_at: string
+          reviewed_by: string | null
+          scope_label: string
+          source_excerpt: string
+          source_line: string
+          status: string
+          trade: string
+          version: number
+        }
+        Insert: {
+          ai_operation_id: string
+          created_at?: string
+          estimate_id: string
+          id?: string
+          item_id: string
+          next_action: string
+          plan_set_id: string
+          plan_sheet_id: string
+          review_kind: string
+          review_notes?: string
+          reviewed_at?: string
+          reviewed_by?: string | null
+          scope_label: string
+          source_excerpt: string
+          source_line: string
+          status: string
+          trade: string
+          version: number
+        }
+        Update: {
+          ai_operation_id?: string
+          created_at?: string
+          estimate_id?: string
+          id?: string
+          item_id?: string
+          next_action?: string
+          plan_set_id?: string
+          plan_sheet_id?: string
+          review_kind?: string
+          review_notes?: string
+          reviewed_at?: string
+          reviewed_by?: string | null
+          scope_label?: string
+          source_excerpt?: string
+          source_line?: string
+          status?: string
+          trade?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_scope_brief_reviews_ai_operation_id_fkey"
+            columns: ["ai_operation_id"]
+            isOneToOne: false
+            referencedRelation: "ai_operations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_scope_brief_reviews_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_scope_brief_reviews_plan_set_id_fkey"
+            columns: ["plan_set_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_scope_brief_reviews_plan_sheet_id_fkey"
             columns: ["plan_sheet_id"]
             isOneToOne: false
             referencedRelation: "estimate_plan_sheets"
@@ -4076,6 +4444,7 @@ export type Database = {
         Row: {
           account_id: string | null
           action_type: string
+          body: string
           completed_at: string | null
           completed_by: string | null
           contact_id: string | null
@@ -4086,14 +4455,27 @@ export type Database = {
           notes: string
           opportunity_id: string | null
           organization_id: string
+          outcome: string
+          outcome_notes: string
           owner_name: string
+          owner_user_id: string | null
+          playbook_enrollment_id: string | null
+          playbook_step_id: string | null
           priority: string
+          sent_at: string | null
+          sent_message_id: string
+          skipped_at: string | null
+          skipped_by: string | null
+          subject: string
           title: string
           updated_at: string
+          value_angle: string
+          value_asset_id: string | null
         }
         Insert: {
           account_id?: string | null
           action_type?: string
+          body?: string
           completed_at?: string | null
           completed_by?: string | null
           contact_id?: string | null
@@ -4104,14 +4486,27 @@ export type Database = {
           notes?: string
           opportunity_id?: string | null
           organization_id: string
+          outcome?: string
+          outcome_notes?: string
           owner_name?: string
+          owner_user_id?: string | null
+          playbook_enrollment_id?: string | null
+          playbook_step_id?: string | null
           priority?: string
+          sent_at?: string | null
+          sent_message_id?: string
+          skipped_at?: string | null
+          skipped_by?: string | null
+          subject?: string
           title: string
           updated_at?: string
+          value_angle?: string
+          value_asset_id?: string | null
         }
         Update: {
           account_id?: string | null
           action_type?: string
+          body?: string
           completed_at?: string | null
           completed_by?: string | null
           contact_id?: string | null
@@ -4122,10 +4517,22 @@ export type Database = {
           notes?: string
           opportunity_id?: string | null
           organization_id?: string
+          outcome?: string
+          outcome_notes?: string
           owner_name?: string
+          owner_user_id?: string | null
+          playbook_enrollment_id?: string | null
+          playbook_step_id?: string | null
           priority?: string
+          sent_at?: string | null
+          sent_message_id?: string
+          skipped_at?: string | null
+          skipped_by?: string | null
+          subject?: string
           title?: string
           updated_at?: string
+          value_angle?: string
+          value_asset_id?: string | null
         }
         Relationships: [
           {
@@ -4143,6 +4550,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "pipeline_next_actions_followup_enrollment_fk"
+            columns: ["playbook_enrollment_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "crm_followup_enrollments"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "pipeline_next_actions_followup_step_fk"
+            columns: ["playbook_step_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "crm_followup_playbook_steps"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
             foreignKeyName: "pipeline_next_actions_opportunity_id_fkey"
             columns: ["opportunity_id"]
             isOneToOne: false
@@ -4155,6 +4576,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_next_actions_value_asset_fk"
+            columns: ["value_asset_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "crm_value_assets"
+            referencedColumns: ["id", "organization_id"]
           },
         ]
       }
@@ -7631,6 +8059,41 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "estimate_plan_revision_impact_reviews"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      save_estimate_scope_brief_review: {
+        Args: {
+          p_ai_operation_id: string
+          p_item_id: string
+          p_next_action: string
+          p_review_notes: string
+          p_status: string
+        }
+        Returns: {
+          ai_operation_id: string
+          created_at: string
+          estimate_id: string
+          id: string
+          item_id: string
+          next_action: string
+          plan_set_id: string
+          plan_sheet_id: string
+          review_kind: string
+          review_notes: string
+          reviewed_at: string
+          reviewed_by: string | null
+          scope_label: string
+          source_excerpt: string
+          source_line: string
+          status: string
+          trade: string
+          version: number
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "estimate_scope_brief_reviews"
           isOneToOne: false
           isSetofReturn: true
         }
