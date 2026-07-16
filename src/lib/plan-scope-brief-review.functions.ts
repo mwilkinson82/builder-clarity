@@ -14,6 +14,10 @@ import {
   type PlanScopeBriefReviewKind,
   type PlanScopeBriefTrade,
 } from "@/lib/plan-scope-brief";
+import type {
+  ScopeBriefWorkOperation,
+  ScopeBriefWorkOperationStatus,
+} from "@/lib/plan-scope-brief-work";
 
 type DynamicError = { code?: string; message: string };
 type DynamicResult<T = unknown> = { data: T | null; error: DynamicError | null };
@@ -128,6 +132,88 @@ export const getPlanScopeBriefReviews = createServerFn({ method: "GET" })
       reviews: rows.map((row) => normalizeScopeBriefReview(row, profileNames)),
       ready: true,
     };
+  });
+
+export const getPlanScopeBriefWorkOperations = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof getReviewsInput>) => getReviewsInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const client = dynamicClient(context.supabase);
+    const reviewsResult = await client
+      .from("estimate_scope_brief_reviews")
+      .select("id")
+      .eq("estimate_id", data.estimate_id)
+      .eq("plan_set_id", data.plan_set_id)
+      .limit(1001);
+    if (isScopeBriefReviewSchemaPending(reviewsResult.error)) {
+      return { operations: [] as ScopeBriefWorkOperation[], ready: false };
+    }
+    if (reviewsResult.error) throw new Error(reviewsResult.error.message);
+    const reviewRows = (reviewsResult.data ?? []) as Record<string, unknown>[];
+    if (reviewRows.length > 1000) {
+      return { operations: [] as ScopeBriefWorkOperation[], ready: false };
+    }
+    const reviewIds = new Set(reviewRows.map((row) => str(row.id)));
+    if (reviewIds.size === 0) {
+      return { operations: [] as ScopeBriefWorkOperation[], ready: true };
+    }
+
+    const provenanceResult = await client
+      .from("estimate_takeoff_measurements")
+      .select("id,scope_brief_review_id")
+      .eq("estimate_id", data.estimate_id)
+      .limit(1);
+    if (
+      provenanceResult.error &&
+      (provenanceResult.error.code === "42703" ||
+        provenanceResult.error.code === "PGRST204" ||
+        provenanceResult.error.message.toLowerCase().includes("scope_brief_review_id"))
+    ) {
+      return { operations: [] as ScopeBriefWorkOperation[], ready: false };
+    }
+    if (provenanceResult.error) throw new Error(provenanceResult.error.message);
+
+    const operationsResult = await client
+      .from("ai_operations")
+      .select("id,status,request_context,created_at,updated_at")
+      .eq("estimate_id", data.estimate_id)
+      .order("updated_at", { ascending: false })
+      .limit(1001);
+    if (operationsResult.error) throw new Error(operationsResult.error.message);
+    const operationRows = (operationsResult.data ?? []) as Record<string, unknown>[];
+    // Never claim that a decision has no downstream work if the operation
+    // history is larger than the bounded read. The UI will show an explicit
+    // unavailable state instead of a false "Ready to start" conclusion.
+    if (operationRows.length > 1000) {
+      return { operations: [] as ScopeBriefWorkOperation[], ready: false };
+    }
+    const operations = operationRows.flatMap((row): ScopeBriefWorkOperation[] => {
+      const requestContext =
+        row.request_context && typeof row.request_context === "object"
+          ? (row.request_context as Record<string, unknown>)
+          : {};
+      const reviewId = str(requestContext.scope_brief_review_id);
+      const status = str(row.status);
+      if (
+        requestContext.source_kind !== "scope_brief" ||
+        !reviewIds.has(reviewId) ||
+        !(["pending", "succeeded", "failed"] as const).includes(
+          status as ScopeBriefWorkOperationStatus,
+        )
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: str(row.id),
+          reviewId,
+          status: status as ScopeBriefWorkOperationStatus,
+          createdAt: str(row.created_at),
+          updatedAt: str(row.updated_at),
+        },
+      ];
+    });
+    return { operations, ready: true };
   });
 
 const saveReviewInput = z.object({

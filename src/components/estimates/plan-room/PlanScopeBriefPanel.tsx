@@ -33,6 +33,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   getPlanScopeBriefReviews,
+  getPlanScopeBriefWorkOperations,
   savePlanScopeBriefReview,
 } from "@/lib/plan-scope-brief-review.functions";
 import {
@@ -54,9 +55,23 @@ import {
   type PlanScopeBriefItem,
   type PlanScopeBriefReviewKind,
 } from "@/lib/plan-scope-brief";
-import type { PlanSetRow } from "@/lib/plan-room.functions";
+import type { PlanSetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
+import {
+  derivePlanScopeBriefWorkStatus,
+  scopeBriefWorkStatusDetail,
+  scopeBriefWorkStatusLabel,
+  type ScopeBriefWorkState,
+} from "@/lib/plan-scope-brief-work";
 
 type BriefFilter = "all" | PlanScopeBriefReviewKind;
+
+const WORK_STATUS_TONE: Partial<Record<ScopeBriefWorkState, string>> = {
+  takeoff_current: "text-success",
+  takeoff_review: "text-warning",
+  prior_work: "text-warning",
+  ai_failed: "text-danger",
+  ai_pending: "text-clay",
+};
 
 const reviewedAt = (value: string) => {
   const date = new Date(value);
@@ -92,6 +107,7 @@ const reviewKindLabel = (value: PlanScopeBriefReviewKind) => {
 export function PlanScopeBriefPanel({
   estimateId,
   planSet,
+  measurements,
   pending,
   progress,
   evidencePending,
@@ -101,6 +117,7 @@ export function PlanScopeBriefPanel({
 }: {
   estimateId: string;
   planSet: PlanSetRow | null;
+  measurements: TakeoffMeasurementRow[];
   pending: boolean;
   progress: string;
   evidencePending: boolean;
@@ -117,6 +134,7 @@ export function PlanScopeBriefPanel({
   const qc = useQueryClient();
   const getBriefFn = useServerFn(getPlanScopeBrief);
   const getReviewsFn = useServerFn(getPlanScopeBriefReviews);
+  const getWorkOperationsFn = useServerFn(getPlanScopeBriefWorkOperations);
   const saveReviewFn = useServerFn(savePlanScopeBriefReview);
   const briefQuery = useQuery({
     queryKey: ["plan-scope-brief", estimateId, planSet?.id],
@@ -131,6 +149,14 @@ export function PlanScopeBriefPanel({
       getReviewsFn({ data: { estimate_id: estimateId, plan_set_id: planSet?.id ?? "" } }),
     enabled: Boolean(planSet?.id),
   });
+  const workOperationsQuery = useQuery({
+    queryKey: ["plan-scope-brief-work-operations", estimateId, planSet?.id],
+    queryFn: () =>
+      getWorkOperationsFn({
+        data: { estimate_id: estimateId, plan_set_id: planSet?.id ?? "" },
+      }),
+    enabled: Boolean(planSet?.id),
+  });
   const latestReviews = useMemo(
     () => latestPlanScopeBriefReviews(reviewsQuery.data?.reviews ?? []),
     [reviewsQuery.data?.reviews],
@@ -139,6 +165,37 @@ export function PlanScopeBriefPanel({
     () => (brief?.items ?? []).flatMap((item) => latestReviews.get(item.id) ?? []),
     [brief?.items, latestReviews],
   );
+  const takeoffWorkRows = useMemo(
+    () =>
+      measurements.map((measurement) => ({
+        id: measurement.id,
+        reviewId: measurement.scope_brief_review_id,
+        aiOperationId: measurement.ai_operation_id,
+        quantity: measurement.quantity,
+        unit: measurement.unit,
+        calculationStatus: measurement.calculation_status,
+        estimateLineItemId: measurement.estimate_line_item_id,
+        updatedAt: measurement.updated_at,
+      })),
+    [measurements],
+  );
+  const workStatusByReviewId = useMemo(() => {
+    const result = new Map<string, ReturnType<typeof derivePlanScopeBriefWorkStatus>>();
+    if (workOperationsQuery.data?.ready !== true) return result;
+    const allReviews = reviewsQuery.data?.reviews ?? [];
+    for (const review of currentReviews) {
+      result.set(
+        review.id,
+        derivePlanScopeBriefWorkStatus({
+          review,
+          itemReviews: allReviews.filter((candidate) => candidate.item_id === review.item_id),
+          operations: workOperationsQuery.data?.operations ?? [],
+          takeoffs: takeoffWorkRows,
+        }),
+      );
+    }
+    return result;
+  }, [currentReviews, reviewsQuery.data?.reviews, takeoffWorkRows, workOperationsQuery.data]);
   const reviewedCount = currentReviews.length;
   const filteredItems = useMemo(
     () => (brief?.items ?? []).filter((item) => filter === "all" || item.review_kind === filter),
@@ -391,6 +448,15 @@ export function PlanScopeBriefPanel({
                             <div key={item.id} className="bg-card px-4 py-3">
                               {(() => {
                                 const decision = latestReviews.get(item.id);
+                                const workStatus = decision
+                                  ? (workStatusByReviewId.get(decision.id) ?? null)
+                                  : null;
+                                const workStatusUnavailable = Boolean(
+                                  decision &&
+                                  !workOperationsQuery.isPending &&
+                                  (workOperationsQuery.isError ||
+                                    workOperationsQuery.data?.ready === false),
+                                );
                                 return (
                                   <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_190px] lg:items-start">
                                     <div>
@@ -430,6 +496,34 @@ export function PlanScopeBriefPanel({
                                           </p>
                                           {decision.review_notes ? (
                                             <p className="mt-1">{decision.review_notes}</p>
+                                          ) : null}
+                                          {workStatus && workStatus.state !== "decision_only" ? (
+                                            <div
+                                              className="mt-2 border-l border-hairline pl-2"
+                                              data-testid={`scope-brief-work-${item.id}`}
+                                            >
+                                              <Badge
+                                                variant="outline"
+                                                className={WORK_STATUS_TONE[workStatus.state]}
+                                              >
+                                                {scopeBriefWorkStatusLabel(workStatus)}
+                                              </Badge>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                {scopeBriefWorkStatusDetail(workStatus)}
+                                              </p>
+                                            </div>
+                                          ) : null}
+                                          {workStatusUnavailable ? (
+                                            <div className="mt-2 border-l border-warning/40 pl-2">
+                                              <Badge variant="outline" className="text-warning">
+                                                Work status unavailable
+                                              </Badge>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                The cited decision is retained, but downstream work
+                                                could not be verified. Refresh; if this persists,
+                                                verify the provenance migration.
+                                              </p>
+                                            </div>
                                           ) : null}
                                         </div>
                                       ) : null}

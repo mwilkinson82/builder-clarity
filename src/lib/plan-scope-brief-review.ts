@@ -39,14 +39,16 @@ export interface PlanScopeBriefReview {
 export const defaultScopeBriefNextAction = (
   reviewKind: PlanScopeBriefReviewKind,
 ): Exclude<PlanScopeBriefNextAction, "none"> =>
-  ({
-    count: "count_review",
-    linear: "length_review",
-    area: "area_review",
-    assembly: "assembly_review",
-    allowance: "pricing_review",
-    coordination: "scope_coordination",
-  })[reviewKind];
+  (
+    ({
+      count: "count_review",
+      linear: "length_review",
+      area: "area_review",
+      assembly: "assembly_review",
+      allowance: "pricing_review",
+      coordination: "scope_coordination",
+    }) satisfies Record<PlanScopeBriefReviewKind, Exclude<PlanScopeBriefNextAction, "none">>
+  )[reviewKind];
 
 export const planScopeBriefReviewStatusLabel = (status: PlanScopeBriefReviewStatus) =>
   ({ accepted: "Kept", deferred: "Later", excluded: "Excluded" })[status];
@@ -73,8 +75,9 @@ export const planScopeBriefStartActionLabel = (action: PlanScopeBriefNextAction)
     none: "No review action",
   })[action];
 
-export const planScopeBriefReviewIsActionable = (review: PlanScopeBriefReview) =>
-  review.status === "accepted" && review.next_action !== "none";
+export const planScopeBriefReviewIsActionable = (
+  review: Pick<PlanScopeBriefReview, "status" | "next_action">,
+) => review.status === "accepted" && review.next_action !== "none";
 
 /**
  * Reviews are append-only. Keep the newest version for each stable cited item
