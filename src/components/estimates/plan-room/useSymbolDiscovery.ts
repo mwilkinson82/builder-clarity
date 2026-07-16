@@ -38,6 +38,7 @@ import {
 } from "./aiDetectionRender";
 import { loadCachedDiscoveryRaster, saveCachedDiscoveryRaster } from "./discoveryRasterCache";
 import { requestServerSheetRender } from "./discoveryServerRender";
+import type { SymbolLibrarySuggestion } from "@/lib/ai-takeoff/symbol-library-domain";
 
 // No exemplar exists at discovery time, so the proposer runs on a fixed
 // footprint guess: ~2% of the sheet's long edge (80px at the 3800px detection
@@ -87,6 +88,8 @@ export type SymbolDiscoveryPhase = "idle" | "running" | "done";
 
 export interface SymbolDiscoveryResult {
   clusters: EmbeddingCluster[];
+  librarySuggestions: SymbolLibrarySuggestion[];
+  libraryExampleCount: number;
   crops: DiscoveryCandidateCrop[];
   candidateCount: number;
   embeddingDim: number;
@@ -104,6 +107,23 @@ export interface SymbolDiscoveryResult {
    * sitting on an already-counted mark never double-counts.
    */
   dedupeRadius: SheetRadius;
+}
+
+export interface DiscoveryMarkup {
+  id: string;
+  clusterIndex: number;
+  memberIndex: number;
+  groupNumber: number;
+  groupCount: number;
+  x: number;
+  y: number;
+  libraryLabel: string;
+}
+
+export interface DiscoveryGroupReviewOutcome {
+  label: string;
+  accepted: number;
+  rejected: number;
 }
 
 export interface UseSymbolDiscoveryArgs {
@@ -129,6 +149,11 @@ export function useSymbolDiscovery({
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<SymbolDiscoveryResult | null>(null);
+  const [selectedClusterIndex, setSelectedClusterIndex] = useState<number | null>(null);
+  const [ignoredClusterIndexes, setIgnoredClusterIndexes] = useState<number[]>([]);
+  const [reviewedGroups, setReviewedGroups] = useState<Record<number, DiscoveryGroupReviewOutcome>>(
+    {},
+  );
   // Single-entry render cache (Stage 2a): re-scanning the same sheet reuses
   // the raster instead of paying the render again. One entry keeps the big
   // canvas from piling up in memory.
@@ -153,6 +178,9 @@ export function useSymbolDiscovery({
     setPhase("running");
     setError("");
     setResult(null);
+    setSelectedClusterIndex(null);
+    setIgnoredClusterIndexes([]);
+    setReviewedGroups({});
     const startedAt = Date.now();
     let operationId: string | null = null;
     try {
@@ -244,6 +272,9 @@ export function useSymbolDiscovery({
       setProgress(`Grouping ${crops.length} candidates by what they look like…`);
       const discovered = await discoverFn({
         data: {
+          estimate_id: estimateId,
+          sheet_id: sheet.id,
+          operation_id: operationId,
           candidates: crops.map((crop) => ({
             x: crop.x,
             y: crop.y,
@@ -258,6 +289,8 @@ export function useSymbolDiscovery({
       operationId = null;
       setResult({
         clusters: discovered.clusters,
+        librarySuggestions: discovered.librarySuggestions,
+        libraryExampleCount: discovered.libraryExampleCount,
         crops,
         candidateCount: discovered.candidateCount,
         embeddingDim: discovered.embeddingDim,
@@ -273,6 +306,10 @@ export function useSymbolDiscovery({
           raster.heightPx,
         ),
       });
+      const firstGroupIndex = discovered.clusters.findIndex(
+        (cluster) => cluster.memberIndexes.length >= 2,
+      );
+      setSelectedClusterIndex(firstGroupIndex >= 0 ? firstGroupIndex : null);
       setPhase("done");
     } catch (thrown) {
       const message = thrown instanceof Error ? thrown.message : "Discovery failed.";
@@ -310,11 +347,106 @@ export function useSymbolDiscovery({
     if (result && result.sheetId === currentSheetId) {
       setError("");
       setPhase("done");
+      if (selectedClusterIndex == null) {
+        const firstGroupIndex = result.clusters.findIndex(
+          (cluster, index) =>
+            cluster.memberIndexes.length >= 2 &&
+            !ignoredClusterIndexes.includes(index) &&
+            !reviewedGroups[index],
+        );
+        setSelectedClusterIndex(firstGroupIndex >= 0 ? firstGroupIndex : null);
+      }
       setOpen(true);
       return;
     }
     await runDiscovery();
-  }, [phase, result, currentSheetId, runDiscovery]);
+  }, [
+    currentSheetId,
+    ignoredClusterIndexes,
+    phase,
+    result,
+    reviewedGroups,
+    runDiscovery,
+    selectedClusterIndex,
+  ]);
+
+  const selectGroup = useCallback((clusterIndex: number) => {
+    setSelectedClusterIndex(clusterIndex);
+    setOpen(true);
+  }, []);
+  const clearSelection = useCallback(() => setSelectedClusterIndex(null), []);
+
+  const nextUnreviewedGroup = useCallback(
+    (afterIndex: number, additionallyDone: number[] = []) => {
+      if (!result) return null;
+      const unavailable = new Set([
+        ...ignoredClusterIndexes,
+        ...Object.keys(reviewedGroups).map(Number),
+        ...additionallyDone,
+      ]);
+      const eligible = result.clusters
+        .map((cluster, index) => ({ cluster, index }))
+        .filter(
+          ({ cluster, index }) => cluster.memberIndexes.length >= 2 && !unavailable.has(index),
+        );
+      return eligible.find(({ index }) => index > afterIndex)?.index ?? eligible[0]?.index ?? null;
+    },
+    [ignoredClusterIndexes, result, reviewedGroups],
+  );
+
+  const ignoreGroup = useCallback(
+    (clusterIndex: number) => {
+      setIgnoredClusterIndexes((current) =>
+        current.includes(clusterIndex) ? current : [...current, clusterIndex],
+      );
+      setSelectedClusterIndex(nextUnreviewedGroup(clusterIndex, [clusterIndex]));
+    },
+    [nextUnreviewedGroup],
+  );
+
+  const completeGroupReview = useCallback(
+    (clusterIndex: number, outcome: DiscoveryGroupReviewOutcome) => {
+      setReviewedGroups((current) => ({ ...current, [clusterIndex]: outcome }));
+      setSelectedClusterIndex(nextUnreviewedGroup(clusterIndex, [clusterIndex]));
+      setOpen(true);
+    },
+    [nextUnreviewedGroup],
+  );
+
+  const markupsForSheet = useCallback(
+    (sheetId: string | null): DiscoveryMarkup[] => {
+      if (!open || phase !== "done" || !result || result.sheetId !== sheetId) return [];
+      return result.clusters.flatMap((cluster, clusterIndex): DiscoveryMarkup[] => {
+        if (
+          cluster.memberIndexes.length < 2 ||
+          ignoredClusterIndexes.includes(clusterIndex) ||
+          reviewedGroups[clusterIndex]
+        ) {
+          return [];
+        }
+        const suggestion = result.librarySuggestions.find(
+          (item) => item.clusterIndex === clusterIndex,
+        );
+        return cluster.memberIndexes.flatMap((memberIndex): DiscoveryMarkup[] => {
+          const crop = result.crops[memberIndex];
+          if (!crop) return [];
+          return [
+            {
+              id: `${result.operationId ?? result.sheetId}:${clusterIndex}:${memberIndex}`,
+              clusterIndex,
+              memberIndex,
+              groupNumber: clusterIndex + 1,
+              groupCount: cluster.memberIndexes.length,
+              x: crop.x,
+              y: crop.y,
+              libraryLabel: suggestion?.label ?? "",
+            },
+          ];
+        });
+      });
+    },
+    [ignoredClusterIndexes, open, phase, result, reviewedGroups],
+  );
 
   const close = useCallback(() => {
     if (phase === "running") return; // let the run finish; credits are honest
@@ -322,7 +454,24 @@ export function useSymbolDiscovery({
     setError("");
   }, [phase]);
 
-  return { phase, open, progress, error, result, start, rescan: runDiscovery, close };
+  return {
+    phase,
+    open,
+    progress,
+    error,
+    result,
+    selectedClusterIndex,
+    ignoredClusterIndexes,
+    reviewedGroups,
+    start,
+    rescan: runDiscovery,
+    close,
+    selectGroup,
+    clearSelection,
+    ignoreGroup,
+    completeGroupReview,
+    markupsForSheet,
+  };
 }
 
 export type SymbolDiscoveryController = ReturnType<typeof useSymbolDiscovery>;

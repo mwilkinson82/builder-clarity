@@ -142,9 +142,9 @@ import type { PlanEvidenceFocus, ProcessedSheetPage } from "./PdfSheetViewer";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 import { AiAssistPanel } from "./AiAssistPanel";
 import { useSymbolDiscovery } from "./useSymbolDiscovery";
-import { SymbolDiscoveryDialog } from "./SymbolDiscoveryDialog";
-import { aiDiscoveryEnabled } from "@/lib/ai-takeoff/embedding-match/ai-engine-flag";
+import { SymbolDiscoveryPanel, type StartDiscoveryGroupReviewInput } from "./SymbolDiscoveryPanel";
 import { clusterMemberPoints } from "@/lib/ai-takeoff/embedding-match/embedding-cluster-domain";
+import { saveAiSymbolLibraryExample } from "@/lib/ai-takeoff/ai-symbol-library.functions";
 import { AiReviewBar } from "./AiReviewBar";
 import { useAiAssist } from "./useAiAssist";
 import {
@@ -288,6 +288,7 @@ export function PlanRoomWorkspace({
   const completeMeasurementScopeItemFn = useServerFn(completeMeasurementScopeItem);
   const createLineForTakeoffsFn = useServerFn(createLineItemForTakeoffs);
   const recalculateSheetTakeoffsFn = useServerFn(recalculateSheetTakeoffs);
+  const saveSymbolLibraryExampleFn = useServerFn(saveAiSymbolLibraryExample);
   const measurementScopeQueueQuery = useQuery({
     queryKey: ["measurement-scope-queue", estimate.id],
     queryFn: () => getMeasurementScopeQueueFn({ data: { estimate_id: estimate.id } }),
@@ -3000,13 +3001,88 @@ export function PlanRoomWorkspace({
     pendingScopeBriefAction,
     setAiAssistScope,
   ]);
-  // Symbol discovery (SYMBOLDISCOVERY Stage 0): QA-flagged via ?aiDiscover=1.
+  // Canvas-first symbol discovery: AI marks candidate groups; the estimator
+  // names one group and every point still enters the existing count review.
   const symbolDiscovery = useSymbolDiscovery({
     estimateId: estimate.id,
     sheets,
     planSets,
     currentSheetId: currentSheet?.id ?? null,
   });
+  const startDiscoveryGroupReview = (input: StartDiscoveryGroupReviewInput) => {
+    const result = symbolDiscovery.result;
+    const cluster = result?.clusters[input.clusterIndex];
+    if (!result || !cluster) return;
+    const seeded = aiAssist.beginExternalReview({
+      label: input.label,
+      color: takeoffColor || TAKEOFF_COLORS[0],
+      unit: input.unit,
+      estimateLineItemId: input.estimateLineItemId,
+      libraryItemId: input.costLibraryItemId,
+      operationId: result.operationId,
+      radius: result.dedupeRadius,
+      points: clusterMemberPoints(cluster, result.crops).map((crop) => ({
+        sheetId: result.sheetId,
+        x: crop.x,
+        y: crop.y,
+      })),
+      onComplete: (outcome) => {
+        symbolDiscovery.completeGroupReview(input.clusterIndex, {
+          label: input.label,
+          accepted: outcome.accepted.length,
+          rejected: outcome.rejectedCount,
+        });
+        const accepted = outcome.accepted[0];
+        if (!accepted || !result.operationId) return;
+        let exemplar: (typeof result.crops)[number] | null = null;
+        for (const memberIndex of cluster.memberIndexes) {
+          const crop = result.crops[memberIndex];
+          if (!crop) continue;
+          if (!exemplar) {
+            exemplar = crop;
+            continue;
+          }
+          const cropDistance =
+            (crop.x - accepted.originalX) ** 2 + (crop.y - accepted.originalY) ** 2;
+          const exemplarDistance =
+            (exemplar.x - accepted.originalX) ** 2 + (exemplar.y - accepted.originalY) ** 2;
+          if (cropDistance < exemplarDistance) exemplar = crop;
+        }
+        if (!exemplar) return;
+        void saveSymbolLibraryExampleFn({
+          data: {
+            estimate_id: estimate.id,
+            plan_sheet_id: result.sheetId,
+            ai_operation_id: result.operationId,
+            label: input.label,
+            trade: input.trade,
+            unit: input.unit,
+            cost_library_item_id: input.costLibraryItemId,
+            source_point: { x: accepted.originalX, y: accepted.originalY },
+            exemplar_base64: exemplar.base64,
+            accepted_count: outcome.accepted.length,
+            rejected_count: outcome.rejectedCount,
+          },
+        })
+          .then(() =>
+            toast.success(
+              `${input.label} saved to the company identification library from ${outcome.accepted.length} accepted count${outcome.accepted.length === 1 ? "" : "s"}.`,
+            ),
+          )
+          .catch((error) =>
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : "The accepted symbol did not save to the company library.",
+            ),
+          );
+      },
+    });
+    if (seeded > 0) {
+      symbolDiscovery.close();
+      if (currentSheet?.id !== result.sheetId) openSheet(result.sheetId);
+    }
+  };
   const openFirstUnscaledSheet = () => {
     const sheet = unscaledSheets[0];
     if (!sheet) return;
@@ -4039,11 +4115,19 @@ export function PlanRoomWorkspace({
             aiGhosts={aiAssist.ghostsForSheet(currentSheet?.id ?? null)}
             activeAiGhostId={aiAssist.activeProposal?.id ?? null}
             onAiGhostSelect={aiAssist.selectProposal}
+            discoveryMarkups={symbolDiscovery.markupsForSheet(currentSheet?.id ?? null)}
+            activeDiscoveryClusterIndex={symbolDiscovery.selectedClusterIndex}
+            onDiscoveryGroupSelect={symbolDiscovery.selectGroup}
             aiPanel={
-              <AiAssistPanel
-                ai={aiAssist}
-                onDiscoverSymbols={aiDiscoveryEnabled() ? symbolDiscovery.start : undefined}
-              />
+              symbolDiscovery.open ? (
+                <SymbolDiscoveryPanel
+                  discovery={symbolDiscovery}
+                  lineItems={lineItems}
+                  onStartReview={startDiscoveryGroupReview}
+                />
+              ) : (
+                <AiAssistPanel ai={aiAssist} onDiscoverSymbols={symbolDiscovery.start} />
+              )
             }
             aiReviewBar={<AiReviewBar ai={aiAssist} />}
             evidenceFocus={
@@ -5178,30 +5262,6 @@ export function PlanRoomWorkspace({
         pending={syncLineMutation.isPending}
         onCancel={() => setSyncConflict(null)}
         onConfirm={confirmSyncConflict}
-      />
-      <SymbolDiscoveryDialog
-        discovery={symbolDiscovery}
-        onCountCluster={({ cluster, label }) => {
-          const result = symbolDiscovery.result;
-          if (!result) return;
-          // A named group's members become review ghosts under that label —
-          // the existing accept/reject/nudge bar counts them (Stage 1).
-          const seeded = aiAssist.beginExternalReview({
-            label,
-            color: takeoffColor || TAKEOFF_COLORS[0],
-            operationId: result.operationId,
-            radius: result.dedupeRadius,
-            points: clusterMemberPoints(cluster, result.crops).map((crop) => ({
-              sheetId: result.sheetId,
-              x: crop.x,
-              y: crop.y,
-            })),
-          });
-          if (seeded > 0) {
-            symbolDiscovery.close();
-            if (currentSheet?.id !== result.sheetId) openSheet(result.sheetId);
-          }
-        }}
       />
       {verifyOutcome && (
         <Dialog open onOpenChange={(open) => !open && setVerifyOutcome(null)}>
