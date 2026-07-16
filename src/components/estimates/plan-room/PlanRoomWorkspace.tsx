@@ -94,6 +94,8 @@ import {
   type ScaleAssuranceCheckPreview,
 } from "@/lib/plan-room-scale-assurance";
 import { analyzePlanSheetMeasurementNotes } from "@/lib/plan-room-measurement-assistant.functions";
+import { generatePlanScopeBrief } from "@/lib/plan-scope-brief.functions";
+import type { PlanScopeBriefItem } from "@/lib/plan-scope-brief";
 import {
   analyzeAcceptedPlanRevisionScope,
   type PlanRevisionMatchRow,
@@ -218,8 +220,12 @@ import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
 import { MeasurementAssistantPanel } from "./MeasurementAssistantPanel";
 import { MeasurementScopeQueuePanel } from "./MeasurementScopeQueuePanel";
 import { PlanScopeCoverageMatrix } from "./PlanScopeCoverageMatrix";
+import { PlanScopeBriefPanel } from "./PlanScopeBriefPanel";
 import { TakeoffAssemblyWorkbench } from "./TakeoffAssemblyWorkbench";
-import { extractPdfMeasurementEvidence } from "./pdfMeasurementText";
+import {
+  extractPdfMeasurementEvidence,
+  extractPdfPlanScopeBriefEvidence,
+} from "./pdfMeasurementText";
 import { FlagIssueButton } from "../FlagIssueButton";
 import type { PlanScopeCoverageRecord } from "@/lib/plan-scope-coverage";
 
@@ -274,6 +280,7 @@ export function PlanRoomWorkspace({
   const updatePlanSheetsFn = useServerFn(updatePlanSheets);
   const recordScaleAssessmentFn = useServerFn(recordScaleAssessment);
   const analyzeMeasurementNotesFn = useServerFn(analyzePlanSheetMeasurementNotes);
+  const generatePlanScopeBriefFn = useServerFn(generatePlanScopeBrief);
   const analyzeRevisionScopeFn = useServerFn(analyzeAcceptedPlanRevisionScope);
   const getMeasurementScopeQueueFn = useServerFn(getMeasurementScopeQueue);
   const saveMeasurementScopeDecisionFn = useServerFn(saveMeasurementScopeDecision);
@@ -310,6 +317,7 @@ export function PlanRoomWorkspace({
     string[]
   >([]);
   const [measurementSourceNote, setMeasurementSourceNote] = useState("");
+  const [scopeBriefProgress, setScopeBriefProgress] = useState("");
   const [measurementEvidenceAnchors, setMeasurementEvidenceAnchors] = useState<
     Record<string, MeasurementEvidenceAnchor>
   >({});
@@ -1904,6 +1912,56 @@ export function PlanRoomWorkspace({
     return data.signedUrl;
   };
 
+  const scopeBriefMutation = useMutation({
+    mutationFn: async () => {
+      if (!currentPlanSet) throw new Error("Choose a drawing set first.");
+      if (currentPlanSet.file_mime_type !== "application/pdf" || !currentPlanSet.file_path) {
+        throw new Error("The Scope Brief needs a retained vector PDF drawing set.");
+      }
+      const setSheets = sheets
+        .filter((sheet) => sheet.plan_set_id === currentPlanSet.id)
+        .sort((left, right) => left.sort_order - right.sort_order);
+      if (setSheets.length === 0) throw new Error("This drawing set has no retained sheets.");
+      const fileUrl = await planSetSignedUrl(currentPlanSet);
+      setScopeBriefProgress(`Reading selectable notes · 0/${setSheets.length} sheets`);
+      const sourceSheets = await extractPdfPlanScopeBriefEvidence({
+        fileUrl,
+        sheets: setSheets,
+        onProgress: (completed, total) =>
+          setScopeBriefProgress(`Reading selectable notes · ${completed}/${total} sheets`),
+      });
+      if (sourceSheets.length === 0) {
+        throw new Error(
+          "No supported selectable plan notes were found in this set. No AI credit was used.",
+        );
+      }
+      setScopeBriefProgress(
+        `Organizing cited scope from ${sourceSheets.length}/${setSheets.length} evidence-bearing sheets…`,
+      );
+      const brief = await generatePlanScopeBriefFn({
+        data: {
+          estimate_id: estimate.id,
+          plan_set_id: currentPlanSet.id,
+          plan_set_name: currentPlanSet.name || currentPlanSet.source_file_name,
+          total_sheet_count: setSheets.length,
+          source_sheets: sourceSheets,
+        },
+      });
+      return { brief, planSetId: currentPlanSet.id };
+    },
+    onSuccess: ({ brief, planSetId }) => {
+      qc.invalidateQueries({ queryKey: ["plan-scope-brief", estimate.id, planSetId] });
+      toast.success(
+        brief.items.length > 0
+          ? `${brief.items.length} cited estimator scope prompt${brief.items.length === 1 ? "" : "s"} ready for review.`
+          : "No sufficiently supported scope prompt was retained. Manual review remains required.",
+      );
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "The Scope Brief could not be built"),
+    onSettled: () => setScopeBriefProgress(""),
+  });
+
   const reviewAcceptedRevisionNotes = async (match: PlanRevisionMatchRow) => {
     const revisionSheet = sheets.find((sheet) => sheet.id === match.revision_sheet_id);
     const baseSheet = sheets.find((sheet) => sheet.id === match.base_sheet_id);
@@ -2108,6 +2166,34 @@ export function PlanRoomWorkspace({
       ...anchor,
     });
   };
+
+  const openScopeBriefEvidenceMutation = useMutation({
+    mutationFn: async (item: PlanScopeBriefItem) => {
+      const sheet = sheets.find((candidate) => candidate.id === item.plan_sheet_id);
+      const planSet = planSets.find((candidate) => candidate.id === sheet?.plan_set_id);
+      if (!sheet || !planSet) throw new Error("The cited drawing sheet is no longer available.");
+      if (planSet.file_mime_type !== "application/pdf" || !planSet.file_path) {
+        throw new Error("The cited brief needs its retained vector PDF.");
+      }
+      const fileUrl = await planSetSignedUrl(planSet);
+      const evidence = await extractPdfMeasurementEvidence({
+        fileUrl,
+        pageNumber: sheet.page_number,
+      });
+      return { item, anchor: evidence.anchors[item.source_line] ?? null };
+    },
+    onSuccess: ({ item, anchor }) => {
+      setSelectedSheetId(item.plan_sheet_id);
+      showMeasurementEvidence({
+        sheetId: item.plan_sheet_id,
+        sourceLine: item.source_line,
+        label: item.scope_label,
+        anchor,
+      });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "The cited sheet could not open"),
+  });
 
   const decideMeasurementSuggestion = (
     suggestion: MeasurementAssistantSuggestion,
@@ -3404,6 +3490,16 @@ export function PlanRoomWorkspace({
               setSelectedSheetId(record.sheet_id);
               openScopeCoverageRecordMutation.mutate(record);
             }}
+          />
+
+          <PlanScopeBriefPanel
+            estimateId={estimate.id}
+            planSet={currentPlanSet}
+            pending={scopeBriefMutation.isPending}
+            progress={scopeBriefProgress}
+            evidencePending={openScopeBriefEvidenceMutation.isPending}
+            onGenerate={() => scopeBriefMutation.mutate()}
+            onOpenEvidence={(item) => openScopeBriefEvidenceMutation.mutate(item)}
           />
 
           <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">

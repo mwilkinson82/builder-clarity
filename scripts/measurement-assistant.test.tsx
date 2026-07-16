@@ -22,6 +22,7 @@ import {
   partitionPlanScopeCoverageDecisions,
   planScopeCoverageDiscipline,
 } from "@/lib/plan-scope-coverage";
+import { parsePlanScopeBrief, selectPlanScopeBriefSourceLines } from "@/lib/plan-scope-brief";
 import {
   resolveScaleAssessmentForSheet,
   type ScaleAssessmentRow,
@@ -473,6 +474,77 @@ describe("guided measurement planning", () => {
     expect(partitioned.current).toEqual([currentDecision]);
     expect(partitioned.historical).toEqual([historicalDecision]);
     expect(record.plan.suggestions).toEqual([currentSuggestion]);
+  });
+
+  it("selects scope-bearing plan notes without treating title blocks or dimensions as scope", () => {
+    const selected = selectPlanScopeBriefSourceLines([
+      { line_number: "L001", text: "PROJECT CRYSTAL CARWASH" },
+      { line_number: "L002", text: "10'-0\"" },
+      { line_number: "L003", text: "MASONRY CONTROL JOINT REINFORCEMENT" },
+      { line_number: "L004", text: "DOOR JAMB AT GWB PARTITION" },
+      { line_number: "L005", text: "SHEET S-100 FOUNDATION PLAN" },
+    ]);
+
+    expect(selected).toEqual([
+      { line_number: "L003", text: "MASONRY CONTROL JOINT REINFORCEMENT" },
+      { line_number: "L004", text: "DOOR JAMB AT GWB PARTITION" },
+    ]);
+  });
+
+  it("builds a cited scope brief and drops unsupported labels or workflows", () => {
+    const sheetId = "33333333-3333-4333-8333-333333333333";
+    const brief = parsePlanScopeBrief({
+      raw: JSON.stringify({
+        items: [
+          {
+            trade: "Electrical",
+            review_kind: "linear",
+            scope_label: "masonry control joint reinforcement",
+            plan_sheet_id: sheetId,
+            source_line: "L015",
+            source_excerpt: "MASONRY CONTROL JOINT REINFORCEMENT",
+          },
+          {
+            trade: "Concrete / Masonry",
+            review_kind: "count",
+            scope_label: "masonry control joint reinforcement",
+            plan_sheet_id: sheetId,
+            source_line: "L015",
+            source_excerpt: "MASONRY CONTROL JOINT REINFORCEMENT",
+          },
+          {
+            trade: "Concrete / Masonry",
+            review_kind: "linear",
+            scope_label: "concrete foundation wall",
+            plan_sheet_id: sheetId,
+            source_line: "L015",
+            source_excerpt: "MASONRY CONTROL JOINT REINFORCEMENT",
+          },
+        ],
+      }),
+      sourceSheets: [
+        {
+          plan_sheet_id: sheetId,
+          sheet_number: "S-100",
+          sheet_name: "FOUNDATION PLAN",
+          discipline: "Structural",
+          source_lines: [{ line_number: "L015", text: "MASONRY CONTROL JOINT REINFORCEMENT" }],
+        },
+      ],
+      totalSheetCount: 2,
+    });
+
+    expect(brief.items).toHaveLength(1);
+    expect(brief.items[0]).toMatchObject({
+      trade: "Concrete / Masonry",
+      review_kind: "linear",
+      sheet_number: "S-100",
+      source_line: "L015",
+    });
+    expect(brief.warnings).toEqual([
+      "2 AI prompts were omitted because their labels or citations were not supported by the supplied drawing text.",
+      "1 sheet has no retained selectable note text and still requires manual review.",
+    ]);
   });
 
   it("prefers the just-saved assessment until refreshed server data catches up", () => {
