@@ -1121,6 +1121,10 @@ function EstimateLineRow({
   const laborExt = Math.round(
     draft.quantity * draft.labor_unit_cost_cents * estimate.region_multiplier,
   );
+  const assemblySource = line.assembly_output_source;
+  const assemblySourceQuantity = assemblySource
+    ? `${assemblySource.output_quantity.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${assemblySource.output_unit}`
+    : "";
 
   const commit = (patch: UpdateLinePayload["patch"]) => onUpdate(patch);
   const handleGridKeyDown = (colIndex: number) => (event: KeyboardEvent<HTMLInputElement>) => {
@@ -1307,7 +1311,33 @@ function EstimateLineRow({
             <PencilRuler className="h-3 w-3" /> Takeoff
           </Link>
         )}
-        {line.quantity_source === "assembly" && (
+        {assemblySource ? (
+          <Link
+            to="/estimates/$estimateId/plan-room"
+            params={{ estimateId: estimate.id }}
+            search={{ measurement: assemblySource.measurement_id }}
+            className={`mt-1 flex items-center justify-end gap-1 text-[11px] hover:text-foreground ${
+              assemblySource.status === "stale" ? "text-warning" : "text-muted-foreground"
+            }`}
+            title={
+              assemblySource.status === "stale"
+                ? `${assemblySource.output_label} is stale. Open its trusted takeoff and review before relying on this row.`
+                : `${assemblySource.output_label}: ${assemblySourceQuantity}, calculated by ${assemblySource.formula_version}. Open its trusted takeoff and confirmed inputs.`
+            }
+            data-testid="line-assembly-link"
+          >
+            {assemblySource.status === "stale" ? (
+              <AlertTriangle className="h-3 w-3" />
+            ) : (
+              <Calculator className="h-3 w-3" />
+            )}
+            <span className="max-w-40 truncate">
+              {assemblySource.status === "stale"
+                ? "Assembly needs review"
+                : `Assembly · ${assemblySource.output_label}`}
+            </span>
+          </Link>
+        ) : line.quantity_source === "assembly" ? (
           <Link
             to="/estimates/$estimateId/plan-room"
             params={{ estimateId: estimate.id }}
@@ -1318,6 +1348,11 @@ function EstimateLineRow({
           >
             <Calculator className="h-3 w-3" /> Assembly
           </Link>
+        ) : null}
+        {assemblySource && (
+          <p className="mt-0.5 text-right text-[10px] text-muted-foreground">
+            {assemblySourceQuantity} · {assemblySource.formula_version}
+          </p>
         )}
       </TableCell>
       <TableCell>

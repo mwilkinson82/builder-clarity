@@ -2564,6 +2564,46 @@ await expectContains(
 );
 
 await expectContains(
+  "src/lib/estimates.functions.ts",
+  [
+    /EstimateAssemblyOutputSource/,
+    /estimate_takeoff_assembly_output_links/,
+    /estimate_takeoff_assemblies/,
+    /measurementByAssemblyId/,
+    /assembly_output_source: assemblySources\.get\(line\.id\) \?\? null/,
+  ],
+  "estimate rows load their exact RLS-readable assembly output source trace",
+);
+
+await expectContains(
+  "src/components/estimates/EstimateWorkspace.tsx",
+  [
+    /Assembly needs review/,
+    /assemblySource\.output_label/,
+    /assemblySource\.formula_version/,
+    /search=\{\{ measurement: assemblySource\.measurement_id \}\}/,
+  ],
+  "estimate quantity cells expose current or stale assembly proof and open its markup",
+);
+
+await expectContains(
+  "src/routes/_authenticated/estimates.$estimateId.plan-room.tsx",
+  [/measurement: search\.measurement/, /focusMeasurementId=\{focusMeasurementId\}/],
+  "plan room accepts an exact measurement source-trace target",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/PlanRoomWorkspace.tsx",
+  [
+    /focusMeasurementId\?: string/,
+    /measurements\.find\(\(item\) => item\.id === focusMeasurementId\)/,
+    /setSelectedMeasurementId\(measurement\.id\)/,
+    /setSelectedSheetId\(measurement\.plan_sheet_id\)/,
+  ],
+  "assembly source traces focus the originating takeoff and sheet without mutating them",
+);
+
+await expectContains(
   "src/lib/takeoff-assembly.ts",
   [
     /assembly-engine-v1/,
