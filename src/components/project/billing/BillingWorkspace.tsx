@@ -76,6 +76,7 @@ import type {
   ProjectRow,
 } from "@/lib/projects.functions";
 import type { Rollup } from "@/lib/ior";
+import type { ProjectSubCostByBucket } from "@/lib/project-cost-forecast";
 
 import { BillingApplicationRowEditor } from "./BillingApplicationRowEditor";
 import { BillingInvoiceRowEditor } from "./BillingInvoiceRowEditor";
@@ -88,6 +89,7 @@ export function BillingWorkspace({
   changeOrders,
   exposures,
   buckets,
+  subCostByBucket,
   selfPerformByBucket,
   billingApplications,
   billingInvoices,
@@ -134,6 +136,7 @@ export function BillingWorkspace({
   changeOrders: ChangeOrderRow[];
   exposures: ExposureRow[];
   buckets: BucketRow[];
+  subCostByBucket?: ProjectSubCostByBucket;
   selfPerformByBucket?: ReadonlyMap<string, number>;
   billingApplications: BillingApplicationRow[];
   billingInvoices: BillingInvoiceRow[];
@@ -1244,6 +1247,9 @@ export function BillingWorkspace({
                 <ProjectCostTrackingPanel
                   projectId={project.id}
                   buckets={buckets}
+                  changeOrders={changeOrders}
+                  changeOrderAllocations={workspace.changeOrderAllocations}
+                  subCostByBucket={subCostByBucket}
                   exposures={exposures}
                   costActuals={workspace.costActuals}
                   onCreateCostActual={onCreateCostActual}

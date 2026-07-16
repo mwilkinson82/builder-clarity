@@ -11,6 +11,10 @@ import { CostActualInvoiceAttachmentLink } from "@/components/billing/CostActual
 import { CostCodeBreakdownManager } from "@/components/billing/CostCodeBreakdownManager";
 import { summarizeCostSettlement } from "@/lib/cost-settlement";
 import { groupCostActualsByDocument } from "@/lib/cost-documents";
+import {
+  summarizeProjectCostForecast,
+  type ProjectSubCostByBucket,
+} from "@/lib/project-cost-forecast";
 import { findOrCreateVendor, listVendors, saveVendor } from "@/lib/vendors.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
@@ -63,6 +67,8 @@ import type {
   BillingApplicationRow,
   BillingOutputFormat,
   BucketRow,
+  ChangeOrderAllocationListRow,
+  ChangeOrderRow,
   ExposureRow,
   ProjectRow,
 } from "@/lib/projects.functions";
@@ -177,6 +183,9 @@ type BillingEnhancementProps = {
   projectId: string;
   payApps: BillingApplicationRow[];
   buckets: BucketRow[];
+  changeOrders?: ChangeOrderRow[];
+  changeOrderAllocations?: ChangeOrderAllocationListRow[];
+  subCostByBucket?: ProjectSubCostByBucket;
   workspace?: BillingWorkspaceData;
   isLoading?: boolean;
   savingLine?: boolean;
@@ -267,6 +276,9 @@ export function BillingEnhancementPanels({
   projectId,
   payApps,
   buckets,
+  changeOrders,
+  changeOrderAllocations,
+  subCostByBucket,
   workspace,
   isLoading,
   savingLine,
@@ -319,6 +331,9 @@ export function BillingEnhancementPanels({
       <ProjectCostTrackingPanel
         projectId={projectId}
         buckets={buckets}
+        changeOrders={changeOrders}
+        changeOrderAllocations={changeOrderAllocations}
+        subCostByBucket={subCostByBucket}
         costActuals={workspace.costActuals}
         onCreateCostActual={onCreateCostActual}
         onImportCostActuals={onImportCostActuals}
@@ -1330,6 +1345,9 @@ function BillingLineItemEditor({
 export function ProjectCostTrackingPanel({
   projectId,
   buckets,
+  changeOrders = [],
+  changeOrderAllocations = [],
+  subCostByBucket,
   exposures = [],
   costActuals,
   onCreateCostActual,
@@ -1342,6 +1360,9 @@ export function ProjectCostTrackingPanel({
 }: {
   projectId: string;
   buckets: BucketRow[];
+  changeOrders?: ChangeOrderRow[];
+  changeOrderAllocations?: ChangeOrderAllocationListRow[];
+  subCostByBucket?: ProjectSubCostByBucket;
   exposures?: ExposureRow[];
   costActuals: CostActualRow[];
   onCreateCostActual: (input: CostActualDraft) => Promise<unknown>;
@@ -1729,17 +1750,17 @@ export function ProjectCostTrackingPanel({
       activeActuals.filter((actual) => actual.status === "paid").map((actual) => actual.amount),
     ),
   );
-  const totalBudget = centsToDollars(
-    sumDollarsToCents(buckets.map((bucket) => bucket.original_budget)),
-  );
-  const totalActual = centsToDollars(
-    sumDollarsToCents(buckets.map((bucket) => bucket.actual_to_date)),
-  );
-  const totalFtc = centsToDollars(sumDollarsToCents(buckets.map((bucket) => bucket.ftc)));
-  const projectedCost = centsToDollars(dollarsToCents(totalActual) + dollarsToCents(totalFtc));
-  const budgetVariance = centsToDollars(
-    dollarsToCents(totalBudget) - dollarsToCents(projectedCost),
-  );
+  // Consume the exact same commitment-adjusted ledger as the Budget page.
+  // Raw bucket.ftc omits the open subcontract layer and produced a false green
+  // variance on the Costs page even while Budget correctly forecast an overrun.
+  const costForecast = summarizeProjectCostForecast({
+    buckets,
+    changeOrders,
+    changeOrderAllocations,
+    subCostByBucket,
+  });
+  const totalActual = costForecast.actuals;
+  const budgetVariance = costForecast.forecastVariance;
   const cashPaid = costLedgerDetailsQuery.data?.settlementReady
     ? centsToDollars(
         activeActuals
@@ -2607,9 +2628,9 @@ export function ProjectCostTrackingPanel({
         />
         <BillingMetric label="Cash paid" value={fmtUSD(cashPaid)} sub="Payments recorded" />
         <BillingMetric
-          label="Projected vs budget"
-          value={fmtUSD(Math.abs(budgetVariance))}
-          sub={budgetVariance < 0 ? "Projected over budget" : "Projected under budget"}
+          label="Forecast variance"
+          value={`${fmtUSD(Math.abs(budgetVariance))} ${budgetVariance < 0 ? "over" : "under"}`}
+          sub={`${fmtUSD(costForecast.workingBudget)} budget − (${fmtUSD(totalActual)} actual + ${fmtUSD(costForecast.forecastToComplete)} forecast)`}
           tone={budgetVariance < 0 ? "danger" : "success"}
         />
       </div>
