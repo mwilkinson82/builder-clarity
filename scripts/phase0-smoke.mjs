@@ -1202,7 +1202,7 @@ await expectContains(
     /seed_key: "harbor-demo:claim:electrical-delay"/,
     /seed_key: "harbor-demo:claim:weather-delay"/,
     /claims: \(\) => seedHarborDemoClaims\(supabase, projectId, seedWarnings\)/,
-    /ensureVersionedHarborDemoModules\(context\.supabase, pid, context\.userId/,
+    /const demoEngine = await ensureVersionedHarborDemoModules\(/,
   ],
   "Harbor demo project seeds claims through the versioned runtime engine",
 );
