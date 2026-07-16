@@ -13,6 +13,7 @@ import {
 import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 import {
   HARBOR_DEMO_CLIENT,
+  HARBOR_DEMO_COMMERCIAL_WORKFLOW,
   HARBOR_DEMO_CPM_WALKTHROUGH,
   HARBOR_DEMO_JOB_NUMBER,
   HARBOR_DEMO_MODULES,
@@ -5135,6 +5136,12 @@ const harborDemoBuckets = [
     original_budget: 220000,
     actual_to_date: 215000,
     ftc: 8000,
+    contract_value: 260000,
+    contract_quantity: 1,
+    unit: "LS",
+    billing_method: "percent",
+    retainage_pct: 10,
+    earned_percent_complete: 83,
   },
   {
     cost_code: "0300",
@@ -5142,6 +5149,12 @@ const harborDemoBuckets = [
     original_budget: 540000,
     actual_to_date: 520000,
     ftc: 35000,
+    contract_value: 635000,
+    contract_quantity: 1800,
+    unit: "CY",
+    billing_method: "percent",
+    retainage_pct: 10,
+    earned_percent_complete: 60,
   },
   {
     cost_code: "0700",
@@ -5149,6 +5162,12 @@ const harborDemoBuckets = [
     original_budget: 430000,
     actual_to_date: 300000,
     ftc: 160000,
+    contract_value: 505000,
+    contract_quantity: 1,
+    unit: "LS",
+    billing_method: "percent",
+    retainage_pct: 10,
+    earned_percent_complete: 45,
   },
   {
     cost_code: "1500",
@@ -5156,6 +5175,12 @@ const harborDemoBuckets = [
     original_budget: 480000,
     actual_to_date: 260000,
     ftc: 240000,
+    contract_value: 565000,
+    contract_quantity: 25000,
+    unit: "LF",
+    billing_method: "percent",
+    retainage_pct: 10,
+    earned_percent_complete: 12,
   },
   {
     cost_code: "0900",
@@ -5163,6 +5188,12 @@ const harborDemoBuckets = [
     original_budget: 780000,
     actual_to_date: 180000,
     ftc: 690000,
+    contract_value: 950000,
+    contract_quantity: 12000,
+    unit: "SF",
+    billing_method: "percent",
+    retainage_pct: 10,
+    earned_percent_complete: 20,
   },
   {
     cost_code: "0130",
@@ -5170,6 +5201,12 @@ const harborDemoBuckets = [
     original_budget: 270000,
     actual_to_date: 150000,
     ftc: 142000,
+    contract_value: 285000,
+    contract_quantity: 1,
+    unit: "LS",
+    billing_method: "percent",
+    retainage_pct: 10,
+    earned_percent_complete: 55,
   },
 ] as const;
 
@@ -6339,6 +6376,859 @@ const ensureHarborDemoProjectManager = async (
   if (reviewError) seedWarnings.push(`Harbor review author update skipped: ${reviewError.message}`);
 };
 
+const harborDemoStableId = (projectId: string, discriminator: string) => {
+  const projectHex = projectId.replace(/-/g, "").toLowerCase();
+  let hash = 2166136261;
+  for (const character of discriminator) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  const suffix = (hash >>> 0).toString(16).padStart(8, "0");
+  const hex = `${projectHex.slice(0, 24)}${suffix}`.padEnd(32, "0").slice(0, 32).split("");
+  hex[12] = "4";
+  hex[16] = "8";
+  const value = hex.join("");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+};
+
+const harborDemoSourceNote = "Harbor onboarding fixture — safe to reset from Start Here.";
+
+const ensureHarborDemoBudgetSov = async (
+  supabase: unknown,
+  projectId: string,
+  upgradeExistingPlaceholders = false,
+) => {
+  const { data: rows, error } = await dynamicTable(supabase, "cost_buckets")
+    .select(
+      "id,cost_code,contract_value,contract_quantity,unit,billing_method,retainage_pct,earned_percent_complete",
+    )
+    .eq("project_id", projectId);
+  if (error) throw new Error(error.message);
+
+  const bucketByCode = new Map(
+    ((rows ?? []) as Array<Record<string, unknown>>).map((row) => [str(row.cost_code), row]),
+  );
+
+  for (const [index, bucket] of harborDemoBuckets.entries()) {
+    const existing = bucketByCode.get(bucket.cost_code);
+    if (!existing) {
+      const { error: insertError } = await dynamicTable(supabase, "cost_buckets").insert({
+        id: harborDemoStableId(projectId, `budget-${bucket.cost_code}`),
+        project_id: projectId,
+        ...bucket,
+        source_type: "original_sov",
+        source_date: "2026-06-01",
+        source_note: harborDemoSourceNote,
+        sort_order: index + 1,
+      });
+      if (insertError?.code !== "23505" && insertError) throw new Error(insertError.message);
+      continue;
+    }
+
+    // Older Harbor copies predate the SOV fields. Fill their empty placeholders
+    // exactly once, while this module is being version-upgraded. Ordinary ensure
+    // runs preserve later onboarding edits, including a deliberate zero value.
+    if (!upgradeExistingPlaceholders) continue;
+    const patch: Record<string, unknown> = {};
+    if (num(existing.contract_value) <= 0) patch.contract_value = bucket.contract_value;
+    if (num(existing.contract_quantity) <= 0) patch.contract_quantity = bucket.contract_quantity;
+    if (!str(existing.unit).trim()) patch.unit = bucket.unit;
+    if (!str(existing.billing_method).trim()) patch.billing_method = bucket.billing_method;
+    if (num(existing.earned_percent_complete) <= 0)
+      patch.earned_percent_complete = bucket.earned_percent_complete;
+    if (Object.keys(patch).length > 0) {
+      const { error: updateError } = await dynamicTable(supabase, "cost_buckets")
+        .update(patch)
+        .eq("id", str(existing.id));
+      if (updateError) throw new Error(updateError.message);
+    }
+  }
+};
+
+const resetHarborDemoBudgetSov = async (supabase: unknown, projectId: string) => {
+  await ensureHarborDemoBudgetSov(supabase, projectId);
+  for (const [index, bucket] of harborDemoBuckets.entries()) {
+    const { error } = await dynamicTable(supabase, "cost_buckets")
+      .update({
+        ...bucket,
+        source_type: "original_sov",
+        source_date: "2026-06-01",
+        source_note: harborDemoSourceNote,
+        sort_order: index + 1,
+      })
+      .eq("project_id", projectId)
+      .eq("cost_code", bucket.cost_code);
+    if (error) throw new Error(error.message);
+  }
+};
+
+const ensureHarborDemoIorCommercialPosition = async (supabase: unknown, projectId: string) => {
+  const [exposureResult, changeOrderResult] = await Promise.all([
+    dynamicTable(supabase, "exposures").select("id,title").eq("project_id", projectId),
+    dynamicTable(supabase, "change_orders").select("id,number").eq("project_id", projectId),
+  ]);
+  if (exposureResult.error) throw new Error(exposureResult.error.message);
+  if (changeOrderResult.error) throw new Error(changeOrderResult.error.message);
+
+  const exposureTitles = new Set(
+    ((exposureResult.data ?? []) as Array<Record<string, unknown>>).map((row) => str(row.title)),
+  );
+  for (const [index, exposure] of harborDemoExposures.entries()) {
+    if (exposureTitles.has(exposure.title)) continue;
+    const { error } = await dynamicTable(supabase, "exposures").insert({
+      id: harborDemoStableId(projectId, `exposure-${index}`),
+      project_id: projectId,
+      ...exposure,
+    });
+    if (error?.code !== "23505" && error) throw new Error(error.message);
+  }
+
+  const changeOrderNumbers = new Set(
+    ((changeOrderResult.data ?? []) as Array<Record<string, unknown>>).map((row) =>
+      str(row.number),
+    ),
+  );
+  for (const [index, changeOrder] of harborDemoChangeOrders.entries()) {
+    if (changeOrderNumbers.has(changeOrder.number)) continue;
+    const { error } = await dynamicTable(supabase, "change_orders").insert({
+      id: harborDemoStableId(projectId, `change-order-${index}`),
+      project_id: projectId,
+      ...changeOrder,
+    });
+    if (error?.code !== "23505" && error) throw new Error(error.message);
+  }
+
+  const [approvedCoResult, finishesBucketResult] = await Promise.all([
+    dynamicTable(supabase, "change_orders")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("number", "CO-002")
+      .maybeSingle(),
+    dynamicTable(supabase, "cost_buckets")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("cost_code", "0900")
+      .maybeSingle(),
+  ]);
+  if (approvedCoResult.error) throw new Error(approvedCoResult.error.message);
+  if (finishesBucketResult.error) throw new Error(finishesBucketResult.error.message);
+  const approvedCoId = str((approvedCoResult.data as Record<string, unknown> | null)?.id);
+  const finishesBucketId = str((finishesBucketResult.data as Record<string, unknown> | null)?.id);
+  if (approvedCoId && finishesBucketId) {
+    const allocationResult = await dynamicTable(supabase, "change_order_allocations")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("change_order_id", approvedCoId)
+      .eq("cost_code", "0900")
+      .maybeSingle();
+    if (allocationResult.error) throw new Error(allocationResult.error.message);
+    if (!allocationResult.data) {
+      const { error } = await dynamicTable(supabase, "change_order_allocations").insert({
+        id: harborDemoStableId(projectId, "change-order-allocation-co-002"),
+        project_id: projectId,
+        change_order_id: approvedCoId,
+        cost_bucket_id: finishesBucketId,
+        cost_code: "0900",
+        description: "Upgraded primary bath stone package",
+        contract_amount: 65000,
+        cost_amount: 58000,
+      });
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    }
+  }
+};
+
+const resetHarborDemoIorCommercialPosition = async (supabase: unknown, projectId: string) => {
+  await ensureHarborDemoIorCommercialPosition(supabase, projectId);
+  for (const exposure of harborDemoExposures) {
+    const { error } = await dynamicTable(supabase, "exposures")
+      .update(exposure)
+      .eq("project_id", projectId)
+      .eq("title", exposure.title);
+    if (error) throw new Error(error.message);
+  }
+  for (const changeOrder of harborDemoChangeOrders) {
+    const { error } = await dynamicTable(supabase, "change_orders")
+      .update(changeOrder)
+      .eq("project_id", projectId)
+      .eq("number", changeOrder.number);
+    if (error) throw new Error(error.message);
+  }
+  const { data: approvedCo, error: approvedCoError } = await dynamicTable(supabase, "change_orders")
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("number", "CO-002")
+    .maybeSingle();
+  if (approvedCoError) throw new Error(approvedCoError.message);
+  const approvedCoId = str((approvedCo as Record<string, unknown> | null)?.id);
+  if (approvedCoId) {
+    const { error } = await dynamicTable(supabase, "change_order_allocations")
+      .update({
+        description: "Upgraded primary bath stone package",
+        contract_amount: 65000,
+        cost_amount: 58000,
+      })
+      .eq("project_id", projectId)
+      .eq("change_order_id", approvedCoId)
+      .eq("cost_code", "0900");
+    if (error) throw new Error(error.message);
+  }
+};
+
+const harborDemoSubcontractDetails = {
+  electrical: {
+    title: "Electrical Scope on Harbor Residence",
+    scope:
+      "Electrical rough-in, branch wiring, devices, fixtures, testing, and closeout per plans.",
+    contactName: "Northeast Electric Demo Desk",
+  },
+  concrete: {
+    title: "Concrete — foundations & structure",
+    scope: "Foundations, footings, and structural concrete per plans and executed proposal.",
+    contactName: "Ray Delgado",
+  },
+  drywall: {
+    title: "Drywall — hang, finish & punch",
+    scope: "Drywall hanging, finishing, sanding, touch-up, and punch-list completion.",
+    contactName: "Jamie Torres",
+  },
+} as const;
+
+type HarborDemoCommercialIds = {
+  organizationId: string;
+  bucketByCode: Map<string, string>;
+  subcontractorByKey: Map<string, string>;
+  subcontractByKey: Map<string, string>;
+};
+
+const ensureHarborDemoSubcontractBuyout = async (
+  supabase: unknown,
+  projectId: string,
+  userId: string,
+  upgradeExistingPlaceholders = false,
+): Promise<HarborDemoCommercialIds> => {
+  const projectResult = await dynamicTable(supabase, "projects")
+    .select("organization_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (projectResult.error) throw new Error(projectResult.error.message);
+  const organizationId = str(
+    (projectResult.data as Record<string, unknown> | null)?.organization_id,
+  );
+  if (!organizationId) throw new Error("Harbor needs a company workspace before buyouts can load.");
+
+  const [bucketResult, directoryResult, subcontractResult, exposureResult] = await Promise.all([
+    dynamicTable(supabase, "cost_buckets").select("id,cost_code").eq("project_id", projectId),
+    dynamicTable(supabase, "subcontractors")
+      .select("id,name")
+      .eq("organization_id", organizationId),
+    dynamicTable(supabase, "subcontracts")
+      .select("id,subcontractor_id,title")
+      .eq("project_id", projectId),
+    dynamicTable(supabase, "exposures").select("id,title").eq("project_id", projectId),
+  ]);
+  if (bucketResult.error) throw new Error(bucketResult.error.message);
+  if (directoryResult.error) throw new Error(directoryResult.error.message);
+  if (subcontractResult.error) throw new Error(subcontractResult.error.message);
+  if (exposureResult.error) throw new Error(exposureResult.error.message);
+
+  const bucketByCode = new Map(
+    ((bucketResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
+      str(row.cost_code),
+      str(row.id),
+    ]),
+  );
+  const directoryByName = new Map(
+    ((directoryResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
+      str(row.name).toLowerCase(),
+      str(row.id),
+    ]),
+  );
+  const existingSubcontracts = (subcontractResult.data ?? []) as Array<Record<string, unknown>>;
+  const subcontractorByKey = new Map<string, string>();
+  const subcontractByKey = new Map<string, string>();
+
+  for (const fixture of HARBOR_DEMO_COMMERCIAL_WORKFLOW.subcontractors) {
+    const detail = harborDemoSubcontractDetails[fixture.key];
+    let subcontractorId = directoryByName.get(fixture.name.toLowerCase()) ?? "";
+    if (!subcontractorId) {
+      subcontractorId = harborDemoStableId(projectId, `subcontractor-${fixture.key}`);
+      const { error } = await dynamicTable(supabase, "subcontractors").insert({
+        id: subcontractorId,
+        organization_id: organizationId,
+        name: fixture.name,
+        trade: fixture.trade,
+        contact_name: detail.contactName,
+        notes: harborDemoSourceNote,
+        source: "user",
+      });
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    }
+    subcontractorByKey.set(fixture.key, subcontractorId);
+
+    const existingSubcontract = existingSubcontracts.find(
+      (row) =>
+        str(row.subcontractor_id) === subcontractorId &&
+        str(row.title).trim().toLowerCase() === detail.title.toLowerCase(),
+    );
+    let subcontractId = str(existingSubcontract?.id);
+    if (!subcontractId) {
+      subcontractId = harborDemoStableId(projectId, `subcontract-${fixture.key}`);
+      const { error } = await dynamicTable(supabase, "subcontracts").insert({
+        id: subcontractId,
+        project_id: projectId,
+        subcontractor_id: subcontractorId,
+        title: detail.title,
+        scope: detail.scope,
+        contract_value: fixture.buyout,
+        retainage_pct: 10,
+        status: "executed",
+        executed_at: "2026-06-05",
+      });
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    }
+    subcontractByKey.set(fixture.key, subcontractId);
+
+    const costBucketId = bucketByCode.get(fixture.costCode);
+    if (!costBucketId) throw new Error(`Harbor cost code ${fixture.costCode} is missing.`);
+    const allocationResult = await dynamicTable(supabase, "subcontract_allocations")
+      .select("id,planned_quantity,unit,benchmark_labor_rate")
+      .eq("project_id", projectId)
+      .eq("subcontract_id", subcontractId)
+      .eq("cost_code", fixture.costCode)
+      .maybeSingle();
+    if (allocationResult.error) throw new Error(allocationResult.error.message);
+    if (!allocationResult.data) {
+      const { error } = await dynamicTable(supabase, "subcontract_allocations").insert({
+        id: harborDemoStableId(projectId, `subcontract-allocation-${fixture.key}`),
+        project_id: projectId,
+        subcontract_id: subcontractId,
+        cost_bucket_id: costBucketId,
+        cost_code: fixture.costCode,
+        description: `${fixture.trade} buyout and production benchmark`,
+        amount: fixture.buyout,
+        planned_quantity: fixture.plannedQuantity,
+        unit: fixture.unit,
+        benchmark_labor_rate: fixture.benchmarkLaborRate,
+      });
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    } else if (upgradeExistingPlaceholders) {
+      const allocation = allocationResult.data as Record<string, unknown>;
+      const patch: Record<string, unknown> = {};
+      if (num(allocation.planned_quantity) <= 0) patch.planned_quantity = fixture.plannedQuantity;
+      if (!str(allocation.unit).trim()) patch.unit = fixture.unit;
+      if (num(allocation.benchmark_labor_rate) <= 0)
+        patch.benchmark_labor_rate = fixture.benchmarkLaborRate;
+      if (Object.keys(patch).length > 0) {
+        const { error } = await dynamicTable(supabase, "subcontract_allocations")
+          .update(patch)
+          .eq("id", str(allocation.id));
+        if (error) throw new Error(error.message);
+      }
+    }
+  }
+
+  const concreteSubcontractId = subcontractByKey.get("concrete");
+  const structureBucketId = bucketByCode.get("0300");
+  if (concreteSubcontractId && structureBucketId) {
+    const paymentId = harborDemoStableId(projectId, "subcontract-payment-concrete-1");
+    const paymentResult = await dynamicTable(supabase, "subcontract_payments")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("subcontract_id", concreteSubcontractId)
+      .eq("reference", "Progress payment #1")
+      .maybeSingle();
+    if (paymentResult.error) throw new Error(paymentResult.error.message);
+    const existingPaymentId = str(
+      (paymentResult.data as Record<string, unknown> | null)?.id,
+      paymentId,
+    );
+    if (!paymentResult.data) {
+      const { error } = await dynamicTable(supabase, "subcontract_payments").insert({
+        id: paymentId,
+        project_id: projectId,
+        subcontract_id: concreteSubcontractId,
+        amount: 20000,
+        retainage_held: 2000,
+        payment_date: "2026-07-08",
+        reference: "Progress payment #1",
+        notes: "Harbor demo: approved concrete progress payment with explicit cost-code split.",
+        status: "paid",
+        approved_at: "2026-07-08T15:00:00.000Z",
+        payment_method: "ach",
+        compliance_override_reason: "Demo payment predates the onboarding compliance lesson.",
+        compliance_overridden_by: userId,
+        compliance_overridden_at: "2026-07-08T15:00:00.000Z",
+      });
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    }
+    const splitResult = await dynamicTable(supabase, "subcontract_payment_allocations")
+      .select("id")
+      .eq("payment_id", existingPaymentId)
+      .eq("cost_code", "0300")
+      .maybeSingle();
+    if (splitResult.error) throw new Error(splitResult.error.message);
+    if (!splitResult.data) {
+      const { error } = await dynamicTable(supabase, "subcontract_payment_allocations").insert({
+        id: harborDemoStableId(projectId, "subcontract-payment-allocation-concrete-1"),
+        project_id: projectId,
+        subcontract_id: concreteSubcontractId,
+        payment_id: existingPaymentId,
+        cost_bucket_id: structureBucketId,
+        cost_code: "0300",
+        description: "Concrete progress payment #1",
+        amount: 20000,
+      });
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    }
+  }
+
+  const drywallSubcontractId = subcontractByKey.get("drywall");
+  const finishesBucketId = bucketByCode.get("0900");
+  const weakDrywallExposure = ((exposureResult.data ?? []) as Array<Record<string, unknown>>).find(
+    (row) => str(row.title) === "Weak drywall subcontractor",
+  );
+  if (drywallSubcontractId && finishesBucketId) {
+    const coResult = await dynamicTable(supabase, "subcontract_change_orders")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("subcontract_id", drywallSubcontractId)
+      .eq("description", "Supplemental finishing crew")
+      .maybeSingle();
+    if (coResult.error) throw new Error(coResult.error.message);
+    if (!coResult.data) {
+      const { error } = await dynamicTable(supabase, "subcontract_change_orders").insert({
+        id: harborDemoStableId(projectId, "subcontract-change-order-drywall-1"),
+        project_id: projectId,
+        subcontract_id: drywallSubcontractId,
+        cost_bucket_id: finishesBucketId,
+        cost_code: "0900",
+        description: "Supplemental finishing crew",
+        amount: 8000,
+        co_date: "2026-07-10",
+        exposure_id: str(weakDrywallExposure?.id) || null,
+      });
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    }
+  }
+
+  return {
+    organizationId,
+    bucketByCode,
+    subcontractorByKey,
+    subcontractByKey,
+  };
+};
+
+const resetHarborDemoSubcontractBuyout = async (
+  supabase: unknown,
+  projectId: string,
+  userId: string,
+) => {
+  const ids = await ensureHarborDemoSubcontractBuyout(supabase, projectId, userId);
+  for (const fixture of HARBOR_DEMO_COMMERCIAL_WORKFLOW.subcontractors) {
+    const subcontractId = ids.subcontractByKey.get(fixture.key);
+    const subcontractorId = ids.subcontractorByKey.get(fixture.key);
+    const bucketId = ids.bucketByCode.get(fixture.costCode);
+    if (!subcontractId || !subcontractorId || !bucketId) continue;
+    const detail = harborDemoSubcontractDetails[fixture.key];
+    const { error: subcontractError } = await dynamicTable(supabase, "subcontracts")
+      .update({
+        title: detail.title,
+        scope: detail.scope,
+        contract_value: fixture.buyout,
+        retainage_pct: 10,
+        status: "executed",
+        executed_at: "2026-06-05",
+      })
+      .eq("id", subcontractId);
+    if (subcontractError) throw new Error(subcontractError.message);
+    const { error: allocationError } = await dynamicTable(supabase, "subcontract_allocations")
+      .update({
+        cost_bucket_id: bucketId,
+        description: `${fixture.trade} buyout and production benchmark`,
+        amount: fixture.buyout,
+        planned_quantity: fixture.plannedQuantity,
+        unit: fixture.unit,
+        benchmark_labor_rate: fixture.benchmarkLaborRate,
+      })
+      .eq("project_id", projectId)
+      .eq("subcontract_id", subcontractId)
+      .eq("cost_code", fixture.costCode);
+    if (allocationError) throw new Error(allocationError.message);
+  }
+};
+
+const harborDemoFieldDays = [
+  {
+    date: "2026-07-11",
+    activity: "Electrical rough-in — main lobby north",
+    crews: 3,
+    quantity: 350,
+    percent: 7,
+    weather: "Clear, 82F",
+    narrative: "ALP Electric began main-lobby conduit and junction-box rough-in.",
+  },
+  {
+    date: "2026-07-12",
+    activity: "Electrical rough-in — main lobby north",
+    crews: 4,
+    quantity: 450,
+    percent: 11,
+    weather: "Clear, 84F",
+    narrative: "ALP Electric continued conduit, wire, and junction-box installation.",
+  },
+  {
+    date: "2026-07-13",
+    activity: "Northeast Electric - Main Lobby Area North - Rough-in",
+    crews: 4,
+    quantity: 500,
+    percent: 15,
+    weather: "Sunny, 80F",
+    narrative: "Electrical rough-in continued in the main lobby north area.",
+  },
+] as const;
+
+const buildHarborDemoFieldReportPayload = (
+  projectId: string,
+  userId: string,
+  day: (typeof harborDemoFieldDays)[number],
+) => ({
+  id: harborDemoStableId(projectId, `daily-report-${day.date}`),
+  project_id: projectId,
+  report_date: day.date,
+  author: HARBOR_DEMO_PROJECT_MANAGER,
+  created_by: userId,
+  weather: day.weather,
+  crew_count: day.crews,
+  manpower: `${day.crews} electrical crews; 2 people per crew; 8 hours per person.`,
+  work_performed: day.narrative,
+  delays: "No impacts to the electrical rough-in sequence.",
+  safety_notes: "Pre-task planning complete; no incidents.",
+  quality_notes: "Supports and box elevations checked before close-in.",
+  visitors: "Project manager and electrical foreman.",
+  notes: harborDemoSourceNote,
+  client_visible: false,
+});
+
+const buildHarborDemoFieldWipPayload = (
+  projectId: string,
+  userId: string,
+  day: (typeof harborDemoFieldDays)[number],
+  costBucketId: string,
+  subcontractorId: string,
+  scheduleActivityId: string | null,
+) => ({
+  id: harborDemoStableId(projectId, `daily-wip-${day.date}`),
+  project_id: projectId,
+  cost_bucket_id: costBucketId,
+  schedule_activity_id: scheduleActivityId,
+  subcontractor_id: subcontractorId,
+  unmatched_vendor_name: "",
+  entry_date: day.date,
+  activity: day.activity,
+  crew_count: day.crews,
+  people_per_crew: 2,
+  hours: 8,
+  labor_rate: 110,
+  material_cost: day.date === "2026-07-13" ? 0 : 2500,
+  equipment_cost: day.date === "2026-07-13" ? 1000 : 0,
+  material_items:
+    day.date === "2026-07-13"
+      ? []
+      : [{ description: "Conduit, boxes, fittings, and wire", amount: 2500 }],
+  equipment_items: day.date === "2026-07-13" ? [{ description: "Man Lift", amount: 1000 }] : [],
+  quantity: day.quantity,
+  unit: HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionMeasure,
+  quantity_items: [
+    { quantity: day.quantity, unit: "LF", description: "Conduit" },
+    { quantity: day.quantity, unit: "LF", description: "Wire" },
+    { quantity: 25, unit: "EA", description: "Junction Boxes" },
+  ],
+  target_production_rate: HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionTargetRate,
+  percent_basis: "sov",
+  field_percent_complete: day.percent,
+  percent_complete: day.percent,
+  percent_overridden_at: null,
+  wip_reviewed_at: `${day.date}T20:00:00.000Z`,
+  wip_reviewed_by: userId,
+  notes: `${harborDemoSourceNote} Production measure: LF of conduit per labor-hour.`,
+  created_by: userId,
+});
+
+const ensureHarborDemoDailyReportsWip = async (
+  supabase: unknown,
+  projectId: string,
+  userId: string,
+) => {
+  const ids = await ensureHarborDemoSubcontractBuyout(supabase, projectId, userId);
+  const costBucketId = ids.bucketByCode.get("1500");
+  const subcontractorId = ids.subcontractorByKey.get("electrical");
+  if (!costBucketId || !subcontractorId)
+    throw new Error("Harbor electrical production prerequisites are missing.");
+
+  const [reportResult, wipResult, activityResult] = await Promise.all([
+    dynamicTable(supabase, "daily_reports").select("id,report_date").eq("project_id", projectId),
+    dynamicTable(supabase, "daily_wip_entries")
+      .select("id,entry_date,cost_bucket_id,subcontractor_id")
+      .eq("project_id", projectId),
+    dynamicTable(supabase, "schedule_activities")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("activity_id", "26-010")
+      .maybeSingle(),
+  ]);
+  if (reportResult.error) throw new Error(reportResult.error.message);
+  if (wipResult.error) throw new Error(wipResult.error.message);
+  if (activityResult.error && !isScheduleActivitiesSchemaError(activityResult.error))
+    throw new Error(activityResult.error.message);
+
+  const reportDates = new Set(
+    ((reportResult.data ?? []) as Array<Record<string, unknown>>).map((row) =>
+      str(row.report_date),
+    ),
+  );
+  const wipRows = (wipResult.data ?? []) as Array<Record<string, unknown>>;
+  const scheduleActivityId =
+    str((activityResult.data as Record<string, unknown> | null)?.id) || null;
+
+  for (const day of harborDemoFieldDays) {
+    if (!reportDates.has(day.date)) {
+      const { error } = await dynamicTable(supabase, "daily_reports").insert(
+        buildHarborDemoFieldReportPayload(projectId, userId, day),
+      );
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    }
+
+    const existingWip = wipRows.find(
+      (row) =>
+        str(row.entry_date) === day.date &&
+        str(row.cost_bucket_id) === costBucketId &&
+        str(row.subcontractor_id) === subcontractorId,
+    );
+    if (!existingWip) {
+      const { error } = await dynamicTable(supabase, "daily_wip_entries").insert(
+        buildHarborDemoFieldWipPayload(
+          projectId,
+          userId,
+          day,
+          costBucketId,
+          subcontractorId,
+          scheduleActivityId,
+        ),
+      );
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    }
+  }
+};
+
+const resetHarborDemoDailyReportsWip = async (
+  supabase: unknown,
+  projectId: string,
+  userId: string,
+) => {
+  await ensureHarborDemoDailyReportsWip(supabase, projectId, userId);
+  const ids = await ensureHarborDemoSubcontractBuyout(supabase, projectId, userId);
+  const costBucketId = ids.bucketByCode.get("1500");
+  const subcontractorId = ids.subcontractorByKey.get("electrical");
+  if (!costBucketId || !subcontractorId) return;
+  const activityResult = await dynamicTable(supabase, "schedule_activities")
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("activity_id", "26-010")
+    .maybeSingle();
+  if (activityResult.error && !isScheduleActivitiesSchemaError(activityResult.error))
+    throw new Error(activityResult.error.message);
+  const scheduleActivityId =
+    str((activityResult.data as Record<string, unknown> | null)?.id) || null;
+
+  for (const day of harborDemoFieldDays) {
+    const reportPayload = buildHarborDemoFieldReportPayload(projectId, userId, day);
+    const { id: _reportId, ...reportPatch } = reportPayload;
+    const { error: reportError } = await dynamicTable(supabase, "daily_reports")
+      .update(reportPatch)
+      .eq("project_id", projectId)
+      .eq("report_date", day.date);
+    if (reportError) throw new Error(reportError.message);
+
+    const wipPayload = buildHarborDemoFieldWipPayload(
+      projectId,
+      userId,
+      day,
+      costBucketId,
+      subcontractorId,
+      scheduleActivityId,
+    );
+    const { id: _wipId, ...wipPatch } = wipPayload;
+    const { error: wipError } = await dynamicTable(supabase, "daily_wip_entries")
+      .update(wipPatch)
+      .eq("project_id", projectId)
+      .eq("entry_date", day.date)
+      .eq("cost_bucket_id", costBucketId)
+      .eq("subcontractor_id", subcontractorId);
+    if (wipError) throw new Error(wipError.message);
+  }
+};
+
+const harborDemoPriorBillingPercentByCode: Record<string, number> = {
+  "0100": 80,
+  "0300": 60,
+  "0700": 45,
+  "1500": 10,
+  "0900": 20,
+  "0130": 55,
+};
+
+const buildHarborDemoBillingApplicationPayload = (projectId: string) => ({
+  id: harborDemoStableId(projectId, "billing-application-draft-2"),
+  project_id: projectId,
+  application_number: HARBOR_DEMO_COMMERCIAL_WORKFLOW.billingApplicationNumber,
+  invoice_number: "DEMO-2607-2",
+  submitted_date: null,
+  due_date: "2026-08-31",
+  billing_period: "July 2026",
+  contract_amount: 3200000,
+  change_order_amount: 65000,
+  amount_billed: 0,
+  paid_to_date: 0,
+  retainage: 0,
+  total_retainage_held: 0,
+  retainage_released_this_period: 0,
+  has_line_detail: true,
+  output_format: "aia_g702",
+  status: "draft",
+  notes:
+    "Harbor onboarding: the PM certifies production in Daily WIP; accounting chooses whether to apply it to this draft.",
+  sort_order: 2,
+});
+
+const buildHarborDemoBillingLinePayload = (
+  projectId: string,
+  billingApplicationId: string,
+  bucket: (typeof harborDemoBuckets)[number],
+  sortOrder: number,
+) => {
+  const previousPercent = harborDemoPriorBillingPercentByCode[bucket.cost_code] ?? 0;
+  return {
+    id: harborDemoStableId(projectId, `billing-line-${bucket.cost_code}`),
+    billing_application_id: billingApplicationId,
+    project_id: projectId,
+    cost_bucket_id: "",
+    cost_code: bucket.cost_code,
+    description: bucket.bucket,
+    billing_method: bucket.billing_method,
+    scheduled_value_cents: Math.round(bucket.contract_value * 100),
+    change_order_value_cents: bucket.cost_code === "0900" ? 6500000 : 0,
+    work_completed_previous_cents: Math.round(
+      (bucket.contract_value * 100 * previousPercent) / 100,
+    ),
+    materials_stored_previous_cents: 0,
+    work_completed_this_period_cents: 0,
+    materials_stored_this_period_cents: 0,
+    retainage_pct: bucket.retainage_pct,
+    retainage_released_cents: 0,
+    sort_order: sortOrder,
+  };
+};
+
+const ensureHarborDemoBillingWorkspace = async (supabase: unknown, projectId: string) => {
+  await ensureHarborDemoBudgetSov(supabase, projectId);
+  const appResult = await dynamicTable(supabase, "billing_applications")
+    .select("id,application_number")
+    .eq("project_id", projectId)
+    .eq("application_number", HARBOR_DEMO_COMMERCIAL_WORKFLOW.billingApplicationNumber)
+    .maybeSingle();
+  if (appResult.error) throw new Error(appResult.error.message);
+
+  let billingApplicationId = str((appResult.data as Record<string, unknown> | null)?.id);
+  if (!billingApplicationId) {
+    billingApplicationId = harborDemoStableId(projectId, "billing-application-draft-2");
+    const { error } = await dynamicTable(supabase, "billing_applications").insert(
+      buildHarborDemoBillingApplicationPayload(projectId),
+    );
+    if (error?.code !== "23505" && error) throw new Error(error.message);
+  }
+
+  const [bucketResult, lineResult] = await Promise.all([
+    dynamicTable(supabase, "cost_buckets").select("id,cost_code").eq("project_id", projectId),
+    dynamicTable(supabase, "billing_line_items")
+      .select("id,cost_code,cost_bucket_id")
+      .eq("billing_application_id", billingApplicationId),
+  ]);
+  if (bucketResult.error) throw new Error(bucketResult.error.message);
+  if (lineResult.error) throw new Error(lineResult.error.message);
+  const bucketIdByCode = new Map(
+    ((bucketResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
+      str(row.cost_code),
+      str(row.id),
+    ]),
+  );
+  const lineCodes = new Set(
+    ((lineResult.data ?? []) as Array<Record<string, unknown>>).map((row) => str(row.cost_code)),
+  );
+
+  for (const [index, bucket] of harborDemoBuckets.entries()) {
+    if (lineCodes.has(bucket.cost_code)) continue;
+    const costBucketId = bucketIdByCode.get(bucket.cost_code);
+    if (!costBucketId) throw new Error(`Harbor billing cost code ${bucket.cost_code} is missing.`);
+    const line = buildHarborDemoBillingLinePayload(
+      projectId,
+      billingApplicationId,
+      bucket,
+      index + 1,
+    );
+    const { error } = await dynamicTable(supabase, "billing_line_items").insert({
+      ...line,
+      cost_bucket_id: costBucketId,
+    });
+    if (error?.code !== "23505" && error) throw new Error(error.message);
+  }
+};
+
+const resetHarborDemoBillingWorkspace = async (supabase: unknown, projectId: string) => {
+  await ensureHarborDemoBillingWorkspace(supabase, projectId);
+  const appResult = await dynamicTable(supabase, "billing_applications")
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("application_number", HARBOR_DEMO_COMMERCIAL_WORKFLOW.billingApplicationNumber)
+    .maybeSingle();
+  if (appResult.error) throw new Error(appResult.error.message);
+  const billingApplicationId = str((appResult.data as Record<string, unknown> | null)?.id);
+  if (!billingApplicationId) return;
+  const { id: _appId, ...appPatch } = buildHarborDemoBillingApplicationPayload(projectId);
+  const { error: appError } = await dynamicTable(supabase, "billing_applications")
+    .update(appPatch)
+    .eq("id", billingApplicationId);
+  if (appError) throw new Error(appError.message);
+
+  const bucketResult = await dynamicTable(supabase, "cost_buckets")
+    .select("id,cost_code")
+    .eq("project_id", projectId);
+  if (bucketResult.error) throw new Error(bucketResult.error.message);
+  const bucketIdByCode = new Map(
+    ((bucketResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
+      str(row.cost_code),
+      str(row.id),
+    ]),
+  );
+  for (const [index, bucket] of harborDemoBuckets.entries()) {
+    const costBucketId = bucketIdByCode.get(bucket.cost_code);
+    if (!costBucketId) continue;
+    const line = buildHarborDemoBillingLinePayload(
+      projectId,
+      billingApplicationId,
+      bucket,
+      index + 1,
+    );
+    const { id: _lineId, ...linePatch } = line;
+    const { error } = await dynamicTable(supabase, "billing_line_items")
+      .update({ ...linePatch, cost_bucket_id: costBucketId })
+      .eq("billing_application_id", billingApplicationId)
+      .eq("cost_code", bucket.cost_code);
+    if (error) throw new Error(error.message);
+  }
+};
+
 type HarborDemoModuleRun = {
   key: HarborDemoModuleKey;
   targetVersion: number;
@@ -6421,11 +7311,29 @@ const ensureVersionedHarborDemoModules = async (
     addRegistryWarning(`Harbor demo version registry write skipped: ${error.message}`);
   };
 
+  const moduleNeedsUpgrade = (key: HarborDemoModuleKey) => {
+    const targetVersion = HARBOR_DEMO_MODULES.find((module) => module.key === key)?.version ?? 0;
+    return (appliedVersions.get(key) ?? 0) < targetVersion;
+  };
+
   const adapters = {
     "project-foundation": () => ensureHarborDemoProjectManager(supabase, projectId, seedWarnings),
+    "budget-sov": () =>
+      ensureHarborDemoBudgetSov(supabase, projectId, moduleNeedsUpgrade("budget-sov")),
+    "ior-commercial-position": () => ensureHarborDemoIorCommercialPosition(supabase, projectId),
+    "subcontract-buyout": () =>
+      ensureHarborDemoSubcontractBuyout(
+        supabase,
+        projectId,
+        userId,
+        moduleNeedsUpgrade("subcontract-buyout"),
+      ),
     "cpm-schedule": () => seedHarborDemoCpmActivities(supabase, projectId, seedWarnings),
+    "daily-reports-wip": () => ensureHarborDemoDailyReportsWip(supabase, projectId, userId),
     "daily-wip-cpm-evidence": () =>
       seedHarborDemoCpmEvidence(supabase, projectId, userId, seedWarnings),
+    "production-control": () => ensureHarborDemoDailyReportsWip(supabase, projectId, userId),
+    "billing-workspace": () => ensureHarborDemoBillingWorkspace(supabase, projectId),
     inspections: () => seedHarborDemoInspections(supabase, projectId, seedWarnings),
     claims: () => seedHarborDemoClaims(supabase, projectId, seedWarnings),
   } satisfies Record<HarborDemoModuleKey, () => Promise<unknown>>;
@@ -6474,6 +7382,21 @@ const resetHarborDemoModuleFixtures = async (
       })
       .eq("id", projectId);
     if (error) throw new Error(error.message);
+    return;
+  }
+
+  if (moduleKey === "budget-sov") {
+    await resetHarborDemoBudgetSov(supabase, projectId);
+    return;
+  }
+
+  if (moduleKey === "ior-commercial-position") {
+    await resetHarborDemoIorCommercialPosition(supabase, projectId);
+    return;
+  }
+
+  if (moduleKey === "subcontract-buyout") {
+    await resetHarborDemoSubcontractBuyout(supabase, projectId, userId);
     return;
   }
 
@@ -6535,6 +7458,22 @@ const resetHarborDemoModuleFixtures = async (
     return;
   }
 
+  if (moduleKey === "daily-reports-wip") {
+    await resetHarborDemoDailyReportsWip(supabase, projectId, userId);
+    return;
+  }
+
+  if (moduleKey === "production-control") {
+    await resetHarborDemoSubcontractBuyout(supabase, projectId, userId);
+    await resetHarborDemoDailyReportsWip(supabase, projectId, userId);
+    return;
+  }
+
+  if (moduleKey === "billing-workspace") {
+    await resetHarborDemoBillingWorkspace(supabase, projectId);
+    return;
+  }
+
   if (moduleKey === "inspections") {
     for (const inspection of harborDemoInspections) {
       const { error } = await dynamicTable(supabase, "project_inspections")
@@ -6568,8 +7507,14 @@ const resetHarborDemoModuleInput = z.object({
   projectId: z.string().uuid(),
   moduleKey: z.enum([
     "project-foundation",
+    "budget-sov",
+    "ior-commercial-position",
+    "subcontract-buyout",
     "cpm-schedule",
+    "daily-reports-wip",
     "daily-wip-cpm-evidence",
+    "production-control",
+    "billing-workspace",
     "inspections",
     "claims",
   ]),

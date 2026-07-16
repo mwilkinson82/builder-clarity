@@ -7,6 +7,7 @@
 // same."
 import assert from "node:assert/strict";
 import { computeBudgetLedger, ledgerLineMargin } from "../src/lib/budget-ledger.ts";
+import { summarizeProjectCostForecast } from "../src/lib/project-cost-forecast.ts";
 import {
   sovLineForecast,
   sovLineForecastWithSubs,
@@ -111,6 +112,41 @@ assert.notEqual(
   ledger.totals.contractValue,
   ledger.totals.budget,
   "contract value and budget must not be the same number",
+);
+
+// Costs workspace regression: it must use the Budget ledger's subcontract-
+// adjusted open commitment, not raw bucket.ftc. This reproduces the founder QA
+// case where raw FTC was zero but the real projection was about $130k.
+const costWorkspaceForecast = summarizeProjectCostForecast({
+  buckets: [
+    {
+      id: "qa-cost",
+      cost_code: "0900",
+      bucket: "Finishes",
+      contract_value: 160000,
+      original_budget: 100977.48,
+      actual_to_date: 5669.09,
+      ftc: 0,
+    },
+  ],
+  subCostByBucket: new Map([["qa-cost", { paid: 0, open: 124330.91, committed: 124330.91 }]]),
+});
+assert.equal(costWorkspaceForecast.actuals, 5669.09, "recognized actual remains intact");
+assert.equal(
+  costWorkspaceForecast.forecastToComplete,
+  124330.91,
+  "open subcontract commitment becomes forecast to complete",
+);
+assert.equal(costWorkspaceForecast.projectedCost, 130000, "actual + forecast = real projection");
+assert.equal(
+  costWorkspaceForecast.forecastVariance,
+  -29022.52,
+  "working budget − projection reports the overrun instead of a false green cushion",
+);
+assert.equal(
+  costWorkspaceForecast.projectedMargin,
+  30000,
+  "contract − projection remains the separate projected margin",
 );
 
 // ---------------------------------------------------------------------------

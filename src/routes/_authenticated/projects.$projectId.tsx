@@ -3377,6 +3377,7 @@ function ProjectPage() {
                   changeOrders={changeOrders}
                   exposures={exposures}
                   buckets={buckets}
+                  subCostByBucket={subCostByBucket}
                   selfPerformByBucket={selfPerformByBucket}
                   billingApplications={visibleBillingApplications}
                   billingInvoices={billingInvoices ?? []}
