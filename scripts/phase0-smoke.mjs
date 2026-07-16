@@ -2647,6 +2647,40 @@ await expectContains(
 );
 
 await expectContains(
+  "src/lib/estimate-review-gate.ts",
+  [
+    /buildEstimateReviewGate/,
+    /linked_quantity_blockers/,
+    /unpriced_active_rows/,
+    /zero_quantity_rows/,
+    /plan_room_follow_ups/,
+  ],
+  "estimate review gate derives blockers and follow-ups without claiming bid certification",
+);
+
+await expectContains(
+  "src/components/estimates/EstimateReviewGate.tsx",
+  [
+    /Estimate Review Gate/,
+    /does not certify/,
+    /Human sign-off remains required/,
+    /estimate-review-gate/,
+  ],
+  "estimate review gate keeps estimator authority and names its limited proof surface",
+);
+
+await expectContains(
+  "src/components/estimates/EstimateWorkspace.tsx",
+  [
+    /buildEstimateReviewGate/,
+    /<EstimateReviewGate/,
+    /id="estimate-line-items"/,
+    /<EstimateQuantitySourceReview/,
+  ],
+  "estimate workspace places the review gate ahead of source detail and line items",
+);
+
+await expectContains(
   "src/lib/takeoff-assembly.ts",
   [
     /assembly-engine-v1/,
