@@ -301,7 +301,7 @@ export function PreparedFollowupCard({
                     <AlertDialogDescription>
                       {demoMode
                         ? `OverWatch will record the complete delivery workflow for ${action.contact_email}, but no external email will leave the application.`
-                        : `OverWatch will email ${action.contact_email} now, record the delivery, and close this playbook step. Replies go to your OverWatch profile email.`}
+                        : `OverWatch will email ${action.contact_email} now, record the delivery, and close this playbook step. Replies go to the OverWatch support inbox.`}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <div className="rounded-lg border border-hairline bg-muted/40 px-3 py-2 text-sm">

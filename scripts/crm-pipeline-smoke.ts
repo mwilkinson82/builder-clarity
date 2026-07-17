@@ -77,6 +77,12 @@ assert.equal(
   }).provider,
   "lovable_email",
 );
+assert.deepEqual(resolveCrmEmailSenderConfig({ RESEND_API_KEY: "test-key" }), {
+  provider: "resend",
+  fromAddress: "notifications@alpoverwatch.com",
+  replyToAddress: "support@alpoverwatch.com",
+  senderDomain: "alpoverwatch.com",
+});
 assert.throws(
   () =>
     resolveCrmEmailSenderConfig({
@@ -84,6 +90,13 @@ assert.throws(
       CRM_EMAIL_SENDER_DOMAIN: "send.overwatch.example",
     }),
   /complete email address/,
+);
+assert.throws(
+  () =>
+    resolveCrmEmailSenderConfig({
+      CRM_EMAIL_REPLY_TO_ADDRESS: "not-an-email",
+    }),
+  /CRM_EMAIL_REPLY_TO_ADDRESS/,
 );
 
 const emailDeliverySource = readFileSync(
