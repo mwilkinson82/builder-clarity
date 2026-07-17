@@ -4033,6 +4033,9 @@ export type Database = {
       estimates: {
         Row: {
           bond_pct: number
+          canonical_demo_key: string | null
+          canonical_demo_version: number | null
+          canonical_expected_total_cents: number | null
           contingency_pct: number
           created_at: string
           created_by: string | null
@@ -4041,6 +4044,7 @@ export type Database = {
           folder: string
           general_conditions_pct: number
           id: string
+          is_canonical_demo: boolean
           kind: string
           name: string
           opportunity_id: string | null
@@ -4061,6 +4065,9 @@ export type Database = {
         }
         Insert: {
           bond_pct?: number
+          canonical_demo_key?: string | null
+          canonical_demo_version?: number | null
+          canonical_expected_total_cents?: number | null
           contingency_pct?: number
           created_at?: string
           created_by?: string | null
@@ -4069,6 +4076,7 @@ export type Database = {
           folder?: string
           general_conditions_pct?: number
           id?: string
+          is_canonical_demo?: boolean
           kind?: string
           name: string
           opportunity_id?: string | null
@@ -4089,6 +4097,9 @@ export type Database = {
         }
         Update: {
           bond_pct?: number
+          canonical_demo_key?: string | null
+          canonical_demo_version?: number | null
+          canonical_expected_total_cents?: number | null
           contingency_pct?: number
           created_at?: string
           created_by?: string | null
@@ -4097,6 +4108,7 @@ export type Database = {
           folder?: string
           general_conditions_pct?: number
           id?: string
+          is_canonical_demo?: boolean
           kind?: string
           name?: string
           opportunity_id?: string | null
