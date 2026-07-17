@@ -95,6 +95,156 @@ export type Database = {
           },
         ]
       }
+      ai_symbol_library_examples: {
+        Row: {
+          accepted_count: number
+          created_at: string
+          created_by: string | null
+          embedding: Json
+          exemplar_storage_path: string
+          id: string
+          library_item_id: string
+          organization_id: string
+          rejected_count: number
+          source_ai_operation_id: string | null
+          source_estimate_id: string | null
+          source_plan_sheet_id: string | null
+          source_point: Json
+          source_point_key: string
+        }
+        Insert: {
+          accepted_count: number
+          created_at?: string
+          created_by?: string | null
+          embedding: Json
+          exemplar_storage_path: string
+          id?: string
+          library_item_id: string
+          organization_id: string
+          rejected_count?: number
+          source_ai_operation_id?: string | null
+          source_estimate_id?: string | null
+          source_plan_sheet_id?: string | null
+          source_point: Json
+          source_point_key: string
+        }
+        Update: {
+          accepted_count?: number
+          created_at?: string
+          created_by?: string | null
+          embedding?: Json
+          exemplar_storage_path?: string
+          id?: string
+          library_item_id?: string
+          organization_id?: string
+          rejected_count?: number
+          source_ai_operation_id?: string | null
+          source_estimate_id?: string | null
+          source_plan_sheet_id?: string | null
+          source_point?: Json
+          source_point_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_symbol_library_examples_library_item_id_fkey"
+            columns: ["library_item_id"]
+            isOneToOne: false
+            referencedRelation: "ai_symbol_library_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_examples_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_examples_source_ai_operation_id_fkey"
+            columns: ["source_ai_operation_id"]
+            isOneToOne: false
+            referencedRelation: "ai_operations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_examples_source_estimate_id_fkey"
+            columns: ["source_estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_examples_source_plan_sheet_id_fkey"
+            columns: ["source_plan_sheet_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sheets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_symbol_library_items: {
+        Row: {
+          active: boolean
+          cost_library_item_id: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          label: string
+          last_used_at: string | null
+          normalized_label: string
+          organization_id: string
+          trade: string
+          unit: string
+          updated_at: string
+          use_count: number
+        }
+        Insert: {
+          active?: boolean
+          cost_library_item_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label: string
+          last_used_at?: string | null
+          normalized_label: string
+          organization_id: string
+          trade?: string
+          unit?: string
+          updated_at?: string
+          use_count?: number
+        }
+        Update: {
+          active?: boolean
+          cost_library_item_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label?: string
+          last_used_at?: string | null
+          normalized_label?: string
+          organization_id?: string
+          trade?: string
+          unit?: string
+          updated_at?: string
+          use_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_symbol_library_items_cost_library_item_id_fkey"
+            columns: ["cost_library_item_id"]
+            isOneToOne: false
+            referencedRelation: "cost_library_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_symbol_library_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       app_super_admins: {
         Row: {
           created_at: string
@@ -1617,6 +1767,328 @@ export type Database = {
           },
         ]
       }
+      crm_meeting_briefs: {
+        Row: {
+          ai_operation_id: string | null
+          attendee_names: string[]
+          brief_data: Json
+          created_at: string
+          created_by: string | null
+          generated_at: string | null
+          id: string
+          meeting_at: string | null
+          meeting_goal: string
+          meeting_type: string
+          model_used: string
+          opportunity_id: string
+          organization_id: string
+          owner_user_id: string | null
+          source_context: Json
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          ai_operation_id?: string | null
+          attendee_names?: string[]
+          brief_data?: Json
+          created_at?: string
+          created_by?: string | null
+          generated_at?: string | null
+          id?: string
+          meeting_at?: string | null
+          meeting_goal?: string
+          meeting_type?: string
+          model_used?: string
+          opportunity_id: string
+          organization_id: string
+          owner_user_id?: string | null
+          source_context?: Json
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          ai_operation_id?: string | null
+          attendee_names?: string[]
+          brief_data?: Json
+          created_at?: string
+          created_by?: string | null
+          generated_at?: string | null
+          id?: string
+          meeting_at?: string | null
+          meeting_goal?: string
+          meeting_type?: string
+          model_used?: string
+          opportunity_id?: string
+          organization_id?: string
+          owner_user_id?: string | null
+          source_context?: Json
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_meeting_briefs_ai_operation_id_organization_id_fkey"
+            columns: ["ai_operation_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "ai_operations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "crm_meeting_briefs_opportunity_id_organization_id_fkey"
+            columns: ["opportunity_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_opportunities"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "crm_meeting_briefs_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_onboarding_plans: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          handoff_summary: string
+          id: string
+          kickoff_date: string | null
+          opportunity_id: string
+          organization_id: string
+          owner_user_id: string | null
+          project_id: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          handoff_summary?: string
+          id?: string
+          kickoff_date?: string | null
+          opportunity_id: string
+          organization_id: string
+          owner_user_id?: string | null
+          project_id?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          handoff_summary?: string
+          id?: string
+          kickoff_date?: string | null
+          opportunity_id?: string
+          organization_id?: string
+          owner_user_id?: string | null
+          project_id?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_onboarding_plans_opportunity_id_organization_id_fkey"
+            columns: ["opportunity_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_opportunities"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "crm_onboarding_plans_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_onboarding_plans_project_id_organization_id_fkey"
+            columns: ["project_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      crm_onboarding_tasks: {
+        Row: {
+          assigned_to: string | null
+          category: string
+          completed_at: string | null
+          completed_by: string | null
+          created_at: string
+          created_by: string | null
+          description: string
+          due_date: string | null
+          due_offset_days: number
+          id: string
+          organization_id: string
+          plan_id: string
+          status: string
+          step_order: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          category?: string
+          completed_at?: string | null
+          completed_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          due_date?: string | null
+          due_offset_days?: number
+          id?: string
+          organization_id: string
+          plan_id: string
+          status?: string
+          step_order: number
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_to?: string | null
+          category?: string
+          completed_at?: string | null
+          completed_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          due_date?: string | null
+          due_offset_days?: number
+          id?: string
+          organization_id?: string
+          plan_id?: string
+          status?: string
+          step_order?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_onboarding_tasks_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_onboarding_tasks_plan_id_organization_id_fkey"
+            columns: ["plan_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "crm_onboarding_plans"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      crm_outbound_messages: {
+        Row: {
+          body_text: string
+          client_request_id: string
+          created_at: string
+          created_by: string | null
+          error_message: string
+          id: string
+          next_action_id: string | null
+          opportunity_id: string
+          organization_id: string
+          provider: string
+          provider_message_id: string
+          recipient_email: string
+          reply_to_email: string
+          sent_at: string | null
+          sent_by: string | null
+          status: string
+          subject: string
+          updated_at: string
+          value_asset_id: string | null
+        }
+        Insert: {
+          body_text: string
+          client_request_id: string
+          created_at?: string
+          created_by?: string | null
+          error_message?: string
+          id?: string
+          next_action_id?: string | null
+          opportunity_id: string
+          organization_id: string
+          provider?: string
+          provider_message_id?: string
+          recipient_email: string
+          reply_to_email?: string
+          sent_at?: string | null
+          sent_by?: string | null
+          status?: string
+          subject: string
+          updated_at?: string
+          value_asset_id?: string | null
+        }
+        Update: {
+          body_text?: string
+          client_request_id?: string
+          created_at?: string
+          created_by?: string | null
+          error_message?: string
+          id?: string
+          next_action_id?: string | null
+          opportunity_id?: string
+          organization_id?: string
+          provider?: string
+          provider_message_id?: string
+          recipient_email?: string
+          reply_to_email?: string
+          sent_at?: string | null
+          sent_by?: string | null
+          status?: string
+          subject?: string
+          updated_at?: string
+          value_asset_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_outbound_messages_next_action_id_organization_id_fkey"
+            columns: ["next_action_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_next_actions"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "crm_outbound_messages_opportunity_id_organization_id_fkey"
+            columns: ["opportunity_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_opportunities"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "crm_outbound_messages_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_outbound_messages_value_asset_id_organization_id_fkey"
+            columns: ["value_asset_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "crm_value_assets"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
       crm_value_assets: {
         Row: {
           approved_for_external: boolean
@@ -2136,6 +2608,8 @@ export type Database = {
       }
       estimate_line_items: {
         Row: {
+          assembly_output_quantity: number | null
+          assembly_output_synced_at: string | null
           cost_code: string
           created_at: string
           csi_division: string
@@ -2160,6 +2634,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          assembly_output_quantity?: number | null
+          assembly_output_synced_at?: string | null
           cost_code?: string
           created_at?: string
           csi_division?: string
@@ -2184,6 +2660,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          assembly_output_quantity?: number | null
+          assembly_output_synced_at?: string | null
           cost_code?: string
           created_at?: string
           csi_division?: string
@@ -2809,6 +3287,72 @@ export type Database = {
           },
         ]
       }
+      estimate_review_activities: {
+        Row: {
+          activity_type: string
+          blocker_count: number
+          created_at: string
+          estimate_id: string
+          follow_up_count: number
+          id: string
+          note: string
+          organization_id: string
+          reviewed_at: string
+          reviewed_by: string
+          sequence: number
+          snapshot: Json
+          snapshot_hash: string
+          total_cents: number
+        }
+        Insert: {
+          activity_type: string
+          blocker_count: number
+          created_at?: string
+          estimate_id: string
+          follow_up_count: number
+          id?: string
+          note: string
+          organization_id: string
+          reviewed_at?: string
+          reviewed_by: string
+          sequence: number
+          snapshot: Json
+          snapshot_hash: string
+          total_cents: number
+        }
+        Update: {
+          activity_type?: string
+          blocker_count?: number
+          created_at?: string
+          estimate_id?: string
+          follow_up_count?: number
+          id?: string
+          note?: string
+          organization_id?: string
+          reviewed_at?: string
+          reviewed_by?: string
+          sequence?: number
+          snapshot?: Json
+          snapshot_hash?: string
+          total_cents?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_review_activities_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_review_activities_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       estimate_scale_assessments: {
         Row: {
           created_at: string
@@ -3118,6 +3662,162 @@ export type Database = {
           },
           {
             foreignKeyName: "estimate_takeoff_assembly_events_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_takeoff_assembly_output_link_events: {
+        Row: {
+          action: string
+          actor_id: string | null
+          assembly_id: string
+          created_at: string
+          estimate_id: string
+          estimate_line_item_id: string | null
+          formula_version: string
+          id: string
+          link_id: string | null
+          output_key: string
+          output_label: string
+          output_quantity: number
+          output_unit: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          assembly_id: string
+          created_at?: string
+          estimate_id: string
+          estimate_line_item_id?: string | null
+          formula_version: string
+          id?: string
+          link_id?: string | null
+          output_key: string
+          output_label: string
+          output_quantity: number
+          output_unit: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          assembly_id?: string
+          created_at?: string
+          estimate_id?: string
+          estimate_line_item_id?: string | null
+          formula_version?: string
+          id?: string
+          link_id?: string | null
+          output_key?: string
+          output_label?: string
+          output_quantity?: number
+          output_unit?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_takeoff_assembly_output_li_estimate_line_item_id_fkey1"
+            columns: ["estimate_line_item_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_line_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assembly_output_link_events_assembly_id_fkey"
+            columns: ["assembly_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_takeoff_assemblies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assembly_output_link_events_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assembly_output_link_events_link_id_fkey"
+            columns: ["link_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_takeoff_assembly_output_links"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_takeoff_assembly_output_links: {
+        Row: {
+          assembly_id: string
+          created_at: string
+          estimate_id: string
+          estimate_line_item_id: string
+          formula_version: string
+          id: string
+          last_synced_at: string
+          linked_at: string
+          linked_by: string | null
+          output_key: string
+          output_label: string
+          output_quantity: number
+          output_unit: string
+          stale_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          assembly_id: string
+          created_at?: string
+          estimate_id: string
+          estimate_line_item_id: string
+          formula_version: string
+          id?: string
+          last_synced_at?: string
+          linked_at?: string
+          linked_by?: string | null
+          output_key: string
+          output_label: string
+          output_quantity: number
+          output_unit: string
+          stale_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          assembly_id?: string
+          created_at?: string
+          estimate_id?: string
+          estimate_line_item_id?: string
+          formula_version?: string
+          id?: string
+          last_synced_at?: string
+          linked_at?: string
+          linked_by?: string | null
+          output_key?: string
+          output_label?: string
+          output_quantity?: number
+          output_unit?: string
+          stale_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_takeoff_assembly_output_lin_estimate_line_item_id_fkey"
+            columns: ["estimate_line_item_id"]
+            isOneToOne: true
+            referencedRelation: "estimate_line_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assembly_output_links_assembly_id_fkey"
+            columns: ["assembly_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_takeoff_assemblies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_assembly_output_links_estimate_id_fkey"
             columns: ["estimate_id"]
             isOneToOne: false
             referencedRelation: "estimates"
@@ -7764,6 +8464,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      build_estimate_review_snapshot: {
+        Args: { p_estimate_id: string }
+        Returns: Json
+      }
       calculate_takeoff_assembly_outputs: {
         Args: {
           p_geometry_quantity: number
@@ -7885,6 +8589,48 @@ export type Database = {
         Args: { p_email: string; p_full_name?: string; p_user_id: string }
         Returns: string
       }
+      estimate_review_snapshot_hash: {
+        Args: { p_snapshot: Json }
+        Returns: string
+      }
+      get_estimate_review_state: {
+        Args: { p_estimate_id: string }
+        Returns: Json
+      }
+      handoff_estimate_takeoff_assembly_output: {
+        Args: {
+          p_assembly_id: string
+          p_destination_type: string
+          p_estimate_line_item_id?: string
+          p_label?: string
+          p_library_item_id?: string
+          p_output_key: string
+        }
+        Returns: {
+          assembly_id: string
+          created_at: string
+          estimate_id: string
+          estimate_line_item_id: string
+          formula_version: string
+          id: string
+          last_synced_at: string
+          linked_at: string
+          linked_by: string | null
+          output_key: string
+          output_label: string
+          output_quantity: number
+          output_unit: string
+          stale_at: string | null
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "estimate_takeoff_assembly_output_links"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       has_org_capability: {
         Args: { p_capability: string; p_org_id: string }
         Returns: boolean
@@ -7903,6 +8649,10 @@ export type Database = {
           source_queue: string
         }
         Returns: number
+      }
+      normalize_assembly_output_unit: {
+        Args: { p_unit: string }
+        Returns: string
       }
       overwatch_access_email_key: { Args: { p_email: string }; Returns: string }
       read_email_batch: {
@@ -7990,6 +8740,31 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      record_estimate_review_activity: {
+        Args: { p_activity_type: string; p_estimate_id: string; p_note: string }
+        Returns: {
+          activity_type: string
+          blocker_count: number
+          created_at: string
+          estimate_id: string
+          follow_up_count: number
+          id: string
+          note: string
+          organization_id: string
+          reviewed_at: string
+          reviewed_by: string
+          sequence: number
+          snapshot: Json
+          snapshot_hash: string
+          total_cents: number
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "estimate_review_activities"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       record_estimate_scale_assessment: {
         Args: {
           p_checks: Json
@@ -8018,6 +8793,26 @@ export type Database = {
       role_preset_capabilities: {
         Args: { p_role: Database["public"]["Enums"]["account_role"] }
         Returns: Json
+      }
+      save_ai_symbol_library_example: {
+        Args: {
+          p_accepted_count: number
+          p_ai_operation_id: string
+          p_cost_library_item_id: string
+          p_embedding: Json
+          p_estimate_id: string
+          p_exemplar_storage_path: string
+          p_label: string
+          p_plan_sheet_id: string
+          p_rejected_count: number
+          p_source_point: Json
+          p_trade: string
+          p_unit: string
+        }
+        Returns: {
+          example_id: string
+          library_item_id: string
+        }[]
       }
       save_estimate_plan_revision_decisions: {
         Args: { p_decisions: Json; p_revision_plan_set_id: string }
@@ -8154,6 +8949,10 @@ export type Database = {
       sync_billing_application_from_lines: {
         Args: { p_billing_application_id: string }
         Returns: undefined
+      }
+      unlink_estimate_takeoff_assembly_output: {
+        Args: { p_assembly_id: string; p_output_key: string }
+        Returns: string
       }
     }
     Enums: {
