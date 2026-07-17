@@ -185,19 +185,19 @@ CREATE INDEX IF NOT EXISTS estimate_versions_estimate_idx
 DROP TRIGGER IF EXISTS estimate_commercial_notes_set_updated_at ON public.estimate_commercial_notes;
 CREATE TRIGGER estimate_commercial_notes_set_updated_at
   BEFORE UPDATE ON public.estimate_commercial_notes
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+  FOR EACH ROW EXECUTE FUNCTION public.tg_set_updated_at();
 DROP TRIGGER IF EXISTS estimate_alternates_set_updated_at ON public.estimate_alternates;
 CREATE TRIGGER estimate_alternates_set_updated_at
   BEFORE UPDATE ON public.estimate_alternates
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+  FOR EACH ROW EXECUTE FUNCTION public.tg_set_updated_at();
 DROP TRIGGER IF EXISTS estimate_bid_packages_set_updated_at ON public.estimate_bid_packages;
 CREATE TRIGGER estimate_bid_packages_set_updated_at
   BEFORE UPDATE ON public.estimate_bid_packages
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+  FOR EACH ROW EXECUTE FUNCTION public.tg_set_updated_at();
 DROP TRIGGER IF EXISTS estimate_vendor_quotes_set_updated_at ON public.estimate_vendor_quotes;
 CREATE TRIGGER estimate_vendor_quotes_set_updated_at
   BEFORE UPDATE ON public.estimate_vendor_quotes
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+  FOR EACH ROW EXECUTE FUNCTION public.tg_set_updated_at();
 
 ALTER TABLE public.cost_library_price_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.estimate_commercial_notes ENABLE ROW LEVEL SECURITY;
