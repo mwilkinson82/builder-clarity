@@ -35,8 +35,13 @@ export function DeliveryHistoryPanel() {
                 {delivery.subject}
               </div>
               <div className="truncate text-xs text-muted-foreground">
-                {delivery.recipient_email}
+                {delivery.recipient_email} · {providerLabel(delivery.provider)}
               </div>
+              {delivery.provider === "demo" && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Workflow recorded safely; no external email was sent.
+                </div>
+              )}
               {delivery.status === "failed" && delivery.error_message && (
                 <div className="mt-1 text-xs text-danger">{delivery.error_message}</div>
               )}
@@ -56,6 +61,12 @@ export function DeliveryHistoryPanel() {
       </div>
     </div>
   );
+}
+
+function providerLabel(provider: string) {
+  if (provider === "demo") return "Demo delivery";
+  if (provider === "resend") return "Resend";
+  return "Lovable email";
 }
 
 function formatTimestamp(value: string) {

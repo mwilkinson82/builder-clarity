@@ -1012,9 +1012,6 @@ export const listOpportunities = createServerFn({ method: "GET" })
     const opportunities = Array.isArray(rows)
       ? rows.map((row) => normalizeOpportunity(row as Record<string, unknown>))
       : [];
-    if (opportunities.length === 0 && !data?.includeArchived) {
-      return demoOpportunities(organizationId, context.userId);
-    }
     return attachOpportunityRelations(context, opportunities);
   });
 
@@ -1111,9 +1108,6 @@ export const listCrmSnapshot = createServerFn({ method: "GET" })
     const opportunities = Array.isArray(opportunitiesRes.data)
       ? (opportunitiesRes.data as Record<string, unknown>[])
       : [];
-    if (baseAccounts.length === 0 && baseContacts.length === 0 && opportunities.length === 0) {
-      return demoCrmSnapshot(organizationId, context.userId);
-    }
     const opportunityById = new Map(
       opportunities.map((row) => [
         str(row.id),

@@ -1,4 +1,3 @@
-import { sendLovableEmail } from "@lovable.dev/email-js";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -16,9 +15,12 @@ import {
   table,
   type DynamicError,
 } from "@/lib/crm-actions-server-shared";
-
-const FROM_DOMAIN = "overwatch.alpcontractorcircle.com";
-const SENDER_DOMAIN = "notify.overwatch.alpcontractorcircle.com";
+import { deliverCrmEmail } from "@/lib/crm-email-delivery.server";
+import {
+  resolveCrmEmailSenderConfig,
+  shouldSimulateCrmEmail,
+  type CrmEmailProvider,
+} from "@/lib/crm-email-policy";
 
 export type CrmOutboundMessage = {
   id: string;
@@ -26,6 +28,7 @@ export type CrmOutboundMessage = {
   next_action_id: string | null;
   recipient_email: string;
   subject: string;
+  provider: CrmEmailProvider;
   status: "pending" | "sent" | "failed";
   error_message: string;
   sent_at: string | null;
@@ -139,6 +142,7 @@ export const listCrmActionSuite = createServerFn({ method: "GET" })
         next_action_id: nullableStr(message.next_action_id),
         recipient_email: str(message.recipient_email),
         subject: str(message.subject),
+        provider: str(message.provider, "lovable_email") as CrmEmailProvider,
         status: str(message.status, "pending") as CrmOutboundMessage["status"],
         error_message: str(message.error_message),
         sent_at: nullableStr(message.sent_at),
@@ -253,7 +257,7 @@ async function finalizeSentFollowup(input: {
     completed_by: input.userId,
     outcome: "sent",
     outcome_notes: input.draft?.testMode
-      ? "Sent through Lovable email in test mode."
+      ? "Harbor demo delivery recorded; no external email was sent."
       : "Sent through OverWatch CRM.",
     sent_at: input.completedAt,
     sent_message_id: input.providerMessageId,
@@ -294,7 +298,7 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
       throw new Error("Only reviewed playbook follow-ups can be sent from OverWatch.");
     }
     const priorDelivery = await table(supabaseAdmin, "crm_outbound_messages")
-      .select("id,status,provider_message_id,sent_at")
+      .select("id,status,provider,provider_message_id,sent_at")
       .eq("organization_id", organizationId)
       .eq("next_action_id", data.action_id)
       .order("created_at", { ascending: false })
@@ -315,10 +319,12 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
       });
       return {
         id: str(previous.id),
+        provider: str(previous.provider, "lovable_email") as CrmEmailProvider,
         providerMessageId: str(previous.provider_message_id),
         sentAt,
         idempotent: true,
         playbookCompleted,
+        testMode: str(previous.provider) === "demo",
       };
     }
     if (previous && str(previous.status) === "pending") {
@@ -387,6 +393,8 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
     const senderName = emailDisplayName(
       str(sender.full_name).trim() || str(action.owner_name).trim() || "OverWatch CRM",
     );
+    const simulate = shouldSimulateCrmEmail({ recipient, testMode: data.test_mode });
+    const deliveryProvider = simulate ? "demo" : resolveCrmEmailSenderConfig(process.env).provider;
     const messageId = crypto.randomUUID();
     const created = await table(supabaseAdmin, "crm_outbound_messages")
       .insert({
@@ -401,6 +409,7 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
         reply_to_email: replyTo,
         subject: data.subject.trim(),
         body_text: body,
+        provider: deliveryProvider,
         provider_message_id: messageId,
         status: "pending",
       })
@@ -423,39 +432,18 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
         organization_id: organizationId,
         opportunity_id: str(action.opportunity_id),
         action_id: data.action_id,
-        test_mode: data.test_mode,
+        test_mode: simulate,
+        provider: deliveryProvider,
       },
     });
 
-    let providerDelivered = false;
-    try {
-      const apiKey = process.env.LOVABLE_API_KEY;
-      if (!apiKey) throw new Error("Lovable email delivery is not configured.");
-      const response = await sendLovableEmail(
-        {
-          to: recipient,
-          from: `${senderName} via OverWatch <noreply@${FROM_DOMAIN}>`,
-          sender_domain: SENDER_DOMAIN,
-          reply_to: replyTo || undefined,
-          subject: data.subject.trim(),
-          html: followupEmailHtml(body),
-          text: body,
-          purpose: "transactional",
-          label: "crm-followup",
-          idempotency_key: `crm-followup:${organizationId}:${data.client_request_id}`,
-          message_id: messageId,
-          unsubscribe_token: crypto.randomUUID(),
-          test_mode: data.test_mode,
-        },
-        { apiKey, sendUrl: process.env.LOVABLE_SEND_URL },
-      );
-      if (!response.success) throw new Error("Lovable did not accept the email for delivery.");
-      providerDelivered = true;
+    if (simulate) {
       const completedAt = new Date().toISOString();
-      const providerMessageId = response.message_id || messageId;
+      const providerMessageId = `demo-${messageId}`;
       const deliveryUpdate = await table(supabaseAdmin, "crm_outbound_messages")
         .update({
           status: "sent",
+          provider: "demo",
           provider_message_id: providerMessageId,
           sent_at: completedAt,
           error_message: "",
@@ -476,7 +464,69 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
           subject: data.subject.trim(),
           body: data.body.trim(),
           assetId,
-          testMode: data.test_mode,
+          testMode: true,
+        },
+      });
+      await table(supabaseAdmin, "pipeline_activity_log").insert({
+        opportunity_id: str(action.opportunity_id),
+        organization_id: organizationId,
+        event_type: "note_added",
+        from_value: "",
+        to_value: "demo",
+        notes: `Demo follow-up recorded for ${recipient}; no external email was sent.`,
+        created_by: context.userId,
+      });
+      return {
+        id: outboundId,
+        provider: "demo" as const,
+        providerMessageId,
+        sentAt: completedAt,
+        idempotent: false,
+        playbookCompleted,
+        testMode: true,
+      };
+    }
+
+    let providerDelivered = false;
+    try {
+      const response = await deliverCrmEmail({
+        to: recipient,
+        senderName,
+        replyTo,
+        subject: data.subject.trim(),
+        html: followupEmailHtml(body),
+        text: body,
+        idempotencyKey: `crm-followup:${organizationId}:${data.client_request_id}`,
+        messageId,
+      });
+      providerDelivered = true;
+      const completedAt = new Date().toISOString();
+      const providerMessageId = response.messageId;
+      const deliveryUpdate = await table(supabaseAdmin, "crm_outbound_messages")
+        .update({
+          status: "sent",
+          provider: response.provider,
+          provider_message_id: providerMessageId,
+          sent_at: completedAt,
+          error_message: "",
+        })
+        .eq("id", outboundId);
+      if (deliveryUpdate.error) throw new Error(deliveryUpdate.error.message);
+      await table(supabaseAdmin, "email_send_log")
+        .update({ status: "sent" })
+        .eq("message_id", messageId);
+      const playbookCompleted = await finalizeSentFollowup({
+        admin: supabaseAdmin,
+        organizationId,
+        userId: context.userId,
+        action,
+        completedAt,
+        providerMessageId,
+        draft: {
+          subject: data.subject.trim(),
+          body: data.body.trim(),
+          assetId,
+          testMode: false,
         },
       });
       await table(supabaseAdmin, "pipeline_activity_log").insert({
@@ -490,10 +540,12 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
       });
       return {
         id: outboundId,
+        provider: response.provider,
         providerMessageId,
         sentAt: completedAt,
         idempotent: false,
         playbookCompleted,
+        testMode: false,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Email delivery failed.";

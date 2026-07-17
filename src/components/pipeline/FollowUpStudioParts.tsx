@@ -48,6 +48,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { generateCrmFollowupDraft } from "@/lib/crm-actions-ai.functions";
 import { sendCrmFollowupEmail } from "@/lib/crm-actions.functions";
+import { crmEmailActionLabel, isCrmDemoRecipientEmail } from "@/lib/crm-email-policy";
 import { shortDate } from "./pipeline-ui";
 
 export type FollowupOutcome =
@@ -85,6 +86,7 @@ export function PreparedFollowupCard({
   const [outcome, setOutcome] = useState<FollowupOutcome>("sent");
   const [outcomeNotes, setOutcomeNotes] = useState("");
   const [resourceIdea, setResourceIdea] = useState("");
+  const demoMode = isCrmDemoRecipientEmail(action.contact_email);
 
   useEffect(() => {
     setSubject(action.subject);
@@ -144,7 +146,7 @@ export function PreparedFollowupCard({
           body,
           value_asset_id: assetId === "none" ? null : assetId,
           client_request_id: crypto.randomUUID(),
-          test_mode: false,
+          test_mode: demoMode,
         },
       }),
     onSuccess: async (result) => {
@@ -154,7 +156,11 @@ export function PreparedFollowupCard({
         queryClient.invalidateQueries({ queryKey: ["pipeline-crm-snapshot"] }),
       ]);
       toast.success(
-        result.playbookCompleted ? "Email sent · playbook complete" : "Email sent from OverWatch",
+        result.testMode
+          ? "Demo send recorded · no email left OverWatch"
+          : result.playbookCompleted
+            ? "Email sent · playbook complete"
+            : "Email sent from OverWatch",
       );
     },
     onError: (error) =>
@@ -280,15 +286,22 @@ export function PreparedFollowupCard({
                     }
                   >
                     <Send className="h-3.5 w-3.5" />
-                    {sendMutation.isPending ? "Sending…" : "Send from OverWatch"}
+                    {sendMutation.isPending
+                      ? demoMode
+                        ? "Recording…"
+                        : "Sending…"
+                      : crmEmailActionLabel(action.contact_email)}
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Send this reviewed follow-up?</AlertDialogTitle>
+                    <AlertDialogTitle>
+                      {demoMode ? "Run this safe demo send?" : "Send this reviewed follow-up?"}
+                    </AlertDialogTitle>
                     <AlertDialogDescription>
-                      OverWatch will email {action.contact_email} now, record the delivery, and
-                      close this playbook step. Replies go to your OverWatch profile email.
+                      {demoMode
+                        ? `OverWatch will record the complete delivery workflow for ${action.contact_email}, but no external email will leave the application.`
+                        : `OverWatch will email ${action.contact_email} now, record the delivery, and close this playbook step. Replies go to your OverWatch profile email.`}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <div className="rounded-lg border border-hairline bg-muted/40 px-3 py-2 text-sm">
@@ -300,7 +313,7 @@ export function PreparedFollowupCard({
                   <AlertDialogFooter>
                     <AlertDialogCancel>Keep editing</AlertDialogCancel>
                     <AlertDialogAction onClick={() => sendMutation.mutate()}>
-                      Send email
+                      {demoMode ? "Record demo send" : "Send email"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
