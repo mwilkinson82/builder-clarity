@@ -50,6 +50,7 @@ const disciplineGroupRank = (discipline: string) => {
 };
 
 export function SheetSidebar({
+  expanded = false,
   sheets,
   planSets,
   sheetSearch,
@@ -67,6 +68,7 @@ export function SheetSidebar({
   onDetectSheetNames,
   detectingNames = false,
 }: {
+  expanded?: boolean;
   sheets: PlanSheetRow[];
   planSets: PlanSetRow[];
   sheetSearch: string;
@@ -250,7 +252,14 @@ export function SheetSidebar({
   };
 
   return (
-    <section className="rounded-lg border border-hairline bg-card shadow-card">
+    <section
+      className={cn(
+        "rounded-lg border border-hairline bg-card shadow-card",
+        expanded && "xl:col-span-2 2xl:col-span-3",
+      )}
+      data-layout={expanded ? "workspace" : "panel"}
+      data-testid="drawing-sets-workspace"
+    >
       <div className="border-b border-hairline bg-surface px-4 py-3">
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -329,7 +338,13 @@ export function SheetSidebar({
           Showing {filteredSheetCount} of {sheets.length} sheets.
         </p>
       </div>
-      <div className="max-h-[680px] space-y-2 overflow-y-auto p-3">
+      <div
+        className={cn(
+          "space-y-2 p-3",
+          expanded ? "overflow-visible" : "max-h-[680px] overflow-y-auto",
+        )}
+        data-testid="drawing-sets-list"
+      >
         {sheets.length === 0 ? (
           <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
             Upload a PDF or image plan set to start measuring this estimate.
@@ -360,7 +375,12 @@ export function SheetSidebar({
                     </Badge>
                   </div>
                 </div>
-                <div className="p-1.5">
+                <div
+                  className={cn(
+                    "p-1.5",
+                    expanded && "grid items-start gap-2 md:grid-cols-2 2xl:grid-cols-3",
+                  )}
+                >
                   {(() => {
                     const disciplines = new Set(
                       planSetSheets

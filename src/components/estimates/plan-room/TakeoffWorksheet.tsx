@@ -241,6 +241,7 @@ export function TakeoffWorksheet({
       sheets={sheets}
       selectedMeasurementId={selectedMeasurementId}
       expanded={expandedGroups.includes(group.key)}
+      workspaceExpanded={expanded}
       onToggleExpanded={() => toggleGroupExpanded(group.key)}
       selectMeasurement={selectMeasurement}
       deleteMeasurement={(measurementId) => deleteMeasurementMutation.mutate(measurementId)}
@@ -259,7 +260,7 @@ export function TakeoffWorksheet({
     <div
       className={cn(
         expanded
-          ? "grid h-full min-h-0 w-full flex-1 gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.7fr)]"
+          ? "grid w-full gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,0.65fr)]"
           : "space-y-4",
       )}
       data-testid="takeoff-worksheet-layout"
@@ -268,7 +269,7 @@ export function TakeoffWorksheet({
       <section
         className={cn(
           "rounded-lg border border-hairline bg-card shadow-card",
-          expanded && "flex min-h-0 flex-col overflow-hidden",
+          expanded && "overflow-visible",
         )}
       >
         <div className="border-b border-hairline bg-surface px-4 py-3">
@@ -357,7 +358,14 @@ export function TakeoffWorksheet({
             </div>
           )}
         </div>
-        <div className="border-b border-hairline p-3" data-testid="takeoff-navigator">
+        <div
+          className={cn(
+            "border-b border-hairline p-3",
+            expanded &&
+              "grid items-start gap-3 lg:grid-cols-[minmax(260px,0.8fr)_minmax(440px,1.2fr)]",
+          )}
+          data-testid="takeoff-navigator"
+        >
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -369,7 +377,7 @@ export function TakeoffWorksheet({
             />
           </div>
           <div
-            className={cn("mt-2 grid grid-cols-2 gap-1.5 text-xs", expanded && "sm:grid-cols-4")}
+            className={cn("grid grid-cols-2 gap-1.5 text-xs", expanded ? "sm:grid-cols-4" : "mt-2")}
             data-testid="takeoff-filter-controls"
           >
             {[
@@ -412,7 +420,10 @@ export function TakeoffWorksheet({
           </div>
           {worksheetColors.length > 1 && (
             <div
-              className="mt-2 flex flex-wrap items-center gap-1.5"
+              className={cn(
+                "flex flex-wrap items-center gap-1.5",
+                expanded ? "lg:col-span-2" : "mt-2",
+              )}
               data-testid="takeoff-worksheet-color-filter"
             >
               <span className="eyebrow">Colors</span>
@@ -452,7 +463,7 @@ export function TakeoffWorksheet({
               )}
             </div>
           )}
-          <p className="mt-2 text-xs text-muted-foreground">
+          <p className={cn("text-xs text-muted-foreground", expanded ? "lg:col-span-2" : "mt-2")}>
             Showing {visibleMeasurements.length} takeoffs in {displayGroups.length} card
             {displayGroups.length === 1 ? "" : "s"}.
             {" Selecting one opens its sheet and centers the markup."}
@@ -460,11 +471,12 @@ export function TakeoffWorksheet({
         </div>
         <div
           className={cn(
-            "overflow-y-auto p-3",
+            "p-3",
             expanded
-              ? "grid min-h-0 flex-1 auto-rows-min gap-3 2xl:grid-cols-2"
-              : "max-h-[520px] space-y-3",
+              ? "grid auto-rows-min gap-3 xl:grid-cols-2 2xl:grid-cols-3"
+              : "max-h-[520px] space-y-3 overflow-y-auto",
           )}
+          data-testid="takeoff-workspace-records"
         >
           {measurements.length === 0 ? (
             <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
@@ -619,6 +631,7 @@ export function TakeoffWorksheet({
                           }
                           pending={classifyPending}
                           compact
+                          workspaceExpanded={expanded}
                         />
                       </div>
                     )}
@@ -678,7 +691,7 @@ export function TakeoffWorksheet({
       <section
         className={cn(
           "rounded-lg border border-hairline bg-card p-4 shadow-card",
-          expanded && "min-h-0 overflow-y-auto",
+          expanded && "self-start xl:sticky xl:top-28",
         )}
       >
         <h2 className="font-serif text-xl">Estimate Sync</h2>

@@ -2290,9 +2290,37 @@ await expectContains(
   "src/components/estimates/plan-room/TakeoffWorksheet.tsx",
   [
     /data-layout=\{expanded \? "expanded" : "panel"\}/,
-    /xl:grid-cols-\[minmax\(0,1\.65fr\)_minmax\(300px,0\.7fr\)\]/,
+    /takeoff-workspace-records/,
+    /workspaceExpanded=\{expanded\}/,
+    /xl:grid-cols-\[minmax\(0,1\.7fr\)_minmax\(320px,0\.65fr\)\]/,
+    /xl:grid-cols-2 2xl:grid-cols-3/,
   ],
-  "the worksheet expands into a full command-center workspace instead of a short scrolling card",
+  "the worksheet expands into a wide command-center workspace without nested record scrolling",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/TakeoffClassify.tsx",
+  [/workspaceExpanded/, /workspaceExpanded[\s\S]*?\? "space-y-1"/],
+  "full-screen takeoff classification expands into the workspace instead of adding a card scroller",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/PlanRoomWorkspace.tsx",
+  [
+    /overflow-y-auto overscroll-contain rounded-\[15px\]/,
+    /\[scrollbar-gutter:stable\]/,
+    /drawingsWorkspaceMaximized/,
+    /toolsWorkspaceMaximized/,
+    /expanded=\{drawingsWorkspaceMaximized\}/,
+    /expanded=\{toolsWorkspaceMaximized\}/,
+  ],
+  "maximized estimating panels use one viewport workspace scroller instead of stacked card scrollers",
+);
+
+await expectContains(
+  "src/components/estimates/plan-room/SheetSidebar.tsx",
+  [/data-layout=\{expanded \? "workspace" : "panel"\}/, /drawing-sets-list/, /overflow-visible/],
+  "maximized drawing controls spread sheet navigation across the workspace without a nested list scroller",
 );
 
 await expectContains(
