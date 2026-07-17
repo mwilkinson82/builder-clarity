@@ -380,21 +380,18 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
     }
 
     const profileResult = await table(context.supabase, "profiles")
-      .select("email,full_name")
+      .select("full_name")
       .eq("id", context.userId)
       .maybeSingle();
     if (profileResult.error) throw new Error(profileResult.error.message);
     const sender = profileResult.data ? row(profileResult.data) : {};
-    const replyToResult = z.string().email().safeParse(str(sender.email).trim());
-    if (!replyToResult.success) {
-      throw new Error("Add a valid email to your OverWatch profile so the contact can reply.");
-    }
-    const replyTo = replyToResult.data;
+    const emailConfig = resolveCrmEmailSenderConfig(process.env);
+    const replyTo = emailConfig.replyToAddress;
     const senderName = emailDisplayName(
       str(sender.full_name).trim() || str(action.owner_name).trim() || "OverWatch CRM",
     );
     const simulate = shouldSimulateCrmEmail({ recipient, testMode: data.test_mode });
-    const deliveryProvider = simulate ? "demo" : resolveCrmEmailSenderConfig(process.env).provider;
+    const deliveryProvider = simulate ? "demo" : emailConfig.provider;
     const messageId = crypto.randomUUID();
     const created = await table(supabaseAdmin, "crm_outbound_messages")
       .insert({
