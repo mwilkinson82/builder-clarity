@@ -24,6 +24,110 @@ import {
   parseCrmAiFollowupDraft,
   parseCrmMeetingBrief,
 } from "../src/lib/crm-action-suite-domain.ts";
+import {
+  HARBOR_CRM_DEMO_FIXTURES,
+  HARBOR_CRM_DEMO_MODULE_KEY,
+  HARBOR_CRM_DEMO_VERSION,
+  isHarborCrmDemoOpportunityName,
+} from "../src/lib/crm-demo-domain.ts";
+import {
+  crmEmailActionLabel,
+  isCrmDemoRecipientEmail,
+  resolveCrmEmailSenderConfig,
+  shouldSimulateCrmEmail,
+} from "../src/lib/crm-email-policy.ts";
+
+// ---------- Versioned Harbor CRM walkthrough ----------
+assert.equal(HARBOR_CRM_DEMO_MODULE_KEY, "crm-workflow");
+assert.equal(HARBOR_CRM_DEMO_VERSION, 1);
+assert.equal(HARBOR_CRM_DEMO_FIXTURES.length, 6);
+assert.equal(
+  HARBOR_CRM_DEMO_FIXTURES.filter((fixture) => fixture.linkToHarborProject).length,
+  1,
+  "Exactly one CRM opportunity is the project handoff into Harbor Residence.",
+);
+assert.equal(
+  HARBOR_CRM_DEMO_FIXTURES.filter((fixture) => fixture.enrollInFollowup).length,
+  1,
+  "The walkthrough includes one prepared value-first follow-up story.",
+);
+assert.ok(isHarborCrmDemoOpportunityName("Harbor Residence Preconstruction"));
+assert.ok(
+  HARBOR_CRM_DEMO_FIXTURES.every((fixture) => isCrmDemoRecipientEmail(fixture.contactEmail)),
+  "Every Harbor walkthrough recipient is locked to the non-delivering demo domain.",
+);
+
+// ---------- CRM email safety and provider choice ----------
+assert.ok(shouldSimulateCrmEmail({ recipient: "person@demo.overwatch.example" }));
+assert.ok(shouldSimulateCrmEmail({ recipient: "person@example.com", testMode: true }));
+assert.equal(crmEmailActionLabel("person@demo.overwatch.example"), "Run demo send");
+assert.equal(
+  resolveCrmEmailSenderConfig({
+    RESEND_API_KEY: "test-key",
+    CRM_EMAIL_FROM_ADDRESS: "followup@send.overwatch.example",
+    CRM_EMAIL_SENDER_DOMAIN: "send.overwatch.example",
+  }).provider,
+  "resend",
+);
+assert.equal(
+  resolveCrmEmailSenderConfig({
+    LOVABLE_API_KEY: "test-key",
+    CRM_EMAIL_FROM_ADDRESS: "followup@send.overwatch.example",
+    CRM_EMAIL_SENDER_DOMAIN: "send.overwatch.example",
+  }).provider,
+  "lovable_email",
+);
+assert.throws(
+  () =>
+    resolveCrmEmailSenderConfig({
+      CRM_EMAIL_FROM_ADDRESS: "not-an-email",
+      CRM_EMAIL_SENDER_DOMAIN: "send.overwatch.example",
+    }),
+  /complete email address/,
+);
+
+const emailDeliverySource = readFileSync(
+  new URL("../src/lib/crm-email-delivery.server.ts", import.meta.url),
+  "utf8",
+);
+assert.match(emailDeliverySource, /https:\/\/api\.resend\.com\/emails/);
+assert.match(emailDeliverySource, /"Idempotency-Key": input\.idempotencyKey/);
+assert.match(emailDeliverySource, /reply_to: input\.replyTo/);
+
+const providerMigration = readFileSync(
+  new URL("../supabase/migrations/20260717165334_allow_resend_crm_provider.sql", import.meta.url),
+  "utf8",
+);
+assert.match(providerMigration, /'lovable_email', 'resend', 'demo'/);
+
+const pipelineServerSource = readFileSync(
+  new URL("../src/lib/pipeline.functions.ts", import.meta.url),
+  "utf8",
+);
+assert.doesNotMatch(
+  pipelineServerSource,
+  /if \(opportunities\.length === 0[\s\S]{0,160}return demoOpportunities/,
+  "An empty live CRM must reach the persistent Harbor seeder instead of masking it with temporary cards.",
+);
+assert.doesNotMatch(
+  pipelineServerSource,
+  /if \(baseAccounts\.length === 0[\s\S]{0,200}return demoCrmSnapshot/,
+  "An empty CRM snapshot must not resurrect an in-memory sample directory.",
+);
+
+const followupUiSource = readFileSync(
+  new URL("../src/components/pipeline/FollowUpStudioParts.tsx", import.meta.url),
+  "utf8",
+);
+assert.match(followupUiSource, /no external email will leave the application/);
+assert.match(followupUiSource, /crmEmailActionLabel/);
+
+const demoControlSource = readFileSync(
+  new URL("../src/components/pipeline/CrmDemoControl.tsx", import.meta.url),
+  "utf8",
+);
+assert.match(demoControlSource, /Restore Harbor CRM/);
+assert.match(demoControlSource, /Your real CRM records are not\s+touched/);
 
 // ---------- Archived demo tombstone → seed nothing ----------
 const archivedDemo = { id: "project-1", archived_at: "2026-07-01T00:00:00Z" };

@@ -19,7 +19,6 @@ import {
   convertToProject,
   createNextAction,
   createOpportunity,
-  ensurePipelineCrmDemo,
   getOpportunity,
   listCrmSnapshot,
   listOpportunities,
@@ -31,6 +30,7 @@ import {
   type PipelineOpportunityRow,
   type PipelineStage,
 } from "@/lib/pipeline.functions";
+import { ensureHarborCrmDemo } from "@/lib/crm-demo.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -49,6 +49,7 @@ import { PipelineGlanceCard } from "./PipelineMetrics";
 import { PipelineRailLists } from "./PipelineRailLists";
 import { PipelineCrmOverview } from "./PipelineCrmOverview";
 import { FollowUpStudio } from "./FollowUpStudio";
+import { CrmDemoControl } from "./CrmDemoControl";
 import { OpportunityCreateDialog, QuickAddOpportunity } from "./OpportunityCreateDialog";
 import { OpportunityDetail } from "./OpportunityDetail";
 import {
@@ -107,7 +108,7 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
   const listFn = useServerFn(listOpportunities);
   const membersFn = useServerFn(listPipelineMembers);
   const crmSnapshotFn = useServerFn(listCrmSnapshot);
-  const ensureDemoFn = useServerFn(ensurePipelineCrmDemo);
+  const ensureDemoFn = useServerFn(ensureHarborCrmDemo);
   const getFn = useServerFn(getOpportunity);
   const createFn = useServerFn(createOpportunity);
   const createEstimateFn = useServerFn(createEstimate);
@@ -266,8 +267,8 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
     mutationFn: () => ensureDemoFn(),
     onSuccess: async (result) => {
       if (result.seeded) {
-        toast.success("CRM sample data loaded", {
-          description: `${result.opportunityCount} sample opportunities are ready to review.`,
+        toast.success("Harbor CRM walkthrough loaded", {
+          description: `${result.opportunityCount} connected demo opportunities are ready to review.`,
         });
       }
       await invalidatePipeline();
@@ -285,13 +286,6 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
       opportunitiesQuery.isLoading ||
       opportunitiesQuery.isError
     ) {
-      return;
-    }
-    // Seed-check against the unfiltered server response: sample rows a user
-    // removed locally still count as "the CRM is not empty", so removing all
-    // samples never re-triggers the database seeder.
-    if (rawOpportunities.length > 0) {
-      setDemoSeedChecked(true);
       return;
     }
     setDemoSeedChecked(true);
@@ -491,6 +485,7 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
   if (workspaceMode === "followup") {
     return (
       <div className="space-y-5">
+        <CrmDemoControl />
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
           <h1 className="font-serif text-[30px] font-normal leading-none text-foreground">
             Follow-Up Studio
@@ -526,6 +521,7 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
 
   return (
     <div className="space-y-5">
+      <CrmDemoControl />
       {/* 1. Page header inside the CRM tab */}
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
         <h1 className="font-serif text-[30px] font-normal leading-none text-foreground">
