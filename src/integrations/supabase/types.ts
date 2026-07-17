@@ -1459,6 +1459,9 @@ export type Database = {
           csi_code: string
           csi_division: string
           description: string
+          effective_date: string | null
+          escalation_pct: number
+          expires_at: string | null
           external_id: string
           id: string
           keywords: Json
@@ -1468,9 +1471,14 @@ export type Database = {
           organization_id: string
           productivity_per_hour: number | null
           source: string
+          source_reference: string
+          source_vendor: string
           synonyms: Json
           unit: string
           updated_at: string
+          verified_at: string | null
+          verified_by: string | null
+          version_no: number
         }
         Insert: {
           base_region?: string
@@ -1480,6 +1488,9 @@ export type Database = {
           csi_code?: string
           csi_division: string
           description: string
+          effective_date?: string | null
+          escalation_pct?: number
+          expires_at?: string | null
           external_id?: string
           id?: string
           keywords?: Json
@@ -1489,9 +1500,14 @@ export type Database = {
           organization_id: string
           productivity_per_hour?: number | null
           source?: string
+          source_reference?: string
+          source_vendor?: string
           synonyms?: Json
           unit: string
           updated_at?: string
+          verified_at?: string | null
+          verified_by?: string | null
+          version_no?: number
         }
         Update: {
           base_region?: string
@@ -1501,6 +1517,9 @@ export type Database = {
           csi_code?: string
           csi_division?: string
           description?: string
+          effective_date?: string | null
+          escalation_pct?: number
+          expires_at?: string | null
           external_id?: string
           id?: string
           keywords?: Json
@@ -1510,13 +1529,90 @@ export type Database = {
           organization_id?: string
           productivity_per_hour?: number | null
           source?: string
+          source_reference?: string
+          source_vendor?: string
           synonyms?: Json
           unit?: string
           updated_at?: string
+          verified_at?: string | null
+          verified_by?: string | null
+          version_no?: number
         }
         Relationships: [
           {
             foreignKeyName: "cost_library_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cost_library_price_history: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          cost_library_item_id: string
+          crew_size: number | null
+          effective_date: string | null
+          escalation_pct: number
+          expires_at: string | null
+          id: string
+          labor_basis: string
+          labor_cost_cents: number
+          material_cost_cents: number
+          organization_id: string
+          productivity_per_hour: number | null
+          source_reference: string
+          source_vendor: string
+          version_no: number
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          cost_library_item_id: string
+          crew_size?: number | null
+          effective_date?: string | null
+          escalation_pct?: number
+          expires_at?: string | null
+          id?: string
+          labor_basis?: string
+          labor_cost_cents?: number
+          material_cost_cents?: number
+          organization_id: string
+          productivity_per_hour?: number | null
+          source_reference?: string
+          source_vendor?: string
+          version_no: number
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          cost_library_item_id?: string
+          crew_size?: number | null
+          effective_date?: string | null
+          escalation_pct?: number
+          expires_at?: string | null
+          id?: string
+          labor_basis?: string
+          labor_cost_cents?: number
+          material_cost_cents?: number
+          organization_id?: string
+          productivity_per_hour?: number | null
+          source_reference?: string
+          source_vendor?: string
+          version_no?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cost_library_price_history_cost_library_item_id_fkey"
+            columns: ["cost_library_item_id"]
+            isOneToOne: false
+            referencedRelation: "cost_library_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cost_library_price_history_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -2605,6 +2701,138 @@ export type Database = {
           used_at?: string | null
         }
         Relationships: []
+      }
+      estimate_alternates: {
+        Row: {
+          amount_cents: number
+          created_at: string
+          created_by: string | null
+          decision: string
+          description: string
+          estimate_id: string
+          id: string
+          name: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          amount_cents?: number
+          created_at?: string
+          created_by?: string | null
+          decision?: string
+          description?: string
+          estimate_id: string
+          id?: string
+          name: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          amount_cents?: number
+          created_at?: string
+          created_by?: string | null
+          decision?: string
+          description?: string
+          estimate_id?: string
+          id?: string
+          name?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_alternates_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_bid_packages: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          due_date: string | null
+          estimate_id: string
+          id: string
+          name: string
+          scope: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          due_date?: string | null
+          estimate_id: string
+          id?: string
+          name: string
+          scope?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          due_date?: string | null
+          estimate_id?: string
+          id?: string
+          name?: string
+          scope?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_bid_packages_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_commercial_notes: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string
+          estimate_id: string
+          id: string
+          note_type: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description: string
+          estimate_id: string
+          id?: string
+          note_type: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          estimate_id?: string
+          id?: string
+          note_type?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_commercial_notes_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       estimate_line_items: {
         Row: {
@@ -4026,6 +4254,116 @@ export type Database = {
             columns: ["scope_brief_review_id"]
             isOneToOne: false
             referencedRelation: "estimate_scope_brief_reviews"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_vendor_quotes: {
+        Row: {
+          amount_cents: number
+          bid_package_id: string | null
+          created_at: string
+          created_by: string | null
+          estimate_id: string
+          exclusions: string
+          id: string
+          inclusions: string
+          received_at: string | null
+          status: string
+          updated_at: string
+          vendor_name: string
+        }
+        Insert: {
+          amount_cents?: number
+          bid_package_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          estimate_id: string
+          exclusions?: string
+          id?: string
+          inclusions?: string
+          received_at?: string | null
+          status?: string
+          updated_at?: string
+          vendor_name: string
+        }
+        Update: {
+          amount_cents?: number
+          bid_package_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          estimate_id?: string
+          exclusions?: string
+          id?: string
+          inclusions?: string
+          received_at?: string | null
+          status?: string
+          updated_at?: string
+          vendor_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_vendor_quotes_bid_package_id_fkey"
+            columns: ["bid_package_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_bid_packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_vendor_quotes_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_versions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          estimate_id: string
+          estimate_snapshot: Json
+          id: string
+          line_items_snapshot: Json
+          name: string
+          note: string
+          subtotal_cents: number
+          total_cents: number
+          version_no: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          estimate_id: string
+          estimate_snapshot?: Json
+          id?: string
+          line_items_snapshot?: Json
+          name: string
+          note?: string
+          subtotal_cents?: number
+          total_cents?: number
+          version_no: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          estimate_id?: string
+          estimate_snapshot?: Json
+          id?: string
+          line_items_snapshot?: Json
+          name?: string
+          note?: string
+          subtotal_cents?: number
+          total_cents?: number
+          version_no?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_versions_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
             referencedColumns: ["id"]
           },
         ]
