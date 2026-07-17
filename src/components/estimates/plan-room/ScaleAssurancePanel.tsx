@@ -189,7 +189,8 @@ export function ScaleAssurancePanel({
           disabled={pending}
           data-testid="scale-assurance-reset"
         >
-          <RotateCcw className="h-3.5 w-3.5" /> Reset Checks
+          <RotateCcw className="h-3.5 w-3.5" />
+          {tool === "verify" && drafts.length === 0 ? "Cancel Check" : "Reset Checks"}
         </Button>
       )}
 

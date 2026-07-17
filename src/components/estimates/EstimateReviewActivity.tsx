@@ -99,7 +99,12 @@ export function EstimateReviewActivity({
             stale. This is a human review record—not an AI certification.
           </p>
 
-          {status === "current" && state?.latest_signoff_reviewed_at ? (
+          {loading ? (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> Checking
+              the current worksheet version and sign-off history…
+            </p>
+          ) : status === "current" && state?.latest_signoff_reviewed_at ? (
             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-success">
               <CheckCircle2 className="h-3.5 w-3.5" /> Version {state.latest_signoff_sequence}{" "}
               signed by {state.latest_signoff_reviewed_by_name} ·{" "}

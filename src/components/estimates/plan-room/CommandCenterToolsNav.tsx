@@ -3,10 +3,10 @@ import { Button } from "@/components/ui/button";
 export type CommandCenterToolsView = "ai" | "measure" | "review" | "worksheet";
 
 const TOOLS_VIEWS: Array<{ value: CommandCenterToolsView; label: string }> = [
-  { value: "ai", label: "AI & Scope" },
+  { value: "ai", label: "Read Notes & AI" },
   { value: "measure", label: "Measure" },
-  { value: "review", label: "Review" },
-  { value: "worksheet", label: "Worksheet" },
+  { value: "review", label: "Review Work" },
+  { value: "worksheet", label: "Estimate Worksheet" },
 ];
 
 export function CommandCenterToolsNav({

@@ -73,6 +73,29 @@ import {
   harborDemoSeedAction,
   isHarborDemoProject,
 } from "../src/lib/demo-seed.ts";
+import { benchmarkRevisionMasks, classifyRevisionPixel } from "../src/lib/plan-revision-redline.ts";
+
+// --- Deterministic revision redline benchmark -------------------------------
+// Synthetic registered masks contain all four visual outcomes. The overlay
+// contract is model-independent: current-only is green, prior-only is red,
+// overlap is dark, and blank remains background.
+assert.equal(classifyRevisionPixel(false, false), "background");
+assert.equal(classifyRevisionPixel(true, true), "unchanged");
+assert.equal(classifyRevisionPixel(true, false), "new");
+assert.equal(classifyRevisionPixel(false, true), "removed");
+const revisionBenchmark = benchmarkRevisionMasks(
+  [false, true, true, false, true, false, false, true],
+  [false, true, false, true, true, false, true, false],
+);
+assert.deepEqual(revisionBenchmark, {
+  total: 8,
+  background: 2,
+  unchanged: 2,
+  new: 2,
+  removed: 2,
+  changed: 4,
+  changedPercent: 50,
+});
 
 // --- Demo hide-not-delete opt-out (hotfix: demo never reseeds) ---------------
 // Every demo ensure-path routes its decision through harborDemoSeedAction on
@@ -1251,6 +1274,12 @@ assert.match(estimatesSource, /Harbor Residence - Sample Estimate/);
 assert.match(estimatesSource, /Harbor Residence - Sample Master Sheet/);
 assert.match(estimatesSource, /ensureHarborSampleMasterSheet/);
 assert.match(estimatesSource, /createBlankLineItems/);
+assert.match(estimatesSource, /canonical_working_copy/);
+assert.match(estimatesSource, /estimate_plan_sets/);
+assert.match(estimatesSource, /estimate_plan_sheets/);
+assert.match(estimatesSource, /estimate_takeoff_measurements/);
+assert.match(estimatesSource, /lineIdMap\.get/);
+assert.match(estimatesSource, /scale_verified_at: null/);
 const harborBlock = estimatesSource.match(
   /const HARBOR_DEMO_ESTIMATE_LINES = \[([\s\S]*?)\n\] as const;/,
 )?.[1];

@@ -147,7 +147,23 @@ export function TakeoffTools({
           data-testid="takeoff-finish-draft"
         >
           <Check className="h-3.5 w-3.5" />
-          <span className={cn(compact && "hidden 2xl:inline")}>{draftCommand.actionLabel}</span>
+          <span>{draftCommand.actionLabel}</span>
+        </Button>
+      )}
+      {(tool === "calibrate" || tool === "verify") && (
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+          onClick={() => {
+            clearDraftPoints();
+            setCalibrationPoints([]);
+            setTool("select");
+          }}
+          data-testid="takeoff-cancel-scale"
+        >
+          <XCircle className="h-3.5 w-3.5" /> Cancel scale check
         </Button>
       )}
       {activeDraftPointCount > 0 && (

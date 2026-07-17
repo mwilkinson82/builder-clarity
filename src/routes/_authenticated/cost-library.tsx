@@ -9,6 +9,7 @@ import {
   Copy,
   Download,
   FileSpreadsheet,
+  History,
   Lock,
   Plus,
   Save,
@@ -48,11 +49,13 @@ import {
   COST_LIBRARY_LABOR_BASES,
   createCostLibraryItem,
   deleteCostLibraryItem,
+  getCostLibraryPriceHistory,
   importCostLibraryItems,
   listCostLibraryItems,
   resolveLibraryUnitCosts,
   updateCostLibraryItem,
   type CostLibraryItemRow,
+  type CostLibraryPriceHistoryRow,
   type CostLibraryLaborBasis,
 } from "@/lib/estimates.functions";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
@@ -153,6 +156,11 @@ type NewItem = {
   labor_basis: CostLibraryLaborBasis | "";
   crew_size: number | null;
   productivity_per_hour: number | null;
+  source_vendor: string;
+  source_reference: string;
+  effective_date: string | null;
+  expires_at: string | null;
+  escalation_pct: number;
 };
 
 type LibraryView = "system" | "my";
@@ -170,18 +178,24 @@ const blankItem: NewItem = {
   labor_basis: "",
   crew_size: null,
   productivity_per_hour: null,
+  source_vendor: "",
+  source_reference: "",
+  effective_date: null,
+  expires_at: null,
+  escalation_pct: 0,
 };
 
 const laborBasisLabel = (basis: CostLibraryLaborBasis) =>
   COST_LIBRARY_LABOR_BASES.find((option) => option.value === basis)?.label ?? "Per Unit";
 
 const EMPTY_COST_ITEMS: CostLibraryItemRow[] = [];
+const COST_LIBRARY_PAGE_SIZE = 100;
 
 const costFocusOptions: Array<{ value: CostFocus; label: string }> = [
   { value: "all", label: "All" },
   { value: "material", label: "Material" },
   { value: "labor", label: "Labor" },
-  { value: "installed", label: "Installed" },
+  { value: "installed", label: "Material + labor" },
 ];
 
 const getCostProfile = (
@@ -196,7 +210,7 @@ const getCostProfile = (
 };
 
 const profileLabel = (profile: ReturnType<typeof getCostProfile>) => {
-  if (profile === "installed") return "Installed";
+  if (profile === "installed") return "Material + labor";
   if (profile === "labor") return "Labor";
   if (profile === "material") return "Material";
   return "No cost";
@@ -300,6 +314,7 @@ function CostLibraryPage() {
   const bulkImport = useServerFn(importCostLibraryItems);
   const update = useServerFn(updateCostLibraryItem);
   const remove = useServerFn(deleteCostLibraryItem);
+  const loadPriceHistory = useServerFn(getCostLibraryPriceHistory);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
   const [search, setSearch] = useState("");
   const [division, setDivision] = useState("all");
@@ -313,6 +328,14 @@ function CostLibraryPage() {
   const [draft, setDraft] = useState<NewItem>(blankItem);
   const [activeView, setActiveView] = useState<LibraryView>("system");
   const [costFocus, setCostFocus] = useState<CostFocus>("all");
+  const [page, setPage] = useState(1);
+  const [historyItem, setHistoryItem] = useState<CostLibraryItemRow | null>(null);
+
+  const historyQuery = useQuery({
+    queryKey: ["cost-library-price-history", historyItem?.id],
+    queryFn: () => loadPriceHistory({ data: { item_id: historyItem?.id ?? "" } }),
+    enabled: Boolean(historyItem?.id),
+  });
 
   // The whole book loads once (no server-side division/category filter) so the
   // sidebar can count every division client-side; refinement is all local.
@@ -369,6 +392,11 @@ function CostLibraryPage() {
           labor_basis: item.labor_basis,
           crew_size: item.crew_size,
           productivity_per_hour: item.productivity_per_hour,
+          source_vendor: item.source_vendor,
+          source_reference: item.source_reference,
+          effective_date: item.effective_date,
+          expires_at: item.expires_at,
+          escalation_pct: item.escalation_pct,
           synonyms: item.synonyms.map(String).slice(0, 40),
           keywords: item.keywords.map(String).slice(0, 60),
         },
@@ -513,11 +541,21 @@ function CostLibraryPage() {
       });
   }, [basisFilter, category, costFocus, division, search, sourceItems]);
 
+  const pageCount = Math.max(1, Math.ceil(visibleItems.length / COST_LIBRARY_PAGE_SIZE));
+  const pagedItems = useMemo(
+    () => visibleItems.slice((page - 1) * COST_LIBRARY_PAGE_SIZE, page * COST_LIBRARY_PAGE_SIZE),
+    [page, visibleItems],
+  );
+  useEffect(() => setPage(1), [activeView, basisFilter, category, costFocus, division, search]);
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+
   // Rows are grouped under a clay Division header, divisions ascending and each
   // division's rows by CSI code, matching the mock's price-book layout.
   const groupedVisible = useMemo(() => {
     const groups = new Map<string, CostLibraryItemRow[]>();
-    for (const item of visibleItems) {
+    for (const item of pagedItems) {
       const key = item.csi_division ?? "";
       const bucket = groups.get(key);
       if (bucket) bucket.push(item);
@@ -534,7 +572,7 @@ function CostLibraryPage() {
             x.description.localeCompare(y.description),
         ),
       }));
-  }, [visibleItems]);
+  }, [pagedItems]);
 
   const priceBookSubhead =
     activeView === "system"
@@ -773,7 +811,7 @@ function CostLibraryPage() {
 
           <div className="mt-3.5 overflow-hidden rounded-xl border border-hairline bg-surface">
             <div className="overflow-x-auto">
-              <Table className="w-full min-w-[920px]">
+              <Table className="w-full min-w-[1040px]">
                 <TableHeader>
                   <TableRow className="bg-muted/60 hover:bg-muted/60 [&>th]:h-auto [&>th]:whitespace-nowrap [&>th]:py-2.5 [&>th]:font-mono [&>th]:text-[9px] [&>th]:font-bold [&>th]:uppercase [&>th]:tracking-[0.12em]">
                     <TableHead>Item</TableHead>
@@ -782,10 +820,10 @@ function CostLibraryPage() {
                     <TableHead className="text-right">Labor $/u</TableHead>
                     <TableHead className="text-center">Crew</TableHead>
                     <TableHead className="text-center">Prod/hr</TableHead>
-                    <TableHead className="border-l border-hairline text-right">Installed</TableHead>
-                    <TableHead className="w-12 text-right">
-                      <span className="sr-only">Actions</span>
+                    <TableHead className="border-l border-hairline text-right">
+                      Combined $/u
                     </TableHead>
+                    <TableHead className="w-40 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -833,6 +871,7 @@ function CostLibraryPage() {
                             onSave={(patch) => updateMutation.mutate({ id: item.id, patch })}
                             onDelete={() => deleteMutation.mutate(item.id)}
                             onCopy={() => copyMutation.mutate(item)}
+                            onHistory={() => setHistoryItem(item)}
                           />
                         ))}
                       </Fragment>
@@ -841,6 +880,36 @@ function CostLibraryPage() {
                 </TableBody>
               </Table>
             </div>
+            {visibleItems.length > COST_LIBRARY_PAGE_SIZE && (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline px-4 py-3 text-xs text-muted-foreground">
+                <span>
+                  Showing {(page - 1) * COST_LIBRARY_PAGE_SIZE + 1}–
+                  {Math.min(page * COST_LIBRARY_PAGE_SIZE, visibleItems.length)} of{" "}
+                  {visibleItems.length}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page === 1}
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <span>
+                    Page {page} of {pageCount}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page === pageCount}
+                    onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </main>
@@ -973,6 +1042,36 @@ function CostLibraryPage() {
                 }
               />
             </Field>
+            <Field label="Source vendor">
+              <Input
+                value={draft.source_vendor}
+                onChange={(event) => setDraft({ ...draft, source_vendor: event.target.value })}
+                placeholder="Supplier, subcontractor, or cost service"
+              />
+            </Field>
+            <Field label="Quote / source reference">
+              <Input
+                value={draft.source_reference}
+                onChange={(event) => setDraft({ ...draft, source_reference: event.target.value })}
+                placeholder="Quote number, URL, or file reference"
+              />
+            </Field>
+            <Field label="Effective date">
+              <Input
+                type="date"
+                value={draft.effective_date ?? ""}
+                onChange={(event) =>
+                  setDraft({ ...draft, effective_date: event.target.value || null })
+                }
+              />
+            </Field>
+            <Field label="Expires date">
+              <Input
+                type="date"
+                value={draft.expires_at ?? ""}
+                onChange={(event) => setDraft({ ...draft, expires_at: event.target.value || null })}
+              />
+            </Field>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setNewOpen(false)}>
@@ -993,6 +1092,14 @@ function CostLibraryPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CostHistoryDialog
+        item={historyItem}
+        history={historyQuery.data?.items ?? []}
+        ready={historyQuery.data?.ready ?? true}
+        loading={historyQuery.isLoading}
+        onOpenChange={(open) => !open && setHistoryItem(null)}
+      />
 
       <CostImportDialog
         open={importOpen}
@@ -1084,11 +1191,13 @@ function CostLibraryRow({
   onSave,
   onDelete,
   onCopy,
+  onHistory,
 }: {
   item: CostLibraryItemRow;
   onSave: (patch: Partial<NewItem>) => void;
   onDelete: () => void;
   onCopy: () => void;
+  onHistory: () => void;
 }) {
   const editable = item.source !== "system";
   const [draft, setDraft] = useState<NewItem>({
@@ -1102,6 +1211,11 @@ function CostLibraryRow({
     labor_basis: item.labor_basis,
     crew_size: item.crew_size,
     productivity_per_hour: item.productivity_per_hour,
+    source_vendor: item.source_vendor,
+    source_reference: item.source_reference,
+    effective_date: item.effective_date,
+    expires_at: item.expires_at,
+    escalation_pct: item.escalation_pct,
   });
   useEffect(() => {
     setDraft({
@@ -1115,6 +1229,11 @@ function CostLibraryRow({
       labor_basis: item.labor_basis,
       crew_size: item.crew_size,
       productivity_per_hour: item.productivity_per_hour,
+      source_vendor: item.source_vendor,
+      source_reference: item.source_reference,
+      effective_date: item.effective_date,
+      expires_at: item.expires_at,
+      escalation_pct: item.escalation_pct,
     });
   }, [item]);
 
@@ -1179,6 +1298,22 @@ function CostLibraryRow({
                   ))}
                 </SelectContent>
               </Select>
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  value={draft.source_vendor}
+                  onChange={(event) => setDraft({ ...draft, source_vendor: event.target.value })}
+                  className="h-8"
+                  placeholder="Source vendor"
+                  aria-label="Source vendor"
+                />
+                <Input
+                  value={draft.source_reference}
+                  onChange={(event) => setDraft({ ...draft, source_reference: event.target.value })}
+                  className="h-8"
+                  placeholder="Quote reference"
+                  aria-label="Quote reference"
+                />
+              </div>
             </div>
           </div>
         </TableCell>
@@ -1272,6 +1407,16 @@ function CostLibraryRow({
               size="icon"
               variant="ghost"
               className="h-8 w-8"
+              onClick={onHistory}
+              title="Price history"
+              aria-label="Price history"
+            >
+              <History className="h-4 w-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
               onClick={onDelete}
               title="Delete cost"
               aria-label="Delete cost"
@@ -1298,8 +1443,13 @@ function CostLibraryRow({
               {item.description}
             </div>
             <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
-              {item.csi_code || item.csi_division}
+              {item.csi_code || item.csi_division} · v{item.version_no}
             </div>
+            {(item.source_vendor || item.source_reference) && (
+              <div className="mt-1 text-[10px] text-muted-foreground">
+                {[item.source_vendor, item.source_reference].filter(Boolean).join(" · ")}
+              </div>
+            )}
           </div>
         </div>
       </TableCell>
@@ -1330,18 +1480,135 @@ function CostLibraryRow({
         )}
       </TableCell>
       <TableCell className="text-right">
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-8 w-8 text-muted-foreground"
-          onClick={onCopy}
-          title="Add to My Cost Library"
-          aria-label="Add to My Cost Library"
-        >
-          <Copy className="h-4 w-4" />
-        </Button>
+        <div className="flex justify-end gap-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 text-muted-foreground"
+            onClick={onHistory}
+            title="Price history"
+            aria-label="Price history"
+          >
+            <History className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 gap-1.5 text-muted-foreground"
+            onClick={onCopy}
+            title="Add to My Cost Library"
+            aria-label="Add to My Cost Library"
+          >
+            <Copy className="h-4 w-4" /> Copy to My Library
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
+  );
+}
+
+function CostHistoryDialog({
+  item,
+  history,
+  ready,
+  loading,
+  onOpenChange,
+}: {
+  item: CostLibraryItemRow | null;
+  history: CostLibraryPriceHistoryRow[];
+  ready: boolean;
+  loading: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={Boolean(item)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeaderV2
+          eyebrow="Cost provenance"
+          title="Price History"
+          description={item ? `${item.description} · current version ${item.version_no}` : ""}
+        />
+        {!ready ? (
+          <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-sm text-warning">
+            Price history is awaiting the database release.
+          </p>
+        ) : loading ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Loading price history…</p>
+        ) : (
+          <div className="max-h-[60vh] space-y-2 overflow-y-auto">
+            {item && (
+              <HistoryRow
+                label={`Version ${item.version_no} · current`}
+                material={item.material_cost_cents}
+                labor={item.labor_cost_cents}
+                source={[item.source_vendor, item.source_reference].filter(Boolean).join(" · ")}
+                date={item.effective_date || item.updated_at}
+                current
+              />
+            )}
+            {history.map((entry) => (
+              <HistoryRow
+                key={entry.id}
+                label={`Version ${entry.version_no}`}
+                material={entry.material_cost_cents}
+                labor={entry.labor_cost_cents}
+                source={[entry.source_vendor, entry.source_reference].filter(Boolean).join(" · ")}
+                date={entry.effective_date || entry.changed_at}
+              />
+            ))}
+            {history.length === 0 && (
+              <p className="rounded-md border border-dashed border-hairline p-4 text-sm text-muted-foreground">
+                No prior price versions. The first pricing change will retain the previous values
+                here.
+              </p>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function HistoryRow({
+  label,
+  material,
+  labor,
+  source,
+  date,
+  current = false,
+}: {
+  label: string;
+  material: number;
+  labor: number;
+  source: string;
+  date: string;
+  current?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid items-center gap-3 rounded-md border border-hairline p-3 text-sm sm:grid-cols-[150px_1fr_120px_120px]",
+        current && "border-success/30 bg-success/5",
+      )}
+    >
+      <div>
+        <p className="font-semibold">{label}</p>
+        <p className="text-xs text-muted-foreground">
+          {date ? new Date(date).toLocaleDateString() : "No date"}
+        </p>
+      </div>
+      <p className="text-xs text-muted-foreground">{source || "No source reference"}</p>
+      <p className="text-right">
+        <span className="text-xs text-muted-foreground">Material</span>
+        <br />
+        {fmtUnitUSD(material)}
+      </p>
+      <p className="text-right">
+        <span className="text-xs text-muted-foreground">Labor</span>
+        <br />
+        {fmtUnitUSD(labor)}
+      </p>
+    </div>
   );
 }
 

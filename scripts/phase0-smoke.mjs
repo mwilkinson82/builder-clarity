@@ -2146,7 +2146,7 @@ await expectContains(
     /materialTotal/,
     /laborTotal/,
     /direct/,
-    /min-w-\[1450px\] table-fixed/, // v2 grid width
+    /min-w-\[1180px\] table-fixed/, // full-width worksheet no longer competes with a side rail
     /data-estimate-grid-cell/,
     /handleGridKeyDown/,
     /ArrowDown/,
@@ -2180,7 +2180,6 @@ await expectContains(
     /plan-cockpit-status-badges/,
     /plan-cockpit-drawings-toggle/,
     /plan-cockpit-tools-toggle/,
-    /plan-cockpit-show-panels/,
     /plan-cockpit-hide-panels/,
     /plan-cockpit-focus-toggle/,
     /plan-cockpit-controls-restore/,
@@ -2213,6 +2212,7 @@ await expectContains(
     /fixed inset-0 z-50 min-h-0 overflow-hidden/,
     /absolute inset-0 grid-cols-1 overflow-hidden p-0/,
     /Clean view/,
+    /setCockpitPanels\(\{ drawings: false, tools: true \}\)/,
     /CockpitFloatingPanelHeader/,
     /PlanRevisionOverlayPanel/,
     /CommandCenterToolsNav/,
@@ -2251,8 +2251,8 @@ await expectContains(
   [
     /plan-cockpit-tools-tabs/,
     /plan-cockpit-tools-tab-\$\{view\.value\}/,
-    /AI & Scope/,
-    /Worksheet/,
+    /Read Notes & AI/,
+    /Estimate Worksheet/,
   ],
   "command center tools are split into task-focused estimator workspaces",
 );

@@ -101,6 +101,7 @@ import {
 import { EstimateQuantitySourceReview } from "@/components/estimates/EstimateQuantitySourceReview";
 import { EstimateReviewActivity } from "@/components/estimates/EstimateReviewActivity";
 import { EstimateReviewGate } from "@/components/estimates/EstimateReviewGate";
+import { EstimateCommercialControls } from "@/components/estimates/EstimateCommercialControls";
 import {
   estimateReleaseNeedsOverride,
   type EstimateReviewActivityType,
@@ -350,6 +351,7 @@ export function EstimateWorkspace({
     colIndex: number;
   } | null>(null);
   const isMasterSheet = estimate.kind === "master_sheet";
+  const isCanonicalDemo = estimate.is_canonical_demo;
   const titleRows = Math.min(3, Math.max(1, Math.ceil(Math.max(nameDraft.length, 1) / 42)));
 
   useEffect(() => setNameDraft(estimate.name), [estimate.name]);
@@ -463,11 +465,13 @@ export function EstimateWorkspace({
       duplicateFn({ data: { id: estimate.id, as_project_estimate: asProjectEstimate } }),
     onSuccess: (result, asProjectEstimate) => {
       toast.success(
-        asProjectEstimate
-          ? "Estimate created from master"
-          : isMasterSheet
-            ? "Master sheet copied"
-            : "Estimate duplicated",
+        isCanonicalDemo
+          ? "Your isolated Harbor working copy is ready"
+          : asProjectEstimate
+            ? "Estimate created from master"
+            : isMasterSheet
+              ? "Master sheet copied"
+              : "Estimate duplicated",
       );
       navigate({ to: "/estimates/$estimateId", params: { estimateId: result.id } });
     },
@@ -758,9 +762,7 @@ export function EstimateWorkspace({
       toast.error(error instanceof Error ? error.message : "Release override did not save"),
   });
 
-  const estimateGridClass = isSheetExpanded
-    ? "min-w-[1180px] table-fixed"
-    : "min-w-[1450px] table-fixed";
+  const estimateGridClass = "min-w-[1180px] table-fixed";
 
   return (
     <div
@@ -805,6 +807,7 @@ export function EstimateWorkspace({
                         }
                       }}
                       className="min-h-[2rem] w-full max-w-[560px] resize-none overflow-hidden border-0 bg-transparent p-0 font-serif text-[26px] leading-tight shadow-none focus-visible:ring-0"
+                      disabled={isCanonicalDemo}
                     />
                     <div className="flex flex-wrap items-center gap-2">
                       <Select
@@ -812,6 +815,7 @@ export function EstimateWorkspace({
                         onValueChange={(status) =>
                           updateEstimatePatch({ status: status as EstimateStatus })
                         }
+                        disabled={isCanonicalDemo}
                       >
                         <SelectTrigger
                           className="h-7 w-auto gap-1.5 rounded-full border-hairline px-3 text-xs capitalize"
@@ -832,6 +836,7 @@ export function EstimateWorkspace({
                           onValueChange={(folder) =>
                             updateEstimatePatch({ folder: folder as EstimateFolder })
                           }
+                          disabled={isCanonicalDemo}
                         >
                           <SelectTrigger
                             className="h-7 w-auto gap-1.5 rounded-full border-hairline px-3 text-xs text-clay"
@@ -870,27 +875,47 @@ export function EstimateWorkspace({
                     variant="ghost"
                     size="sm"
                     className="gap-1.5"
-                    onClick={() => duplicateMutation.mutate(false)}
+                    onClick={() => duplicateMutation.mutate(isCanonicalDemo)}
                     disabled={duplicateMutation.isPending}
                   >
-                    <Copy className="h-3.5 w-3.5" /> {isMasterSheet ? "Copy Master" : "Duplicate"}
+                    <Copy className="h-3.5 w-3.5" />
+                    {isCanonicalDemo
+                      ? "Create Working Copy"
+                      : isMasterSheet
+                        ? "Copy Master"
+                        : "Duplicate"}
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="gap-1.5 text-danger hover:text-danger"
-                    onClick={() => setDeleteOpen(true)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {isMasterSheet ? "Delete Master" : "Delete"}
-                  </Button>
+                  {!isCanonicalDemo && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="gap-1.5">
+                          <ChevronDown className="h-3.5 w-3.5" /> More
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          className="text-danger focus:text-danger"
+                          onClick={() => setDeleteOpen(true)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          {isMasterSheet ? "Delete Master" : "Delete Estimate"}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                 </div>
                 <Separator orientation="vertical" className="hidden h-6 xl:block" />
-                <Button variant="outline" size="sm" className="gap-1.5" asChild>
-                  <Link to="/estimates/$estimateId/plan-room" params={{ estimateId: estimate.id }}>
-                    <PencilRuler className="h-3.5 w-3.5" /> Plan Room
-                  </Link>
-                </Button>
+                {!isMasterSheet && (
+                  <Button variant="outline" size="sm" className="gap-1.5" asChild>
+                    <Link
+                      to="/estimates/$estimateId/plan-room"
+                      params={{ estimateId: estimate.id }}
+                    >
+                      <PencilRuler className="h-3.5 w-3.5" />
+                      {isCanonicalDemo ? "Explore Plan Room" : "Plan Room"}
+                    </Link>
+                  </Button>
+                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="sm" className="gap-1.5">
@@ -914,256 +939,298 @@ export function EstimateWorkspace({
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <Button
-                  size="sm"
-                  className="gap-1.5 bg-accent text-accent-foreground shadow-sm hover:bg-accent/90 focus-visible:ring-accent"
-                  title={
-                    isMasterSheet ? "Create a project estimate from this master sheet" : undefined
-                  }
-                  onClick={() =>
-                    isMasterSheet
-                      ? duplicateMutation.mutate(true)
-                      : requestReleaseAction("push_project")
-                  }
-                  disabled={
-                    isMasterSheet
-                      ? duplicateMutation.isPending
-                      : pushMutation.isPending || orderedLines.length === 0
-                  }
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  {isMasterSheet ? "Create Estimate From Master" : "Push to Project"}
-                </Button>
+                {!isCanonicalDemo && (
+                  <Button
+                    size="sm"
+                    className="gap-1.5 bg-accent text-accent-foreground shadow-sm hover:bg-accent/90 focus-visible:ring-accent"
+                    title={
+                      isMasterSheet ? "Create a project estimate from this master sheet" : undefined
+                    }
+                    onClick={() =>
+                      isMasterSheet
+                        ? duplicateMutation.mutate(true)
+                        : requestReleaseAction("push_project")
+                    }
+                    disabled={
+                      isMasterSheet
+                        ? duplicateMutation.isPending
+                        : pushMutation.isPending || orderedLines.length === 0
+                    }
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {isMasterSheet ? "Create Estimate From Master" : "Push to Project"}
+                  </Button>
+                )}
               </div>
             </div>
           </div>
         </header>
       )}
 
+      {!isSheetExpanded && isCanonicalDemo && (
+        <div className="border-b border-clay/30 bg-clay/[0.07] px-5 py-3 text-sm lg:px-8">
+          <div className="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-3">
+            <p>
+              <span className="font-medium">Protected sample:</span> quantities, pricing, drawings,
+              and takeoffs are locked to the approved{" "}
+              {fmtUSD(
+                (estimate.canonical_expected_total_cents ?? estimate.total_with_markups_cents) /
+                  100,
+              )}{" "}
+              baseline.
+            </p>
+            <Button
+              size="sm"
+              className="gap-1.5"
+              onClick={() => duplicateMutation.mutate(true)}
+              disabled={duplicateMutation.isPending}
+            >
+              <Copy className="h-3.5 w-3.5" /> Create Working Copy
+            </Button>
+          </div>
+        </div>
+      )}
+
       <main
         className={
           isSheetExpanded
             ? "grid min-h-0 flex-1 grid-cols-1 p-3"
-            : "mx-auto grid max-w-[1800px] gap-5 px-5 py-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-8"
+            : "mx-auto grid w-full max-w-[1800px] gap-5 px-5 py-6 lg:grid-cols-1 lg:px-8"
         }
       >
-        <section
-          className={`min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card ${
-            isSheetExpanded ? "flex min-h-0 flex-col" : ""
-          }`}
-        >
-          {!isMasterSheet && orderedLines.length > 0 && (
-            <>
-              <EstimateReviewGate estimateId={estimate.id} review={estimateReviewGate} />
-              <EstimateReviewActivity
-                estimateId={estimate.id}
-                state={reviewActivityQuery.data}
-                loading={reviewActivityQuery.isLoading || reviewActivityQuery.isFetching}
-                onChanged={refreshReviewActivity}
-              />
-            </>
-          )}
-          {!isMasterSheet && (
-            <EstimateQuantitySourceReview estimateId={estimate.id} review={quantitySourceReview} />
-          )}
-          <div
-            id="estimate-line-items"
-            className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline bg-surface px-4 py-3"
+        <fieldset disabled={isCanonicalDemo} className="contents">
+          <section
+            className={`min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card ${
+              isSheetExpanded ? "flex min-h-0 flex-col" : ""
+            }`}
           >
-            <div>
-              <h2 className="font-serif text-2xl">
-                {isMasterSheet ? "Master Sheet Lines" : "Line Items"}
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                {isMasterSheet
-                  ? `${orderedLines.length} rows. This saved master sheet is the reusable worksheet; the download is only the Excel/CSV import format.`
-                  : `${orderedLines.length} rows. Import a master sheet, then replace or append this estimate.`}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                onClick={() => {
-                  setImportStep("choose");
-                  setImportOpen(true);
-                }}
-              >
-                <Upload className="h-3.5 w-3.5" /> Import Master Sheet
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                aria-pressed={isSheetExpanded}
-                onClick={() => setIsSheetExpanded((expanded) => !expanded)}
-                title={isSheetExpanded ? "Exit the full-screen worksheet" : "Expand the worksheet"}
-                data-testid="estimate-sheet-expand"
-              >
-                {isSheetExpanded ? (
-                  <Minimize2 className="h-3.5 w-3.5" />
-                ) : (
-                  <Maximize2 className="h-3.5 w-3.5" />
-                )}
-                {isSheetExpanded ? "Exit Full Screen" : "Expand Sheet"}
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" className="gap-1.5" disabled={createLinesMutation.isPending}>
-                    <Plus className="h-3.5 w-3.5" /> Add Rows
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {[1, 5, 10, 15].map((count) => (
-                    <DropdownMenuItem key={count} onClick={() => addBlankRows(count)}>
-                      {count === 1 ? "1 blank row" : `${count} blank rows`}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </div>
-          {showFirstRunLauncher ? (
-            <EstimateFirstRunLauncher
-              onTakeoff={() =>
-                navigate({
-                  to: "/estimates/$estimateId/plan-room",
-                  params: { estimateId: estimate.id },
-                  search: { upload: true },
-                })
-              }
-              onImportMasterSheet={() => setImportOpen(true)}
-              onBuildByHand={() => addBlankRows(1)}
-              disabled={createLinesMutation.isPending}
-            />
-          ) : (
-            <div className={isSheetExpanded ? "min-h-0 flex-1 overflow-auto" : "overflow-x-auto"}>
-              <Table data-estimate-grid className={estimateGridClass}>
-                <TableHeader>
-                  <TableRow className="bg-surface [&>th]:whitespace-nowrap">
-                    <TableHead className={isSheetExpanded ? "w-[36px]" : "w-[44px]"} />
-                    <TableHead className={isSheetExpanded ? "w-[44px]" : "w-[56px]"}>#</TableHead>
-                    <TableHead className={isSheetExpanded ? "w-[105px]" : "w-[120px]"}>
-                      Cost Code
-                    </TableHead>
-                    <TableHead className={isSheetExpanded ? "w-[130px]" : "w-[150px]"}>
-                      Group
-                    </TableHead>
-                    <TableHead className={isSheetExpanded ? undefined : "w-[340px]"}>
-                      Description
-                    </TableHead>
-                    <TableHead className={isSheetExpanded ? "w-[70px]" : "w-[86px]"}>
-                      Unit
-                    </TableHead>
-                    <TableHead
-                      className={`${isSheetExpanded ? "w-[105px]" : "w-[128px]"} text-right`}
-                    >
-                      Qty
-                    </TableHead>
-                    <TableHead
-                      className={`${isSheetExpanded ? "w-[126px]" : "w-[150px]"} text-right`}
-                    >
-                      Mat $/Unit
-                    </TableHead>
-                    <TableHead
-                      className={`${isSheetExpanded ? "w-[126px]" : "w-[150px]"} text-right`}
-                    >
-                      Labor $/Unit
-                    </TableHead>
-                    <TableHead
-                      className={`${isSheetExpanded ? "w-[150px]" : "w-[170px]"} border-l border-hairline text-right`}
-                    >
-                      Extended
-                    </TableHead>
-                    <TableHead className={isSheetExpanded ? "w-[44px]" : "w-[56px]"} />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {orderedLines.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={11}
-                        className="py-12 text-center text-sm text-muted-foreground"
-                        data-testid="estimate-grid-empty"
-                      >
-                        Measure it in the Plan Room, price it from your Cost Library, or import your
-                        master sheet — start wherever you like.
-                      </TableCell>
-                    </TableRow>
+            {!isMasterSheet && orderedLines.length > 0 && (
+              <>
+                <EstimateReviewGate estimateId={estimate.id} review={estimateReviewGate} />
+                <EstimateReviewActivity
+                  estimateId={estimate.id}
+                  state={reviewActivityQuery.data}
+                  loading={reviewActivityQuery.isLoading || reviewActivityQuery.isFetching}
+                  onChanged={refreshReviewActivity}
+                />
+              </>
+            )}
+            {!isMasterSheet && (
+              <EstimateQuantitySourceReview
+                estimateId={estimate.id}
+                review={quantitySourceReview}
+              />
+            )}
+            <div
+              id="estimate-line-items"
+              className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline bg-surface px-4 py-3"
+            >
+              <div>
+                <h2 className="font-serif text-2xl">
+                  {isMasterSheet ? "Master Sheet Lines" : "Line Items"}
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  {isMasterSheet
+                    ? `${orderedLines.length} rows. This saved master sheet is the reusable worksheet; the download is only the Excel/CSV import format.`
+                    : `${orderedLines.length} rows. Import a master sheet, then replace or append this estimate.`}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => {
+                    setImportStep("choose");
+                    setImportOpen(true);
+                  }}
+                >
+                  <Upload className="h-3.5 w-3.5" /> Import Master Sheet
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  aria-pressed={isSheetExpanded}
+                  onClick={() => setIsSheetExpanded((expanded) => !expanded)}
+                  title={
+                    isSheetExpanded ? "Exit the full-screen worksheet" : "Expand the worksheet"
+                  }
+                  data-testid="estimate-sheet-expand"
+                >
+                  {isSheetExpanded ? (
+                    <Minimize2 className="h-3.5 w-3.5" />
                   ) : (
-                    groupedRuns.map((run) => (
-                      <Fragment key={run.key}>
-                        {showGroupHeaders && (
-                          <TableRow className="border-t border-hairline bg-background hover:bg-background">
-                            <TableCell colSpan={11} className="px-3 py-2.5">
-                              <div className="flex items-center gap-2.5">
-                                <span className="eyebrow">{run.label}</span>
-                                <span className="text-[11px] text-muted-foreground">
-                                  {run.rows.length} {run.rows.length === 1 ? "item" : "items"}
-                                </span>
-                                <span className="flex-1" />
-                                <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-                                  Subtotal
-                                </span>
-                                <span className="font-serif text-[15px]">
-                                  {fmtUSD(run.subtotalCents / 100)}
-                                </span>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                        {run.rows.map(({ line, index }) => (
-                          <EstimateLineRow
-                            key={line.id}
-                            estimate={estimate}
-                            line={line}
-                            takeoffIssue={takeoffIssueByLineId.get(line.id)}
-                            index={index}
-                            onUpdate={(patch) => updateLineMutation.mutate({ id: line.id, patch })}
-                            onDelete={() => deleteLineMutation.mutate(line.id)}
-                            onDragStart={() => setDraggingId(line.id)}
-                            onDragEnd={() => setDraggingId(null)}
-                            onDrop={() => onDropRow(line.id)}
-                            isDragging={draggingId === line.id}
-                            onCreateNextRow={(colIndex) => {
-                              addBlankRows(1, colIndex);
-                            }}
-                          />
-                        ))}
-                      </Fragment>
-                    ))
+                    <Maximize2 className="h-3.5 w-3.5" />
                   )}
-                  <TableRow className="border-t-2 border-foreground bg-surface font-medium">
-                    <TableCell colSpan={9} className="text-sm">
-                      Grand subtotal
-                    </TableCell>
-                    <TableCell className="border-l border-hairline text-right align-top">
-                      <div className="font-serif text-[15px] leading-tight">
-                        {fmtUSD(liveTotals.direct_cents / 100)}
-                      </div>
-                      <div className="mt-0.5 text-[10px] tabular text-muted-foreground">
-                        {fmtUSD(liveTotals.material_cents / 100)} mat ·{" "}
-                        {fmtUSD(liveTotals.labor_cents / 100)} lab
-                      </div>
-                    </TableCell>
-                    <TableCell />
-                  </TableRow>
-                </TableBody>
-              </Table>
+                  {isSheetExpanded ? "Exit Full Screen" : "Expand Sheet"}
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" className="gap-1.5" disabled={createLinesMutation.isPending}>
+                      <Plus className="h-3.5 w-3.5" /> Add Rows
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {[1, 5, 10, 15].map((count) => (
+                      <DropdownMenuItem key={count} onClick={() => addBlankRows(count)}>
+                        {count === 1 ? "1 blank row" : `${count} blank rows`}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
-          )}
-        </section>
+            {showFirstRunLauncher ? (
+              <EstimateFirstRunLauncher
+                onTakeoff={() =>
+                  navigate({
+                    to: "/estimates/$estimateId/plan-room",
+                    params: { estimateId: estimate.id },
+                    search: { upload: true },
+                  })
+                }
+                onImportMasterSheet={() => setImportOpen(true)}
+                onBuildByHand={() => addBlankRows(1)}
+                disabled={createLinesMutation.isPending}
+              />
+            ) : (
+              <div className={isSheetExpanded ? "min-h-0 flex-1 overflow-auto" : "overflow-x-auto"}>
+                <Table data-estimate-grid className={estimateGridClass}>
+                  <TableHeader>
+                    <TableRow className="bg-surface [&>th]:whitespace-nowrap">
+                      <TableHead className={isSheetExpanded ? "w-[36px]" : "w-[44px]"} />
+                      <TableHead className={isSheetExpanded ? "w-[44px]" : "w-[56px]"}>#</TableHead>
+                      <TableHead className={isSheetExpanded ? "w-[105px]" : "w-[120px]"}>
+                        Cost Code
+                      </TableHead>
+                      <TableHead className={isSheetExpanded ? "w-[130px]" : "w-[150px]"}>
+                        Group
+                      </TableHead>
+                      <TableHead className={isSheetExpanded ? undefined : "w-[340px]"}>
+                        Description
+                      </TableHead>
+                      <TableHead className={isSheetExpanded ? "w-[70px]" : "w-[86px]"}>
+                        Unit
+                      </TableHead>
+                      <TableHead
+                        className={`${isSheetExpanded ? "w-[105px]" : "w-[128px]"} text-right`}
+                      >
+                        Qty
+                      </TableHead>
+                      <TableHead
+                        className={`${isSheetExpanded ? "w-[126px]" : "w-[150px]"} text-right`}
+                      >
+                        Mat $/Unit
+                      </TableHead>
+                      <TableHead
+                        className={`${isSheetExpanded ? "w-[126px]" : "w-[150px]"} text-right`}
+                      >
+                        Labor $/Unit
+                      </TableHead>
+                      <TableHead
+                        className={`${isSheetExpanded ? "w-[150px]" : "w-[170px]"} border-l border-hairline text-right`}
+                      >
+                        Extended
+                      </TableHead>
+                      <TableHead className={isSheetExpanded ? "w-[44px]" : "w-[56px]"} />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {orderedLines.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={11}
+                          className="py-12 text-center text-sm text-muted-foreground"
+                          data-testid="estimate-grid-empty"
+                        >
+                          Measure it in the Plan Room, price it from your Cost Library, or import
+                          your master sheet — start wherever you like.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      groupedRuns.map((run) => (
+                        <Fragment key={run.key}>
+                          {showGroupHeaders && (
+                            <TableRow className="border-t border-hairline bg-background hover:bg-background">
+                              <TableCell colSpan={11} className="px-3 py-2.5">
+                                <div className="flex items-center gap-2.5">
+                                  <span className="eyebrow">{run.label}</span>
+                                  <span className="text-[11px] text-muted-foreground">
+                                    {run.rows.length} {run.rows.length === 1 ? "item" : "items"}
+                                  </span>
+                                  <span className="flex-1" />
+                                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                                    Subtotal
+                                  </span>
+                                  <span className="font-serif text-[15px]">
+                                    {fmtUSD(run.subtotalCents / 100)}
+                                  </span>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          {run.rows.map(({ line, index }) => (
+                            <EstimateLineRow
+                              key={line.id}
+                              estimate={estimate}
+                              line={line}
+                              takeoffIssue={takeoffIssueByLineId.get(line.id)}
+                              index={index}
+                              onUpdate={(patch) =>
+                                updateLineMutation.mutate({ id: line.id, patch })
+                              }
+                              onDelete={() => deleteLineMutation.mutate(line.id)}
+                              onDragStart={() => setDraggingId(line.id)}
+                              onDragEnd={() => setDraggingId(null)}
+                              onDrop={() => onDropRow(line.id)}
+                              isDragging={draggingId === line.id}
+                              onCreateNextRow={(colIndex) => {
+                                addBlankRows(1, colIndex);
+                              }}
+                            />
+                          ))}
+                        </Fragment>
+                      ))
+                    )}
+                    <TableRow className="border-t-2 border-foreground bg-surface font-medium">
+                      <TableCell colSpan={9} className="text-sm">
+                        Grand subtotal
+                      </TableCell>
+                      <TableCell className="border-l border-hairline text-right align-top">
+                        <div className="font-serif text-[15px] leading-tight">
+                          {fmtUSD(liveTotals.direct_cents / 100)}
+                        </div>
+                        <div className="mt-0.5 text-[10px] tabular text-muted-foreground">
+                          {fmtUSD(liveTotals.material_cents / 100)} mat ·{" "}
+                          {fmtUSD(liveTotals.labor_cents / 100)} lab
+                        </div>
+                      </TableCell>
+                      <TableCell />
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </section>
 
-        {!isSheetExpanded && (
-          <EstimateSummaryPanel
-            estimate={estimate}
-            totals={liveTotals}
-            regions={regions}
-            onPatch={updateEstimatePatch}
-            onSaveDefaults={() => saveDefaultsMutation.mutate()}
-            savingDefaults={saveDefaultsMutation.isPending}
+          {!isSheetExpanded && (
+            <EstimateSummaryPanel
+              estimate={estimate}
+              totals={liveTotals}
+              regions={regions}
+              onPatch={updateEstimatePatch}
+              onSaveDefaults={() => saveDefaultsMutation.mutate()}
+              savingDefaults={saveDefaultsMutation.isPending}
+            />
+          )}
+        </fieldset>
+        {!isSheetExpanded && !isMasterSheet && (
+          <EstimateCommercialControls
+            estimateId={estimate.id}
+            estimateName={estimate.name}
+            readOnly={isCanonicalDemo}
           />
         )}
       </main>

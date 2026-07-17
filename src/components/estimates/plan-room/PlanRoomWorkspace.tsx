@@ -275,6 +275,7 @@ export function PlanRoomWorkspace({
   focusMeasurementId = "",
   autoOpenUpload = false,
 }: PlanRoomWorkspaceProps) {
+  const isCanonicalDemo = estimate.is_canonical_demo === true;
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const focusTargetAppliedRef = useRef(false);
@@ -411,8 +412,8 @@ export function PlanRoomWorkspace({
   // the route and then discover a second button before reaching the workbench.
   const [isCockpitMode, setIsCockpitMode] = useState(true);
   const [cockpitPanels, setCockpitPanels] = useState<Record<CockpitPanelKey, boolean>>({
-    drawings: true,
-    tools: true,
+    drawings: false,
+    tools: false,
   });
   const [cockpitPanelLayouts, setCockpitPanelLayouts] = useState<
     Record<CockpitPanelKey, CockpitPanelLayout>
@@ -421,7 +422,7 @@ export function PlanRoomWorkspace({
     Record<CockpitPanelKey, CockpitPanelPresentation>
   >({ drawings: "windowed", tools: "windowed" });
   const [cockpitChromeVisible, setCockpitChromeVisible] = useState(true);
-  const [cockpitToolsView, setCockpitToolsView] = useState<CommandCenterToolsView>("measure");
+  const [cockpitToolsView, setCockpitToolsView] = useState<CommandCenterToolsView>("ai");
   const estimatorActivation = useEstimatorActivation(estimate.id);
   const [overlaySheetId, setOverlaySheetId] = useState("");
   const [overlayOpacity, setOverlayOpacity] = useState(65);
@@ -2389,7 +2390,7 @@ export function PlanRoomWorkspace({
     setCalibrationPoints([]);
     setSelectedMeasurementId("");
     if (isCockpitMode) {
-      setCockpitPanels((current) => ({ ...current, tools: true }));
+      setCockpitPanels({ drawings: false, tools: true });
     }
     if (currentSheetScaleStatus !== "verified") {
       setTool("select");
@@ -2957,6 +2958,7 @@ export function PlanRoomWorkspace({
     }
   };
   const backendReady = schemaReady !== false;
+  const workspaceWritable = backendReady && !isCanonicalDemo;
   const currentSheetTitle = currentSheet
     ? `${currentSheet.sheet_number} ${currentSheet.sheet_name}`.trim()
     : "No sheet selected";
@@ -2975,7 +2977,7 @@ export function PlanRoomWorkspace({
   // is the visible fallback.
   useEffect(() => {
     if (!autoOpenUpload || autoUploadTriggeredRef.current) return;
-    if (!backendReady || uploading || createSetMutation.isPending) return;
+    if (!workspaceWritable || uploading || createSetMutation.isPending) return;
     autoUploadTriggeredRef.current = true;
     const hasRealPlanSet = planSets.some(
       (planSet) => planSet.file_mime_type !== SAMPLE_PLAN_SET_MIME,
@@ -2983,7 +2985,7 @@ export function PlanRoomWorkspace({
     if (hasRealPlanSet) return;
     fileInputRef.current?.click();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoOpenUpload, backendReady, planSets, uploading]);
+  }, [autoOpenUpload, planSets, uploading, workspaceWritable]);
   const openSheet = (sheetId: string) => {
     setSelectedSheetId(sheetId);
     setPendingPoints([]);
@@ -3024,7 +3026,7 @@ export function PlanRoomWorkspace({
     setCalibrationPoints([]);
     setSelectedMeasurementId("");
     if (isCockpitMode) {
-      setCockpitPanels((current) => ({ ...current, tools: true }));
+      setCockpitPanels({ drawings: false, tools: true });
     }
 
     if (action === "count_review") {
@@ -3189,7 +3191,7 @@ export function PlanRoomWorkspace({
     if (!sheet) return;
     openSheet(sheet.id);
     setTool("calibrate");
-    setCockpitPanels((current) => ({ ...current, tools: true }));
+    setCockpitPanels({ drawings: false, tools: true });
     toast.info("Opened the first sheet that still needs scale.");
   };
   const showUnlinkedTakeoffs = () => {
@@ -3204,8 +3206,9 @@ export function PlanRoomWorkspace({
     openSheet(nextItem.sheet.id);
   };
   const restoreCockpitPanel = (panel: CockpitPanelKey) => {
+    const otherPanel: CockpitPanelKey = panel === "drawings" ? "tools" : "drawings";
     setCockpitPanelPresentations((current) => ({ ...current, [panel]: "windowed" }));
-    setCockpitPanels((current) => ({ ...current, [panel]: true }));
+    setCockpitPanels((current) => ({ ...current, [panel]: true, [otherPanel]: false }));
   };
   const minimizeCockpitPanel = (panel: CockpitPanelKey) => {
     setCockpitPanelPresentations((current) => ({ ...current, [panel]: "windowed" }));
@@ -3217,7 +3220,7 @@ export function PlanRoomWorkspace({
   };
   const showCockpitPanels = () => {
     setCockpitPanelPresentations({ drawings: "windowed", tools: "windowed" });
-    setCockpitPanels({ drawings: true, tools: true });
+    setCockpitPanels({ drawings: true, tools: false });
   };
   const hideCockpitPanels = () => {
     setCockpitPanelPresentations({ drawings: "windowed", tools: "windowed" });
@@ -3239,7 +3242,7 @@ export function PlanRoomWorkspace({
   };
   const selectCockpitToolsView = (view: CommandCenterToolsView) => {
     setCockpitToolsView(view);
-    setCockpitPanels((current) => ({ ...current, tools: true }));
+    setCockpitPanels({ drawings: false, tools: true });
     if (view === "worksheet") maximizeCockpitPanel("tools");
   };
   const drawingsWorkspaceMaximized =
@@ -3480,13 +3483,13 @@ export function PlanRoomWorkspace({
       sheets[0];
     if (preferredSheet) openSheet(preferredSheet.id);
     else fileInputRef.current?.click();
-    showCockpitPanels();
+    restoreCockpitPanel("tools");
     setCockpitToolsView("ai");
     estimatorActivation.choose("guided");
   };
   const startTakeoffActivation = () => {
     if (sheets.length === 0) fileInputRef.current?.click();
-    showCockpitPanels();
+    restoreCockpitPanel("tools");
     setCockpitToolsView("measure");
     estimatorActivation.choose("takeoff");
   };
@@ -3496,7 +3499,7 @@ export function PlanRoomWorkspace({
   };
   const takeoffToolsProps = {
     tool,
-    backendReady,
+    backendReady: workspaceWritable,
     draftCommand,
     activeDraftPointCount,
     setTool: (nextTool: ToolMode) => {
@@ -3626,6 +3629,11 @@ export function PlanRoomWorkspace({
           {currentSheetTitle}
         </p>
       </div>
+      {isCanonicalDemo && (
+        <Badge variant="outline" className="border-primary/30 bg-primary/5 text-primary">
+          Protected sample · view only
+        </Badge>
+      )}
       <div
         className="hidden items-center gap-1.5 2xl:flex"
         data-testid="plan-cockpit-status-badges"
@@ -3637,31 +3645,18 @@ export function PlanRoomWorkspace({
         </Badge>
       </div>
       <Separator orientation="vertical" className="mx-1 hidden h-6 lg:block" />
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="h-8 gap-1.5 px-2"
-        title="Open the getting-started workflow"
-        onClick={estimatorActivation.openWelcome}
-        data-testid="estimator-activation-open"
-      >
-        <CircleHelp className="h-3.5 w-3.5" />
-        <span className="hidden 2xl:inline">Getting started</span>
-      </Button>
-      {(!cockpitPanels.drawings || !cockpitPanels.tools) && (
+      {!isCanonicalDemo && (
         <Button
           type="button"
           size="sm"
           variant="outline"
           className="h-8 gap-1.5 px-2"
-          title="Show both side panels"
-          aria-label="Show both side panels"
-          onClick={showCockpitPanels}
-          data-testid="plan-cockpit-show-panels"
+          title="Open the getting-started workflow"
+          onClick={estimatorActivation.openWelcome}
+          data-testid="estimator-activation-open"
         >
-          <Maximize2 className="h-3.5 w-3.5" />
-          Panels
+          <CircleHelp className="h-3.5 w-3.5" />
+          <span className="hidden 2xl:inline">Getting started</span>
         </Button>
       )}
       <Button
@@ -3693,27 +3688,30 @@ export function PlanRoomWorkspace({
       {(cockpitPanels.drawings || cockpitPanels.tools) && (
         <Button
           type="button"
-          size="icon"
+          size="sm"
           variant="outline"
-          className="h-8 w-8"
+          className="h-8 gap-1.5 px-2"
           title="Hide command center panels"
+          aria-label="Hide panels and return to the drawing"
           onClick={hideCockpitPanels}
           data-testid="plan-cockpit-hide-panels"
         >
           <Minimize2 className="h-3.5 w-3.5" />
+          <span className="hidden xl:inline">Drawing only</span>
         </Button>
       )}
       <Button
         type="button"
-        size="icon"
+        size="sm"
         variant="outline"
-        className="h-8 w-8"
+        className="h-8 gap-1.5 px-2"
         title="Clean view: hide floating command bars without closing your panels"
         aria-label="Clean view"
         onClick={() => setCockpitChromeVisible(false)}
         data-testid="plan-cockpit-focus-toggle"
       >
         <Maximize2 className="h-3.5 w-3.5" />
+        <span className="hidden xl:inline">Clean view</span>
       </Button>
       <FlagIssueButton compact getContext={flagIssueContext} />
       <input
@@ -3729,7 +3727,7 @@ export function PlanRoomWorkspace({
         title="Upload plans"
         aria-label="Upload plans"
         onClick={() => fileInputRef.current?.click()}
-        disabled={!backendReady || uploading || createSetMutation.isPending}
+        disabled={!workspaceWritable || uploading || createSetMutation.isPending}
       >
         <FileUp className="h-3.5 w-3.5" />
       </Button>
@@ -3745,7 +3743,7 @@ export function PlanRoomWorkspace({
       data-testid="plan-room-workspace"
     >
       <EstimatorActivationDialog
-        open={estimatorActivation.welcomeOpen}
+        open={!isCanonicalDemo && estimatorActivation.welcomeOpen}
         hasDrawings={sheets.length > 0}
         onGuidedExample={startGuidedActivation}
         onStartTakeoff={startTakeoffActivation}
@@ -3819,7 +3817,7 @@ export function PlanRoomWorkspace({
                   size="sm"
                   className="gap-1.5"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={!backendReady || uploading || createSetMutation.isPending}
+                  disabled={!workspaceWritable || uploading || createSetMutation.isPending}
                 >
                   <FileUp className="h-3.5 w-3.5" />
                   Upload Plans
@@ -3857,7 +3855,7 @@ export function PlanRoomWorkspace({
             isCockpitMode &&
               (cockpitPanels.drawings
                 ? drawingsWorkspaceMaximized
-                  ? "absolute z-[60] grid auto-rows-min gap-4 overflow-y-auto overscroll-contain rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur [scrollbar-gutter:stable] xl:grid-cols-2 2xl:grid-cols-3"
+                  ? "absolute z-[60] grid auto-rows-min scroll-pt-28 gap-4 overflow-y-auto overscroll-contain rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur [scrollbar-gutter:stable] xl:grid-cols-2 2xl:grid-cols-3"
                   : "absolute z-40 space-y-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}
@@ -3898,53 +3896,63 @@ export function PlanRoomWorkspace({
             currentSheet={currentSheet}
             openSheet={openSheet}
             thumbnailUrlByPath={thumbUrlByPath}
-            onRenameSheet={(sheetId, patch) => renameSheetMutation.mutate({ sheetId, patch })}
+            onRenameSheet={
+              isCanonicalDemo
+                ? undefined
+                : (sheetId, patch) => renameSheetMutation.mutate({ sheetId, patch })
+            }
             renamePending={renameSheetMutation.isPending}
             onDetectSheetNames={
-              currentPlanSet?.file_mime_type === "application/pdf" && currentPlanSet.file_path
+              !isCanonicalDemo &&
+              currentPlanSet?.file_mime_type === "application/pdf" &&
+              currentPlanSet.file_path
                 ? () => detectNamesMutation.mutate()
                 : undefined
             }
             detectingNames={detectNamesMutation.isPending}
           />
 
-          <PlanScopeCoverageMatrix
-            estimateId={estimate.id}
-            planSet={currentPlanSet}
-            sheets={sheets}
-            queueItems={measurementScopeItems}
-            reviewingSheetId={
-              measurementAssistantMutation.isPending
-                ? (measurementAssistantMutation.variables?.sheetId ?? currentSheet?.id ?? "")
-                : ""
-            }
-            onReviewSheet={(sheetId) => {
-              setSelectedSheetId(sheetId);
-              measurementAssistantMutation.mutate({ sheetId });
-            }}
-            onOpenRecord={(record) => {
-              setSelectedSheetId(record.sheet_id);
-              openScopeCoverageRecordMutation.mutate(record);
-            }}
-          />
+          {!isCanonicalDemo && (
+            <PlanScopeCoverageMatrix
+              estimateId={estimate.id}
+              planSet={currentPlanSet}
+              sheets={sheets}
+              queueItems={measurementScopeItems}
+              reviewingSheetId={
+                measurementAssistantMutation.isPending
+                  ? (measurementAssistantMutation.variables?.sheetId ?? currentSheet?.id ?? "")
+                  : ""
+              }
+              onReviewSheet={(sheetId) => {
+                setSelectedSheetId(sheetId);
+                measurementAssistantMutation.mutate({ sheetId });
+              }}
+              onOpenRecord={(record) => {
+                setSelectedSheetId(record.sheet_id);
+                openScopeCoverageRecordMutation.mutate(record);
+              }}
+            />
+          )}
 
-          <PlanScopeBriefPanel
-            estimateId={estimate.id}
-            planSet={currentPlanSet}
-            measurements={measurements}
-            pending={scopeBriefMutation.isPending}
-            progress={scopeBriefProgress}
-            evidencePending={openScopeBriefEvidenceMutation.isPending}
-            onGenerate={() => scopeBriefMutation.mutate()}
-            onOpenEvidence={(item) => openScopeBriefEvidenceMutation.mutate({ item })}
-            onStartAction={(item, review) =>
-              openScopeBriefEvidenceMutation.mutate({
-                item,
-                action: review.next_action,
-                review,
-              })
-            }
-          />
+          {!isCanonicalDemo && (
+            <PlanScopeBriefPanel
+              estimateId={estimate.id}
+              planSet={currentPlanSet}
+              measurements={measurements}
+              pending={scopeBriefMutation.isPending}
+              progress={scopeBriefProgress}
+              evidencePending={openScopeBriefEvidenceMutation.isPending}
+              onGenerate={() => scopeBriefMutation.mutate()}
+              onOpenEvidence={(item) => openScopeBriefEvidenceMutation.mutate({ item })}
+              onStartAction={(item, review) =>
+                openScopeBriefEvidenceMutation.mutate({
+                  item,
+                  action: review.next_action,
+                  review,
+                })
+              }
+            />
+          )}
 
           <PlanRevisionOverlayPanel
             estimateId={estimate.id}
@@ -3959,6 +3967,7 @@ export function PlanRoomWorkspace({
             overlayMode={overlayMode}
             overlayOpacity={overlayOpacity}
             revisionSheetOptions={revisionSheetOptions}
+            readOnly={isCanonicalDemo}
             onOverlaySheetChange={setOverlaySheetId}
             onOverlayModeChange={setOverlayMode}
             onOverlayOpacityChange={setOverlayOpacity}
@@ -4256,7 +4265,7 @@ export function PlanRoomWorkspace({
               selectMeasurement(measurement);
             }}
             onMeasurementGeometryChange={saveMeasurementGeometry}
-            isGeometrySaving={updateMeasurementMutation.isPending}
+            isGeometrySaving={isCanonicalDemo || updateMeasurementMutation.isPending}
             showFloatingControls={cockpitChromeVisible}
             roomControls={isCockpitMode && cockpitChromeVisible ? cockpitRoomControls : null}
             sheetControls={isCockpitMode && cockpitChromeVisible ? cockpitSheetControls : null}
@@ -4335,8 +4344,8 @@ export function PlanRoomWorkspace({
               (cockpitPanels.tools
                 ? toolsWorkspaceMaximized
                   ? cockpitToolsView === "review"
-                    ? "absolute z-[60] grid auto-rows-min gap-4 overflow-y-auto overscroll-contain rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur [scrollbar-gutter:stable] xl:grid-cols-[minmax(260px,0.75fr)_minmax(320px,0.85fr)_minmax(420px,1.4fr)]"
-                    : "absolute z-[60] space-y-4 overflow-y-auto overscroll-contain rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur [scrollbar-gutter:stable]"
+                    ? "absolute z-[60] grid auto-rows-min scroll-pt-28 gap-4 overflow-y-auto overscroll-contain rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur [scrollbar-gutter:stable] xl:grid-cols-[minmax(260px,0.75fr)_minmax(320px,0.85fr)_minmax(420px,1.4fr)]"
+                    : "absolute z-[60] scroll-pt-28 space-y-4 overflow-y-auto overscroll-contain rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur [scrollbar-gutter:stable]"
                   : "absolute z-40 space-y-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}
@@ -4361,25 +4370,31 @@ export function PlanRoomWorkspace({
               onClose={() => minimizeCockpitPanel("tools")}
             />
           )}
-          {estimatorActivation.checklistVisible && (
-            <div
-              className={cn(
-                toolsWorkspaceMaximized && cockpitToolsView === "review" && "xl:col-span-3",
-              )}
-            >
-              <EstimatorActivationChecklist
-                hasDrawings={sheets.length > 0}
-                scaleVerified={currentSheetScaleStatus === "verified"}
-                hasTakeoff={measurements.length > 0}
-                hasLinkedTakeoff={linkedCount > 0}
-                onOpenDrawings={openActivationDrawings}
-                onVerifyScale={openActivationScale}
-                onOpenAiMarkups={openActivationAiMarkups}
-                onOpenWorksheet={openActivationWorksheet}
-                onHide={estimatorActivation.hide}
-              />
-            </div>
-          )}
+          {estimatorActivation.checklistVisible &&
+            !(
+              sheets.length > 0 &&
+              currentSheetScaleStatus === "verified" &&
+              measurements.length > 0 &&
+              linkedCount > 0
+            ) && (
+              <div
+                className={cn(
+                  toolsWorkspaceMaximized && cockpitToolsView === "review" && "xl:col-span-3",
+                )}
+              >
+                <EstimatorActivationChecklist
+                  hasDrawings={sheets.length > 0}
+                  scaleVerified={currentSheetScaleStatus === "verified"}
+                  hasTakeoff={measurements.length > 0}
+                  hasLinkedTakeoff={linkedCount > 0}
+                  onOpenDrawings={openActivationDrawings}
+                  onVerifyScale={openActivationScale}
+                  onOpenAiMarkups={openActivationAiMarkups}
+                  onOpenWorksheet={openActivationWorksheet}
+                  onHide={estimatorActivation.hide}
+                />
+              </div>
+            )}
           {isCockpitMode && (
             <div
               className={cn(
@@ -4419,7 +4434,7 @@ export function PlanRoomWorkspace({
                       plan={measurementAssistantPlan}
                       pending={measurementAssistantMutation.isPending}
                       canAnalyze={Boolean(
-                        backendReady &&
+                        workspaceWritable &&
                         currentSheet &&
                         currentPlanSet?.file_mime_type === "application/pdf" &&
                         currentPlanSet.file_path,
@@ -4609,7 +4624,7 @@ export function PlanRoomWorkspace({
                             className="w-full gap-1.5"
                             onClick={applyStatedScale}
                             disabled={
-                              !backendReady || !statedPresetId || updateSheetMutation.isPending
+                              !workspaceWritable || !statedPresetId || updateSheetMutation.isPending
                             }
                             data-testid="stated-scale-apply"
                           >
@@ -4631,7 +4646,7 @@ export function PlanRoomWorkspace({
                                 variant="outline"
                                 className="mt-2 w-full"
                                 onClick={() => applyToSetMutation.mutate(applyToSetOffer)}
-                                disabled={applyToSetMutation.isPending}
+                                disabled={!workspaceWritable || applyToSetMutation.isPending}
                                 data-testid="stated-scale-apply-to-set-button"
                               >
                                 {applyToSetMutation.isPending
@@ -4685,7 +4700,7 @@ export function PlanRoomWorkspace({
                           variant="outline"
                           className="gap-1.5"
                           onClick={saveScale}
-                          disabled={!backendReady || updateSheetMutation.isPending}
+                          disabled={!workspaceWritable || updateSheetMutation.isPending}
                         >
                           <Save className="h-3.5 w-3.5" /> Save
                         </Button>
@@ -4699,7 +4714,7 @@ export function PlanRoomWorkspace({
                           tool={tool}
                           selectedPointCount={calibrationPoints.length}
                           verifyFeet={verifyFeet}
-                          backendReady={backendReady}
+                          backendReady={workspaceWritable}
                           scaleAssuranceReady={scaleAssuranceReady}
                           pending={
                             scaleAssessmentMutation.isPending || scaleCorrectionMutation.isPending
@@ -5000,7 +5015,7 @@ export function PlanRoomWorkspace({
                           onClick={() =>
                             recalculateSheetMutation.mutate(selectedMeasurement.plan_sheet_id)
                           }
-                          disabled={recalculateSheetMutation.isPending}
+                          disabled={isCanonicalDemo || recalculateSheetMutation.isPending}
                           data-testid="selected-takeoff-recalculate-sheet"
                         >
                           Recalculate sheet
@@ -5008,270 +5023,272 @@ export function PlanRoomWorkspace({
                       </div>
                     )}
                   </div>
-                  <TakeoffAssemblyWorkbench
-                    estimateId={estimate.id}
-                    measurement={selectedMeasurement}
-                    scopeItems={measurementScopeItems}
-                    lineItems={lineItems}
-                  />
-                  <div className="space-y-1.5">
-                    <Label>Takeoff label</Label>
-                    <Input
-                      value={selectedMeasurementDraft.label}
-                      onChange={(event) =>
-                        setSelectedMeasurementDraft((draft) => ({
-                          ...draft,
-                          label: event.target.value,
-                        }))
-                      }
+                  <fieldset disabled={isCanonicalDemo} className="contents">
+                    <TakeoffAssemblyWorkbench
+                      estimateId={estimate.id}
+                      measurement={selectedMeasurement}
+                      scopeItems={measurementScopeItems}
+                      lineItems={lineItems}
                     />
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_92px]">
                     <div className="space-y-1.5">
-                      <Label>Measured quantity</Label>
-                      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                      <Label>Takeoff label</Label>
+                      <Input
+                        value={selectedMeasurementDraft.label}
+                        onChange={(event) =>
+                          setSelectedMeasurementDraft((draft) => ({
+                            ...draft,
+                            label: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_92px]">
+                      <div className="space-y-1.5">
+                        <Label>Measured quantity</Label>
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={selectedMeasurementDraft.quantity}
+                            onChange={(event) =>
+                              setSelectedMeasurementDraft((draft) => ({
+                                ...draft,
+                                quantity: event.target.value,
+                              }))
+                            }
+                            data-testid="selected-takeoff-quantity-input"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={recalculateSelectedMeasurement}
+                            disabled={updateMeasurementMutation.isPending}
+                            data-testid="selected-takeoff-recalculate"
+                          >
+                            Recalc
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Override only when field judgment beats the markup. Recalc returns to
+                          drawing geometry.
+                        </p>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Unit</Label>
                         <Input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={selectedMeasurementDraft.quantity}
+                          value={selectedMeasurementDraft.unit}
                           onChange={(event) =>
                             setSelectedMeasurementDraft((draft) => ({
                               ...draft,
-                              quantity: event.target.value,
+                              unit: event.target.value,
                             }))
                           }
-                          data-testid="selected-takeoff-quantity-input"
+                          data-testid="selected-takeoff-unit-input"
                         />
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={recalculateSelectedMeasurement}
-                          disabled={updateMeasurementMutation.isPending}
-                          data-testid="selected-takeoff-recalculate"
-                        >
-                          Recalc
-                        </Button>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Override only when field judgment beats the markup. Recalc returns to
-                        drawing geometry.
-                      </p>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>Unit</Label>
-                      <Input
-                        value={selectedMeasurementDraft.unit}
-                        onChange={(event) =>
-                          setSelectedMeasurementDraft((draft) => ({
-                            ...draft,
-                            unit: event.target.value,
-                          }))
-                        }
-                        data-testid="selected-takeoff-unit-input"
-                      />
-                    </div>
-                  </div>
-                  {(Math.abs(
-                    Number(selectedMeasurementDraft.quantity || 0) - selectedMeasurement.quantity,
-                  ) > 0.00005 ||
-                    selectedMeasurement.calculation_method === "manual_override") && (
-                    <div className="space-y-1.5">
-                      <Label>Override reason</Label>
-                      <Textarea
-                        rows={2}
-                        value={selectedMeasurementDraft.overrideReason}
-                        onChange={(event) =>
-                          setSelectedMeasurementDraft((draft) => ({
-                            ...draft,
-                            overrideReason: event.target.value,
-                          }))
-                        }
-                        placeholder="Example: field-verified dimension supersedes the printed plan."
-                        data-testid="selected-takeoff-override-reason"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Manual quantities are allowed, but the estimator's reason stays in the audit
-                        trail.
-                      </p>
-                    </div>
-                  )}
-                  <div className="space-y-1.5">
-                    <Label>Markup color</Label>
-                    <div
-                      className="flex flex-wrap gap-2"
-                      data-testid="selected-takeoff-color-picker"
-                    >
-                      {TAKEOFF_COLORS.map((color) => (
-                        <button
-                          key={color}
-                          type="button"
-                          title={color}
-                          onClick={() =>
+                    {(Math.abs(
+                      Number(selectedMeasurementDraft.quantity || 0) - selectedMeasurement.quantity,
+                    ) > 0.00005 ||
+                      selectedMeasurement.calculation_method === "manual_override") && (
+                      <div className="space-y-1.5">
+                        <Label>Override reason</Label>
+                        <Textarea
+                          rows={2}
+                          value={selectedMeasurementDraft.overrideReason}
+                          onChange={(event) =>
                             setSelectedMeasurementDraft((draft) => ({
                               ...draft,
-                              color,
+                              overrideReason: event.target.value,
                             }))
                           }
-                          className={`h-8 w-8 rounded border ${
-                            selectedMeasurementDraft.color === color
-                              ? "border-foreground"
-                              : "border-hairline"
-                          }`}
-                          style={{ backgroundColor: color }}
+                          placeholder="Example: field-verified dimension supersedes the printed plan."
+                          data-testid="selected-takeoff-override-reason"
                         />
-                      ))}
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Notes</Label>
-                    <Textarea
-                      rows={3}
-                      value={selectedMeasurementDraft.notes}
-                      onChange={(event) =>
-                        setSelectedMeasurementDraft((draft) => ({
-                          ...draft,
-                          notes: event.target.value,
-                        }))
-                      }
-                      placeholder="Add assumptions, sheet notes, or scope clarifications."
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    {selectedMeasurementLine ? (
+                        <p className="text-xs text-muted-foreground">
+                          Manual quantities are allowed, but the estimator's reason stays in the
+                          audit trail.
+                        </p>
+                      </div>
+                    )}
+                    <div className="space-y-1.5">
+                      <Label>Markup color</Label>
                       <div
-                        className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs"
-                        data-testid="selected-takeoff-row-link"
+                        className="flex flex-wrap gap-2"
+                        data-testid="selected-takeoff-color-picker"
                       >
-                        <span className="min-w-0 truncate">
-                          Linked:{" "}
-                          {selectedMeasurementLine.cost_code
-                            ? `${selectedMeasurementLine.cost_code} · `
-                            : ""}
-                          {selectedMeasurementLine.description.slice(0, 50)} · per{" "}
-                          {selectedMeasurementLine.unit}
-                        </span>
+                        {TAKEOFF_COLORS.map((color) => (
+                          <button
+                            key={color}
+                            type="button"
+                            title={color}
+                            onClick={() =>
+                              setSelectedMeasurementDraft((draft) => ({
+                                ...draft,
+                                color,
+                              }))
+                            }
+                            className={`h-8 w-8 rounded border ${
+                              selectedMeasurementDraft.color === color
+                                ? "border-foreground"
+                                : "border-hairline"
+                            }`}
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Notes</Label>
+                      <Textarea
+                        rows={3}
+                        value={selectedMeasurementDraft.notes}
+                        onChange={(event) =>
+                          setSelectedMeasurementDraft((draft) => ({
+                            ...draft,
+                            notes: event.target.value,
+                          }))
+                        }
+                        placeholder="Add assumptions, sheet notes, or scope clarifications."
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      {selectedMeasurementLine ? (
+                        <div
+                          className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs"
+                          data-testid="selected-takeoff-row-link"
+                        >
+                          <span className="min-w-0 truncate">
+                            Linked:{" "}
+                            {selectedMeasurementLine.cost_code
+                              ? `${selectedMeasurementLine.cost_code} · `
+                              : ""}
+                            {selectedMeasurementLine.description.slice(0, 50)} · per{" "}
+                            {selectedMeasurementLine.unit}
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 shrink-0 px-2 text-xs"
+                            onClick={() =>
+                              updateMeasurementMutation.mutate({
+                                id: selectedMeasurement.id,
+                                patch: { estimate_line_item_id: null },
+                              })
+                            }
+                            data-testid="selected-takeoff-unlink"
+                          >
+                            Unlink
+                          </Button>
+                        </div>
+                      ) : (
+                        <div data-testid="selected-takeoff-row-link">
+                          <LinkOrCreatePicker
+                            lineItems={lineItems}
+                            takeoffUnit={selectedMeasurement.unit}
+                            onPickRow={(lineId) =>
+                              linkMeasurementToRow(selectedMeasurement.id, lineId)
+                            }
+                            onPickLibraryItem={(item) =>
+                              classifyTakeoffMutation.mutate({
+                                measurementIds: [selectedMeasurement.id],
+                                source: { type: "library", library_item_id: item.id },
+                              })
+                            }
+                            onCreateFromLabel={(label) =>
+                              classifyTakeoffMutation.mutate({
+                                measurementIds: [selectedMeasurement.id],
+                                source: {
+                                  type: "label",
+                                  description: label,
+                                  unit: selectedMeasurement.unit,
+                                },
+                              })
+                            }
+                            pending={classifyTakeoffMutation.isPending}
+                            compact
+                          />
+                        </div>
+                      )}
+                      {selectedMeasurementLine &&
+                        !takeoffUnitsCompatible(
+                          selectedMeasurement.unit,
+                          selectedMeasurementLine.unit,
+                        ) && (
+                          <p
+                            className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs"
+                            data-testid="selected-takeoff-unit-mismatch"
+                          >
+                            This takeoff measures {unitLongName(selectedMeasurement.unit)}, but the
+                            row is priced per {unitLongName(selectedMeasurementLine.unit)}. Sync
+                            will ask before mixing them.
+                          </p>
+                        )}
+                      <div className="grid grid-cols-2 gap-2">
                         <Button
                           type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 shrink-0 px-2 text-xs"
-                          onClick={() =>
-                            updateMeasurementMutation.mutate({
-                              id: selectedMeasurement.id,
-                              patch: { estimate_line_item_id: null },
-                            })
-                          }
-                          data-testid="selected-takeoff-unlink"
+                          variant="outline"
+                          className="gap-1.5"
+                          onClick={saveSelectedMeasurement}
+                          disabled={updateMeasurementMutation.isPending}
+                          data-testid="selected-takeoff-save-details"
                         >
-                          Unlink
+                          <Save className="h-3.5 w-3.5" /> Save Details
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="gap-1.5"
+                          onClick={() => deleteMeasurementMutation.mutate(selectedMeasurement.id)}
+                          disabled={deleteMeasurementMutation.isPending}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-danger" /> Delete
                         </Button>
                       </div>
-                    ) : (
-                      <div data-testid="selected-takeoff-row-link">
-                        <LinkOrCreatePicker
-                          lineItems={lineItems}
-                          takeoffUnit={selectedMeasurement.unit}
-                          onPickRow={(lineId) =>
-                            linkMeasurementToRow(selectedMeasurement.id, lineId)
+                      {selectedMeasurement.calculation_status === "current" &&
+                        selectedMeasurementLine &&
+                        (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0 && (
+                          <p
+                            className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-foreground"
+                            data-testid="selected-takeoff-linked-trust-warning"
+                          >
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                            Another takeoff feeding this estimate row needs review before the row
+                            can sync.
+                          </p>
+                        )}
+                      {selectedMeasurementLine ? (
+                        <Button
+                          size="sm"
+                          className="w-full gap-1.5"
+                          onClick={() =>
+                            syncLineMutation.mutate({ lineId: selectedMeasurementLine.id })
                           }
-                          onPickLibraryItem={(item) =>
-                            classifyTakeoffMutation.mutate({
-                              measurementIds: [selectedMeasurement.id],
-                              source: { type: "library", library_item_id: item.id },
-                            })
+                          disabled={
+                            syncLineMutation.isPending ||
+                            (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
                           }
-                          onCreateFromLabel={(label) =>
-                            classifyTakeoffMutation.mutate({
-                              measurementIds: [selectedMeasurement.id],
-                              source: {
-                                type: "label",
-                                description: label,
-                                unit: selectedMeasurement.unit,
-                              },
-                            })
+                          title={
+                            takeoffSyncBlockReason(selectedMeasurement.calculation_status) ||
+                            ((lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
+                              ? "Another takeoff feeding this estimate row must be reviewed before sending."
+                              : "Send this takeoff total to the estimate.")
                           }
-                          pending={classifyTakeoffMutation.isPending}
-                          compact
-                        />
-                      </div>
-                    )}
-                    {selectedMeasurementLine &&
-                      !takeoffUnitsCompatible(
-                        selectedMeasurement.unit,
-                        selectedMeasurementLine.unit,
-                      ) && (
-                        <p
-                          className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs"
-                          data-testid="selected-takeoff-unit-mismatch"
+                          data-testid="selected-takeoff-sync"
                         >
-                          This takeoff measures {unitLongName(selectedMeasurement.unit)}, but the
-                          row is priced per {unitLongName(selectedMeasurementLine.unit)}. Sync will
-                          ask before mixing them.
+                          <Link2 className="h-3.5 w-3.5" />
+                          Send This Takeoff Total to Estimate
+                        </Button>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Link this takeoff to an estimate row before sending quantity.
                         </p>
                       )}
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="gap-1.5"
-                        onClick={saveSelectedMeasurement}
-                        disabled={updateMeasurementMutation.isPending}
-                        data-testid="selected-takeoff-save-details"
-                      >
-                        <Save className="h-3.5 w-3.5" /> Save Details
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="gap-1.5"
-                        onClick={() => deleteMeasurementMutation.mutate(selectedMeasurement.id)}
-                        disabled={deleteMeasurementMutation.isPending}
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-danger" /> Delete
-                      </Button>
                     </div>
-                    {selectedMeasurement.calculation_status === "current" &&
-                      selectedMeasurementLine &&
-                      (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0 && (
-                        <p
-                          className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-foreground"
-                          data-testid="selected-takeoff-linked-trust-warning"
-                        >
-                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
-                          Another takeoff feeding this estimate row needs review before the row can
-                          sync.
-                        </p>
-                      )}
-                    {selectedMeasurementLine ? (
-                      <Button
-                        size="sm"
-                        className="w-full gap-1.5"
-                        onClick={() =>
-                          syncLineMutation.mutate({ lineId: selectedMeasurementLine.id })
-                        }
-                        disabled={
-                          syncLineMutation.isPending ||
-                          (lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
-                        }
-                        title={
-                          takeoffSyncBlockReason(selectedMeasurement.calculation_status) ||
-                          ((lineTotals.get(selectedMeasurementLine.id)?.untrustedCount ?? 0) > 0
-                            ? "Another takeoff feeding this estimate row must be reviewed before sending."
-                            : "Send this takeoff total to the estimate.")
-                        }
-                        data-testid="selected-takeoff-sync"
-                      >
-                        <Link2 className="h-3.5 w-3.5" />
-                        Send This Takeoff Total to Estimate
-                      </Button>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        Link this takeoff to an estimate row before sending quantity.
-                      </p>
-                    )}
-                  </div>
+                  </fieldset>
                 </div>
               ) : (
                 <div className="mt-4 rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
@@ -5285,6 +5302,7 @@ export function PlanRoomWorkspace({
           {(!isCockpitMode || cockpitToolsView === "worksheet") && (
             <TakeoffWorksheet
               expanded={toolsWorkspaceMaximized}
+              readOnly={isCanonicalDemo}
               measurements={measurements}
               totalMeasured={totalMeasured}
               copyTakeoffSummary={copyTakeoffSummary}

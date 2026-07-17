@@ -20,6 +20,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   delete(): DynamicSupabaseQuery;
   upsert(values: unknown, options?: { onConflict?: string }): DynamicSupabaseQuery;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
+  neq(column: string, value: unknown): DynamicSupabaseQuery;
   or(filters: string): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): Promise<DynamicSupabaseResult<unknown[]>>;
   order(
@@ -141,6 +142,10 @@ export interface EstimateRow {
   total_with_markups_cents: number;
   status: EstimateStatus;
   folder: EstimateFolder;
+  is_canonical_demo: boolean;
+  canonical_demo_key: string | null;
+  canonical_demo_version: number | null;
+  canonical_expected_total_cents: number | null;
   created_at: string;
   updated_at: string;
   line_item_count?: number;
@@ -212,8 +217,29 @@ export interface CostLibraryItemRow {
   keywords: Json[];
   source: "system" | "user" | "imported";
   base_region: string;
+  source_vendor: string;
+  source_reference: string;
+  effective_date: string | null;
+  expires_at: string | null;
+  verified_at: string | null;
+  verified_by: string | null;
+  escalation_pct: number;
+  version_no: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface CostLibraryPriceHistoryRow {
+  id: string;
+  cost_library_item_id: string;
+  version_no: number;
+  material_cost_cents: number;
+  labor_cost_cents: number;
+  labor_basis: CostLibraryLaborBasis;
+  source_vendor: string;
+  source_reference: string;
+  effective_date: string | null;
+  changed_at: string;
 }
 
 export interface EstimateTotalsBreakdown {
@@ -309,6 +335,19 @@ const isMissingQuantityProvenanceColumn = (error: { code?: string; message?: str
   );
 };
 
+const isMissingCanonicalDemoColumn = (error: { code?: string; message?: string } | null) => {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" ||
+      error.code === "42703" ||
+      (/is_canonical_demo|canonical_demo_key|canonical_demo_version|canonical_expected_total_cents/i.test(
+        message,
+      ) &&
+        /schema cache|column|could not find|does not exist/i.test(message))),
+  );
+};
+
 const LABOR_BASIS_PENDING_MESSAGE =
   "Labor pricing basis is still being enabled on the backend. Wait for the database migration to finish, then try again.";
 
@@ -349,6 +388,14 @@ const normalizeEstimate = (row: Record<string, unknown>): EstimateRow => {
     total_with_markups_cents: Math.round(num(row.total_with_markups_cents)),
     status,
     folder: normalizeEstimateFolder(row.folder, status),
+    is_canonical_demo: row.is_canonical_demo === true,
+    canonical_demo_key: row.canonical_demo_key ? str(row.canonical_demo_key) : null,
+    canonical_demo_version:
+      row.canonical_demo_version == null ? null : Math.round(num(row.canonical_demo_version)),
+    canonical_expected_total_cents:
+      row.canonical_expected_total_cents == null
+        ? null
+        : Math.round(num(row.canonical_expected_total_cents)),
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
   };
@@ -425,6 +472,14 @@ const normalizeLibraryItem = (
     keywords: arr(row.keywords),
     source: str(row.source, "system") as CostLibraryItemRow["source"],
     base_region: str(row.base_region, "national"),
+    source_vendor: str(row.source_vendor),
+    source_reference: str(row.source_reference),
+    effective_date: row.effective_date ? str(row.effective_date) : null,
+    expires_at: row.expires_at ? str(row.expires_at) : null,
+    verified_at: row.verified_at ? str(row.verified_at) : null,
+    verified_by: row.verified_by ? str(row.verified_by) : null,
+    escalation_pct: Math.round(num(row.escalation_pct)),
+    version_no: Math.max(1, Math.round(num(row.version_no, 1))),
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
   };
@@ -631,22 +686,42 @@ async function ensureHarborDemoEstimate(
   context: { supabase: unknown; userId: string },
   organizationId: string,
 ) {
-  const { data: existingEstimates, error: existingError } = await dynamicTable(
-    context.supabase,
-    "estimates",
-  )
-    .select("id,name,project_id")
+  let existingResult = await dynamicTable(context.supabase, "estimates")
+    .select("id,name,project_id,is_canonical_demo,canonical_demo_key")
     .eq("organization_id", organizationId)
     .limit(500);
-  if (existingError) throw new Error(existingError.message);
-
-  const estimates = (existingEstimates ?? []) as Record<string, unknown>[];
-  if (
-    estimates.some(
-      (estimate) => str(estimate.name).toLowerCase() === HARBOR_DEMO_ESTIMATE_NAME.toLowerCase(),
-    )
-  ) {
+  if (existingResult.error && isMissingCanonicalDemoColumn(existingResult.error)) {
+    // Until Lovable applies the migration, preserve the legacy seed behavior
+    // without presenting a sample as protected when the database cannot lock it.
+    existingResult = await dynamicTable(context.supabase, "estimates")
+      .select("id,name,project_id")
+      .eq("organization_id", organizationId)
+      .limit(500);
+    if (existingResult.error) throw new Error(existingResult.error.message);
+    const legacyRows = (existingResult.data ?? []) as Record<string, unknown>[];
+    if (
+      legacyRows.some(
+        (estimate) => str(estimate.name).toLowerCase() === HARBOR_DEMO_ESTIMATE_NAME.toLowerCase(),
+      )
+    ) {
+      return;
+    }
+    // Do not attempt a partially protected seed. The next list request after
+    // the migration lands will create the canonical sample atomically.
     return;
+  } else if (existingResult.error) {
+    throw new Error(existingResult.error.message);
+  } else {
+    const existingRows = (existingResult.data ?? []) as Record<string, unknown>[];
+    if (
+      existingRows.some(
+        (estimate) =>
+          estimate.is_canonical_demo === true &&
+          str(estimate.canonical_demo_key) === HARBOR_CANONICAL_DEMO_KEY,
+      )
+    ) {
+      return;
+    }
   }
 
   const { data: projects, error: projectsError } = await dynamicTable(context.supabase, "projects")
@@ -661,7 +736,7 @@ async function ensureHarborDemoEstimate(
   if (harborDemoSeedAction(harborProject) === "skip") return;
 
   const externalIds = Array.from(
-    new Set(HARBOR_DEMO_ESTIMATE_LINES.map((line) => line.external_id).filter(Boolean)),
+    new Set(HARBOR_CANONICAL_ESTIMATE_LINES.map((line) => line.external_id).filter(Boolean)),
   );
   const libraryResult =
     externalIds.length > 0
@@ -686,10 +761,10 @@ async function ensureHarborDemoEstimate(
     .insert({
       organization_id: organizationId,
       created_by: context.userId,
-      name: HARBOR_DEMO_ESTIMATE_NAME,
+      name: HARBOR_CANONICAL_ESTIMATE_NAME,
       description:
-        "Fully loaded demo estimate for the Harbor Residence learning project. Use it to see takeoff rows, cost groups, markups, exports, and project handoff before importing your own pricing.",
-      project_id: str(harborProject?.id) || null,
+        "Read-only estimating workbench sample. Create a working copy before changing quantities, pricing, takeoffs, or drawings.",
+      project_id: null,
       project_type: "residential",
       region: "national",
       region_multiplier: 1,
@@ -701,6 +776,10 @@ async function ensureHarborDemoEstimate(
       general_conditions_pct: 450,
       custom_markups: [] as unknown as Json,
       status: "final",
+      is_canonical_demo: false,
+      canonical_demo_key: null,
+      canonical_demo_version: null,
+      canonical_expected_total_cents: null,
     })
     .select("id")
     .single();
@@ -710,7 +789,7 @@ async function ensureHarborDemoEstimate(
 
   const estimateId = str((estimateRow as Record<string, unknown>).id);
   const { error: linesError } = await dynamicTable(context.supabase, "estimate_line_items").insert(
-    HARBOR_DEMO_ESTIMATE_LINES.map((line, index) => ({
+    HARBOR_CANONICAL_ESTIMATE_LINES.map((line, index) => ({
       estimate_id: estimateId,
       csi_division: line.csi_division,
       cost_code: line.cost_code,
@@ -722,12 +801,35 @@ async function ensureHarborDemoEstimate(
       library_item_id: line.external_id ? (libraryIds.get(line.external_id) ?? null) : null,
       scope_group: line.scope_group,
       sort_order: index + 1,
-      notes: "Seeded Harbor Residence sample estimate.",
+      notes: "Canonical Harbor Residence learning estimate. Duplicate before editing.",
     })),
   );
   if (linesError) throw new Error(linesError.message);
 
-  await recalculateEstimateTotalsInternal(context, estimateId);
+  const recalculated = await recalculateEstimateTotalsInternal(context, estimateId);
+  if (recalculated.totals.total_cents !== HARBOR_CANONICAL_TOTAL_CENTS) {
+    throw new Error(
+      `Canonical Harbor sample total drifted to ${recalculated.totals.total_cents} cents.`,
+    );
+  }
+
+  const { error: protectError } = await dynamicTable(context.supabase, "estimates")
+    .update({
+      is_canonical_demo: true,
+      canonical_demo_key: HARBOR_CANONICAL_DEMO_KEY,
+      canonical_demo_version: 1,
+      canonical_expected_total_cents: HARBOR_CANONICAL_TOTAL_CENTS,
+    })
+    .eq("id", estimateId);
+  if (protectError) throw new Error(protectError.message);
+
+  // Old seeded demos remain useful company data, but they must not masquerade
+  // as the protected sample in the list.
+  await dynamicTable(context.supabase, "estimates")
+    .update({ name: HARBOR_WORKING_COPY_NAME })
+    .eq("organization_id", organizationId)
+    .eq("name", HARBOR_DEMO_ESTIMATE_NAME)
+    .neq("id", estimateId);
 }
 
 async function insertEstimateRow(
@@ -1058,6 +1160,11 @@ const costLibraryItemInput = z.object({
   labor_basis: z.enum(["per_unit", "per_hour", "installed"]).optional().default("per_unit"),
   crew_size: z.number().min(0).max(999).nullable().optional(),
   productivity_per_hour: z.number().min(0).max(999999).nullable().optional(),
+  source_vendor: z.string().max(200).optional().default(""),
+  source_reference: z.string().max(500).optional().default(""),
+  effective_date: z.string().date().nullable().optional(),
+  expires_at: z.string().date().nullable().optional(),
+  escalation_pct: z.number().int().min(-10000).max(100000).optional().default(0),
   synonyms: z.array(z.string().max(80)).max(40).optional().default([]),
   keywords: z.array(z.string().max(80)).max(60).optional().default([]),
 });
@@ -1095,6 +1202,10 @@ const saveMarkupDefaultsInput = z.object({
 });
 
 const HARBOR_DEMO_ESTIMATE_NAME = "Harbor Residence - Sample Estimate";
+const HARBOR_CANONICAL_ESTIMATE_NAME = "Harbor Residence — Canonical Sample";
+const HARBOR_WORKING_COPY_NAME = "Harbor Residence — Working Copy";
+const HARBOR_CANONICAL_DEMO_KEY = "harbor-residence-v1";
+const HARBOR_CANONICAL_TOTAL_CENTS = 160_613_700;
 const HARBOR_SAMPLE_MASTER_SHEET_NAME = "Harbor Residence - Sample Master Sheet";
 
 const HARBOR_DEMO_ESTIMATE_LINES = [
@@ -1404,6 +1515,10 @@ const HARBOR_SAMPLE_MASTER_SHEET_LINES = HARBOR_DEMO_ESTIMATE_LINES.filter((line
     "22-100",
     "26-100",
   ].includes(line.cost_code),
+);
+
+const HARBOR_CANONICAL_ESTIMATE_LINES = HARBOR_SAMPLE_MASTER_SHEET_LINES.map((line) =>
+  line.cost_code === "31-220" ? { ...line, material_unit_cost_cents: 1_632_523 } : { ...line },
 );
 
 async function ensureHarborSampleMasterSheet(
@@ -1983,11 +2098,13 @@ export const duplicateEstimate = createServerFn({ method: "POST" })
     const estimate = await loadEstimate(context, data.id);
     const lines = await loadEstimateLines(context, data.id);
     const copyAsProjectEstimate = data.as_project_estimate === true;
-    const copyName = copyAsProjectEstimate
-      ? `${estimate.name.replace(/\s*master\s*(estimate|sheet)?\s*/gi, " ").trim()} Estimate`
-          .replace(/\s+/g, " ")
-          .slice(0, 200) || `Estimate from ${estimate.name}`.slice(0, 200)
-      : `Copy of ${estimate.name}`.slice(0, 200);
+    const copyName = estimate.is_canonical_demo
+      ? HARBOR_WORKING_COPY_NAME
+      : copyAsProjectEstimate
+        ? `${estimate.name.replace(/\s*master\s*(estimate|sheet)?\s*/gi, " ").trim()} Estimate`
+            .replace(/\s+/g, " ")
+            .slice(0, 200) || `Estimate from ${estimate.name}`.slice(0, 200)
+        : `Copy of ${estimate.name}`.slice(0, 200);
     const copyId = await insertEstimateRow(
       context,
       {
@@ -2015,30 +2132,177 @@ export const duplicateEstimate = createServerFn({ method: "POST" })
       },
       "Estimate copy did not save.",
     );
-    if (lines.length > 0) {
-      const { error: lineError } = await dynamicTable(
-        context.supabase,
-        "estimate_line_items",
-      ).insert(
-        lines.map((line) => ({
-          estimate_id: copyId,
-          csi_division: line.csi_division,
-          cost_code: line.cost_code,
-          description: line.description,
-          unit: line.unit,
-          quantity: line.quantity,
-          material_unit_cost_cents: line.material_unit_cost_cents,
-          labor_unit_cost_cents: line.labor_unit_cost_cents,
-          library_item_id: line.library_item_id,
-          scope_group: line.scope_group,
-          sort_order: line.sort_order,
-          notes: line.notes,
-        })),
-      );
-      if (lineError) throw new Error(lineError.message);
+    try {
+      const lineIdMap = new Map<string, string>();
+      if (lines.length > 0) {
+        const lineCopies = lines.map((line) => {
+          const id = crypto.randomUUID();
+          lineIdMap.set(line.id, id);
+          return {
+            id,
+            estimate_id: copyId,
+            csi_division: line.csi_division,
+            cost_code: line.cost_code,
+            description: line.description,
+            unit: line.unit,
+            quantity: line.quantity,
+            material_unit_cost_cents: line.material_unit_cost_cents,
+            labor_unit_cost_cents: line.labor_unit_cost_cents,
+            library_item_id: line.library_item_id,
+            scope_group: line.scope_group,
+            sort_order: line.sort_order,
+            notes: line.notes,
+          };
+        });
+        const { error: lineError } = await dynamicTable(
+          context.supabase,
+          "estimate_line_items",
+        ).insert(lineCopies);
+        if (lineError) throw new Error(lineError.message);
+      }
+
+      // A canonical copy must remain useful in the Plan Room. Reuse immutable
+      // source files, but clone every database-owned drawing, sheet, markup,
+      // and estimate-row link so one estimator can never change another's
+      // learning workspace. Scales deliberately require a fresh two-check
+      // verification in the copy; count geometry remains current.
+      if (estimate.is_canonical_demo) {
+        const [planSetResult, sheetResult, measurementResult] = await Promise.all([
+          dynamicTable(context.supabase, "estimate_plan_sets")
+            .select("*")
+            .eq("estimate_id", estimate.id),
+          dynamicTable(context.supabase, "estimate_plan_sheets")
+            .select("*")
+            .eq("estimate_id", estimate.id),
+          dynamicTable(context.supabase, "estimate_takeoff_measurements")
+            .select("*")
+            .eq("estimate_id", estimate.id),
+        ]);
+        if (planSetResult.error) throw new Error(planSetResult.error.message);
+        if (sheetResult.error) throw new Error(sheetResult.error.message);
+        if (measurementResult.error) throw new Error(measurementResult.error.message);
+
+        const planSets = (planSetResult.data ?? []) as Record<string, unknown>[];
+        const sheets = (sheetResult.data ?? []) as Record<string, unknown>[];
+        const measurements = (measurementResult.data ?? []) as Record<string, unknown>[];
+        const planSetIdMap = new Map<string, string>();
+        const sheetIdMap = new Map<string, string>();
+
+        if (planSets.length > 0) {
+          const planSetCopies = planSets.map((planSet) => {
+            const id = crypto.randomUUID();
+            planSetIdMap.set(str(planSet.id), id);
+            return {
+              id,
+              organization_id: estimate.organization_id,
+              estimate_id: copyId,
+              created_by: context.userId,
+              name: str(planSet.name),
+              description: str(planSet.description),
+              source_file_name: str(planSet.source_file_name),
+              file_path: str(planSet.file_path),
+              file_mime_type: str(planSet.file_mime_type),
+              file_size_bytes: Math.max(0, Math.round(num(planSet.file_size_bytes))),
+              page_count: Math.max(1, Math.round(num(planSet.page_count, 1))),
+              sample_key: "",
+              status: str(planSet.status, "current"),
+            };
+          });
+          const { error } = await dynamicTable(context.supabase, "estimate_plan_sets").insert(
+            planSetCopies,
+          );
+          if (error) throw new Error(error.message);
+        }
+
+        if (sheets.length > 0) {
+          const sheetCopies = sheets.map((sheet) => {
+            const id = crypto.randomUUID();
+            sheetIdMap.set(str(sheet.id), id);
+            return {
+              id,
+              plan_set_id: planSetIdMap.get(str(sheet.plan_set_id)),
+              estimate_id: copyId,
+              sheet_number: str(sheet.sheet_number),
+              sheet_name: str(sheet.sheet_name),
+              discipline: str(sheet.discipline),
+              page_number: Math.max(1, Math.round(num(sheet.page_number, 1))),
+              sort_order: Math.max(1, Math.round(num(sheet.sort_order, 1))),
+              scale_label: str(sheet.scale_label),
+              scale_feet_per_pixel: Math.max(0, num(sheet.scale_feet_per_pixel)),
+              scale_source: str(sheet.scale_source, "unset"),
+              scale_verified_at: null,
+              thumbnail_path: str(sheet.thumbnail_path),
+              width_px: Math.max(0, Math.round(num(sheet.width_px))),
+              height_px: Math.max(0, Math.round(num(sheet.height_px))),
+              scale_revision: Math.max(1, Math.round(num(sheet.scale_revision, 1))),
+              scale_changed_at: sheet.scale_changed_at ?? null,
+            };
+          });
+          const { error } = await dynamicTable(context.supabase, "estimate_plan_sheets").insert(
+            sheetCopies,
+          );
+          if (error) throw new Error(error.message);
+        }
+
+        if (measurements.length > 0) {
+          const measurementCopies = measurements.map((measurement) => {
+            const toolType = str(measurement.tool_type, "count");
+            const isCount = toolType === "count";
+            return {
+              id: crypto.randomUUID(),
+              estimate_id: copyId,
+              plan_sheet_id: sheetIdMap.get(str(measurement.plan_sheet_id)),
+              estimate_line_item_id: measurement.estimate_line_item_id
+                ? (lineIdMap.get(str(measurement.estimate_line_item_id)) ?? null)
+                : null,
+              library_item_id: measurement.library_item_id ?? null,
+              created_by: context.userId,
+              tool_type: toolType,
+              label: str(measurement.label),
+              unit: str(measurement.unit),
+              quantity: Math.max(0, num(measurement.quantity)),
+              waste_pct: Math.max(0, Math.round(num(measurement.waste_pct))),
+              color: str(measurement.color, "#1b7a6e"),
+              geometry: (measurement.geometry ?? {}) as Json,
+              notes: str(measurement.notes),
+              created_by_ai: measurement.created_by_ai === true,
+              calculation_method: isCount ? "count" : "geometry",
+              calculation_status: isCount ? "current" : "unverified_scale",
+              calculated_quantity: isCount ? Math.max(0, num(measurement.quantity)) : null,
+              calculation_scale_revision: isCount
+                ? null
+                : Math.max(1, Math.round(num(measurement.calculation_scale_revision, 1))),
+              calculated_at: isCount ? new Date().toISOString() : null,
+              calculation_context: {
+                source: "canonical_working_copy",
+                copied_from_measurement_id: str(measurement.id),
+              },
+              override_reason: "",
+              ai_operation_id: null,
+              ai_proposal_source:
+                measurement.created_by_ai === true ? "canonical_working_copy" : null,
+              ai_confidence: measurement.ai_confidence ?? null,
+              ai_original_geometry: (measurement.ai_original_geometry ?? null) as Json | null,
+              ai_review_action: measurement.ai_review_action ?? null,
+              ai_reviewed_by: measurement.ai_reviewed_by ?? null,
+              ai_reviewed_at: measurement.ai_reviewed_at ?? null,
+              scope_brief_review_id: null,
+            };
+          });
+          const { error } = await dynamicTable(
+            context.supabase,
+            "estimate_takeoff_measurements",
+          ).insert(measurementCopies);
+          if (error) throw new Error(error.message);
+        }
+      }
+
+      await recalculateEstimateTotalsInternal(context, copyId);
+      return { id: copyId };
+    } catch (error) {
+      await dynamicTable(context.supabase, "estimates").delete().eq("id", copyId);
+      throw error;
     }
-    await recalculateEstimateTotalsInternal(context, copyId);
-    return { id: copyId };
   });
 
 const scoreLibraryItem = (item: CostLibraryItemRow, query: string) => {
@@ -2123,6 +2387,47 @@ export const listCostLibraryItems = createServerFn({ method: "GET" })
       new Set(items.map((item) => item.csi_division).filter(Boolean)),
     ).sort();
     return { items, categories, divisions };
+  });
+
+export const getCostLibraryPriceHistory = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { item_id: string }) =>
+    z.object({ item_id: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const result = await dynamicTable(context.supabase, "cost_library_price_history")
+      .select("*")
+      .eq("cost_library_item_id", data.item_id)
+      .order("version_no", { ascending: false })
+      .limit(100);
+    if (result.error) {
+      const message = result.error.message.toLowerCase();
+      if (
+        result.error.code === "42P01" ||
+        result.error.code === "PGRST205" ||
+        message.includes("cost_library_price_history")
+      ) {
+        return { ready: false, items: [] as CostLibraryPriceHistoryRow[] };
+      }
+      throw new Error(result.error.message);
+    }
+    return {
+      ready: true,
+      items: ((result.data ?? []) as Record<string, unknown>[]).map(
+        (row): CostLibraryPriceHistoryRow => ({
+          id: str(row.id),
+          cost_library_item_id: str(row.cost_library_item_id),
+          version_no: Math.max(1, Math.round(num(row.version_no, 1))),
+          material_cost_cents: Math.round(num(row.material_cost_cents)),
+          labor_cost_cents: Math.round(num(row.labor_cost_cents)),
+          labor_basis: normalizeLaborBasis(row.labor_basis),
+          source_vendor: str(row.source_vendor),
+          source_reference: str(row.source_reference),
+          effective_date: row.effective_date ? str(row.effective_date) : null,
+          changed_at: str(row.changed_at),
+        }),
+      ),
+    };
   });
 
 export const createCostLibraryItem = createServerFn({ method: "POST" })

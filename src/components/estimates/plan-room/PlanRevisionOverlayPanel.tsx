@@ -27,6 +27,7 @@ export function PlanRevisionOverlayPanel({
   overlayMode,
   overlayOpacity,
   revisionSheetOptions,
+  readOnly = false,
   onOverlaySheetChange,
   onOverlayModeChange,
   onOverlayOpacityChange,
@@ -44,6 +45,7 @@ export function PlanRevisionOverlayPanel({
   overlayMode: RevisionOverlayMode;
   overlayOpacity: number;
   revisionSheetOptions: Array<{ sheet: PlanSheetRow; planSet: PlanSetRow }>;
+  readOnly?: boolean;
   onOverlaySheetChange: (sheetId: string) => void;
   onOverlayModeChange: (mode: RevisionOverlayMode) => void;
   onOverlayOpacityChange: (opacity: number) => void;
@@ -62,16 +64,23 @@ export function PlanRevisionOverlayPanel({
         work in red, and unchanged linework in dark overlap.
       </p>
       <div className="mt-3 space-y-3">
-        <PlanRevisionReviewPanel
-          estimateId={estimateId}
-          currentPlanSet={currentPlanSet}
-          currentSheet={currentSheet}
-          planSets={planSets}
-          sheets={sheets}
-          processingIdentity={processingIdentity}
-          onUseOverlay={onOverlaySheetChange}
-          onReviewRevisionNotes={onReviewRevisionNotes}
-        />
+        {readOnly ? (
+          <p className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
+            Comparison review is view-only in this protected sample. Choose an available prior sheet
+            below, or create a working copy to accept revision matches and AI note reviews.
+          </p>
+        ) : (
+          <PlanRevisionReviewPanel
+            estimateId={estimateId}
+            currentPlanSet={currentPlanSet}
+            currentSheet={currentSheet}
+            planSets={planSets}
+            sheets={sheets}
+            processingIdentity={processingIdentity}
+            onUseOverlay={onOverlaySheetChange}
+            onReviewRevisionNotes={onReviewRevisionNotes}
+          />
+        )}
 
         <Select
           value={overlaySheetId || "none"}

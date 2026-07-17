@@ -2,11 +2,17 @@ import { createFileRoute, Link, Outlet, useLocation, useNavigate } from "@tansta
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Copy, Eye, MoreHorizontal, Plus, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -29,6 +35,7 @@ import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import {
   createEstimate,
   deleteEstimate,
+  duplicateEstimate,
   ESTIMATE_FOLDERS,
   listEstimateRegions,
   listEstimates,
@@ -48,7 +55,8 @@ export const Route = createFileRoute("/_authenticated/estimates")({
       { title: "Estimates — Overwatch" },
       {
         name: "description",
-        content: "Manual spreadsheet estimating with Overwatch cost library and project handoff.",
+        content:
+          "Estimator-controlled takeoff, cited AI assistance, pricing, review, and project handoff.",
       },
     ],
   }),
@@ -158,6 +166,7 @@ function EstimatesPage() {
   const create = useServerFn(createEstimate);
   const update = useServerFn(updateEstimate);
   const deleteEstimateFn = useServerFn(deleteEstimate);
+  const duplicateEstimateFn = useServerFn(duplicateEstimate);
   const regionList = useServerFn(listEstimateRegions);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
   const [search, setSearch] = useState("");
@@ -183,7 +192,15 @@ function EstimatesPage() {
   const companyName = companyContext?.name || "Company";
 
   // listEstimates filters master sheets out server-side.
-  const projectEstimates = useMemo(() => estimatesQuery.data ?? [], [estimatesQuery.data]);
+  const allEstimates = useMemo(() => estimatesQuery.data ?? [], [estimatesQuery.data]);
+  const canonicalDemo = useMemo(
+    () => allEstimates.find((estimate) => estimate.is_canonical_demo) ?? null,
+    [allEstimates],
+  );
+  const projectEstimates = useMemo(
+    () => allEstimates.filter((estimate) => !estimate.is_canonical_demo),
+    [allEstimates],
+  );
 
   const folderCounts = useMemo(() => {
     const counts = new Map<EstimateFolder, number>();
@@ -293,6 +310,19 @@ function EstimatesPage() {
       toast.error(error instanceof Error ? error.message : "Estimate did not delete"),
   });
 
+  const createWorkingCopyMutation = useMutation({
+    mutationFn: () => {
+      if (!canonicalDemo) throw new Error("The canonical sample is not available yet.");
+      return duplicateEstimateFn({ data: { id: canonicalDemo.id, as_project_estimate: true } });
+    },
+    onSuccess: (result) => {
+      toast.success("Your isolated working copy is ready.");
+      navigate({ to: "/estimates/$estimateId", params: { estimateId: result.id } });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Working copy was not created"),
+  });
+
   if (/^\/estimates\/[^/]+(?:\/.*)?$/.test(location.pathname)) {
     return <Outlet />;
   }
@@ -314,8 +344,8 @@ function EstimatesPage() {
             <p className={MONO_LABEL}>{companyName}</p>
             <h1 className="mt-2 font-serif text-3xl text-foreground">Estimates</h1>
             <p className="mt-1.5 max-w-[60ch] text-sm text-muted-foreground">
-              Manual spreadsheet estimating with the Overwatch cost library — win a bid and hand it
-              straight off to a project.
+              Build a priced estimate, verify drawing quantities, review cited AI assistance, and
+              hand an approved bid directly to the project team.
             </p>
           </div>
           <nav className="flex flex-wrap gap-2" aria-label="Estimating sections">
@@ -341,6 +371,38 @@ function EstimatesPage() {
           />
           <StatCard label="Win rate" value={kpis.winRate === null ? "—" : `${kpis.winRate}%`} />
         </div>
+
+        {canonicalDemo && (
+          <section className="grid gap-4 rounded-xl border border-clay/30 bg-clay/[0.05] p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div className="min-w-0">
+              <p className="eyebrow flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5" /> Protected learning estimate
+              </p>
+              <h2 className="mt-1 font-serif text-xl">{canonicalDemo.name}</h2>
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                This product-owned sample is locked at{" "}
+                {fmtUSD(canonicalDemo.total_with_markups_cents / 100)} so every estimator starts
+                from the same trusted baseline. Open it read-only or create an isolated copy for
+                practice.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" asChild className="gap-1.5">
+                <Link to="/estimates/$estimateId" params={{ estimateId: canonicalDemo.id }}>
+                  <Eye className="h-3.5 w-3.5" /> Open read-only
+                </Link>
+              </Button>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() => createWorkingCopyMutation.mutate()}
+                disabled={createWorkingCopyMutation.isPending}
+              >
+                <Copy className="h-3.5 w-3.5" /> Create my working copy
+              </Button>
+            </div>
+          </section>
+        )}
 
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -501,21 +563,32 @@ function EstimatesPage() {
                         {shortDate(estimate.updated_at)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-muted-foreground hover:text-danger"
-                          title="Delete estimate"
-                          aria-label="Delete estimate"
-                          disabled={deleteMutation.isPending}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setDeleteTarget(estimate);
-                          }}
-                          onKeyDown={(event) => event.stopPropagation()}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground"
+                              aria-label={`More actions for ${estimate.name}`}
+                              onClick={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => event.stopPropagation()}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            align="end"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <DropdownMenuItem
+                              className="text-danger focus:text-danger"
+                              disabled={deleteMutation.isPending}
+                              onSelect={() => setDeleteTarget(estimate)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" /> Delete estimate
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   );

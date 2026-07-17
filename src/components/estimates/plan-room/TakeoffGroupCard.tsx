@@ -38,6 +38,7 @@ export function TakeoffGroupCard({
   syncLine,
   linkedLineUntrustedCount = 0,
   classifyPending = false,
+  readOnly = false,
 }: {
   group: TakeoffWorksheetGroup<TakeoffMeasurementRow>;
   lineItems: EstimateLineItemRow[];
@@ -59,6 +60,7 @@ export function TakeoffGroupCard({
   syncLine: (lineId: string) => void;
   linkedLineUntrustedCount?: number;
   classifyPending?: boolean;
+  readOnly?: boolean;
 }) {
   const linkedLine = group.linkedLineId
     ? (lineItems.find((line) => line.id === group.linkedLineId) ?? null)
@@ -196,6 +198,7 @@ export function TakeoffGroupCard({
                       className="h-7 gap-1 px-2 text-xs"
                       title="Same name, different thing? Detach clears the link on this takeoff only."
                       onClick={() => detachMeasurement(member.id)}
+                      disabled={readOnly}
                       data-testid="takeoff-group-member-detach"
                     >
                       <Unlink className="h-3 w-3" />
@@ -209,6 +212,7 @@ export function TakeoffGroupCard({
                     className="h-7 px-2 text-xs"
                     title="Delete this takeoff"
                     onClick={() => deleteMeasurement(member.id)}
+                    disabled={readOnly}
                     data-testid="takeoff-group-member-delete"
                   >
                     <Trash2 className="h-3 w-3 text-danger" />
@@ -261,7 +265,7 @@ export function TakeoffGroupCard({
               variant="outline"
               className="w-full gap-1.5"
               onClick={() => syncLine(linkedLine.id)}
-              disabled={syncBlockedCount > 0}
+              disabled={readOnly || syncBlockedCount > 0}
               title={
                 syncBlockedCount > 0
                   ? `${syncBlockedCount} takeoff${syncBlockedCount === 1 ? "" : "s"} feeding this estimate row must be reviewed before sending.`
@@ -273,6 +277,11 @@ export function TakeoffGroupCard({
               Send Total Qty to Estimate
             </Button>
           </>
+        ) : readOnly ? (
+          <p className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-muted-foreground">
+            This protected sample preserves its original takeoff links. Create a working copy to
+            classify or connect measurements.
+          </p>
         ) : (
           <div className="space-y-1.5" data-testid="takeoff-group-classify">
             <p className="text-xs font-medium">
