@@ -1,10 +1,12 @@
 import { AlertTriangle, Check, EyeOff, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
 import { sheetScaleStatus } from "./planRoomShared";
 
 export function ReadinessPanel({
+  className,
   sheets,
   measurements,
   unscaledSheets,
@@ -19,6 +21,7 @@ export function ReadinessPanel({
   reviewCalculationIssues,
   setAllTakeoffLayersVisible,
 }: {
+  className?: string;
   sheets: PlanSheetRow[];
   measurements: TakeoffMeasurementRow[];
   unscaledSheets: PlanSheetRow[];
@@ -54,7 +57,7 @@ export function ReadinessPanel({
     hiddenSheetMeasurementCount === 0;
   return (
     <section
-      className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+      className={cn("rounded-lg border border-hairline bg-card p-4 shadow-card", className)}
       data-testid="takeoff-readiness-checklist"
     >
       <div className="flex items-start justify-between gap-3">

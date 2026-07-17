@@ -25,6 +25,7 @@ const reviewedAt = (value: string) => {
 };
 
 export function MeasurementScopeQueuePanel({
+  expanded = false,
   items,
   sheets,
   measurements,
@@ -35,6 +36,7 @@ export function MeasurementScopeQueuePanel({
   onStart,
   onDecision,
 }: {
+  expanded?: boolean;
   items: MeasurementScopeQueueItem[];
   sheets: PlanSheetRow[];
   measurements: TakeoffMeasurementRow[];
@@ -109,7 +111,10 @@ export function MeasurementScopeQueuePanel({
             ))}
           </div>
 
-          <div className="mt-3 max-h-80 space-y-3 overflow-y-auto pr-1">
+          <div
+            className={expanded ? "mt-3 space-y-3" : "mt-3 max-h-80 space-y-3 overflow-y-auto pr-1"}
+            data-testid="measurement-scope-queue-items"
+          >
             {filtered.length === 0 ? (
               <p className="py-3 text-xs text-muted-foreground">No scope items in this view.</p>
             ) : (

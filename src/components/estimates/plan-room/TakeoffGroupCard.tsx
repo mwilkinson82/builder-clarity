@@ -28,6 +28,7 @@ export function TakeoffGroupCard({
   sheets,
   selectedMeasurementId,
   expanded,
+  workspaceExpanded = false,
   onToggleExpanded,
   selectMeasurement,
   deleteMeasurement,
@@ -43,6 +44,7 @@ export function TakeoffGroupCard({
   sheets: PlanSheetRow[];
   selectedMeasurementId: string;
   expanded: boolean;
+  workspaceExpanded?: boolean;
   onToggleExpanded: () => void;
   selectMeasurement: (measurement: TakeoffMeasurementRow) => void;
   deleteMeasurement: (measurementId: string) => void;
@@ -293,6 +295,7 @@ export function TakeoffGroupCard({
               }
               pending={classifyPending}
               compact
+              workspaceExpanded={workspaceExpanded}
             />
           </div>
         )}

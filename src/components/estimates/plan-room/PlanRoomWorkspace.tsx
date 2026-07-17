@@ -3242,6 +3242,9 @@ export function PlanRoomWorkspace({
     setCockpitPanels((current) => ({ ...current, tools: true }));
     if (view === "worksheet") maximizeCockpitPanel("tools");
   };
+  const drawingsWorkspaceMaximized =
+    isCockpitMode && cockpitPanelPresentations.drawings === "maximized";
+  const toolsWorkspaceMaximized = isCockpitMode && cockpitPanelPresentations.tools === "maximized";
   // Panels must stay below the floating command deck. The deck wraps to extra
   // rows on narrow viewports, so measure its real footprint when it is in the
   // DOM and only fall back to the chrome constant when it is not measurable.
@@ -3853,8 +3856,8 @@ export function PlanRoomWorkspace({
             !isCockpitMode && "space-y-4",
             isCockpitMode &&
               (cockpitPanels.drawings
-                ? cockpitPanelPresentations.drawings === "maximized"
-                  ? "absolute z-[60] grid auto-rows-min gap-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur xl:grid-cols-2 2xl:grid-cols-3"
+                ? drawingsWorkspaceMaximized
+                  ? "absolute z-[60] grid auto-rows-min gap-4 overflow-y-auto overscroll-contain rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur [scrollbar-gutter:stable] xl:grid-cols-2 2xl:grid-cols-3"
                   : "absolute z-40 space-y-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}
@@ -3882,6 +3885,7 @@ export function PlanRoomWorkspace({
             />
           )}
           <SheetSidebar
+            expanded={drawingsWorkspaceMaximized}
             sheets={sheets}
             planSets={planSets}
             sheetSearch={sheetSearch}
@@ -4329,10 +4333,10 @@ export function PlanRoomWorkspace({
             !isCockpitMode && "space-y-4",
             isCockpitMode &&
               (cockpitPanels.tools
-                ? cockpitPanelPresentations.tools === "maximized"
-                  ? cockpitToolsView === "worksheet"
-                    ? "absolute z-[60] flex flex-col gap-2 overflow-hidden rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
-                    : "absolute z-[60] flex flex-col gap-2 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
+                ? toolsWorkspaceMaximized
+                  ? cockpitToolsView === "review"
+                    ? "absolute z-[60] grid auto-rows-min gap-4 overflow-y-auto overscroll-contain rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur [scrollbar-gutter:stable] xl:grid-cols-[minmax(260px,0.75fr)_minmax(320px,0.85fr)_minmax(420px,1.4fr)]"
+                    : "absolute z-[60] space-y-4 overflow-y-auto overscroll-contain rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur [scrollbar-gutter:stable]"
                   : "absolute z-40 space-y-4 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}
@@ -4358,20 +4362,33 @@ export function PlanRoomWorkspace({
             />
           )}
           {estimatorActivation.checklistVisible && (
-            <EstimatorActivationChecklist
-              hasDrawings={sheets.length > 0}
-              scaleVerified={currentSheetScaleStatus === "verified"}
-              hasTakeoff={measurements.length > 0}
-              hasLinkedTakeoff={linkedCount > 0}
-              onOpenDrawings={openActivationDrawings}
-              onVerifyScale={openActivationScale}
-              onOpenAiMarkups={openActivationAiMarkups}
-              onOpenWorksheet={openActivationWorksheet}
-              onHide={estimatorActivation.hide}
-            />
+            <div
+              className={cn(
+                toolsWorkspaceMaximized && cockpitToolsView === "review" && "xl:col-span-3",
+              )}
+            >
+              <EstimatorActivationChecklist
+                hasDrawings={sheets.length > 0}
+                scaleVerified={currentSheetScaleStatus === "verified"}
+                hasTakeoff={measurements.length > 0}
+                hasLinkedTakeoff={linkedCount > 0}
+                onOpenDrawings={openActivationDrawings}
+                onVerifyScale={openActivationScale}
+                onOpenAiMarkups={openActivationAiMarkups}
+                onOpenWorksheet={openActivationWorksheet}
+                onHide={estimatorActivation.hide}
+              />
+            </div>
           )}
           {isCockpitMode && (
-            <CommandCenterToolsNav value={cockpitToolsView} onChange={selectCockpitToolsView} />
+            <div
+              className={cn(
+                toolsWorkspaceMaximized && "sticky top-14 z-30",
+                toolsWorkspaceMaximized && cockpitToolsView === "review" && "xl:col-span-3",
+              )}
+            >
+              <CommandCenterToolsNav value={cockpitToolsView} onChange={selectCockpitToolsView} />
+            </div>
           )}
           {(!isCockpitMode || cockpitToolsView === "ai" || cockpitToolsView === "measure") && (
             <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
@@ -4388,7 +4405,14 @@ export function PlanRoomWorkspace({
                 </div>
                 <Target className="h-4 w-4 text-muted-foreground" />
               </div>
-              <div className="mt-4 space-y-3">
+              <div
+                className={cn(
+                  "mt-4",
+                  toolsWorkspaceMaximized
+                    ? "grid items-start gap-4 xl:grid-cols-[minmax(280px,0.7fr)_minmax(0,1.3fr)]"
+                    : "space-y-3",
+                )}
+              >
                 {(!isCockpitMode || cockpitToolsView === "ai") && (
                   <>
                     <MeasurementAssistantPanel
@@ -4444,6 +4468,7 @@ export function PlanRoomWorkspace({
                       }}
                     />
                     <MeasurementScopeQueuePanel
+                      expanded={toolsWorkspaceMaximized}
                       items={measurementScopeItems}
                       sheets={sheets}
                       measurements={measurements}
@@ -4468,33 +4493,47 @@ export function PlanRoomWorkspace({
                 )}
                 {(!isCockpitMode || cockpitToolsView === "measure") && (
                   <>
-                    <div className="space-y-1.5">
-                      <Label>Takeoff label</Label>
-                      <Input
-                        value={measurementLabel}
-                        onChange={(event) => setMeasurementLabel(event.target.value)}
-                        placeholder="e.g. Slab-on-grade area"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Markup color</Label>
-                      <div className="flex gap-2">
-                        {TAKEOFF_COLORS.map((color) => (
-                          <button
-                            key={color}
-                            type="button"
-                            title={color}
-                            onClick={() => setTakeoffColor(color)}
-                            className={`h-8 w-8 rounded border ${
-                              takeoffColor === color ? "border-foreground" : "border-hairline"
-                            }`}
-                            style={{ backgroundColor: color }}
-                          />
-                        ))}
+                    <div
+                      className={cn(
+                        "space-y-3",
+                        toolsWorkspaceMaximized &&
+                          "rounded-lg border border-hairline bg-surface p-4",
+                      )}
+                    >
+                      <div className="space-y-1.5">
+                        <Label>Takeoff label</Label>
+                        <Input
+                          value={measurementLabel}
+                          onChange={(event) => setMeasurementLabel(event.target.value)}
+                          placeholder="e.g. Slab-on-grade area"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Markup color</Label>
+                        <div className="flex gap-2">
+                          {TAKEOFF_COLORS.map((color) => (
+                            <button
+                              key={color}
+                              type="button"
+                              title={color}
+                              onClick={() => setTakeoffColor(color)}
+                              className={`h-8 w-8 rounded border ${
+                                takeoffColor === color ? "border-foreground" : "border-hairline"
+                              }`}
+                              style={{ backgroundColor: color }}
+                            />
+                          ))}
+                        </div>
                       </div>
                     </div>
-                    <Separator />
-                    <div className="space-y-2">
+                    {!toolsWorkspaceMaximized && <Separator />}
+                    <div
+                      className={cn(
+                        "space-y-2",
+                        toolsWorkspaceMaximized &&
+                          "rounded-lg border border-hairline bg-surface p-4",
+                      )}
+                    >
                       <div className="flex items-center justify-between gap-2">
                         <Label>Set drawing scale</Label>
                         {currentSheetScaleStatus === "verified" ? (
@@ -4702,7 +4741,10 @@ export function PlanRoomWorkspace({
 
           {(!isCockpitMode || cockpitToolsView === "review") && (
             <section
-              className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+              className={cn(
+                "rounded-lg border border-hairline bg-card p-4 shadow-card",
+                toolsWorkspaceMaximized && "self-start",
+              )}
               data-testid="takeoff-layer-controls"
             >
               <div className="flex items-start justify-between gap-3">
@@ -4849,6 +4891,7 @@ export function PlanRoomWorkspace({
 
           {(!isCockpitMode || cockpitToolsView === "review") && (
             <ReadinessPanel
+              className={toolsWorkspaceMaximized ? "self-start" : undefined}
               sheets={sheets}
               measurements={measurements}
               unscaledSheets={unscaledSheets}
@@ -4872,7 +4915,10 @@ export function PlanRoomWorkspace({
 
           {(!isCockpitMode || cockpitToolsView === "review") && (
             <section
-              className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+              className={cn(
+                "rounded-lg border border-hairline bg-card p-4 shadow-card",
+                toolsWorkspaceMaximized && "self-start",
+              )}
               data-testid="selected-takeoff-inspector"
             >
               <div className="flex items-center justify-between gap-3">
@@ -5238,7 +5284,7 @@ export function PlanRoomWorkspace({
 
           {(!isCockpitMode || cockpitToolsView === "worksheet") && (
             <TakeoffWorksheet
-              expanded={isCockpitMode && cockpitPanelPresentations.tools === "maximized"}
+              expanded={toolsWorkspaceMaximized}
               measurements={measurements}
               totalMeasured={totalMeasured}
               copyTakeoffSummary={copyTakeoffSummary}

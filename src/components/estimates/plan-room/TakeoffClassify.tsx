@@ -30,6 +30,7 @@ export function LinkOrCreatePicker({
   pending = false,
   compact = false,
   fillHeight = false,
+  workspaceExpanded = false,
   strictUnit = false,
 }: {
   lineItems: EstimateLineItemRow[];
@@ -40,6 +41,9 @@ export function LinkOrCreatePicker({
   onCreateFromLabel: (label: string) => void;
   pending?: boolean;
   compact?: boolean;
+  // Full-screen workspaces use their one viewport scroller. Do not add a
+  // second height-limited results scroller inside a takeoff card.
+  workspaceExpanded?: boolean;
   // Assembly outputs cannot use the takeoff sync override. Hide incompatible
   // destinations so one deterministic unit can never be relabeled as another.
   strictUnit?: boolean;
@@ -103,7 +107,9 @@ export function LinkOrCreatePicker({
         className={
           fillHeight
             ? "min-h-0 flex-1 space-y-1 overflow-y-auto"
-            : "max-h-56 space-y-1 overflow-y-auto"
+            : workspaceExpanded
+              ? "space-y-1"
+              : "max-h-56 space-y-1 overflow-y-auto"
         }
       >
         {strictUnit && (
