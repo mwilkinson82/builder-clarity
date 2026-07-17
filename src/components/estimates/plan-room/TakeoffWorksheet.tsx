@@ -137,6 +137,7 @@ export function SyncConflictDialog({
 
 export function TakeoffWorksheet({
   expanded = false,
+  readOnly = false,
   measurements,
   totalMeasured,
   copyTakeoffSummary,
@@ -169,6 +170,7 @@ export function TakeoffWorksheet({
   matchCount = 0,
 }: {
   expanded?: boolean;
+  readOnly?: boolean;
   measurements: TakeoffMeasurementRow[];
   totalMeasured: number;
   copyTakeoffSummary: () => void;
@@ -253,6 +255,7 @@ export function TakeoffWorksheet({
         group.linkedLineId ? (lineTotals.get(group.linkedLineId)?.untrustedCount ?? 0) : 0
       }
       classifyPending={classifyPending}
+      readOnly={readOnly}
     />
   );
 
@@ -282,9 +285,14 @@ export function TakeoffWorksheet({
                   totalMeasured,
                 )}
               </p>
+              {readOnly && (
+                <Badge variant="outline" className="mt-2">
+                  Protected sample · view only
+                </Badge>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2" data-testid="takeoff-report-actions">
-              {onBuildFromTakeoffs && (
+              {onBuildFromTakeoffs && !readOnly && (
                 <Button
                   type="button"
                   size="sm"
@@ -299,7 +307,7 @@ export function TakeoffWorksheet({
                   Build Estimate From Takeoffs
                 </Button>
               )}
-              {onReviewMatches && matchCount > 0 && (
+              {onReviewMatches && matchCount > 0 && !readOnly && (
                 <Button
                   type="button"
                   size="sm"
@@ -576,6 +584,7 @@ export function TakeoffWorksheet({
                         className="h-8 gap-1 px-2 text-xs"
                         title="Delete this takeoff"
                         onClick={() => deleteMeasurementMutation.mutate(measurement.id)}
+                        disabled={readOnly}
                         data-testid="takeoff-row-delete"
                       >
                         <Trash2 className="h-3.5 w-3.5 text-danger" />
@@ -601,11 +610,16 @@ export function TakeoffWorksheet({
                               patch: { estimate_line_item_id: null },
                             });
                           }}
+                          disabled={readOnly}
                           data-testid="takeoff-row-unlink"
                         >
                           Unlink
                         </Button>
                       </div>
+                    ) : readOnly ? (
+                      <p className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-muted-foreground">
+                        Unlinked in the protected sample. Create a working copy to classify it.
+                      </p>
                     ) : (
                       // The same unified picker as the finish popover and the
                       // inspector — dismissing the popover always leaves this
@@ -664,7 +678,7 @@ export function TakeoffWorksheet({
                         variant="outline"
                         className="w-full gap-1.5"
                         onClick={() => syncLineMutation.mutate({ lineId: linkedLine.id })}
-                        disabled={linkedLineUntrustedCount > 0}
+                        disabled={readOnly || linkedLineUntrustedCount > 0}
                         title={
                           linkedLineUntrustedCount > 0
                             ? `${linkedLineUntrustedCount} takeoff${linkedLineUntrustedCount === 1 ? "" : "s"} feeding this estimate row must be reviewed before sending.`
@@ -722,7 +736,7 @@ export function TakeoffWorksheet({
                     size="sm"
                     variant="outline"
                     onClick={() => syncLineMutation.mutate({ lineId: line.id })}
-                    disabled={(total?.untrustedCount ?? 0) > 0}
+                    disabled={readOnly || (total?.untrustedCount ?? 0) > 0}
                     title={
                       (total?.untrustedCount ?? 0) > 0
                         ? "Review every stale or unverified takeoff feeding this row before syncing."
