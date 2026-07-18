@@ -395,6 +395,7 @@ async function seedOpportunityActivity(input: {
 
 async function seedFollowupStory(input: {
   client: unknown;
+  deliveryClient: unknown;
   organizationId: string;
   userId: string;
   ownerName: string;
@@ -463,7 +464,7 @@ async function seedFollowupStory(input: {
     records(actions.data).find((action) => Boolean(str(action.sent_at))) ??
     records(actions.data)[0];
   if (!sentAction) throw new Error("Harbor follow-up actions were not created.");
-  const delivery = await demoTable(input.client, "crm_outbound_messages").insert({
+  const delivery = await demoTable(input.deliveryClient, "crm_outbound_messages").insert({
     organization_id: input.organizationId,
     opportunity_id: input.opportunity.id,
     next_action_id: str(sentAction.id),
@@ -621,6 +622,7 @@ async function runHarborCrmSeed(input: {
   if (followupOpportunity) {
     await seedFollowupStory({
       client: input.context.supabase,
+      deliveryClient: supabaseAdmin,
       organizationId: input.organizationId,
       userId: input.context.userId,
       ownerName,
