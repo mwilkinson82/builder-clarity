@@ -186,6 +186,16 @@ const followupUiSource = readFileSync(
 assert.match(followupUiSource, /no external email will leave the application/);
 assert.match(followupUiSource, /crmEmailActionLabel/);
 
+const followupStudioSource = readFileSync(
+  new URL("../src/components/pipeline/FollowUpStudio.tsx", import.meta.url),
+  "utf8",
+);
+assert.match(followupStudioSource, /What the Value Library is for/);
+assert.match(followupStudioSource, /Give every follow-up a reason to be opened/);
+assert.match(followupStudioSource, /Lead with something useful/);
+assert.match(followupStudioSource, /Recommended rhythm:/);
+assert.match(followupStudioSource, /without giving the recipient access to your CRM/);
+
 const demoControlSource = readFileSync(
   new URL("../src/components/pipeline/CrmDemoControl.tsx", import.meta.url),
   "utf8",

@@ -1,6 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { CalendarClock, Handshake, Library, ListChecks, PlayCircle, Upload } from "lucide-react";
+import {
+  BookOpen,
+  CalendarClock,
+  CheckCircle2,
+  Handshake,
+  Library,
+  Lightbulb,
+  ListChecks,
+  PlayCircle,
+  Send,
+  Target,
+  Upload,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -411,9 +423,10 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
         <TabsContent value="library" className="space-y-5">
           <SectionLead
             eyebrow="Reusable value"
-            title="Give the team something useful to send"
-            description="Store approved guides, checklists, case studies, articles, and planning resources once, then use them across follow-up playbooks."
+            title="Use useful information to earn the next conversation"
+            description="The Value Library keeps approved guides, checklists, case studies, and planning resources ready for the right follow-up—not mass marketing."
           />
+          <LibraryFieldGuide />
           <div className="grid items-start gap-4 xl:grid-cols-[0.9fr_1.1fr]">
             <div className="rounded-xl border border-hairline bg-surface p-5 shadow-card">
               <div className="eyebrow">Add a resource</div>
@@ -561,6 +574,101 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
           />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function LibraryFieldGuide() {
+  const workflow = [
+    {
+      number: "01",
+      title: "Save the useful resource",
+      description: "Add an approved file or link and say who it helps and why.",
+      icon: BookOpen,
+    },
+    {
+      number: "02",
+      title: "Match it to the moment",
+      description: "Choose one resource that answers the prospect's current question or concern.",
+      icon: Target,
+    },
+    {
+      number: "03",
+      title: "Send it with context",
+      description: "Explain why it matters, personalize the note, and ask for one clear next step.",
+      icon: Send,
+    },
+  ];
+  const practices = [
+    "Lead with something useful—not “just checking in.”",
+    "Send one relevant resource instead of a pile of attachments.",
+    "Tell them why the resource matters to their project.",
+    "End with one simple next step, question, or meeting request.",
+    "Review the recipient, facts, and link before anything leaves OverWatch.",
+  ];
+
+  return (
+    <div className="grid overflow-hidden rounded-xl border border-hairline bg-surface shadow-card xl:grid-cols-[1.08fr_0.92fr]">
+      <section className="bg-foreground p-5 text-background sm:p-6">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background/10">
+            <Library className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="eyebrow text-background/60">What the Value Library is for</div>
+            <h3 className="mt-2 font-serif text-xl leading-tight">
+              Give every follow-up a reason to be opened.
+            </h3>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-background/70">
+              Store the material your team repeatedly uses to help a prospect make a decision, avoid
+              a mistake, or understand the work. OverWatch then keeps it ready beside the prepared
+              follow-up—without giving the recipient access to your CRM.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          {workflow.map((step) => {
+            const Icon = step.icon;
+            return (
+              <div
+                key={step.number}
+                className="rounded-lg border border-background/15 bg-background/5 p-3"
+              >
+                <div className="flex items-center justify-between text-background/50">
+                  <span className="font-mono text-[10px] tracking-[0.18em]">{step.number}</span>
+                  <Icon className="h-3.5 w-3.5" />
+                </div>
+                <div className="mt-3 text-sm font-semibold">{step.title}</div>
+                <p className="mt-1 text-xs leading-5 text-background/65">{step.description}</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="p-5 sm:p-6">
+        <div className="flex items-center gap-2">
+          <Lightbulb className="h-4 w-4 text-signal" />
+          <div className="eyebrow">Follow-up best practices</div>
+        </div>
+        <h3 className="mt-2 font-serif text-xl text-foreground">
+          Be helpful, specific, and brief.
+        </h3>
+        <ul className="mt-4 space-y-3">
+          {practices.map((practice) => (
+            <li key={practice} className="flex gap-2.5 text-sm leading-5 text-muted-foreground">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-positive" />
+              <span>{practice}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-5 rounded-lg border border-hairline bg-background px-3.5 py-3 text-xs leading-5 text-muted-foreground">
+          <span className="font-semibold text-foreground">Recommended rhythm:</span> Day 1 set
+          expectations · Day 3 share value · Day 5 show proof · Day 8 ask for the decision. Stop the
+          sequence when the opportunity closes or the recipient opts out.
+        </div>
+      </section>
     </div>
   );
 }
