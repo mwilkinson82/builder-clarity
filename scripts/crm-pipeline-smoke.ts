@@ -17,6 +17,7 @@ import {
   followupDueDate,
   followupTiming,
   personalizeFollowupTemplate,
+  shouldShowPreparedFollowup,
 } from "../src/lib/crm-followup-domain.ts";
 import {
   CRM_ONBOARDING_TASK_TEMPLATES,
@@ -91,6 +92,56 @@ assert.throws(
     }),
   /complete email address/,
 );
+
+assert.equal(
+  shouldShowPreparedFollowup({
+    opportunityActive: true,
+    enrollmentStatus: "active",
+    completedAt: null,
+    skippedAt: null,
+  }),
+  true,
+  "An open step on an active opportunity and enrollment stays in the prepared queue.",
+);
+for (const hidden of [
+  {
+    opportunityActive: false,
+    enrollmentStatus: "active" as const,
+    completedAt: null,
+    skippedAt: null,
+  },
+  {
+    opportunityActive: true,
+    enrollmentStatus: "stopped" as const,
+    completedAt: null,
+    skippedAt: null,
+  },
+  {
+    opportunityActive: true,
+    enrollmentStatus: "active" as const,
+    completedAt: "2026-07-18T12:00:00.000Z",
+    skippedAt: null,
+  },
+]) {
+  assert.equal(
+    shouldShowPreparedFollowup(hidden),
+    false,
+    "Archived, stopped, or completed follow-up work must stay out of the prepared queue.",
+  );
+}
+
+const lifecycleMigration = readFileSync(
+  new URL(
+    "../supabase/migrations/20260718132418_stop_archived_crm_workflows_and_repair_harbor.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+assert.match(lifecycleMigration, /tg_stop_crm_workflows_on_opportunity_archive/);
+assert.match(lifecycleMigration, /crm_followup_enrollments[\s\S]*status = 'stopped'/);
+assert.match(lifecycleMigration, /pipeline_next_actions[\s\S]*skipped_at = coalesce/);
+assert.match(lifecycleMigration, /crm_onboarding_plans[\s\S]*status = 'stopped'/);
+assert.match(lifecycleMigration, /notify pgrst, 'reload schema'/i);
 assert.throws(
   () =>
     resolveCrmEmailSenderConfig({

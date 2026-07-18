@@ -5,6 +5,7 @@ import {
   DEFAULT_VALUE_FOLLOWUP_PLAYBOOK,
   followupDueDate,
   personalizeFollowupTemplate,
+  shouldShowPreparedFollowup,
   type FollowupChannel,
 } from "@/lib/crm-followup-domain";
 
@@ -388,37 +389,52 @@ export const listCrmFollowupStudio = createServerFn({ method: "GET" })
     const playbookById = new Map(playbookRows.map((playbook) => [playbook.id, playbook]));
     const stepById = new Map(stepRows.map((step) => [step.id, step]));
 
-    const enrollmentRows = (Array.isArray(enrollments.data) ? enrollments.data : []).map((row) => {
-      const source = row as Record<string, unknown>;
-      const opportunityId = str(source.opportunity_id);
-      const playbookId = str(source.playbook_id);
-      return {
-        id: str(source.id),
-        opportunity_id: opportunityId,
-        playbook_id: playbookId,
-        owner_user_id: nullableStr(source.owner_user_id),
-        status: str(source.status, "active") as CrmFollowupEnrollment["status"],
-        started_at: str(source.started_at),
-        playbook_name: playbookById.get(playbookId)?.name ?? "Follow-up playbook",
-        opportunity_name: str(opportunityById.get(opportunityId)?.name, "Opportunity"),
-      } satisfies CrmFollowupEnrollment;
-    });
+    const enrollmentRows = (Array.isArray(enrollments.data) ? enrollments.data : [])
+      .map((row) => {
+        const source = row as Record<string, unknown>;
+        const opportunityId = str(source.opportunity_id);
+        const playbookId = str(source.playbook_id);
+        return {
+          id: str(source.id),
+          opportunity_id: opportunityId,
+          playbook_id: playbookId,
+          owner_user_id: nullableStr(source.owner_user_id),
+          status: str(source.status, "active") as CrmFollowupEnrollment["status"],
+          started_at: str(source.started_at),
+          playbook_name: playbookById.get(playbookId)?.name ?? "Follow-up playbook",
+          opportunity_name: str(opportunityById.get(opportunityId)?.name, "Opportunity"),
+        } satisfies CrmFollowupEnrollment;
+      })
+      // Archived opportunities are intentionally absent from opportunityById.
+      // Never let a stale enrollment resurrect an anonymous "Opportunity" card.
+      .filter((enrollment) => opportunityById.has(enrollment.opportunity_id));
+
+    const enrollmentById = new Map(enrollmentRows.map((enrollment) => [enrollment.id, enrollment]));
 
     const prepared = (Array.isArray(actions.data) ? actions.data : [])
       .map((row) => row as Record<string, unknown>)
-      .filter(
-        (row) =>
-          nullableStr(row.playbook_enrollment_id) &&
-          !nullableStr(row.completed_at) &&
-          !nullableStr(row.skipped_at),
-      )
+      .filter((row) => {
+        const enrollmentId = nullableStr(row.playbook_enrollment_id);
+        const opportunityId = str(row.opportunity_id);
+        return (
+          Boolean(enrollmentId) &&
+          shouldShowPreparedFollowup({
+            opportunityActive: opportunityById.has(opportunityId),
+            enrollmentStatus: enrollmentId
+              ? (enrollmentById.get(enrollmentId)?.status ?? null)
+              : null,
+            completedAt: nullableStr(row.completed_at),
+            skippedAt: nullableStr(row.skipped_at),
+          })
+        );
+      })
       .map((row) => {
         const opportunityId = str(row.opportunity_id);
         const opportunity = opportunityById.get(opportunityId);
         const stepId = str(row.playbook_step_id);
         const step = stepById.get(stepId);
         const enrollmentId = str(row.playbook_enrollment_id);
-        const enrollment = enrollmentRows.find((item) => item.id === enrollmentId);
+        const enrollment = enrollmentById.get(enrollmentId);
         return {
           id: str(row.id),
           opportunity_id: opportunityId,
