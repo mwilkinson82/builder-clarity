@@ -87,7 +87,7 @@ export function ReadinessPanel({
             )}
             <span className="min-w-0">
               <span className="block font-medium text-foreground">Quantity trust</span>
-              <span className="block truncate text-muted-foreground">
+              <span className="block leading-snug text-muted-foreground">
                 {calculationIssues.length === 0
                   ? "All takeoff quantities are current"
                   : `${calculationIssues.length} takeoff${calculationIssues.length === 1 ? "" : "s"} cannot feed the estimate yet`}
@@ -118,7 +118,7 @@ export function ReadinessPanel({
             <span className="min-w-0">
               <span className="block font-medium text-foreground">Sheet scales</span>
               <span
-                className="block truncate text-muted-foreground"
+                className="block leading-snug text-muted-foreground"
                 data-testid="readiness-scale-summary"
               >
                 {unscaledSheets.length > 0
@@ -150,7 +150,7 @@ export function ReadinessPanel({
             )}
             <span className="min-w-0">
               <span className="block font-medium text-foreground">Takeoff links</span>
-              <span className="block truncate text-muted-foreground">
+              <span className="block leading-snug text-muted-foreground">
                 {linkedCount} of {measurements.length} takeoffs linked to estimate rows
               </span>
             </span>
@@ -176,7 +176,7 @@ export function ReadinessPanel({
             )}
             <span className="min-w-0">
               <span className="block font-medium text-foreground">Visible markups</span>
-              <span className="block truncate text-muted-foreground">
+              <span className="block leading-snug text-muted-foreground">
                 {visibleSheetMeasurements.length} of {sheetMeasurements.length} marks visible on
                 this sheet
               </span>

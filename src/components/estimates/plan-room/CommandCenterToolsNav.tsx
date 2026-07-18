@@ -12,13 +12,17 @@ const TOOLS_VIEWS: Array<{ value: CommandCenterToolsView; label: string }> = [
 export function CommandCenterToolsNav({
   value,
   onChange,
+  expanded = false,
 }: {
   value: CommandCenterToolsView;
   onChange: (value: CommandCenterToolsView) => void;
+  expanded?: boolean;
 }) {
   return (
     <nav
-      className="sticky top-0 z-20 grid grid-cols-2 gap-1 rounded-lg border border-hairline bg-card/95 p-1 shadow-sm backdrop-blur sm:grid-cols-4"
+      className={`sticky top-0 z-20 grid gap-1 rounded-lg border border-hairline bg-card/95 p-1 shadow-sm backdrop-blur ${
+        expanded ? "grid-cols-4" : "grid-cols-2"
+      }`}
       aria-label="Takeoff workspace sections"
       data-testid="plan-cockpit-tools-tabs"
     >
@@ -28,7 +32,7 @@ export function CommandCenterToolsNav({
           type="button"
           size="sm"
           variant={value === view.value ? "default" : "ghost"}
-          className="h-8 px-2 text-xs"
+          className="h-auto min-h-8 min-w-0 whitespace-normal px-2 py-1.5 text-center text-xs leading-tight"
           aria-current={value === view.value ? "page" : undefined}
           onClick={() => onChange(view.value)}
           data-testid={`plan-cockpit-tools-tab-${view.value}`}

@@ -24,6 +24,7 @@ import {
 } from "@/lib/plan-room-measurement-scope";
 
 export function MeasurementAssistantPanel({
+  expanded = false,
   plan,
   pending,
   canAnalyze,
@@ -42,6 +43,7 @@ export function MeasurementAssistantPanel({
   onDecision,
   onClear,
 }: {
+  expanded?: boolean;
   plan: MeasurementAssistantPlanResult | null;
   pending: boolean;
   canAnalyze: boolean;
@@ -67,8 +69,8 @@ export function MeasurementAssistantPanel({
   const guideCount = plan?.suggestions.filter((suggestion) => suggestion.guide).length ?? 0;
   return (
     <div className="border-b border-hairline pb-4" data-testid="measurement-assistant-panel">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className={expanded ? "flex items-start justify-between gap-3" : "space-y-3"}>
+        <div className="min-w-0">
           <div className="eyebrow flex items-center gap-1.5">
             <Sparkles className="h-3 w-3" /> AI measurement planning
           </div>
@@ -81,7 +83,7 @@ export function MeasurementAssistantPanel({
           type="button"
           size="sm"
           variant="outline"
-          className="shrink-0 gap-1.5"
+          className={expanded ? "shrink-0 gap-1.5" : "w-full gap-1.5 whitespace-normal"}
           onClick={onAnalyze}
           disabled={!canAnalyze || pending}
           data-testid="measurement-assistant-analyze"
@@ -145,7 +147,9 @@ export function MeasurementAssistantPanel({
                     className="border-t border-hairline pt-3 first:border-t-0 first:pt-0"
                     data-testid={`measurement-suggestion-${suggestion.id}`}
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    <div
+                      className={expanded ? "flex items-start justify-between gap-3" : "space-y-2"}
+                    >
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
                           {suggestion.tool === "linear" ? (
@@ -186,7 +190,13 @@ export function MeasurementAssistantPanel({
                           {suggestion.source_line} · “{suggestion.source_excerpt}”
                         </blockquote>
                       </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      <div
+                        className={
+                          expanded
+                            ? "flex shrink-0 flex-col items-end gap-1.5"
+                            : "flex flex-wrap items-center gap-1.5"
+                        }
+                      >
                         {suggestion.guide && (
                           <Button
                             type="button"
@@ -291,7 +301,7 @@ export function MeasurementAssistantPanel({
             </ul>
           )}
 
-          <div className="flex items-center justify-between gap-3 border-t border-hairline pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-2">
             <p className="text-[10px] text-muted-foreground">
               Cited suggestions are planning aids, never measured quantities.
             </p>

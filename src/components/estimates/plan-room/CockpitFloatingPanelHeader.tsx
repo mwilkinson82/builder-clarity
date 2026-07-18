@@ -33,7 +33,12 @@ export function CockpitFloatingPanelHeader({
   onClose: () => void;
 }) {
   return (
-    <div className="sticky top-0 z-20 col-span-full mb-2 flex items-center justify-between gap-3 rounded-md border border-hairline bg-muted px-3 py-2 shadow-sm">
+    <div
+      className={cn(
+        "sticky top-0 z-20 col-span-full mb-2 gap-2 rounded-md border border-hairline bg-muted px-3 py-2 shadow-sm",
+        maximized ? "flex items-center justify-between" : "grid grid-cols-1",
+      )}
+    >
       <div
         className={cn(
           "flex min-w-0 flex-1 items-center gap-2",
@@ -60,13 +65,13 @@ export function CockpitFloatingPanelHeader({
           <p className="truncate text-[10px] text-muted-foreground">{layoutLabel}</p>
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className={cn("grid shrink-0 grid-cols-3 items-center gap-1", maximized && "flex")}>
         {!maximized && (
           <Button
             type="button"
             size="sm"
             variant="ghost"
-            className="h-7 px-2 text-xs"
+            className="h-7 min-w-0 px-2 text-xs"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={onReset}
             data-testid={resetTestId}
@@ -78,7 +83,7 @@ export function CockpitFloatingPanelHeader({
           type="button"
           size="sm"
           variant="ghost"
-          className="h-7 gap-1.5 px-2 text-xs"
+          className="h-7 min-w-0 gap-1.5 px-2 text-xs"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={onToggleMaximize}
           aria-label={maximized ? `Restore ${title} to a movable panel` : `Maximize ${title}`}
@@ -95,7 +100,7 @@ export function CockpitFloatingPanelHeader({
           type="button"
           size="sm"
           variant="ghost"
-          className="h-7 gap-1.5 px-2 text-xs"
+          className="h-7 min-w-0 gap-1.5 px-2 text-xs"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={onClose}
           aria-label={`Minimize ${title}`}

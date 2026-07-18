@@ -61,7 +61,7 @@ export function MeasurementScopeQueuePanel({
   return (
     <div className="border-b border-hairline pb-4" data-testid="measurement-scope-queue">
       <div className="flex items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <div className="eyebrow flex items-center gap-1.5">
             <ClipboardCheck className="h-3 w-3" /> Scope queue
           </div>
@@ -70,7 +70,9 @@ export function MeasurementScopeQueuePanel({
             estimate.
           </p>
         </div>
-        <Badge variant={openCount > 0 ? "secondary" : "outline"}>{openCount} open</Badge>
+        <Badge className="shrink-0" variant={openCount > 0 ? "secondary" : "outline"}>
+          {openCount} open
+        </Badge>
       </div>
 
       {!ready ? (
@@ -134,8 +136,12 @@ export function MeasurementScopeQueuePanel({
                     data-testid={`measurement-scope-item-${item.id}`}
                   >
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-xs font-medium text-foreground">{item.label}</span>
-                      <Badge variant="outline">{item.unit}</Badge>
+                      <span className="min-w-0 break-words text-xs font-medium text-foreground">
+                        {item.label}
+                      </span>
+                      <Badge className="shrink-0" variant="outline">
+                        {item.unit}
+                      </Badge>
                       <Badge variant={item.status === "completed" ? "secondary" : "outline"}>
                         {measurementScopeStatusLabel(item.status)}
                       </Badge>
@@ -145,7 +151,7 @@ export function MeasurementScopeQueuePanel({
                         </Badge>
                       )}
                     </div>
-                    <p className="mt-1 text-[11px] text-muted-foreground">
+                    <p className="mt-1 break-words text-[11px] text-muted-foreground">
                       {sheet?.sheet_number || `Page ${sheet?.page_number ?? "?"}`} ·{" "}
                       {item.source_line}
                     </p>
