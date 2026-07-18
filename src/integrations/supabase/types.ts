@@ -2990,6 +2990,7 @@ export type Database = {
           created_at: string
           estimate_id: string
           id: string
+          proposal_snapshot: Json
           scope_item_id: string
           takeoff_measurement_id: string | null
         }
@@ -2999,6 +3000,7 @@ export type Database = {
           created_at?: string
           estimate_id: string
           id?: string
+          proposal_snapshot?: Json
           scope_item_id: string
           takeoff_measurement_id?: string | null
         }
@@ -3008,6 +3010,7 @@ export type Database = {
           created_at?: string
           estimate_id?: string
           id?: string
+          proposal_snapshot?: Json
           scope_item_id?: string
           takeoff_measurement_id?: string | null
         }
@@ -3046,6 +3049,8 @@ export type Database = {
           decision_by: string | null
           estimate_id: string
           estimate_line_item_id: string | null
+          guide_geometry: Json
+          guide_source: string | null
           id: string
           label: string
           library_item_id: string | null
@@ -3071,6 +3076,8 @@ export type Database = {
           decision_by?: string | null
           estimate_id: string
           estimate_line_item_id?: string | null
+          guide_geometry?: Json
+          guide_source?: string | null
           id?: string
           label: string
           library_item_id?: string | null
@@ -3096,6 +3103,8 @@ export type Database = {
           decision_by?: string | null
           estimate_id?: string
           estimate_line_item_id?: string | null
+          guide_geometry?: Json
+          guide_source?: string | null
           id?: string
           label?: string
           library_item_id?: string | null
@@ -8876,6 +8885,8 @@ export type Database = {
           decision_by: string | null
           estimate_id: string
           estimate_line_item_id: string | null
+          guide_geometry: Json
+          guide_source: string | null
           id: string
           label: string
           library_item_id: string | null
@@ -9043,53 +9054,106 @@ export type Database = {
         }
         Returns: Json
       }
-      record_estimate_measurement_scope_decision: {
-        Args: {
-          p_ai_operation_id: string
-          p_estimate_id: string
-          p_label: string
-          p_plan_sheet_id: string
-          p_scope_key: string
-          p_source_anchor: Json
-          p_source_excerpt: string
-          p_source_line: string
-          p_status: string
-          p_suggestion_key: string
-          p_tool_type: string
-          p_unit: string
-        }
-        Returns: {
-          ai_operation_id: string | null
-          completed_at: string | null
-          completed_by: string | null
-          created_at: string
-          created_by: string | null
-          decision_at: string
-          decision_by: string | null
-          estimate_id: string
-          estimate_line_item_id: string | null
-          id: string
-          label: string
-          library_item_id: string | null
-          plan_sheet_id: string
-          scope_key: string
-          source_anchor: Json
-          source_excerpt: string
-          source_line: string
-          status: string
-          suggestion_key: string
-          takeoff_measurement_id: string | null
-          tool_type: string
-          unit: string
-          updated_at: string
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "estimate_measurement_scope_items"
-          isOneToOne: false
-          isSetofReturn: true
-        }
-      }
+      record_estimate_measurement_scope_decision:
+        | {
+            Args: {
+              p_ai_operation_id: string
+              p_estimate_id: string
+              p_guide_geometry: Json
+              p_label: string
+              p_plan_sheet_id: string
+              p_scope_key: string
+              p_source_anchor: Json
+              p_source_excerpt: string
+              p_source_line: string
+              p_status: string
+              p_suggestion_key: string
+              p_tool_type: string
+              p_unit: string
+            }
+            Returns: {
+              ai_operation_id: string | null
+              completed_at: string | null
+              completed_by: string | null
+              created_at: string
+              created_by: string | null
+              decision_at: string
+              decision_by: string | null
+              estimate_id: string
+              estimate_line_item_id: string | null
+              guide_geometry: Json
+              guide_source: string | null
+              id: string
+              label: string
+              library_item_id: string | null
+              plan_sheet_id: string
+              scope_key: string
+              source_anchor: Json
+              source_excerpt: string
+              source_line: string
+              status: string
+              suggestion_key: string
+              takeoff_measurement_id: string | null
+              tool_type: string
+              unit: string
+              updated_at: string
+            }[]
+            SetofOptions: {
+              from: "*"
+              to: "estimate_measurement_scope_items"
+              isOneToOne: false
+              isSetofReturn: true
+            }
+          }
+        | {
+            Args: {
+              p_ai_operation_id: string
+              p_estimate_id: string
+              p_label: string
+              p_plan_sheet_id: string
+              p_scope_key: string
+              p_source_anchor: Json
+              p_source_excerpt: string
+              p_source_line: string
+              p_status: string
+              p_suggestion_key: string
+              p_tool_type: string
+              p_unit: string
+            }
+            Returns: {
+              ai_operation_id: string | null
+              completed_at: string | null
+              completed_by: string | null
+              created_at: string
+              created_by: string | null
+              decision_at: string
+              decision_by: string | null
+              estimate_id: string
+              estimate_line_item_id: string | null
+              guide_geometry: Json
+              guide_source: string | null
+              id: string
+              label: string
+              library_item_id: string | null
+              plan_sheet_id: string
+              scope_key: string
+              source_anchor: Json
+              source_excerpt: string
+              source_line: string
+              status: string
+              suggestion_key: string
+              takeoff_measurement_id: string | null
+              tool_type: string
+              unit: string
+              updated_at: string
+            }[]
+            SetofOptions: {
+              from: "*"
+              to: "estimate_measurement_scope_items"
+              isOneToOne: false
+              isSetofReturn: true
+            }
+          }
       record_estimate_review_activity: {
         Args: { p_activity_type: string; p_estimate_id: string; p_note: string }
         Returns: {
