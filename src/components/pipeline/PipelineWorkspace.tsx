@@ -671,7 +671,7 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
       <PipelineCrmOverview
         snapshot={crmSnapshot}
         opportunities={opportunities}
-        isLoading={crmSnapshotQuery.isLoading || ensureDemoMutation.isPending}
+        isLoading={crmSnapshotQuery.isLoading}
         completingActionId={
           typeof completeActionMutation.variables === "string"
             ? completeActionMutation.variables
