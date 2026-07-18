@@ -68,6 +68,13 @@ export interface MeasurementSourceEvidence extends MeasurementSourceLine {
   anchor: MeasurementEvidenceAnchor;
 }
 
+export function activeMeasurementEvidenceSourceLine(
+  focus: { sheetId: string; sourceLine: string } | null,
+  currentSheetId: string | null | undefined,
+) {
+  return focus && focus.sheetId === currentSheetId ? focus.sourceLine : "";
+}
+
 export const MEASUREMENT_EVIDENCE_TIMEOUT_MS = 25_000;
 export const MEASUREMENT_GUIDE_LONG_EDGE_PX = 1_800;
 

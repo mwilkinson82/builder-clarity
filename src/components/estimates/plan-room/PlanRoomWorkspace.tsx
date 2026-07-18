@@ -102,6 +102,7 @@ import {
   type PlanRevisionMatchRow,
 } from "@/lib/plan-revision-match.functions";
 import {
+  activeMeasurementEvidenceSourceLine,
   MEASUREMENT_GUIDE_LONG_EDGE_PX,
   measurementAssistantTakeoffNote,
   type MeasurementEvidenceAnchor,
@@ -4540,11 +4541,10 @@ export function PlanRoomWorkspace({
                       completedSuggestionIds={completedMeasurementSuggestionIds}
                       queueItemBySuggestionId={queueItemBySuggestionId}
                       duplicateCountBySuggestionId={duplicateCountBySuggestionId}
-                      activeEvidenceSourceLine={
-                        measurementEvidenceFocus?.sheetId === currentSheet?.id
-                          ? measurementEvidenceFocus.sourceLine
-                          : ""
-                      }
+                      activeEvidenceSourceLine={activeMeasurementEvidenceSourceLine(
+                        measurementEvidenceFocus,
+                        currentSheet?.id,
+                      )}
                       activeGuideSuggestionId={resolvedFocusedMeasurementGuideId}
                       decisionPending={measurementScopeDecisionMutation.isPending}
                       onAnalyze={() => measurementAssistantMutation.mutate(undefined)}

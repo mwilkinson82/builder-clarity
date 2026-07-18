@@ -6,6 +6,7 @@ import { MeasurementAttentionDock } from "@/components/estimates/plan-room/Measu
 import { MeasurementGuideLayer } from "@/components/estimates/plan-room/MeasurementGuideLayer";
 import { MeasurementGuideReviewBar } from "@/components/estimates/plan-room/MeasurementGuideReviewBar";
 import {
+  activeMeasurementEvidenceSourceLine,
   groupPdfMeasurementText,
   groupPdfMeasurementEvidence,
   measurementAssistantTakeoffNote,
@@ -42,6 +43,16 @@ import {
 } from "@/lib/plan-room-scale-assurance";
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+
+it("keeps an empty Plan Room free of null evidence-focus crashes", () => {
+  expect(activeMeasurementEvidenceSourceLine(null, undefined)).toBe("");
+  expect(
+    activeMeasurementEvidenceSourceLine({ sheetId: "sheet-a", sourceLine: "L014" }, "sheet-b"),
+  ).toBe("");
+  expect(
+    activeMeasurementEvidenceSourceLine({ sheetId: "sheet-a", sourceLine: "L014" }, "sheet-a"),
+  ).toBe("L014");
+});
 
 describe("guided measurement planning", () => {
   it("returns control when selectable PDF note extraction stalls", async () => {
