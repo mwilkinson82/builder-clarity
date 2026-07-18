@@ -69,6 +69,7 @@ import { AiGhostLayer, type AiGhostRender } from "./AiGhostLayer";
 import { DiscoveryMarkupLayer } from "./DiscoveryMarkupLayer";
 import type { DiscoveryMarkup } from "./useSymbolDiscovery";
 import { MeasurementGuideLayer } from "./MeasurementGuideLayer";
+import type { MeasurementAttentionMode } from "./MeasurementAttentionDock";
 import type { MeasurementAssistantSuggestion } from "@/lib/plan-room-measurement-assistant";
 
 const isDirectPlanFileUrl = (filePath: string) =>
@@ -400,7 +401,11 @@ export function PlanCanvas({
   onDiscoveryGroupSelect,
   measurementGuideSuggestions = [],
   activeMeasurementGuideId = "",
+  measurementGuideMode = "all",
+  measurementGuideOpacity = 70,
+  measurementGuideScanNonce = 0,
   onMeasurementGuideSelect,
+  measurementGuideControls,
   aiPanel,
   aiReviewBar,
   evidenceFocus = null,
@@ -466,7 +471,11 @@ export function PlanCanvas({
   // guides are visual hints only and never become takeoff geometry.
   measurementGuideSuggestions?: MeasurementAssistantSuggestion[];
   activeMeasurementGuideId?: string;
+  measurementGuideMode?: MeasurementAttentionMode;
+  measurementGuideOpacity?: number;
+  measurementGuideScanNonce?: number;
   onMeasurementGuideSelect?: (suggestionId: string) => void;
+  measurementGuideControls?: ReactNode;
   // Floating AI Assist surfaces rendered over the canvas in both standard and
   // cockpit modes (same overlay discipline as the command decks).
   aiPanel?: ReactNode;
@@ -1658,6 +1667,11 @@ export function PlanCanvas({
           <div className="pointer-events-auto">{aiReviewBar}</div>
         </div>
       )}
+      {measurementGuideControls && (
+        <div className="pointer-events-none absolute inset-x-3 top-20 z-40 flex justify-center">
+          <div className="pointer-events-auto">{measurementGuideControls}</div>
+        </div>
+      )}
 
       <div
         ref={scrollRef}
@@ -1852,6 +1866,9 @@ export function PlanCanvas({
                 suggestions={measurementGuideSuggestions}
                 activeSuggestionId={activeMeasurementGuideId}
                 viewSize={viewSize}
+                mode={measurementGuideMode}
+                opacity={measurementGuideOpacity}
+                scanNonce={measurementGuideScanNonce}
                 onSelect={onMeasurementGuideSelect}
               />
               {measurements.map((measurement) => (

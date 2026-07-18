@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
+import { parseMeasurementVisualGuide } from "@/lib/plan-room-measurement-assistant";
 import type {
   MeasurementScopeDecisionStatus,
   MeasurementScopeQueueItem,
@@ -63,6 +64,8 @@ function normalizeScopeItem(
 ): MeasurementScopeQueueItem {
   const decisionBy = row.decision_by == null ? null : str(row.decision_by);
   const completedBy = row.completed_by == null ? null : str(row.completed_by);
+  const toolType = row.tool_type === "area" ? "area" : "linear";
+  const guide = parseMeasurementVisualGuide(row.guide_geometry, toolType);
   return {
     id: str(row.id),
     estimate_id: str(row.estimate_id),
@@ -71,11 +74,13 @@ function normalizeScopeItem(
     suggestion_key: str(row.suggestion_key),
     scope_key: str(row.scope_key),
     label: str(row.label),
-    tool_type: row.tool_type === "area" ? "area" : "linear",
+    tool_type: toolType,
     unit: row.unit === "SF" ? "SF" : "LF",
     source_line: str(row.source_line),
     source_excerpt: str(row.source_excerpt),
     source_anchor: normalizedAnchor(row.source_anchor),
+    guide,
+    guide_source: guide && row.guide_source === "ai_visual_hint" ? "ai_visual_hint" : null,
     status: (["accepted", "rejected", "deferred", "completed"].includes(str(row.status))
       ? str(row.status)
       : "deferred") as MeasurementScopeStatus,
@@ -104,6 +109,19 @@ const anchorInput = z
   })
   .nullable();
 
+const guidePointInput = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+});
+
+const guideGeometryInput = z
+  .object({
+    kind: z.enum(["linear_route", "area_region"]),
+    points: z.array(guidePointInput).min(2).max(16),
+    source: z.literal("ai_visual_hint"),
+  })
+  .nullable();
+
 const scopeDecisionInput = z.object({
   estimate_id: z.string().uuid(),
   plan_sheet_id: z.string().uuid(),
@@ -116,6 +134,7 @@ const scopeDecisionInput = z.object({
   source_line: z.string().min(1).max(12),
   source_excerpt: z.string().min(3).max(260),
   source_anchor: anchorInput,
+  guide_geometry: guideGeometryInput,
   status: z.enum(["accepted", "rejected", "deferred"]),
 });
 
@@ -176,6 +195,7 @@ export const saveMeasurementScopeDecision = createServerFn({ method: "POST" })
         p_source_line: data.source_line,
         p_source_excerpt: data.source_excerpt,
         p_source_anchor: (data.source_anchor ?? {}) as Json,
+        p_guide_geometry: (data.guide_geometry ?? {}) as Json,
         p_status: data.status satisfies MeasurementScopeDecisionStatus,
       },
     );

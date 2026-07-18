@@ -116,7 +116,7 @@ export function MeasurementAssistantPanel({
         <div className="mt-4 space-y-3" data-testid="measurement-assistant-results">
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
             <Badge variant="secondary">{plan.suggestions.length} suggestions</Badge>
-            {guideCount > 0 && <Badge variant="outline">{guideCount} marked on drawing</Badge>}
+            {guideCount > 0 && <Badge variant="outline">{guideCount} AI callouts</Badge>}
             <span>{plan.source_line_count} extracted lines reviewed</span>
             <span>
               {plan.credits_charged === 0
@@ -198,7 +198,7 @@ export function MeasurementAssistantPanel({
                             onClick={() => onShowGuide(suggestion)}
                             data-testid={`measurement-suggestion-guide-${suggestion.id}`}
                           >
-                            <MapPinned className="h-3 w-3" /> Markup
+                            <MapPinned className="h-3 w-3" /> Show callout
                           </Button>
                         )}
                         <Button

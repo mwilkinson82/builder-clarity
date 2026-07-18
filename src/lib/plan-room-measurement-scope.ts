@@ -1,6 +1,7 @@
 import type {
   MeasurementAssistantSuggestion,
   MeasurementEvidenceAnchor,
+  MeasurementVisualGuide,
 } from "@/lib/plan-room-measurement-assistant";
 
 export type MeasurementScopeStatus = "accepted" | "rejected" | "deferred" | "completed";
@@ -19,6 +20,8 @@ export interface MeasurementScopeQueueItem {
   source_line: string;
   source_excerpt: string;
   source_anchor: MeasurementEvidenceAnchor | null;
+  guide: MeasurementVisualGuide | null;
+  guide_source: "ai_visual_hint" | null;
   status: MeasurementScopeStatus;
   decision_by: string | null;
   decision_by_name: string;
@@ -85,6 +88,7 @@ export function scopeItemAsSuggestion(item: MeasurementScopeQueueItem) {
         ? "Review the cited note, then trace only the supported scope as a linear takeoff."
         : "Review the cited note, then trace only the supported surface as an area takeoff.",
     evidence_strength: "review" as const,
+    ...(item.guide ? { guide: item.guide } : {}),
   } satisfies MeasurementAssistantSuggestion;
 }
 
