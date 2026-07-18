@@ -227,6 +227,11 @@ assert.match(
   /seedFollowupStory\(\{[\s\S]*client: input\.context\.supabase/,
   "Harbor follow-up rows use the authenticated schema-aware project connection.",
 );
+assert.doesNotMatch(
+  crmDemoServerSource,
+  /insert\(actionRows\)[\s\S]{0,200}\.order\("due_date"/,
+  "Harbor follow-up seeding must not depend on a freshly reloaded PostgREST due_date sort.",
+);
 
 // ---------- Archived demo tombstone → seed nothing ----------
 const archivedDemo = { id: "project-1", archived_at: "2026-07-01T00:00:00Z" };

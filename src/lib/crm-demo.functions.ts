@@ -453,10 +453,16 @@ async function seedFollowupStory(input: {
   });
   const actions = await demoTable(input.client, "pipeline_next_actions")
     .insert(actionRows)
-    .select("id,subject,body,sent_at,sent_message_id")
-    .order("due_date", { ascending: true });
+    .select("id,subject,body,sent_at,sent_message_id");
   if (actions.error) throw new Error(actions.error.message);
-  const sentAction = records(actions.data)[0];
+  // The first demo touch is the only row marked sent. Select it from the
+  // returned payload instead of asking PostgREST to order the mutation by
+  // due_date. Some deployments can briefly retain an older relation cache
+  // after the due_date migration, which made the otherwise-valid seed fail.
+  const sentAction =
+    records(actions.data).find((action) => Boolean(str(action.sent_at))) ??
+    records(actions.data)[0];
+  if (!sentAction) throw new Error("Harbor follow-up actions were not created.");
   const delivery = await demoTable(input.client, "crm_outbound_messages").insert({
     organization_id: input.organizationId,
     opportunity_id: input.opportunity.id,
