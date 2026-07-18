@@ -227,6 +227,11 @@ assert.match(
   /seedFollowupStory\(\{[\s\S]*client: input\.context\.supabase/,
   "Harbor follow-up rows use the authenticated schema-aware project connection.",
 );
+assert.match(
+  crmDemoServerSource,
+  /seedFollowupStory\(\{[\s\S]*deliveryClient: supabaseAdmin/,
+  "The simulated outbound audit row stays on the server-only connection instead of weakening delivery-table grants.",
+);
 assert.doesNotMatch(
   crmDemoServerSource,
   /insert\(actionRows\)[\s\S]{0,200}\.order\("due_date"/,
