@@ -4499,7 +4499,11 @@ export function PlanRoomWorkspace({
                 toolsWorkspaceMaximized && cockpitToolsView === "review" && "xl:col-span-3",
               )}
             >
-              <CommandCenterToolsNav value={cockpitToolsView} onChange={selectCockpitToolsView} />
+              <CommandCenterToolsNav
+                value={cockpitToolsView}
+                expanded={toolsWorkspaceMaximized}
+                onChange={selectCockpitToolsView}
+              />
             </div>
           )}
           {(!isCockpitMode || cockpitToolsView === "ai" || cockpitToolsView === "measure") && (
@@ -4528,6 +4532,7 @@ export function PlanRoomWorkspace({
                 {(!isCockpitMode || cockpitToolsView === "ai") && (
                   <>
                     <MeasurementAssistantPanel
+                      expanded={toolsWorkspaceMaximized}
                       plan={measurementAssistantPlan}
                       pending={measurementAssistantMutation.isPending}
                       canAnalyze={Boolean(
@@ -4940,7 +4945,7 @@ export function PlanRoomWorkspace({
                         )}
                         <span className="min-w-0">
                           <span className="block font-medium text-foreground">{copy.label}</span>
-                          <span className="block truncate text-muted-foreground">
+                          <span className="block leading-snug text-muted-foreground">
                             {copy.detail}
                           </span>
                         </span>
