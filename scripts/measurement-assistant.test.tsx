@@ -3,7 +3,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MeasurementAssistantPanel } from "@/components/estimates/plan-room/MeasurementAssistantPanel";
 import { MeasurementAttentionDock } from "@/components/estimates/plan-room/MeasurementAttentionDock";
-import { MeasurementGuideLayer } from "@/components/estimates/plan-room/MeasurementGuideLayer";
+import {
+  AI_ATTENTION_BLUE,
+  MeasurementGuideLayer,
+} from "@/components/estimates/plan-room/MeasurementGuideLayer";
 import { MeasurementGuideReviewBar } from "@/components/estimates/plan-room/MeasurementGuideReviewBar";
 import {
   activeMeasurementEvidenceSourceLine,
@@ -957,6 +960,14 @@ it("renders drawing guides as selectable dashed hints", () => {
       .querySelector('[data-testid="measurement-guide-path-measurement-suggestion-1"]')
       ?.getAttribute("stroke-dasharray"),
   ).toBe("7 6");
+  expect(
+    container
+      .querySelector('[data-testid="measurement-guide-path-measurement-suggestion-1"]')
+      ?.getAttribute("stroke"),
+  ).toBe(AI_ATTENTION_BLUE);
+  expect(
+    container.querySelector('[data-testid="measurement-guide-halo-measurement-suggestion-1"]'),
+  ).not.toBeNull();
   act(() => guide!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   expect(select).toHaveBeenCalledWith("measurement-suggestion-1");
 });

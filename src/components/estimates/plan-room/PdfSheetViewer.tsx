@@ -1087,10 +1087,12 @@ export function PlanCanvas({
     });
   };
 
-  // Plain wheel zooms the sheet (trackpad pinch arrives as a ctrlKey wheel);
-  // panels outside this viewport keep native scrolling. A native non-passive
-  // listener is required — React root wheel listeners are passive, and the
-  // browser must not also scroll the stage or page-zoom.
+  // Plain wheel zooms the sheet (trackpad pinch arrives as a ctrlKey wheel).
+  // The AI attention dock floats above the sheet, so it must deliberately
+  // forward the same gesture; otherwise the exact place an estimator is
+  // reviewing becomes a dead zone. Other floating panels keep native scroll.
+  // A native non-passive listener is required because React wheel listeners
+  // are passive and cannot prevent stage or browser zoom at the same time.
   const wheelHandlerRef = useRef<(event: WheelEvent) => void>(() => {});
   useEffect(() => {
     wheelHandlerRef.current = (event: WheelEvent) => {
@@ -1107,11 +1109,20 @@ export function PlanCanvas({
     };
   });
   useEffect(() => {
+    const root = rootRef.current;
     const stage = scrollRef.current;
-    if (!stage) return;
-    const listener = (event: WheelEvent) => wheelHandlerRef.current(event);
-    stage.addEventListener("wheel", listener, { passive: false });
-    return () => stage.removeEventListener("wheel", listener);
+    if (!root || !stage) return;
+    const listener = (event: WheelEvent) => {
+      const target = event.target;
+      const insideStage = target instanceof Node && stage.contains(target);
+      const insideAttentionDock =
+        target instanceof Element &&
+        Boolean(target.closest('[data-testid="measurement-attention-dock"]'));
+      if (!insideStage && !insideAttentionDock) return;
+      wheelHandlerRef.current(event);
+    };
+    root.addEventListener("wheel", listener, { passive: false });
+    return () => root.removeEventListener("wheel", listener);
   }, []);
 
   // Space-bar-hold + drag pans with any tool active, without disturbing an
