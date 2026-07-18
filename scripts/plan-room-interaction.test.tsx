@@ -194,7 +194,13 @@ const persistedLinear = persistedMeasurement({
 // Mirrors PlanRoomWorkspace.tsx (onMeasurementSelect at ~3098) verbatim:
 // AI-assist arming intercepts the click before plain selection.
 
-function Host({ measurements }: { measurements: TakeoffMeasurementRow[] }) {
+function Host({
+  measurements,
+  showAttentionDock = false,
+}: {
+  measurements: TakeoffMeasurementRow[];
+  showAttentionDock?: boolean;
+}) {
   const [viewSize, setViewSize] = useState<ViewSize>({ width: 1000, height: 700 });
   const [selectedMeasurementId, setSelectedMeasurementId] = useState("");
   const ai = useAiAssist({
@@ -257,6 +263,11 @@ function Host({ measurements }: { measurements: TakeoffMeasurementRow[] }) {
         onMeasurementGeometryChange={async () => {}}
         isGeometrySaving={false}
         aiPanel={<AiAssistPanel ai={ai} />}
+        measurementGuideControls={
+          showAttentionDock ? (
+            <div data-testid="measurement-attention-dock">AI callout controls</div>
+          ) : undefined
+        }
       />
     </div>
   );
@@ -267,7 +278,7 @@ function Host({ measurements }: { measurements: TakeoffMeasurementRow[] }) {
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-async function mountHost(measurements: TakeoffMeasurementRow[]) {
+async function mountHost(measurements: TakeoffMeasurementRow[], showAttentionDock = false) {
   container = document.createElement("div");
   document.body.appendChild(container);
   const queryClient = new QueryClient({
@@ -276,7 +287,7 @@ async function mountHost(measurements: TakeoffMeasurementRow[]) {
   const rootRoute = createRootRoute({
     component: () => (
       <QueryClientProvider client={queryClient}>
-        <Host measurements={measurements} />
+        <Host measurements={measurements} showAttentionDock={showAttentionDock} />
       </QueryClientProvider>
     ),
   });
@@ -290,6 +301,22 @@ async function mountHost(measurements: TakeoffMeasurementRow[]) {
     root!.render(<RouterProvider router={router} />);
   });
 }
+
+test("wheel zoom remains active over the floating AI attention dock", async () => {
+  await mountHost([persistedCount], true);
+  const dock = document.querySelector<HTMLElement>('[data-testid="measurement-attention-dock"]');
+  const zoomThumb = document.querySelector<HTMLElement>(
+    '[data-testid="plan-zoom-slider"] [role="slider"]',
+  );
+  expect(dock).not.toBeNull();
+  expect(zoomThumb?.getAttribute("aria-valuenow")).toBe("100");
+
+  await act(async () => {
+    dock!.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -240 }));
+  });
+
+  expect(Number(zoomThumb?.getAttribute("aria-valuenow"))).toBeGreaterThan(100);
+});
 
 afterEach(() => {
   act(() => {

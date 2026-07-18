@@ -336,7 +336,7 @@ export function PlanRoomWorkspace({
   const [focusedMeasurementGuideId, setFocusedMeasurementGuideId] = useState("");
   const [measurementAttentionMode, setMeasurementAttentionMode] =
     useState<MeasurementAttentionMode>("all");
-  const [measurementAttentionOpacity, setMeasurementAttentionOpacity] = useState(70);
+  const [measurementAttentionOpacity, setMeasurementAttentionOpacity] = useState(85);
   const [measurementAttentionScanNonce, setMeasurementAttentionScanNonce] = useState(0);
   const [measurementGuideLabel, setMeasurementGuideLabel] = useState("");
   const [preparedMeasurementSuggestionId, setPreparedMeasurementSuggestionId] = useState("");

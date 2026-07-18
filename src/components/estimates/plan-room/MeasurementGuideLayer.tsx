@@ -3,6 +3,11 @@ import type { MeasurementAssistantSuggestion } from "@/lib/plan-room-measurement
 import type { ViewSize } from "./planRoomShared";
 import type { MeasurementAttentionMode } from "./MeasurementAttentionDock";
 
+// Inspection blue is deliberately separate from revision red/green and from
+// estimator-selected takeoff colors. A white casing keeps the hint legible on
+// dense black linework without implying that the AI geometry is accepted.
+export const AI_ATTENTION_BLUE = "#0b63f6";
+
 const guidePath = (suggestion: MeasurementAssistantSuggestion, viewSize: ViewSize) => {
   const points = suggestion.guide?.points ?? [];
   if (points.length === 0) return "";
@@ -66,9 +71,9 @@ export function MeasurementGuideLayer({
     <g data-testid="measurement-guide-layer">
       <defs>
         <linearGradient id="measurement-attention-sweep" x1="0" x2="1">
-          <stop offset="0" stopColor="var(--clay)" stopOpacity="0" />
-          <stop offset="0.5" stopColor="var(--clay)" stopOpacity="0.3" />
-          <stop offset="1" stopColor="var(--clay)" stopOpacity="0" />
+          <stop offset="0" stopColor={AI_ATTENTION_BLUE} stopOpacity="0" />
+          <stop offset="0.5" stopColor={AI_ATTENTION_BLUE} stopOpacity="0.34" />
+          <stop offset="1" stopColor={AI_ATTENTION_BLUE} stopOpacity="0" />
         </linearGradient>
       </defs>
       {mode !== "hidden" && scanNonce > 0 && !prefersReducedMotion && (
@@ -97,7 +102,7 @@ export function MeasurementGuideLayer({
         const path = guidePath(suggestion, viewSize);
         const anchor = guideAnchor(suggestion, viewSize);
         const active = suggestion.id === activeSuggestionId;
-        const pathOpacity = active ? boundedOpacity : Math.max(0.25, boundedOpacity * 0.58);
+        const pathOpacity = active ? boundedOpacity : Math.max(0.42, boundedOpacity * 0.72);
         const select = () => onSelect?.(suggestion.id);
         const onKeyDown = (event: KeyboardEvent<SVGGElement>) => {
           if (event.key !== "Enter" && event.key !== " ") return;
@@ -113,7 +118,7 @@ export function MeasurementGuideLayer({
             aria-pressed={active}
             onClick={select}
             onKeyDown={onKeyDown}
-            className="cursor-pointer outline-none focus-visible:[&>path]:stroke-foreground"
+            className="cursor-pointer outline-none focus-visible:[&_[data-attention-stroke]]:stroke-foreground"
             data-testid={`measurement-guide-${suggestion.id}`}
           >
             <title>{suggestion.label} — AI-drawn scope markup, not measured</title>
@@ -127,20 +132,33 @@ export function MeasurementGuideLayer({
             />
             <path
               d={path}
-              className={
-                suggestion.guide?.kind === "area_region"
-                  ? "pointer-events-none fill-clay/10 stroke-clay"
-                  : "pointer-events-none fill-none stroke-clay"
-              }
-              strokeWidth={active ? 4 : 3}
+              fill="none"
+              stroke="white"
+              strokeWidth={active ? 8 : 7}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={Math.min(0.92, pathOpacity + 0.18)}
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+              data-testid={`measurement-guide-halo-${suggestion.id}`}
+            />
+            <path
+              d={path}
+              fill={suggestion.guide?.kind === "area_region" ? AI_ATTENTION_BLUE : "none"}
+              fillOpacity={suggestion.guide?.kind === "area_region" ? 0.12 : undefined}
+              stroke={AI_ATTENTION_BLUE}
+              className="pointer-events-none"
+              strokeWidth={active ? 4.5 : 3.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
               strokeDasharray={active ? "10 5" : "7 6"}
               opacity={pathOpacity}
               vectorEffect="non-scaling-stroke"
+              data-attention-stroke
               style={
                 active
                   ? {
-                      filter:
-                        "drop-shadow(0 0 6px color-mix(in srgb, var(--clay) 58%, transparent))",
+                      filter: `drop-shadow(0 0 7px color-mix(in srgb, ${AI_ATTENTION_BLUE} 68%, transparent))`,
                     }
                   : undefined
               }
@@ -168,8 +186,10 @@ export function MeasurementGuideLayer({
               cx={anchor.x}
               cy={anchor.y}
               r={active ? 14 : 12}
-              className="pointer-events-none fill-card stroke-clay"
-              strokeWidth={2}
+              fill="white"
+              stroke={AI_ATTENTION_BLUE}
+              className="pointer-events-none"
+              strokeWidth={3}
               opacity={pathOpacity}
               vectorEffect="non-scaling-stroke"
             />
@@ -178,7 +198,8 @@ export function MeasurementGuideLayer({
               y={anchor.y}
               textAnchor="middle"
               dominantBaseline="central"
-              className="pointer-events-none fill-foreground text-[11px] font-semibold"
+              fill={AI_ATTENTION_BLUE}
+              className="pointer-events-none text-[11px] font-bold"
             >
               {index + 1}
             </text>
