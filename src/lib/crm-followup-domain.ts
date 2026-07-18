@@ -1,5 +1,6 @@
 export type FollowupChannel = "email" | "call" | "text" | "meeting" | "task";
 export type FollowupTiming = "overdue" | "today" | "upcoming" | "unscheduled";
+export type FollowupEnrollmentStatus = "active" | "paused" | "completed" | "stopped";
 
 export type FollowupPlaybookStepTemplate = {
   stepOrder: number;
@@ -116,4 +117,18 @@ export function appendValueAssetToBody(body: string, title: string, url: string)
   const cleanUrl = url.trim();
   if (!cleanUrl) return body.trim();
   return `${body.trim()}\n\n${cleanTitle}: ${cleanUrl}`;
+}
+
+export function shouldShowPreparedFollowup(input: {
+  opportunityActive: boolean;
+  enrollmentStatus: FollowupEnrollmentStatus | null;
+  completedAt: string | null;
+  skippedAt: string | null;
+}) {
+  return (
+    input.opportunityActive &&
+    input.enrollmentStatus === "active" &&
+    !input.completedAt &&
+    !input.skippedAt
+  );
 }
