@@ -599,7 +599,7 @@ async function runHarborCrmSeed(input: {
       contactEmail: fixture.contactEmail,
     });
     await seedOpportunityActivity({
-      client: supabaseAdmin,
+      client: input.context.supabase,
       organizationId: input.organizationId,
       userId: input.context.userId,
       ownerName,
@@ -614,7 +614,7 @@ async function runHarborCrmSeed(input: {
   const followupOpportunity = followupFixture ? opportunities.get(followupFixture.key) : undefined;
   if (followupOpportunity) {
     await seedFollowupStory({
-      client: supabaseAdmin,
+      client: input.context.supabase,
       organizationId: input.organizationId,
       userId: input.context.userId,
       ownerName,
