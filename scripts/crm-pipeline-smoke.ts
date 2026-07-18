@@ -207,6 +207,11 @@ assert.doesNotMatch(
   /ensureHarborCrmDemo/,
   "The pipeline must not start a second Harbor seed while the status control is preparing it.",
 );
+assert.doesNotMatch(
+  pipelineWorkspaceSource,
+  /ensureDemoMutation/,
+  "No stale automatic-seed mutation references may survive in the pipeline render path.",
+);
 
 const crmDemoServerSource = readFileSync(
   new URL("../src/lib/crm-demo.functions.ts", import.meta.url),
