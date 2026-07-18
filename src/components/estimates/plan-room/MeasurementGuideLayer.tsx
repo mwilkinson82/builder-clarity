@@ -1,6 +1,7 @@
-import type { KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import type { MeasurementAssistantSuggestion } from "@/lib/plan-room-measurement-assistant";
 import type { ViewSize } from "./planRoomShared";
+import type { MeasurementAttentionMode } from "./MeasurementAttentionDock";
 
 const guidePath = (suggestion: MeasurementAssistantSuggestion, viewSize: ViewSize) => {
   const points = suggestion.guide?.points ?? [];
@@ -26,20 +27,77 @@ export function MeasurementGuideLayer({
   suggestions,
   activeSuggestionId,
   viewSize,
+  mode = "all",
+  opacity = 70,
+  scanNonce = 0,
   onSelect,
 }: {
   suggestions: MeasurementAssistantSuggestion[];
   activeSuggestionId: string;
   viewSize: ViewSize;
+  mode?: MeasurementAttentionMode;
+  opacity?: number;
+  scanNonce?: number;
   onSelect?: (suggestionId: string) => void;
 }) {
   const guided = suggestions.filter((suggestion) => suggestion.guide);
+  const focusedId = guided.some((suggestion) => suggestion.id === activeSuggestionId)
+    ? activeSuggestionId
+    : (guided[0]?.id ?? "");
+  const visible =
+    mode === "hidden"
+      ? []
+      : mode === "spotlight"
+        ? guided.filter((suggestion) => suggestion.id === focusedId)
+        : guided;
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    if (!query) return;
+    const update = () => setPrefersReducedMotion(query.matches);
+    update();
+    query.addEventListener?.("change", update);
+    return () => query.removeEventListener?.("change", update);
+  }, []);
+
+  const boundedOpacity = Math.min(1, Math.max(0.25, opacity / 100));
   return (
     <g data-testid="measurement-guide-layer">
-      {guided.map((suggestion, index) => {
+      <defs>
+        <linearGradient id="measurement-attention-sweep" x1="0" x2="1">
+          <stop offset="0" stopColor="var(--clay)" stopOpacity="0" />
+          <stop offset="0.5" stopColor="var(--clay)" stopOpacity="0.3" />
+          <stop offset="1" stopColor="var(--clay)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {mode !== "hidden" && scanNonce > 0 && !prefersReducedMotion && (
+        <rect
+          key={`attention-scan-${scanNonce}`}
+          x={-viewSize.width * 0.22}
+          y={0}
+          width={viewSize.width * 0.22}
+          height={viewSize.height}
+          fill="url(#measurement-attention-sweep)"
+          pointerEvents="none"
+          data-testid="measurement-attention-scan"
+        >
+          <animate
+            attributeName="x"
+            from={String(-viewSize.width * 0.22)}
+            to={String(viewSize.width)}
+            dur="1.15s"
+            fill="freeze"
+          />
+          <animate attributeName="opacity" values="0;1;0" dur="1.15s" fill="freeze" />
+        </rect>
+      )}
+      {visible.map((suggestion) => {
+        const index = guided.findIndex((candidate) => candidate.id === suggestion.id);
         const path = guidePath(suggestion, viewSize);
         const anchor = guideAnchor(suggestion, viewSize);
         const active = suggestion.id === activeSuggestionId;
+        const pathOpacity = active ? boundedOpacity : Math.max(0.25, boundedOpacity * 0.58);
         const select = () => onSelect?.(suggestion.id);
         const onKeyDown = (event: KeyboardEvent<SVGGElement>) => {
           if (event.key !== "Enter" && event.key !== " ") return;
@@ -48,7 +106,7 @@ export function MeasurementGuideLayer({
         };
         return (
           <g
-            key={suggestion.id}
+            key={`${suggestion.id}-${scanNonce}`}
             role="button"
             tabIndex={0}
             aria-label={`Review AI-drawn scope markup for ${suggestion.label}`}
@@ -76,15 +134,43 @@ export function MeasurementGuideLayer({
               }
               strokeWidth={active ? 4 : 3}
               strokeDasharray={active ? "10 5" : "7 6"}
+              opacity={pathOpacity}
               vectorEffect="non-scaling-stroke"
+              style={
+                active
+                  ? {
+                      filter:
+                        "drop-shadow(0 0 6px color-mix(in srgb, var(--clay) 58%, transparent))",
+                    }
+                  : undefined
+              }
               data-testid={`measurement-guide-path-${suggestion.id}`}
-            />
+            >
+              {scanNonce > 0 && !prefersReducedMotion && (
+                <>
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    from="80"
+                    to="0"
+                    dur="0.9s"
+                    fill="freeze"
+                  />
+                  <animate
+                    attributeName="opacity"
+                    values={`0.12;${pathOpacity}`}
+                    dur="0.9s"
+                    fill="freeze"
+                  />
+                </>
+              )}
+            </path>
             <circle
               cx={anchor.x}
               cy={anchor.y}
               r={active ? 14 : 12}
               className="pointer-events-none fill-card stroke-clay"
               strokeWidth={2}
+              opacity={pathOpacity}
               vectorEffect="non-scaling-stroke"
             />
             <text

@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MeasurementAssistantPanel } from "@/components/estimates/plan-room/MeasurementAssistantPanel";
+import { MeasurementAttentionDock } from "@/components/estimates/plan-room/MeasurementAttentionDock";
 import { MeasurementGuideLayer } from "@/components/estimates/plan-room/MeasurementGuideLayer";
 import { MeasurementGuideReviewBar } from "@/components/estimates/plan-room/MeasurementGuideReviewBar";
 import {
@@ -18,6 +19,7 @@ import {
   duplicateScopeCounts,
   measurementScopeKey,
   measurementSuggestionKey,
+  scopeItemAsSuggestion,
   type MeasurementScopeQueueItem,
 } from "@/lib/plan-room-measurement-scope";
 import {
@@ -845,6 +847,8 @@ const queuedScope: MeasurementScopeQueueItem = {
   source_line: "L014",
   source_excerpt: "CONTINUOUS GWB AT CORRIDOR WALLS",
   source_anchor: { x: 0.1, y: 0.2, width: 0.3, height: 0.04 },
+  guide: result.suggestions[0].guide ?? null,
+  guide_source: "ai_visual_hint",
   status: "accepted",
   decision_by: "55555555-5555-4555-8555-555555555555",
   decision_by_name: "Estimator",
@@ -944,6 +948,53 @@ it("renders drawing guides as selectable dashed hints", () => {
   ).toBe("7 6");
   act(() => guide!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   expect(select).toHaveBeenCalledWith("measurement-suggestion-1");
+});
+
+it("keeps accepted visual-guide provenance available after the AI review session", () => {
+  const restored = scopeItemAsSuggestion(queuedScope);
+
+  expect(restored.guide).toEqual(result.suggestions[0].guide);
+  expect(restored.guide?.source).toBe("ai_visual_hint");
+  expect(restored.id).toBe(`scope-item-${queuedScope.id}`);
+});
+
+it("lets the estimator spotlight, hide, and replay a sparse AI attention layer", () => {
+  const setMode = vi.fn();
+  const replay = vi.fn();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() =>
+    root!.render(
+      <MeasurementAttentionDock
+        count={3}
+        activeIndex={1}
+        mode="all"
+        opacity={70}
+        onPrevious={() => {}}
+        onNext={() => {}}
+        onModeChange={setMode}
+        onOpacityChange={() => {}}
+        onReplay={replay}
+      />,
+    ),
+  );
+
+  expect(container.textContent).toContain("AI attention layer");
+  expect(container.textContent).toContain("Visual callouts only");
+  expect(container.textContent).toContain("2/3");
+  act(() =>
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="measurement-attention-spotlight"]')!
+      .click(),
+  );
+  expect(setMode).toHaveBeenCalledWith("spotlight");
+  act(() =>
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="measurement-attention-replay"]')!
+      .click(),
+  );
+  expect(replay).toHaveBeenCalledOnce();
 });
 
 it("requires estimator acceptance before a visual hint can start a trusted trace", () => {

@@ -220,6 +220,10 @@ import { CockpitFloatingPanelHeader } from "./CockpitFloatingPanelHeader";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { ScaleAssurancePanel } from "./ScaleAssurancePanel";
 import { MeasurementAssistantPanel } from "./MeasurementAssistantPanel";
+import {
+  MeasurementAttentionDock,
+  type MeasurementAttentionMode,
+} from "./MeasurementAttentionDock";
 import { MeasurementGuideReviewBar } from "./MeasurementGuideReviewBar";
 import { MeasurementScopeQueuePanel } from "./MeasurementScopeQueuePanel";
 import { PlanScopeCoverageMatrix } from "./PlanScopeCoverageMatrix";
@@ -328,6 +332,11 @@ export function PlanRoomWorkspace({
   const [measurementAssistantPlan, setMeasurementAssistantPlan] =
     useState<MeasurementAssistantPlanResult | null>(null);
   const [activeMeasurementGuideId, setActiveMeasurementGuideId] = useState("");
+  const [focusedMeasurementGuideId, setFocusedMeasurementGuideId] = useState("");
+  const [measurementAttentionMode, setMeasurementAttentionMode] =
+    useState<MeasurementAttentionMode>("all");
+  const [measurementAttentionOpacity, setMeasurementAttentionOpacity] = useState(70);
+  const [measurementAttentionScanNonce, setMeasurementAttentionScanNonce] = useState(0);
   const [measurementGuideLabel, setMeasurementGuideLabel] = useState("");
   const [preparedMeasurementSuggestionId, setPreparedMeasurementSuggestionId] = useState("");
   const [preparedMeasurementSuggestion, setPreparedMeasurementSuggestion] =
@@ -514,13 +523,42 @@ export function PlanRoomWorkspace({
       }),
     ) as Record<string, MeasurementScopeQueueItem | undefined>;
   }, [currentSheet, measurementAssistantPlan, measurementScopeItems]);
+  const measurementGuideSuggestions = useMemo(() => {
+    const currentPlanGuides =
+      measurementAssistantPlan?.suggestions.filter((suggestion) => suggestion.guide) ?? [];
+    if (currentPlanGuides.length > 0) return currentPlanGuides;
+    if (!currentSheet) return [];
+    return measurementScopeItems
+      .filter(
+        (item) =>
+          item.plan_sheet_id === currentSheet.id && item.status !== "rejected" && item.guide,
+      )
+      .map(scopeItemAsSuggestion);
+  }, [currentSheet, measurementAssistantPlan, measurementScopeItems]);
   const activeMeasurementGuideSuggestion =
-    measurementAssistantPlan?.suggestions.find(
+    measurementGuideSuggestions.find(
       (suggestion) => suggestion.id === activeMeasurementGuideId && suggestion.guide,
     ) ?? null;
   const activeMeasurementGuideQueueItem = activeMeasurementGuideSuggestion
-    ? queueItemBySuggestionId[activeMeasurementGuideSuggestion.id]
+    ? measurementScopeItems.find(
+        (item) =>
+          item.plan_sheet_id === currentSheet?.id &&
+          (activeMeasurementGuideSuggestion.id === `scope-item-${item.id}` ||
+            item.suggestion_key ===
+              measurementSuggestionKey(currentSheet?.id ?? "", activeMeasurementGuideSuggestion)),
+      )
     : undefined;
+  const resolvedFocusedMeasurementGuideId = measurementGuideSuggestions.some(
+    (suggestion) => suggestion.id === focusedMeasurementGuideId,
+  )
+    ? focusedMeasurementGuideId
+    : (measurementGuideSuggestions[0]?.id ?? "");
+  const focusedMeasurementGuideIndex = Math.max(
+    0,
+    measurementGuideSuggestions.findIndex(
+      (suggestion) => suggestion.id === resolvedFocusedMeasurementGuideId,
+    ),
+  );
   const duplicateCountBySuggestionId = useMemo(() => {
     if (!measurementAssistantPlan) return {};
     return Object.fromEntries(
@@ -541,6 +579,8 @@ export function PlanRoomWorkspace({
     setScaleVerifiedAtOverride(undefined);
     setMeasurementAssistantPlan(null);
     setActiveMeasurementGuideId("");
+    setFocusedMeasurementGuideId("");
+    setMeasurementAttentionMode("all");
     setMeasurementGuideLabel("");
     setPreparedMeasurementSuggestionId("");
     setPreparedMeasurementSuggestion(null);
@@ -2121,9 +2161,13 @@ export function PlanRoomWorkspace({
       return { plan, anchors: evidence.anchors };
     },
     onSuccess: ({ plan, anchors }) => {
+      const firstGuide = plan.suggestions.find((suggestion) => suggestion.guide) ?? null;
       setMeasurementAssistantPlan(plan);
-      setActiveMeasurementGuideId("");
-      setMeasurementGuideLabel("");
+      setActiveMeasurementGuideId(firstGuide?.id ?? "");
+      setFocusedMeasurementGuideId(firstGuide?.id ?? "");
+      setMeasurementGuideLabel(firstGuide?.label ?? "");
+      setMeasurementAttentionMode("all");
+      if (firstGuide) setMeasurementAttentionScanNonce((current) => current + 1);
       setMeasurementEvidenceAnchors(anchors);
       setPreparedMeasurementSuggestionId("");
       setPreparedMeasurementSuggestion(null);
@@ -2159,6 +2203,7 @@ export function PlanRoomWorkspace({
       return { record, anchors: evidence.anchors };
     },
     onSuccess: ({ record, anchors }) => {
+      const firstGuide = record.plan.suggestions.find((suggestion) => suggestion.guide) ?? null;
       setMeasurementAssistantPlan({
         ...record.plan,
         operation_id: record.operation_id,
@@ -2167,8 +2212,11 @@ export function PlanRoomWorkspace({
         provider: "recorded",
         source_line_count: record.source_line_count,
       });
-      setActiveMeasurementGuideId("");
-      setMeasurementGuideLabel("");
+      setActiveMeasurementGuideId(firstGuide?.id ?? "");
+      setFocusedMeasurementGuideId(firstGuide?.id ?? "");
+      setMeasurementGuideLabel(firstGuide?.label ?? "");
+      setMeasurementAttentionMode("all");
+      if (firstGuide) setMeasurementAttentionScanNonce((current) => current + 1);
       setMeasurementEvidenceAnchors(anchors);
       setPreparedMeasurementSuggestionId("");
       setPreparedMeasurementSuggestion(null);
@@ -2212,6 +2260,7 @@ export function PlanRoomWorkspace({
           source_line: suggestion.source_line,
           source_excerpt: suggestion.source_excerpt,
           source_anchor: anchor,
+          guide_geometry: suggestion.guide ?? null,
           status,
         },
       }),
@@ -2305,8 +2354,11 @@ export function PlanRoomWorkspace({
     status: MeasurementScopeDecisionStatus,
     labelOverride?: string,
   ) => {
-    if (!currentSheet || !measurementAssistantPlan) return;
+    if (!currentSheet) return;
     const suggestionKey = measurementSuggestionKey(currentSheet.id, suggestion);
+    const existingItem = measurementScopeItems.find(
+      (item) => item.plan_sheet_id === currentSheet.id && item.suggestion_key === suggestionKey,
+    );
     const decidedSuggestion = labelOverride?.trim()
       ? { ...suggestion, label: labelOverride.trim() }
       : suggestion;
@@ -2314,16 +2366,33 @@ export function PlanRoomWorkspace({
       suggestion: decidedSuggestion,
       status,
       sheetId: currentSheet.id,
-      aiOperationId: measurementAssistantPlan.operation_id,
-      anchor: measurementEvidenceAnchors[suggestion.source_line] ?? null,
+      aiOperationId:
+        measurementAssistantPlan?.operation_id ?? existingItem?.ai_operation_id ?? null,
+      anchor:
+        measurementEvidenceAnchors[suggestion.source_line] ?? existingItem?.source_anchor ?? null,
       suggestionKey,
     });
   };
 
   const selectMeasurementGuide = (suggestion: MeasurementAssistantSuggestion) => {
-    const queueItem = queueItemBySuggestionId[suggestion.id];
+    const queueItem = measurementScopeItems.find(
+      (item) =>
+        item.plan_sheet_id === currentSheet?.id &&
+        (suggestion.id === `scope-item-${item.id}` ||
+          item.suggestion_key === measurementSuggestionKey(currentSheet?.id ?? "", suggestion)),
+    );
     setActiveMeasurementGuideId(suggestion.id);
+    setFocusedMeasurementGuideId(suggestion.id);
+    if (measurementAttentionMode === "hidden") setMeasurementAttentionMode("spotlight");
     setMeasurementGuideLabel(queueItem?.label || suggestion.label);
+  };
+
+  const moveMeasurementGuideFocus = (offset: -1 | 1) => {
+    if (measurementGuideSuggestions.length === 0) return;
+    const nextIndex =
+      (focusedMeasurementGuideIndex + offset + measurementGuideSuggestions.length) %
+      measurementGuideSuggestions.length;
+    selectMeasurementGuide(measurementGuideSuggestions[nextIndex]);
   };
 
   const showActiveMeasurementGuideEvidence = () => {
@@ -2359,6 +2428,8 @@ export function PlanRoomWorkspace({
     const label = measurementGuideLabel.trim() || activeMeasurementGuideQueueItem.label;
     setPreparedMeasurementScopeItemId(activeMeasurementGuideQueueItem.id);
     prepareMeasurementSuggestion({ ...activeMeasurementGuideSuggestion, label });
+    setFocusedMeasurementGuideId(activeMeasurementGuideSuggestion.id);
+    setMeasurementAttentionMode("spotlight");
     setActiveMeasurementGuideId("");
     setMeasurementGuideLabel("");
   };
@@ -2381,6 +2452,10 @@ export function PlanRoomWorkspace({
   const prepareMeasurementSuggestion = (suggestion: MeasurementAssistantSuggestion) => {
     setActiveMeasurementGuideId("");
     setMeasurementGuideLabel("");
+    if (suggestion.guide) {
+      setFocusedMeasurementGuideId(suggestion.id);
+      setMeasurementAttentionMode("spotlight");
+    }
     setPreparedScopeBriefTakeoff(null);
     setMeasurementLabel(suggestion.label);
     setMeasurementSourceNote(measurementAssistantTakeoffNote(suggestion));
@@ -2402,8 +2477,8 @@ export function PlanRoomWorkspace({
     setTool(suggestion.tool);
     toast.info(
       suggestion.tool === "linear"
-        ? "Linear takeoff armed. Trace the scope; double-click or press Enter to finish."
-        : "Area takeoff armed. Trace the perimeter, then finish the area.",
+        ? "Trusted trace armed. Follow the AI spotlight; magnetic ink snap aligns each click to nearby drawing linework."
+        : "Trusted area trace armed. Follow the AI spotlight; magnetic ink snap aligns each corner to nearby drawing linework.",
     );
   };
 
@@ -4282,14 +4357,35 @@ export function PlanRoomWorkspace({
             discoveryMarkups={symbolDiscovery.markupsForSheet(currentSheet?.id ?? null)}
             activeDiscoveryClusterIndex={symbolDiscovery.selectedClusterIndex}
             onDiscoveryGroupSelect={symbolDiscovery.selectGroup}
-            measurementGuideSuggestions={measurementAssistantPlan?.suggestions ?? []}
-            activeMeasurementGuideId={activeMeasurementGuideId}
+            measurementGuideSuggestions={measurementGuideSuggestions}
+            activeMeasurementGuideId={resolvedFocusedMeasurementGuideId}
+            measurementGuideMode={measurementAttentionMode}
+            measurementGuideOpacity={measurementAttentionOpacity}
+            measurementGuideScanNonce={measurementAttentionScanNonce}
             onMeasurementGuideSelect={(suggestionId) => {
-              const suggestion = measurementAssistantPlan?.suggestions.find(
+              const suggestion = measurementGuideSuggestions.find(
                 (candidate) => candidate.id === suggestionId,
               );
               if (suggestion) selectMeasurementGuide(suggestion);
             }}
+            measurementGuideControls={
+              <MeasurementAttentionDock
+                count={measurementGuideSuggestions.length}
+                activeIndex={focusedMeasurementGuideIndex}
+                mode={measurementAttentionMode}
+                opacity={measurementAttentionOpacity}
+                onPrevious={() => moveMeasurementGuideFocus(-1)}
+                onNext={() => moveMeasurementGuideFocus(1)}
+                onModeChange={setMeasurementAttentionMode}
+                onOpacityChange={setMeasurementAttentionOpacity}
+                onReplay={() => {
+                  setMeasurementAttentionMode((current) =>
+                    current === "hidden" ? "all" : current,
+                  );
+                  setMeasurementAttentionScanNonce((current) => current + 1);
+                }}
+              />
+            }
             aiPanel={
               symbolDiscovery.open ? (
                 <SymbolDiscoveryPanel
@@ -4449,7 +4545,7 @@ export function PlanRoomWorkspace({
                           ? measurementEvidenceFocus.sourceLine
                           : ""
                       }
-                      activeGuideSuggestionId={activeMeasurementGuideId}
+                      activeGuideSuggestionId={resolvedFocusedMeasurementGuideId}
                       decisionPending={measurementScopeDecisionMutation.isPending}
                       onAnalyze={() => measurementAssistantMutation.mutate(undefined)}
                       onPrepare={(suggestion) => {
@@ -4472,6 +4568,8 @@ export function PlanRoomWorkspace({
                       onClear={() => {
                         setMeasurementAssistantPlan(null);
                         setActiveMeasurementGuideId("");
+                        setFocusedMeasurementGuideId("");
+                        setMeasurementAttentionMode("all");
                         setMeasurementGuideLabel("");
                         setPreparedMeasurementSuggestionId("");
                         setPreparedMeasurementSuggestion(null);

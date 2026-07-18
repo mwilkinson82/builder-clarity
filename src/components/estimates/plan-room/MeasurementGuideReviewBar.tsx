@@ -67,7 +67,8 @@ export function MeasurementGuideReviewBar({
             AI traced this dashed {suggestion.tool === "linear" ? "route" : "region"} as a visual
             proposal from the cited note and drawing image. It cannot feed the estimate. Confirm
             what it represents, then create the trusted quantity with your snapped trace and
-            verified sheet scale.
+            verified sheet scale. The spotlight stays visible while magnetic ink snap aligns your
+            clicks to nearby drawing linework.
           </p>
           <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
             <Input
