@@ -507,6 +507,7 @@ export function PlanCanvas({
   // for the wheel to settle.
   const lastRenderSignatureRef = useRef("");
   const [zoom, setZoom] = useState(1);
+  const autoFocusedAiGhostRef = useRef("");
   const [isPanning, setIsPanning] = useState(false);
   const [isZoomWindowMode, setIsZoomWindowMode] = useState(false);
   const [zoomWindowDraft, setZoomWindowDraft] = useState<ZoomWindowDraft | null>(null);
@@ -975,15 +976,22 @@ export function PlanCanvas({
     requestAnimationFrame(() => jumpViewport(center));
   }, [jumpViewport, selectedMeasurement, sheet?.id, viewSize.height, viewSize.width, zoom]);
 
-  // AI review: pan (and zoom in enough to read the symbol) to the active
-  // ghost so the human always sees what they are accepting or rejecting.
+  // AI review: center each newly active ghost once at a readable, moderate
+  // scale. After that first focus, zoom belongs entirely to the estimator;
+  // changing zoom must never re-assert the review scale or snap them back in.
   useEffect(() => {
-    if (!activeAiGhostId) return;
+    if (!activeAiGhostId) {
+      autoFocusedAiGhostRef.current = "";
+      return;
+    }
+    const focusKey = `${sheet?.id ?? ""}:${activeAiGhostId}`;
+    if (autoFocusedAiGhostRef.current === focusKey) return;
     const ghost = aiGhosts.find((item) => item.id === activeAiGhostId);
     if (!ghost) return;
-    setZoom((current) => (current < 1.5 ? 1.5 : current));
+    autoFocusedAiGhostRef.current = focusKey;
+    setZoom((current) => (current < 1.1 ? 1.1 : current));
     requestAnimationFrame(() => jumpViewport({ x: ghost.x, y: ghost.y }));
-  }, [activeAiGhostId, aiGhosts, jumpViewport, sheet?.id, viewSize.height, viewSize.width, zoom]);
+  }, [activeAiGhostId, aiGhosts, jumpViewport, sheet?.id, viewSize.height, viewSize.width]);
 
   useEffect(() => {
     requestAnimationFrame(updateViewportFrame);
@@ -1088,9 +1096,10 @@ export function PlanCanvas({
   };
 
   // Plain wheel zooms the sheet (trackpad pinch arrives as a ctrlKey wheel).
-  // The AI attention dock floats above the sheet, so it must deliberately
-  // forward the same gesture; otherwise the exact place an estimator is
-  // reviewing becomes a dead zone. Other floating panels keep native scroll.
+  // AI attention and Accept/Reject review controls float above the sheet, so
+  // they deliberately forward the same gesture; otherwise the exact place an
+  // estimator is reviewing becomes a dead zone. Other floating panels keep
+  // native scroll.
   // A native non-passive listener is required because React wheel listeners
   // are passive and cannot prevent stage or browser zoom at the same time.
   const wheelHandlerRef = useRef<(event: WheelEvent) => void>(() => {});
@@ -1115,10 +1124,9 @@ export function PlanCanvas({
     const listener = (event: WheelEvent) => {
       const target = event.target;
       const insideStage = target instanceof Node && stage.contains(target);
-      const insideAttentionDock =
-        target instanceof Element &&
-        Boolean(target.closest('[data-testid="measurement-attention-dock"]'));
-      if (!insideStage && !insideAttentionDock) return;
+      const insideZoomThroughOverlay =
+        target instanceof Element && Boolean(target.closest('[data-plan-zoom-through="true"]'));
+      if (!insideStage && !insideZoomThroughOverlay) return;
       wheelHandlerRef.current(event);
     };
     root.addEventListener("wheel", listener, { passive: false });
@@ -1674,12 +1682,18 @@ export function PlanCanvas({
         </div>
       )}
       {aiReviewBar && (
-        <div className="pointer-events-none absolute inset-x-3 bottom-16 z-40 flex justify-center">
+        <div
+          className="pointer-events-none absolute inset-x-3 bottom-16 z-40 flex justify-center"
+          data-plan-zoom-through="true"
+        >
           <div className="pointer-events-auto">{aiReviewBar}</div>
         </div>
       )}
       {measurementGuideControls && (
-        <div className="pointer-events-none absolute inset-x-3 top-20 z-40 flex justify-center">
+        <div
+          className="pointer-events-none absolute inset-x-3 top-20 z-40 flex justify-center"
+          data-plan-zoom-through="true"
+        >
           <div className="pointer-events-auto">{measurementGuideControls}</div>
         </div>
       )}

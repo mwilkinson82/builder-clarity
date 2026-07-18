@@ -197,9 +197,11 @@ const persistedLinear = persistedMeasurement({
 function Host({
   measurements,
   showAttentionDock = false,
+  showAiReview = false,
 }: {
   measurements: TakeoffMeasurementRow[];
   showAttentionDock?: boolean;
+  showAiReview?: boolean;
 }) {
   const [viewSize, setViewSize] = useState<ViewSize>({ width: 1000, height: 700 });
   const [selectedMeasurementId, setSelectedMeasurementId] = useState("");
@@ -268,6 +270,15 @@ function Host({
             <div data-testid="measurement-attention-dock">AI callout controls</div>
           ) : undefined
         }
+        aiGhosts={
+          showAiReview
+            ? [{ id: "proposal-1", x: 0.5, y: 0.5, confidence: 0.9, status: "pending" }]
+            : []
+        }
+        activeAiGhostId={showAiReview ? "proposal-1" : null}
+        aiReviewBar={
+          showAiReview ? <div data-testid="ai-review-bar">Accept or reject this callout</div> : null
+        }
       />
     </div>
   );
@@ -278,7 +289,11 @@ function Host({
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-async function mountHost(measurements: TakeoffMeasurementRow[], showAttentionDock = false) {
+async function mountHost(
+  measurements: TakeoffMeasurementRow[],
+  showAttentionDock = false,
+  showAiReview = false,
+) {
   container = document.createElement("div");
   document.body.appendChild(container);
   const queryClient = new QueryClient({
@@ -287,7 +302,11 @@ async function mountHost(measurements: TakeoffMeasurementRow[], showAttentionDoc
   const rootRoute = createRootRoute({
     component: () => (
       <QueryClientProvider client={queryClient}>
-        <Host measurements={measurements} showAttentionDock={showAttentionDock} />
+        <Host
+          measurements={measurements}
+          showAttentionDock={showAttentionDock}
+          showAiReview={showAiReview}
+        />
       </QueryClientProvider>
     ),
   });
@@ -316,6 +335,25 @@ test("wheel zoom remains active over the floating AI attention dock", async () =
   });
 
   expect(Number(zoomThumb?.getAttribute("aria-valuenow"))).toBeGreaterThan(100);
+});
+
+test("Accept/Reject review permits zooming out below its one-time focus scale", async () => {
+  await mountHost([persistedCount], false, true);
+  const review = document.querySelector<HTMLElement>('[data-testid="ai-review-bar"]');
+  const zoomThumb = document.querySelector<HTMLElement>(
+    '[data-testid="plan-zoom-slider"] [role="slider"]',
+  );
+  expect(review).not.toBeNull();
+  expect(zoomThumb?.getAttribute("aria-valuenow")).toBe("110");
+
+  await act(async () => {
+    review!.dispatchEvent(
+      new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 240 }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  expect(Number(zoomThumb?.getAttribute("aria-valuenow"))).toBeLessThan(110);
 });
 
 afterEach(() => {
