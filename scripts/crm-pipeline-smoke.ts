@@ -192,6 +192,36 @@ const demoControlSource = readFileSync(
 );
 assert.match(demoControlSource, /Restore Harbor CRM/);
 assert.match(demoControlSource, /Your real CRM records are not\s+touched/);
+assert.match(
+  demoControlSource,
+  /current\.status !== "ready"[\s\S]*await ensureFn\(\)[\s\S]*return statusFn\(\)/,
+  "The status control owns the automatic Harbor seed and refreshes the certified version afterward.",
+);
+
+const pipelineWorkspaceSource = readFileSync(
+  new URL("../src/components/pipeline/PipelineWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+assert.doesNotMatch(
+  pipelineWorkspaceSource,
+  /ensureHarborCrmDemo/,
+  "The pipeline must not start a second Harbor seed while the status control is preparing it.",
+);
+
+const crmDemoServerSource = readFileSync(
+  new URL("../src/lib/crm-demo.functions.ts", import.meta.url),
+  "utf8",
+);
+assert.match(
+  crmDemoServerSource,
+  /seedOpportunityActivity\(\{[\s\S]*client: input\.context\.supabase/,
+  "Harbor action rows use the authenticated schema-aware project connection.",
+);
+assert.match(
+  crmDemoServerSource,
+  /seedFollowupStory\(\{[\s\S]*client: input\.context\.supabase/,
+  "Harbor follow-up rows use the authenticated schema-aware project connection.",
+);
 
 // ---------- Archived demo tombstone → seed nothing ----------
 const archivedDemo = { id: "project-1", archived_at: "2026-07-01T00:00:00Z" };

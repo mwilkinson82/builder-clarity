@@ -14,7 +14,11 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { getHarborCrmDemoStatus, resetHarborCrmDemo } from "@/lib/crm-demo.functions";
+import {
+  ensureHarborCrmDemo,
+  getHarborCrmDemoStatus,
+  resetHarborCrmDemo,
+} from "@/lib/crm-demo.functions";
 
 const LOCAL_DEMO_KEYS = [
   "overwatch.crm.demo-opportunity-overrides.v1",
@@ -24,11 +28,22 @@ const LOCAL_DEMO_KEYS = [
 
 export function CrmDemoControl() {
   const queryClient = useQueryClient();
+  const ensureFn = useServerFn(ensureHarborCrmDemo);
   const statusFn = useServerFn(getHarborCrmDemoStatus);
   const resetFn = useServerFn(resetHarborCrmDemo);
   const statusQuery = useQuery({
     queryKey: ["harbor-crm-demo-status"],
-    queryFn: () => statusFn(),
+    queryFn: async () => {
+      const current = await statusFn();
+      if (
+        current.available &&
+        (current.status !== "ready" || current.appliedVersion < current.targetVersion)
+      ) {
+        await ensureFn();
+        return statusFn();
+      }
+      return current;
+    },
   });
   const resetMutation = useMutation({
     mutationFn: () => resetFn(),
@@ -79,10 +94,14 @@ export function CrmDemoControl() {
             type="button"
             variant="outline"
             className="gap-1.5"
-            disabled={resetMutation.isPending}
+            disabled={statusQuery.isFetching || resetMutation.isPending}
           >
             <RotateCcw className="h-3.5 w-3.5" />
-            {resetMutation.isPending ? "Restoring…" : "Restore walkthrough"}
+            {statusQuery.isFetching
+              ? "Preparing…"
+              : resetMutation.isPending
+                ? "Restoring…"
+                : "Restore walkthrough"}
           </Button>
         </AlertDialogTrigger>
         <AlertDialogContent>

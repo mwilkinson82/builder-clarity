@@ -30,7 +30,6 @@ import {
   type PipelineOpportunityRow,
   type PipelineStage,
 } from "@/lib/pipeline.functions";
-import { ensureHarborCrmDemo } from "@/lib/crm-demo.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -108,7 +107,6 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
   const listFn = useServerFn(listOpportunities);
   const membersFn = useServerFn(listPipelineMembers);
   const crmSnapshotFn = useServerFn(listCrmSnapshot);
-  const ensureDemoFn = useServerFn(ensureHarborCrmDemo);
   const getFn = useServerFn(getOpportunity);
   const createFn = useServerFn(createOpportunity);
   const createEstimateFn = useServerFn(createEstimate);
@@ -128,7 +126,6 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
   const [sortMode, setSortMode] = useState<PipelineSortMode>("last_activity_at");
   const [showArchived, setShowArchived] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(initialOpportunityId ?? null);
-  const [demoSeedChecked, setDemoSeedChecked] = useState(false);
   const [demoOpportunityOverrides, setDemoOpportunityOverrides] = useState<
     Record<string, DemoOpportunityOverride>
   >(readDemoOpportunityOverrides);
@@ -262,42 +259,6 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
       queryClient.invalidateQueries({ queryKey: ["pipeline-crm-snapshot"] }),
     ]);
   };
-
-  const ensureDemoMutation = useMutation({
-    mutationFn: () => ensureDemoFn(),
-    onSuccess: async (result) => {
-      if (result.seeded) {
-        toast.success("Harbor CRM walkthrough loaded", {
-          description: `${result.opportunityCount} connected demo opportunities are ready to review.`,
-        });
-      }
-      await invalidatePipeline();
-    },
-    onError: (error) => {
-      if (isMissingPipelineSchemaMessage(error)) return;
-      toast.error("CRM sample data did not load", { description: errorMessage(error) });
-    },
-  });
-
-  useEffect(() => {
-    if (
-      demoSeedChecked ||
-      showArchived ||
-      opportunitiesQuery.isLoading ||
-      opportunitiesQuery.isError
-    ) {
-      return;
-    }
-    setDemoSeedChecked(true);
-    ensureDemoMutation.mutate();
-  }, [
-    demoSeedChecked,
-    ensureDemoMutation,
-    rawOpportunities.length,
-    opportunitiesQuery.isError,
-    opportunitiesQuery.isLoading,
-    showArchived,
-  ]);
 
   const createMutation = useMutation({
     mutationFn: (input: CreateOpportunityInput) => createFn({ data: input }),
@@ -787,12 +748,6 @@ function sortOpportunities(
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error";
-}
-
-function isMissingPipelineSchemaMessage(error: unknown) {
-  return /pipeline_(opportunities|accounts|contacts|next_actions|activity_log)/i.test(
-    errorMessage(error),
-  );
 }
 
 function applyDemoOpportunityOverride(
