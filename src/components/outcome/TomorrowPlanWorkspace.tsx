@@ -9,8 +9,11 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDot,
+  Flag,
+  LockKeyhole,
   Pencil,
   Plus,
+  RotateCcw,
   Trash2,
   XCircle,
 } from "lucide-react";
@@ -29,7 +32,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { DailyWipEntryRow } from "@/lib/daily-wip.functions";
 import type { ScheduleActivityRow } from "@/lib/schedule.functions";
-import type { SubcontractRow } from "@/lib/subcontracts.functions";
+import type { SubcontractAllocationRow, SubcontractRow } from "@/lib/subcontracts.functions";
+import {
+  expectedProductionQuantity,
+  plannedLaborHours,
+  productionRateIsOverridden,
+  resolveTomorrowPlanBenchmark,
+} from "@/lib/tomorrow-plan-benchmark";
 import {
   deleteTomorrowPlanItem,
   listTomorrowPlanItems,
@@ -50,6 +59,7 @@ interface TomorrowPlanWorkspaceProps {
   buckets: BucketOption[];
   scheduleActivities: ScheduleActivityRow[];
   subcontracts: SubcontractRow[];
+  allocations: SubcontractAllocationRow[];
   actualEntries: DailyWipEntryRow[];
   initialDate?: string;
 }
@@ -93,6 +103,9 @@ const emptyDraft = (planDate: string): Draft => ({
   planned_quantity: 0,
   unit: "",
   target_rate: null,
+  benchmark_rate: null,
+  benchmark_source: "",
+  benchmark_source_id: null,
   materials: "",
   materials_ready: false,
   equipment: "",
@@ -120,6 +133,7 @@ export function TomorrowPlanWorkspace({
   buckets,
   scheduleActivities,
   subcontracts,
+  allocations,
   actualEntries,
   initialDate,
 }: TomorrowPlanWorkspaceProps) {
@@ -317,6 +331,7 @@ export function TomorrowPlanWorkspace({
         buckets={buckets}
         scheduleActivities={scheduleActivities}
         subcontracts={subcontracts}
+        allocations={allocations}
         saving={save.isPending}
         onSave={() => save.mutate()}
         editing={Boolean(editingId)}
@@ -353,6 +368,7 @@ function PlanCard({
     0,
   );
   const actualRate = actualHours > 0 ? actualQuantity / actualHours : 0;
+  const targetOverridden = productionRateIsOverridden(item.target_rate, item.benchmark_rate);
   const outcome = actual.length
     ? actualQuantity >= item.planned_quantity
       ? "Promise met"
@@ -380,6 +396,15 @@ function PlanCard({
               {item.status.replace("_", " ")}
             </span>
             <span className="text-xs text-muted-foreground">{item.confirmation_status}</span>
+            {targetOverridden ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-warning/35 bg-warning/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-warning">
+                <Flag className="h-3 w-3" /> Course correction
+              </span>
+            ) : item.benchmark_rate != null ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-success">
+                <LockKeyhole className="h-3 w-3" /> Benchmark aligned
+              </span>
+            ) : null}
           </div>
           <h3 className="mt-3 font-serif text-2xl text-foreground">{item.activity}</h3>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -395,6 +420,23 @@ function PlanCard({
           </Button>
         </div>
       </div>
+
+      {targetOverridden && item.benchmark_rate != null ? (
+        <div className="mt-3 flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/5 p-3 text-xs">
+          <Flag className="mt-0.5 h-3.5 w-3.5 flex-none text-warning" />
+          <p className="text-muted-foreground">
+            Tomorrow was course-corrected from the locked benchmark of{" "}
+            <span className="font-semibold text-foreground">
+              {item.benchmark_rate.toFixed(2)} {item.unit}/labor hr
+            </span>{" "}
+            to{" "}
+            <span className="font-semibold text-foreground">
+              {(item.target_rate ?? 0).toFixed(2)} {item.unit}/labor hr
+            </span>
+            . The benchmark itself was not rewritten.
+          </p>
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-px overflow-hidden rounded-xl border border-hairline bg-hairline sm:grid-cols-4">
         {[
@@ -466,6 +508,7 @@ function PlanDialog({
   buckets,
   scheduleActivities,
   subcontracts,
+  allocations,
   saving,
   onSave,
   editing,
@@ -477,12 +520,108 @@ function PlanDialog({
   buckets: BucketOption[];
   scheduleActivities: ScheduleActivityRow[];
   subcontracts: SubcontractRow[];
+  allocations: SubcontractAllocationRow[];
   saving: boolean;
   onSave: () => void;
   editing: boolean;
 }) {
   const patch = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
+  const resolvedBenchmark = useMemo(
+    () =>
+      resolveTomorrowPlanBenchmark({
+        subcontractorId: draft.subcontractor_id,
+        costBucketId: draft.cost_bucket_id,
+        subcontracts,
+        allocations,
+      }),
+    [allocations, draft.cost_bucket_id, draft.subcontractor_id, subcontracts],
+  );
+  const benchmarkRate =
+    draft.benchmark_source_id === resolvedBenchmark?.allocationId && draft.benchmark_rate != null
+      ? draft.benchmark_rate
+      : (resolvedBenchmark?.targetRate ?? draft.benchmark_rate);
+  const laborHours = plannedLaborHours({
+    crewCount: draft.crew_count,
+    peoplePerCrew: draft.people_per_crew,
+    hoursPerPerson: draft.hours_per_person,
+  });
+  const targetOverridden = productionRateIsOverridden(draft.target_rate, benchmarkRate);
+
+  useEffect(() => {
+    if (!resolvedBenchmark) return;
+    if (draft.benchmark_source_id === resolvedBenchmark.allocationId) return;
+
+    setDraft((current) => {
+      const nextLaborHours = plannedLaborHours({
+        crewCount: current.crew_count,
+        peoplePerCrew: current.people_per_crew,
+        hoursPerPerson: current.hours_per_person,
+      });
+      return {
+        ...current,
+        unit: resolvedBenchmark.unit,
+        benchmark_rate: resolvedBenchmark.targetRate,
+        benchmark_source: "subcontract_buyout",
+        benchmark_source_id: resolvedBenchmark.allocationId,
+        target_rate: resolvedBenchmark.targetRate,
+        planned_quantity: expectedProductionQuantity(resolvedBenchmark.targetRate, nextLaborHours),
+      };
+    });
+  }, [draft.benchmark_source_id, resolvedBenchmark, setDraft]);
+
+  const setLabor = (key: "crew_count" | "people_per_crew" | "hours_per_person", value: number) =>
+    setDraft((current) => {
+      const next = { ...current, [key]: value };
+      const nextHours = plannedLaborHours({
+        crewCount: next.crew_count,
+        peoplePerCrew: next.people_per_crew,
+        hoursPerPerson: next.hours_per_person,
+      });
+      return {
+        ...next,
+        planned_quantity:
+          next.target_rate != null
+            ? expectedProductionQuantity(next.target_rate, nextHours)
+            : next.planned_quantity,
+      };
+    });
+  const setTargetRate = (value: number) =>
+    setDraft((current) => ({
+      ...current,
+      target_rate: value || null,
+      planned_quantity: value
+        ? expectedProductionQuantity(
+            value,
+            plannedLaborHours({
+              crewCount: current.crew_count,
+              peoplePerCrew: current.people_per_crew,
+              hoursPerPerson: current.hours_per_person,
+            }),
+          )
+        : current.planned_quantity,
+    }));
+  const setPlannedQuantity = (value: number) =>
+    setDraft((current) => {
+      const currentLaborHours = plannedLaborHours({
+        crewCount: current.crew_count,
+        peoplePerCrew: current.people_per_crew,
+        hoursPerPerson: current.hours_per_person,
+      });
+      return {
+        ...current,
+        planned_quantity: value,
+        target_rate: currentLaborHours > 0 ? value / currentLaborHours : current.target_rate,
+      };
+    });
+  const resetToBenchmark = () => {
+    if (benchmarkRate == null) return;
+    setDraft((current) => ({
+      ...current,
+      target_rate: benchmarkRate,
+      planned_quantity: expectedProductionQuantity(benchmarkRate, laborHours),
+    }));
+  };
   const readiness = [
     ["materials_ready", "Material is on site or confirmed", "materials"],
     ["equipment_ready", "Equipment is available and released", "equipment"],
@@ -540,7 +679,15 @@ function PlanDialog({
             <select
               className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
               value={draft.cost_bucket_id ?? ""}
-              onChange={(e) => patch("cost_bucket_id", e.target.value || null)}
+              onChange={(e) =>
+                setDraft((current) => ({
+                  ...current,
+                  cost_bucket_id: e.target.value || null,
+                  benchmark_rate: null,
+                  benchmark_source: "",
+                  benchmark_source_id: null,
+                }))
+              }
             >
               <option value="">Not linked</option>
               {buckets.map((bucket) => (
@@ -556,8 +703,14 @@ function PlanDialog({
               value={draft.subcontractor_id ?? ""}
               onChange={(e) => {
                 const match = subcontracts.find((sub) => sub.subcontractor_id === e.target.value);
-                patch("subcontractor_id", e.target.value || null);
-                if (match) patch("performer_name", match.title.split(" — ")[0]);
+                setDraft((current) => ({
+                  ...current,
+                  subcontractor_id: e.target.value || null,
+                  performer_name: match ? match.title.split(" — ")[0] : current.performer_name,
+                  benchmark_rate: null,
+                  benchmark_source: "",
+                  benchmark_source_id: null,
+                }));
               }}
             >
               <option value="">Self-perform, vendor, or unlisted</option>
@@ -595,38 +748,98 @@ function PlanDialog({
           </Field>
         </div>
 
+        <div
+          className={cn(
+            "mb-3 rounded-xl border p-4",
+            benchmarkRate == null
+              ? "border-hairline bg-surface"
+              : targetOverridden
+                ? "border-warning/35 bg-warning/5"
+                : "border-success/30 bg-success/5",
+          )}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              {benchmarkRate == null ? (
+                <CircleDot className="mt-0.5 h-4 w-4 text-muted-foreground" />
+              ) : targetOverridden ? (
+                <Flag className="mt-0.5 h-4 w-4 text-warning" />
+              ) : (
+                <LockKeyhole className="mt-0.5 h-4 w-4 text-success" />
+              )}
+              <div>
+                <p className="text-sm font-semibold text-foreground">
+                  {benchmarkRate == null
+                    ? "No approved production benchmark found"
+                    : targetOverridden
+                      ? "Course correction: tomorrow’s target overrides the benchmark"
+                      : "Production promise aligned to the buyout benchmark"}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {benchmarkRate == null ? (
+                    <>
+                      Select a measured subcontract scope, or configure its planned quantity, unit,
+                      and GC loaded labor benchmark in Subcontractors. A manual target is allowed
+                      only when no approved benchmark exists.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-semibold text-foreground">
+                        {benchmarkRate.toFixed(2)} {resolvedBenchmark?.unit ?? draft.unit}/labor hr
+                      </span>{" "}
+                      · {resolvedBenchmark?.sourceLabel ?? "Saved subcontract buyout benchmark"} ·{" "}
+                      {laborHours.toLocaleString()} planned labor-hours produces{" "}
+                      {expectedProductionQuantity(
+                        targetOverridden ? (draft.target_rate ?? benchmarkRate) : benchmarkRate,
+                        laborHours,
+                      ).toLocaleString()}{" "}
+                      {resolvedBenchmark?.unit ?? draft.unit}.
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+            {targetOverridden ? (
+              <Button type="button" size="sm" variant="outline" onClick={resetToBenchmark}>
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Reset to benchmark
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
         <div className="grid gap-3 rounded-xl border border-hairline p-4 sm:grid-cols-6">
           <NumberField
             label="Crews"
             value={draft.crew_count}
-            onChange={(value) => patch("crew_count", value)}
+            onChange={(value) => setLabor("crew_count", value)}
           />
           <NumberField
             label="People / crew"
             value={draft.people_per_crew}
-            onChange={(value) => patch("people_per_crew", value)}
+            onChange={(value) => setLabor("people_per_crew", value)}
           />
           <NumberField
             label="Hours / person"
             value={draft.hours_per_person}
-            onChange={(value) => patch("hours_per_person", value)}
+            onChange={(value) => setLabor("hours_per_person", value)}
           />
           <NumberField
-            label="Planned qty"
+            label="Promised output"
             value={draft.planned_quantity}
-            onChange={(value) => patch("planned_quantity", value)}
+            onChange={setPlannedQuantity}
           />
           <Field label="Unit">
             <Input
               value={draft.unit}
               onChange={(e) => patch("unit", e.target.value)}
               placeholder="LF, SF, EA"
+              readOnly={benchmarkRate != null}
             />
           </Field>
           <NumberField
             label="Target / labor hr"
             value={draft.target_rate ?? 0}
-            onChange={(value) => patch("target_rate", value || null)}
+            onChange={setTargetRate}
           />
         </div>
 

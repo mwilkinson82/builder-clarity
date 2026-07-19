@@ -66,7 +66,10 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   insert(values: unknown): DynamicSupabaseQuery;
   update(values: unknown): DynamicSupabaseQuery;
   delete(): DynamicSupabaseQuery;
-  upsert(values: unknown, options?: { onConflict?: string }): DynamicSupabaseQuery;
+  upsert(
+    values: unknown,
+    options?: { onConflict?: string; ignoreDuplicates?: boolean },
+  ): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): Promise<DynamicSupabaseResult<unknown[]>>;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
   is(column: string, value: unknown): DynamicSupabaseQuery;
@@ -173,6 +176,8 @@ export type COType =
   | "sub_issued"
   | "other";
 
+export type COFinancialDirection = "addition" | "credit";
+
 /** How a change order is priced. Ships in the structured-fields migration. */
 export type COPricingMethod =
   "lump_sum" | "time_and_materials" | "unit_price" | "allowance" | "other";
@@ -184,6 +189,8 @@ export interface ChangeOrderRow {
   description: string;
   contract_amount: number;
   cost_amount: number;
+  /** Addition increases the owner contract; credit is a deductive change. */
+  financial_direction: COFinancialDirection;
   status: COStatus;
   probability: number;
   owner: string;
@@ -2030,6 +2037,10 @@ export const getProject = createServerFn({ method: "GET" })
         description: str(o.description),
         contract_amount: num(o.contract_amount),
         cost_amount: num(o.cost_amount),
+        financial_direction: str(
+          o.financial_direction,
+          num(o.contract_amount) < 0 || num(o.cost_amount) < 0 ? "credit" : "addition",
+        ) as COFinancialDirection,
         status: (o.status as COStatus) ?? "Pending",
         probability: num(o.probability),
         owner: str(o.owner),
@@ -2714,12 +2725,14 @@ const CO_TYPES = [
   "sub_issued",
   "other",
 ] as const;
+const CO_FINANCIAL_DIRECTIONS = ["addition", "credit"] as const;
 
 const coInput = z.object({
   number: z.string().max(50).default(""),
   description: z.string().min(1).max(500),
   contract_amount: z.number(),
   cost_amount: z.number(),
+  financial_direction: z.enum(CO_FINANCIAL_DIRECTIONS).default("addition"),
   status: z.enum(["Approved", "Pending", "Denied"]).default("Pending"),
   probability: z.number().min(0).max(100).default(100),
   owner: z.string().max(200).default(""),
@@ -2743,6 +2756,7 @@ const CO_STRUCTURED_COLUMNS = [
   "schedule_impact_days",
   "requested_by",
   "date_initiated",
+  "financial_direction",
 ] as const;
 
 const stripCoStructuredColumns = <T extends Record<string, unknown>>(payload: T): Partial<T> => {
@@ -2761,7 +2775,13 @@ export const createChangeOrder = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
-    const row = { project_id: projectId, ...rest };
+    const sign = rest.financial_direction === "credit" ? -1 : 1;
+    const row = {
+      project_id: projectId,
+      ...rest,
+      contract_amount: Math.abs(rest.contract_amount) * sign,
+      cost_amount: Math.abs(rest.cost_amount) * sign,
+    };
     // Cast to `never`: the structured columns land with a migration that may be
     // behind the generated Database types (same pattern as linkChangeOrderExposure).
     let { data: inserted, error } = await context.supabase
@@ -2788,6 +2808,12 @@ export const updateChangeOrder = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { id, ...patch } = data;
+    if (patch.financial_direction) {
+      const sign = patch.financial_direction === "credit" ? -1 : 1;
+      if (patch.contract_amount != null)
+        patch.contract_amount = Math.abs(patch.contract_amount) * sign;
+      if (patch.cost_amount != null) patch.cost_amount = Math.abs(patch.cost_amount) * sign;
+    }
     // Cast to `never`: structured columns may be a migration behind the generated
     // Database types (same pattern as linkChangeOrderExposure).
     let { error } = await context.supabase
@@ -2924,8 +2950,8 @@ const changeOrderAllocationInput = z.object({
   projectId: z.string().uuid(),
   changeOrderId: z.string().uuid(),
   costBucketId: z.string().uuid(),
-  contractAmount: z.number().min(0),
-  costAmount: z.number().min(0).default(0),
+  contractAmount: z.number(),
+  costAmount: z.number().default(0),
 });
 
 export const allocateChangeOrder = createServerFn({ method: "POST" })
@@ -2947,7 +2973,7 @@ export const allocateChangeOrder = createServerFn({ method: "POST" })
       throw new Error("Cost code not found on this project.");
     }
     const coRes = await dynamicTable(context.supabase, "change_orders")
-      .select("id,project_id,number,description")
+      .select("id,project_id,number,description,contract_amount,cost_amount,financial_direction")
       .eq("id", data.changeOrderId)
       .maybeSingle();
     if (coRes.error) throw new Error(coRes.error.message);
@@ -2955,6 +2981,12 @@ export const allocateChangeOrder = createServerFn({ method: "POST" })
     if (!co || (co.project_id as string) !== data.projectId) {
       throw new Error("Change order not found on this project.");
     }
+    const isCredit =
+      str(co.financial_direction) === "credit" ||
+      num(co.contract_amount) < 0 ||
+      num(co.cost_amount) < 0;
+    const contractAmount = Math.abs(data.contractAmount) * (isCredit ? -1 : 1);
+    const costAmount = Math.abs(data.costAmount) * (isCredit ? -1 : 1);
 
     const { error } = await dynamicTable(context.supabase, "change_order_allocations").insert({
       project_id: data.projectId,
@@ -2962,8 +2994,8 @@ export const allocateChangeOrder = createServerFn({ method: "POST" })
       cost_bucket_id: data.costBucketId,
       cost_code: str(bucket.cost_code),
       description: [str(co.number, "CO"), str(co.description)].filter(Boolean).join(" - "),
-      contract_amount: data.contractAmount,
-      cost_amount: data.costAmount,
+      contract_amount: contractAmount,
+      cost_amount: costAmount,
     });
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -6603,6 +6635,7 @@ type HarborDemoCommercialIds = {
   bucketByCode: Map<string, string>;
   subcontractorByKey: Map<string, string>;
   subcontractByKey: Map<string, string>;
+  allocationByKey: Map<string, string>;
 };
 
 const ensureHarborDemoSubcontractBuyout = async (
@@ -6651,6 +6684,7 @@ const ensureHarborDemoSubcontractBuyout = async (
   const existingSubcontracts = (subcontractResult.data ?? []) as Array<Record<string, unknown>>;
   const subcontractorByKey = new Map<string, string>();
   const subcontractByKey = new Map<string, string>();
+  const allocationByKey = new Map<string, string>();
 
   for (const fixture of HARBOR_DEMO_COMMERCIAL_WORKFLOW.subcontractors) {
     const detail = harborDemoSubcontractDetails[fixture.key];
@@ -6702,9 +6736,11 @@ const ensureHarborDemoSubcontractBuyout = async (
       .eq("cost_code", fixture.costCode)
       .maybeSingle();
     if (allocationResult.error) throw new Error(allocationResult.error.message);
+    let allocationId = str((allocationResult.data as Record<string, unknown> | null)?.id);
     if (!allocationResult.data) {
+      allocationId = harborDemoStableId(projectId, `subcontract-allocation-${fixture.key}`);
       const { error } = await dynamicTable(supabase, "subcontract_allocations").insert({
-        id: harborDemoStableId(projectId, `subcontract-allocation-${fixture.key}`),
+        id: allocationId,
         project_id: projectId,
         subcontract_id: subcontractId,
         cost_bucket_id: costBucketId,
@@ -6730,6 +6766,7 @@ const ensureHarborDemoSubcontractBuyout = async (
         if (error) throw new Error(error.message);
       }
     }
+    allocationByKey.set(fixture.key, allocationId);
   }
 
   const concreteSubcontractId = subcontractByKey.get("concrete");
@@ -6821,6 +6858,7 @@ const ensureHarborDemoSubcontractBuyout = async (
     bucketByCode,
     subcontractorByKey,
     subcontractByKey,
+    allocationByKey,
   };
 };
 
@@ -6971,9 +7009,11 @@ const ensureHarborDemoDailyReportsWip = async (
   }
 
   const [reportResult, wipResult, activityResult] = await Promise.all([
-    dynamicTable(supabase, "daily_reports").select("id,report_date").eq("project_id", projectId),
+    dynamicTable(supabase, "daily_reports")
+      .select("id,report_date,notes")
+      .eq("project_id", projectId),
     dynamicTable(supabase, "daily_wip_entries")
-      .select("id,entry_date,cost_bucket_id,subcontractor_id")
+      .select("id,entry_date,cost_bucket_id,subcontractor_id,notes")
       .eq("project_id", projectId),
     dynamicTable(supabase, "schedule_activities")
       .select("id,activity_id")
@@ -6983,6 +7023,38 @@ const ensureHarborDemoDailyReportsWip = async (
   if (wipResult.error) throw new Error(wipResult.error.message);
   if (activityResult.error && !isScheduleActivitiesSchemaError(activityResult.error))
     throw new Error(activityResult.error.message);
+
+  if (upgradeExistingFixtures) {
+    const canonicalDates = new Set(HARBOR_DEMO_PRODUCTION_DAYS.map((day) => day.date));
+    const staleReportIds = ((reportResult.data ?? []) as Array<Record<string, unknown>>)
+      .filter(
+        (row) =>
+          str(row.notes).startsWith(harborDemoSourceNote) &&
+          !canonicalDates.has(str(row.report_date)),
+      )
+      .map((row) => str(row.id))
+      .filter(Boolean);
+    const staleWipIds = ((wipResult.data ?? []) as Array<Record<string, unknown>>)
+      .filter(
+        (row) =>
+          str(row.notes).startsWith(harborDemoSourceNote) &&
+          !canonicalDates.has(str(row.entry_date)),
+      )
+      .map((row) => str(row.id))
+      .filter(Boolean);
+    if (staleWipIds.length) {
+      const staleWipDelete = await dynamicTable(supabase, "daily_wip_entries")
+        .delete()
+        .in("id", staleWipIds);
+      if (staleWipDelete.error) throw new Error(staleWipDelete.error.message);
+    }
+    if (staleReportIds.length) {
+      const staleReportDelete = await dynamicTable(supabase, "daily_reports")
+        .delete()
+        .in("id", staleReportIds);
+      if (staleReportDelete.error) throw new Error(staleReportDelete.error.message);
+    }
+  }
 
   const reportByDate = new Map(
     ((reportResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
@@ -7000,19 +7072,14 @@ const ensureHarborDemoDailyReportsWip = async (
     ]),
   );
 
+  const reportRows: Array<Record<string, unknown>> = [];
+  const wipRows: Array<Record<string, unknown>> = [];
+
   for (const day of HARBOR_DEMO_PRODUCTION_DAYS) {
     const reportPayload = buildHarborDemoFieldReportPayload(projectId, userId, day);
     const existingReportId = reportByDate.get(day.date);
-    if (!existingReportId) {
-      const { error } = await dynamicTable(supabase, "daily_reports").insert(reportPayload);
-      if (error?.code !== "23505" && error) throw new Error(error.message);
-    } else if (upgradeExistingFixtures) {
-      const { id: _id, ...patch } = reportPayload;
-      const { error } = await dynamicTable(supabase, "daily_reports")
-        .update(patch)
-        .eq("id", existingReportId);
-      if (error) throw new Error(error.message);
-    }
+    if (!existingReportId || upgradeExistingFixtures)
+      reportRows.push({ ...reportPayload, id: existingReportId || reportPayload.id });
 
     for (const line of day.lines) {
       const costBucketId = ids.bucketByCode.get(line.costCode);
@@ -7027,17 +7094,30 @@ const ensureHarborDemoDailyReportsWip = async (
         subcontractorId,
         activityIdByCode.get(line.scheduleActivityCode) || null,
       );
-      if (!wipIds.has(payload.id)) {
-        const { error } = await dynamicTable(supabase, "daily_wip_entries").insert(payload);
-        if (error?.code !== "23505" && error) throw new Error(error.message);
-      } else if (upgradeExistingFixtures) {
-        const { id: _id, ...patch } = payload;
-        const { error } = await dynamicTable(supabase, "daily_wip_entries")
-          .update(patch)
-          .eq("id", payload.id);
-        if (error) throw new Error(error.message);
-      }
+      if (!wipIds.has(payload.id) || upgradeExistingFixtures) wipRows.push(payload);
     }
+  }
+
+  // A full Harbor production story is 30 reports and 53 measured work lines.
+  // Writing them one at a time made the version adapter exceed the server
+  // request window, leaving the registry on v1 and every later visit repeating
+  // the same partial upgrade. Keep the canonical reset atomic at the table
+  // level so every company receives the whole teaching dataset in a handful of
+  // requests.
+  if (reportRows.length > 0) {
+    const reportWrite = await dynamicTable(supabase, "daily_reports").upsert(reportRows, {
+      onConflict: "project_id,report_date",
+      ignoreDuplicates: !upgradeExistingFixtures,
+    });
+    if (reportWrite.error) throw new Error(reportWrite.error.message);
+  }
+
+  if (wipRows.length > 0) {
+    const wipWrite = await dynamicTable(supabase, "daily_wip_entries").upsert(wipRows, {
+      onConflict: "id",
+      ignoreDuplicates: !upgradeExistingFixtures,
+    });
+    if (wipWrite.error) throw new Error(wipWrite.error.message);
   }
 };
 
@@ -7060,7 +7140,7 @@ const ensureHarborDemoTomorrowPlan = async (
     dynamicTable(supabase, "schedule_activities")
       .select("id,activity_id")
       .eq("project_id", projectId),
-    dynamicTable(supabase, "tomorrow_plan_items").select("id").eq("project_id", projectId),
+    dynamicTable(supabase, "tomorrow_plan_items").select("id,notes").eq("project_id", projectId),
   ]);
   if (activityResult.error) throw new Error(activityResult.error.message);
   if (existingResult.error) throw new Error(existingResult.error.message);
@@ -7076,8 +7156,8 @@ const ensureHarborDemoTomorrowPlan = async (
   );
   const fixtures = [
     {
-      seedKey: "actual-comparison-electrical-2026-07-13",
-      plan_date: "2026-07-13",
+      seedKey: "actual-comparison-electrical-2026-07-17",
+      plan_date: "2026-07-17",
       scheduleCode: "26-010",
       costCode: "1500",
       performerKey: "electrical",
@@ -7088,9 +7168,9 @@ const ensureHarborDemoTomorrowPlan = async (
       crew_count: 2,
       people_per_crew: 3,
       hours_per_person: 8,
-      planned_quantity: 410,
+      planned_quantity: 1056,
       unit: "LF",
-      target_rate: 7.5,
+      target_rate: 22,
       materials: "Branch wire, conduit, boxes, and fittings staged by area",
       materials_ready: true,
       equipment: "Scissor lift and gang boxes",
@@ -7108,7 +7188,7 @@ const ensureHarborDemoTomorrowPlan = async (
         "Teaching comparison: the next Daily WIP line closes this promise against actual output.",
     },
     {
-      seedKey: "electrical-2026-07-14",
+      seedKey: "electrical-2026-07-20",
       plan_date: HARBOR_DEMO_TOMORROW_PLAN_DATE,
       scheduleCode: "26-010",
       costCode: "1500",
@@ -7120,9 +7200,9 @@ const ensureHarborDemoTomorrowPlan = async (
       crew_count: 2,
       people_per_crew: 3,
       hours_per_person: 8,
-      planned_quantity: 420,
+      planned_quantity: 1056,
       unit: "LF",
-      target_rate: 7.5,
+      target_rate: 22,
       materials: "Wire, conduit, boxes, and fittings staged in the east wing",
       materials_ready: true,
       equipment: "Scissor lift charged and released",
@@ -7139,7 +7219,7 @@ const ensureHarborDemoTomorrowPlan = async (
       notes: "Ready means the work can start without waiting when the crew arrives.",
     },
     {
-      seedKey: "drywall-2026-07-14",
+      seedKey: "drywall-2026-07-20",
       plan_date: HARBOR_DEMO_TOMORROW_PLAN_DATE,
       scheduleCode: "09-020",
       costCode: "0900",
@@ -7151,9 +7231,9 @@ const ensureHarborDemoTomorrowPlan = async (
       crew_count: 1,
       people_per_crew: 4,
       hours_per_person: 8,
-      planned_quantity: 850,
+      planned_quantity: 270.77,
       unit: "SF",
-      target_rate: 25,
+      target_rate: (12_000 * 110) / 156_000,
       materials: "Compound, corner bead, and sanding media staged",
       materials_ready: true,
       equipment: "Rolling scaffold and dust-control equipment",
@@ -7172,7 +7252,7 @@ const ensureHarborDemoTomorrowPlan = async (
         "Treat the constraint tonight; do not discover it with four finishers standing idle tomorrow.",
     },
     {
-      seedKey: "cabinet-delivery-2026-07-14",
+      seedKey: "cabinet-delivery-2026-07-20",
       plan_date: HARBOR_DEMO_TOMORROW_PLAN_DATE,
       scheduleCode: "12-020",
       costCode: "0130",
@@ -7206,6 +7286,25 @@ const ensureHarborDemoTomorrowPlan = async (
     },
   ] as const;
 
+  if (overwrite) {
+    const canonicalIds = new Set(
+      fixtures.map((fixture) => harborDemoStableId(projectId, `tomorrow-plan-${fixture.seedKey}`)),
+    );
+    const staleIds = ((existingResult.data ?? []) as Array<Record<string, unknown>>)
+      .filter(
+        (row) => str(row.notes).startsWith(harborDemoSourceNote) && !canonicalIds.has(str(row.id)),
+      )
+      .map((row) => str(row.id))
+      .filter(Boolean);
+    if (staleIds.length) {
+      const staleDelete = await dynamicTable(supabase, "tomorrow_plan_items")
+        .delete()
+        .in("id", staleIds);
+      if (staleDelete.error) throw new Error(staleDelete.error.message);
+      for (const id of staleIds) existingIds.delete(id);
+    }
+  }
+
   for (const fixture of fixtures) {
     const id = harborDemoStableId(projectId, `tomorrow-plan-${fixture.seedKey}`);
     const payload = {
@@ -7227,6 +7326,11 @@ const ensureHarborDemoTomorrowPlan = async (
       planned_quantity: fixture.planned_quantity,
       unit: fixture.unit,
       target_rate: fixture.target_rate,
+      benchmark_rate: fixture.performerKey ? fixture.target_rate : null,
+      benchmark_source: fixture.performerKey ? "subcontract_buyout" : "",
+      benchmark_source_id: fixture.performerKey
+        ? ids.allocationByKey.get(fixture.performerKey) || null
+        : null,
       materials: fixture.materials,
       materials_ready: fixture.materials_ready,
       equipment: fixture.equipment,
@@ -7536,7 +7640,13 @@ const ensureVersionedHarborDemoModules = async (
         userId,
         moduleNeedsUpgrade("production-control"),
       ),
-    "tomorrow-plan": () => ensureHarborDemoTomorrowPlan(supabase, projectId, userId),
+    "tomorrow-plan": () =>
+      ensureHarborDemoTomorrowPlan(
+        supabase,
+        projectId,
+        userId,
+        moduleNeedsUpgrade("tomorrow-plan"),
+      ),
     "billing-workspace": () => ensureHarborDemoBillingWorkspace(supabase, projectId),
     inspections: () => seedHarborDemoInspections(supabase, projectId, seedWarnings),
     claims: () => seedHarborDemoClaims(supabase, projectId, seedWarnings),

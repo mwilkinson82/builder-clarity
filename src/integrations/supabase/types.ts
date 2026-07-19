@@ -570,6 +570,7 @@ export type Database = {
           cost_code: string
           created_at: string
           description: string
+          financial_direction: string
           id: string
           materials_stored_previous_cents: number
           materials_stored_this_period_cents: number
@@ -622,6 +623,7 @@ export type Database = {
           cost_code?: string
           created_at?: string
           description?: string
+          financial_direction?: string
           id?: string
           materials_stored_previous_cents?: number
           materials_stored_this_period_cents?: number
@@ -734,6 +736,7 @@ export type Database = {
           cost_code?: string
           created_at?: string
           description?: string
+          financial_direction?: string
           id?: string
           project_id: string
           updated_at?: string
@@ -8593,6 +8596,9 @@ export type Database = {
       tomorrow_plan_items: {
         Row: {
           activity: string
+          benchmark_rate: number | null
+          benchmark_source: string
+          benchmark_source_id: string | null
           confirmation_status: string
           confirmed_at: string | null
           confirmed_by: string | null
@@ -8630,6 +8636,9 @@ export type Database = {
         }
         Insert: {
           activity?: string
+          benchmark_rate?: number | null
+          benchmark_source?: string
+          benchmark_source_id?: string | null
           confirmation_status?: string
           confirmed_at?: string | null
           confirmed_by?: string | null
@@ -8667,6 +8676,9 @@ export type Database = {
         }
         Update: {
           activity?: string
+          benchmark_rate?: number | null
+          benchmark_source?: string
+          benchmark_source_id?: string | null
           confirmation_status?: string
           confirmed_at?: string | null
           confirmed_by?: string | null
@@ -8703,6 +8715,13 @@ export type Database = {
           work_area_ready?: boolean
         }
         Relationships: [
+          {
+            foreignKeyName: "tomorrow_plan_items_benchmark_source_id_fkey"
+            columns: ["benchmark_source_id"]
+            isOneToOne: false
+            referencedRelation: "subcontract_allocations"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "tomorrow_plan_items_cost_bucket_id_fkey"
             columns: ["cost_bucket_id"]

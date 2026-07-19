@@ -201,6 +201,34 @@ assert.equal(unallocatedRow.contractValue, 50000, "unallocated CO contract kept 
 assert.equal(unallocatedRow.budget, 40000, "unallocated CO cost kept in totals");
 assert.equal(unallocatedRow.margin, null, "no margin claimed until allocation lands it");
 
+// A first-class credit stays signed through both sides of the ledger. This is
+// Darian's partial-scope-removal case: the owner contract drops by $5,653 and
+// the cost forecast drops by $2,778, so margin declines by the $2,875 spread.
+const creditLedger = computeBudgetLedger(
+  buckets.slice(0, 1),
+  [],
+  [],
+  [{ id: "credit-1", status: "Approved", contract_amount: -5653, cost_amount: -2778 }],
+  [
+    {
+      change_order_id: "credit-1",
+      cost_bucket_id: "b1",
+      contract_amount: -5653,
+      cost_amount: -2778,
+    },
+  ],
+);
+const creditedLine = creditLedger.rows[0];
+assert.equal(creditedLine.contractValue, 629347, "credit reduces the SOV contract value");
+assert.equal(creditedLine.budget, 537222, "credit removes cost from the working budget");
+assert.equal(creditedLine.changeOrderContract, -5653, "credit contract provenance stays signed");
+assert.equal(creditedLine.changeOrderBudget, -2778, "credit cost provenance stays signed");
+assert.equal(
+  creditedLine.margin,
+  92125,
+  "credit margin impact equals contract credit less cost removed",
+);
+
 // ---------------------------------------------------------------------------
 // WIP engine: priced lines use the real contract; unpriced fall back to budget
 // (legacy behavior — WIP never zeroes out on old data).

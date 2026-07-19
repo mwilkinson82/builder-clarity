@@ -25,10 +25,6 @@ export interface HarborProductionDay {
 }
 
 const WORKING_DATES = [
-  "2026-06-02",
-  "2026-06-03",
-  "2026-06-04",
-  "2026-06-05",
   "2026-06-08",
   "2026-06-09",
   "2026-06-10",
@@ -55,6 +51,10 @@ const WORKING_DATES = [
   "2026-07-09",
   "2026-07-10",
   "2026-07-13",
+  "2026-07-14",
+  "2026-07-15",
+  "2026-07-16",
+  "2026-07-17",
 ] as const;
 
 const concreteQuantities = [72, 76, 78, 82, 84, 80, 86, 88, 92, 90] as const;
@@ -84,7 +84,7 @@ const concreteLine = (index: number): HarborProductionLine => ({
   hours: 8,
   quantity: concreteQuantities[index],
   unit: "CY",
-  targetRate: 1.25,
+  targetRate: (1_800 * 110) / 145_000,
   percent: Math.min(50, (index + 1) * 5),
   materialCost: 4200,
   equipmentCost: 850,
@@ -106,7 +106,7 @@ const drywallLine = (dayIndex: number): HarborProductionLine => {
     hours: 8,
     quantity: drywallQuantities[scopeIndex],
     unit: "SF",
-    targetRate: 25,
+    targetRate: (12_000 * 110) / 156_000,
     percent: Math.min(69, (scopeIndex + 1) * 3),
     materialCost: dayIndex % 5 === 0 ? 1800 : 0,
     equipmentCost: 0,
@@ -133,7 +133,7 @@ const electricalLine = (dayIndex: number): HarborProductionLine => {
     hours: 8,
     quantity: electricalQuantities[scopeIndex],
     unit: "LF",
-    targetRate: 7.5,
+    targetRate: 22,
     percent: Math.min(60, (scopeIndex + 1) * 3),
     materialCost: dayIndex % 4 === 0 ? 2500 : 0,
     equipmentCost: dayIndex % 7 === 0 ? 1000 : 0,
@@ -153,4 +153,4 @@ export const HARBOR_DEMO_PRODUCTION_DAYS: readonly HarborProductionDay[] = WORKI
   },
 );
 
-export const HARBOR_DEMO_TOMORROW_PLAN_DATE = "2026-07-14";
+export const HARBOR_DEMO_TOMORROW_PLAN_DATE = "2026-07-20";

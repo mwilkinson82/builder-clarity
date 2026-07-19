@@ -26,6 +26,7 @@ export interface ChangeOrderAllocationInput {
   changeOrderId: string;
   costBucketId: string;
   contractAmount: number;
+  costAmount: number;
 }
 
 interface ChangeOrderAllocationPanelProps {
@@ -56,10 +57,12 @@ function ApprovedCoRow({
   onRemoveAllocation: (id: string) => void;
   saving?: boolean;
 }) {
-  const summary = summarizeApprovedCo(co.id, co.contract_amount, allocations);
+  const summary = summarizeApprovedCo(co.id, co.contract_amount, allocations, co.cost_amount);
+  const isCredit = co.financial_direction === "credit" || co.contract_amount < 0;
   const coAllocations = allocations.filter((allocation) => allocation.change_order_id === co.id);
   const [bucketId, setBucketId] = useState("");
   const [amount, setAmount] = useState(0);
+  const [costAmount, setCostAmount] = useState(0);
 
   // Only cost-coded buckets are valid allocation targets — an uncoded line
   // can't carry a change order into line 2.
@@ -68,13 +71,20 @@ function ApprovedCoRow({
   const startAllocation = (nextBucketId: string) => {
     setBucketId(nextBucketId);
     // Default the amount to whatever is still unallocated, the common case.
-    if (summary.remaining > 0) setAmount(summary.remaining);
+    if (summary.remaining !== 0) setAmount(Math.abs(summary.remaining));
+    if (summary.remainingCost !== 0) setCostAmount(Math.abs(summary.remainingCost));
   };
   const submit = () => {
-    if (!bucketId || amount <= 0) return;
-    onAllocate({ changeOrderId: co.id, costBucketId: bucketId, contractAmount: amount });
+    if (!bucketId || (amount <= 0 && costAmount <= 0)) return;
+    onAllocate({
+      changeOrderId: co.id,
+      costBucketId: bucketId,
+      contractAmount: Math.abs(amount) * (isCredit ? -1 : 1),
+      costAmount: Math.abs(costAmount) * (isCredit ? -1 : 1),
+    });
     setBucketId("");
     setAmount(0);
+    setCostAmount(0);
   };
 
   return (
@@ -91,7 +101,16 @@ function ApprovedCoRow({
               </StatusChip>
             ) : (
               <StatusChip tone="blocked" icon={AlertTriangle}>
-                {fmtUSDCents(summary.remaining)} to allocate
+                {Math.abs(summary.remaining) > 0.005
+                  ? `${fmtUSDCents(Math.abs(summary.remaining))} ${isCredit ? "credit" : "contract"}`
+                  : ""}
+                {Math.abs(summary.remaining) > 0.005 && Math.abs(summary.remainingCost) > 0.005
+                  ? " · "
+                  : ""}
+                {Math.abs(summary.remainingCost) > 0.005
+                  ? `${fmtUSDCents(Math.abs(summary.remainingCost))} cost`
+                  : ""}{" "}
+                to allocate
               </StatusChip>
             )}
           </div>
@@ -100,8 +119,11 @@ function ApprovedCoRow({
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular text-muted-foreground">
-          <span>Value {fmtUSDCents(co.contract_amount)}</span>
+          <span>
+            {isCredit ? "Owner credit" : "Value"} {fmtUSDCents(co.contract_amount)}
+          </span>
           <span>Allocated {fmtUSDCents(summary.allocated)}</span>
+          <span>Cost {fmtUSDCents(co.cost_amount)}</span>
           <span className="font-semibold text-foreground">
             Remaining {fmtUSDCents(summary.remaining)}
           </span>
@@ -123,7 +145,8 @@ function ApprovedCoRow({
               </span>
               <span className="flex items-center gap-2">
                 <span className="tabular font-medium">
-                  {fmtUSDCents(allocation.contract_amount)}
+                  Contract {fmtUSDCents(allocation.contract_amount)} · Cost{" "}
+                  {fmtUSDCents(allocation.cost_amount)}
                 </span>
                 <button
                   type="button"
@@ -140,7 +163,7 @@ function ApprovedCoRow({
         </div>
       ) : null}
 
-      {summary.remaining > 0 ? (
+      {Math.abs(summary.remaining) > 0.005 || Math.abs(summary.remainingCost) > 0.005 ? (
         codedBuckets.length === 0 ? (
           <p className="mt-3 text-xs text-warning">
             Add cost codes to your SOV lines first — a change order can only be allocated to a coded
@@ -167,15 +190,26 @@ function ApprovedCoRow({
             </div>
             <div className="space-y-1 sm:w-40">
               <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                Amount
+                {isCredit ? "Credit amount" : "Amount"}
               </Label>
               <MoneyInput value={amount} onValueChange={setAmount} align="right" className="h-9" />
+            </div>
+            <div className="space-y-1 sm:w-40">
+              <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                {isCredit ? "Cost removed" : "Cost added"}
+              </Label>
+              <MoneyInput
+                value={costAmount}
+                onValueChange={setCostAmount}
+                align="right"
+                className="h-9"
+              />
             </div>
             <Button
               type="button"
               size="sm"
               className="h-9 gap-1.5"
-              disabled={saving || !bucketId || amount <= 0}
+              disabled={saving || !bucketId || (amount <= 0 && costAmount <= 0)}
               onClick={submit}
             >
               <Plus className="h-3.5 w-3.5" /> Allocate
@@ -220,8 +254,9 @@ export function ChangeOrderAllocationPanel({
             Approved change orders: allocate to bill
           </div>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Assign each approved change order's value to the SOV cost code it belongs to. Allocated
-            value rolls into that line's contract on the next application (G702 line 2).
+            Assign each approved addition or owner credit to the SOV cost code it belongs to.
+            Allocated additions increase that line; allocated credits reduce it on the next
+            application (G702 line 2).
           </p>
         </div>
         <div className="text-sm tabular text-muted-foreground">

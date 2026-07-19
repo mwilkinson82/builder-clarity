@@ -190,6 +190,7 @@ import {
   listCostActualsForBudget,
 } from "@/lib/projects.functions";
 import { isHarborDemoProject } from "@/lib/demo-seed";
+import { HARBOR_DEMO_TOMORROW_PLAN_DATE } from "@/lib/harbor-production-demo";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -2990,10 +2991,11 @@ function ProjectPage() {
                 buckets={buckets}
                 scheduleActivities={scheduleData?.activities ?? []}
                 subcontracts={subcontractsQuery.data?.subcontracts ?? []}
+                allocations={subcontractsQuery.data?.allocations ?? []}
                 actualEntries={dailyWipEntriesQuery.data ?? []}
                 initialDate={
                   isHarborDemoProject(project as unknown as Record<string, unknown>)
-                    ? "2026-07-14"
+                    ? HARBOR_DEMO_TOMORROW_PLAN_DATE
                     : undefined
                 }
               />

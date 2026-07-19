@@ -1221,7 +1221,8 @@ assert.equal(projectWip.total_earned, 25_000);
 
 // --- Change-order → cost-code allocation (Harbor coherence) -------------------
 
-// Allocation totals sum per CO in cents; unallocated is never negative.
+// Allocation totals sum per CO in cents. Additions stay positive and owner
+// credits stay negative all the way into the SOV.
 const ALLOCS = [
   { change_order_id: "co-a", cost_bucket_id: "b1", contract_amount: 40_000 },
   { change_order_id: "co-a", cost_bucket_id: "b2", contract_amount: 25_000.5 },
@@ -1236,6 +1237,9 @@ assert.equal(allocByCo.get("co-none"), undefined);
 assert.equal(unallocatedContract(65_000, 65_000), 0);
 assert.equal(unallocatedContract(65_000, 40_000), 25_000);
 assert.equal(unallocatedContract(65_000, 70_000), 0); // over-allocation clamps to zero
+assert.equal(unallocatedContract(-5_653, -2_000), -3_653); // partial owner credit
+assert.equal(unallocatedContract(-5_653, -5_653), 0);
+assert.equal(unallocatedContract(-5_653, -6_000), 0); // credit over-allocation clamps to zero
 
 const partial = summarizeApprovedCo("co-a", 145_000, ALLOCS);
 assert.equal(partial.allocated, 65_000.5);
@@ -1253,6 +1257,36 @@ const none = summarizeApprovedCo("co-c", 85_000, ALLOCS);
 assert.equal(none.allocated, 0);
 assert.equal(none.remaining, 85_000);
 assert.equal(none.fullyAllocated, false);
+
+const creditAllocations = [
+  {
+    change_order_id: "credit-a",
+    cost_bucket_id: "b1",
+    contract_amount: -5_653,
+    cost_amount: -2_778,
+  },
+];
+const credit = summarizeApprovedCo("credit-a", -5_653, creditAllocations, -2_778);
+assert.equal(credit.remaining, 0);
+assert.equal(credit.remainingCost, 0);
+assert.equal(credit.fullyAllocated, true);
+
+const costOnlyCredit = summarizeApprovedCo(
+  "credit-b",
+  0,
+  [
+    {
+      change_order_id: "credit-b",
+      cost_bucket_id: "b1",
+      contract_amount: 0,
+      cost_amount: -2_778,
+    },
+  ],
+  -2_778,
+);
+assert.equal(costOnlyCredit.remaining, 0);
+assert.equal(costOnlyCredit.remainingCost, 0);
+assert.equal(costOnlyCredit.fullyAllocated, true);
 
 // --- Exposure → cost-code allocation (At Risk goes live, BUDGETENGINE P1) -----
 
