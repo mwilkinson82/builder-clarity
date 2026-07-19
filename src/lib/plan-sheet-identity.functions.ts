@@ -142,6 +142,16 @@ const responseSchema = {
   },
 };
 
+const AI_SHEET_IDENTITY_BATCH_SIZE = 4;
+
+function batchSheets<T>(sheets: T[]) {
+  const batches: T[][] = [];
+  for (let index = 0; index < sheets.length; index += AI_SHEET_IDENTITY_BATCH_SIZE) {
+    batches.push(sheets.slice(index, index + AI_SHEET_IDENTITY_BATCH_SIZE));
+  }
+  return batches;
+}
+
 export const identifyPlanSheetsWithAi = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof identifyInput>) => identifyInput.parse(input))
@@ -207,6 +217,7 @@ export const identifyPlanSheetsWithAi = createServerFn({ method: "POST" })
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const requestedModel = process.env.OPENAI_SHEET_IDENTITY_MODEL?.trim() || resolveOpenAiModel();
+    const sheetBatches = batchSheets(data.sheets);
     const { data: operation, error: operationError } = await dynamicTable(
       supabaseAdmin,
       "ai_operations",
@@ -224,6 +235,8 @@ export const identifyPlanSheetsWithAi = createServerFn({ method: "POST" })
           plan_set_id: data.plan_set_id,
           plan_set_name: data.plan_set_name,
           sheet_count: data.sheets.length,
+          batch_count: sheetBatches.length,
+          batch_size: AI_SHEET_IDENTITY_BATCH_SIZE,
           authority: "proposal_only_estimator_confirms_sheet_identity",
         } as Json,
       })
@@ -262,35 +275,54 @@ export const identifyPlanSheetsWithAi = createServerFn({ method: "POST" })
 
     try {
       const { callOpenAiVision } = await import("@/lib/ai-takeoff/openai.server");
-      const response = await callOpenAiVision({
-        model: requestedModel,
-        instruction: identityPrompt(data.plan_set_name, data.sheets),
-        images: data.sheets.map((sheet) => ({ mediaType: sheet.media_type, base64: sheet.base64 })),
-        maxTokens: Math.max(1_500, data.sheets.length * 120),
-        api: "responses",
-        imageDetail: "high",
-        reasoningEffort: "low",
-        responseJsonSchema: { name: "plan_sheet_identities", schema: responseSchema },
-        timeoutMs: 120_000,
-      });
-      const identities = parsePlanSheetIdentityResponse({
-        raw: response.text,
-        requestedSheetIds: sheetIds,
-      });
+      const identities = [];
+      let completedSheets = 0;
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let apiCostCents = 0;
+      let completedModel = requestedModel;
+
+      // Full construction sheets are token-heavy even when compressed. Keep each
+      // vision request bounded so large image-only plan sets cannot exceed the
+      // model context window while preserving one auditable, one-credit operation.
+      for (const batch of sheetBatches) {
+        const response = await callOpenAiVision({
+          model: requestedModel,
+          instruction: identityPrompt(data.plan_set_name, batch),
+          images: batch.map((sheet) => ({ mediaType: sheet.media_type, base64: sheet.base64 })),
+          maxTokens: Math.max(1_000, batch.length * 180),
+          api: "responses",
+          imageDetail: "high",
+          reasoningEffort: "low",
+          responseJsonSchema: { name: "plan_sheet_identities", schema: responseSchema },
+          timeoutMs: 120_000,
+        });
+        identities.push(
+          ...parsePlanSheetIdentityResponse({
+            raw: response.text,
+            requestedSheetIds: batch.map((sheet) => sheet.plan_sheet_id),
+          }),
+        );
+        completedSheets += batch.length;
+        completedModel = response.model;
+        inputTokens += response.inputTokens;
+        outputTokens += response.outputTokens;
+        apiCostCents += computeApiCostCents(
+          response.model,
+          response.inputTokens,
+          response.outputTokens,
+        );
+      }
       const completedAt = new Date().toISOString();
       const result = { identities };
       const { error: finishError } = await dynamicTable(supabaseAdmin, "ai_operations")
         .update({
           status: "succeeded",
-          sheets_completed: data.sheets.length,
-          model_used: response.model,
-          input_tokens: response.inputTokens,
-          output_tokens: response.outputTokens,
-          api_cost_cents: computeApiCostCents(
-            response.model,
-            response.inputTokens,
-            response.outputTokens,
-          ),
+          sheets_completed: completedSheets,
+          model_used: completedModel,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          api_cost_cents: apiCostCents,
           result: result as Json,
           updated_at: completedAt,
         })
@@ -300,7 +332,7 @@ export const identifyPlanSheetsWithAi = createServerFn({ method: "POST" })
         identities,
         operation_id: operationId,
         credits_charged: chargedCredits,
-        model: response.model,
+        model: completedModel,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "AI title-block reading failed.";
