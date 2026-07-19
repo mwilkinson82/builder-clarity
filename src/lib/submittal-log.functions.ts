@@ -304,7 +304,7 @@ export const getProjectLetterhead = createServerFn({ method: "GET" })
     // Resolve a fetchable logo URL (stored URL, else the public asset URL).
     let logoUrl = str(o.logo_url);
     if (!logoUrl && str(o.id)) {
-      const { data: pub } = (context.supabase as DynamicSupabaseClient).storage
+      const { data: pub } = (context.supabase as unknown as DynamicSupabaseClient).storage
         .from(COMPANY_ASSET_BUCKET)
         .getPublicUrl(companyLogoPath(str(o.id)));
       logoUrl = versionAssetUrl(pub.publicUrl, str(o.updated_at));

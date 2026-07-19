@@ -129,7 +129,7 @@ assert.match(
 );
 
 const tomorrowPlanMigration = readFileSync(
-  "supabase/migrations/20260719172142_tomorrow_plan.sql",
+  "supabase/migrations/20260719174300_bff0201c-d9c6-4c3b-bc35-bd5f3695cde6.sql",
   "utf8",
 );
 assert.match(tomorrowPlanMigration, /create table if not exists public\.tomorrow_plan_items/i);
