@@ -45,7 +45,7 @@ export const HARBOR_DEMO_MODULES = [
   },
   {
     key: "tomorrow-plan",
-    version: 2,
+    version: 3,
     dependsOn: ["subcontract-buyout", "cpm-schedule", "daily-reports-wip"],
   },
   {
@@ -64,7 +64,8 @@ export const HARBOR_DEMO_COMMERCIAL_WORKFLOW = {
   billingApplicationNumber: "Pay App 2 — Draft",
   productionCostCode: "1500",
   productionMeasure: "LF",
-  productionTargetRate: 7.5,
+  // 25,000 LF / ($125,000 buyout / $110 GC loaded labor benchmark)
+  productionTargetRate: 22,
   productionPeriod: {
     start: "2026-06-08",
     end: "2026-07-17",

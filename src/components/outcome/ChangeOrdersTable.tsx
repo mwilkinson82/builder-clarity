@@ -25,6 +25,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import {
   Download,
   FileText,
+  MinusCircle,
   Paperclip,
   Plus,
   Pencil,
@@ -39,6 +40,7 @@ import type {
   ChangeOrderDocumentRow,
   ChangeOrderRow,
   ClientChangeOrderStatus,
+  COFinancialDirection,
   CoDocType,
   COPricingMethod,
   COStatus,
@@ -75,6 +77,11 @@ const CO_TYPE_SHORT: Record<COType, string> = {
   missed_scope: "Missed scope",
   sub_issued: "Sub issued",
   other: "Other",
+};
+
+const FINANCIAL_DIRECTION_LABELS: Record<COFinancialDirection, string> = {
+  addition: "Add to contract",
+  credit: "Credit / deduct",
 };
 
 /** Plain-English pricing-method labels (full labels for the edit dialog). */
@@ -126,6 +133,7 @@ function buildCoLogCsv(rows: ChangeOrderRow[]): string {
   const header = [
     "CO #",
     "Description",
+    "Financial direction",
     "Reason",
     "Status",
     "Client status",
@@ -141,6 +149,7 @@ function buildCoLogCsv(rows: ChangeOrderRow[]): string {
     return [
       c.number,
       c.description,
+      FINANCIAL_DIRECTION_LABELS[c.financial_direction],
       CO_TYPE_SHORT[c.co_type] ?? "Other",
       c.status,
       CLIENT_STATUS_DISPLAY[c.client_status]?.label ?? c.client_status,
@@ -162,6 +171,14 @@ function ReasonChip({ type }: { type: COType }) {
       {CO_TYPE_SHORT[type] ?? "Other"}
     </span>
   );
+}
+
+function DirectionChip({ direction }: { direction: COFinancialDirection }) {
+  return direction === "credit" ? (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-danger/25 bg-danger/5 px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-danger">
+      <MinusCircle className="h-3 w-3" /> Owner credit
+    </span>
+  ) : null;
 }
 
 /** How the CO is priced — a quiet mono chip beside the reason. */
@@ -194,6 +211,7 @@ type Draft = {
   description: string;
   contract_amount: number;
   cost_amount: number;
+  financial_direction: COFinancialDirection;
   status: COStatus;
   probability: number;
   owner: string;
@@ -210,6 +228,7 @@ const empty: Draft = {
   description: "",
   contract_amount: 0,
   cost_amount: 0,
+  financial_direction: "addition",
   status: "Pending",
   probability: 100,
   owner: "",
@@ -286,6 +305,7 @@ export function ChangeOrdersTable({
       description: c.description,
       contract_amount: c.contract_amount,
       cost_amount: c.cost_amount,
+      financial_direction: c.financial_direction,
       status: c.status,
       probability: c.probability,
       owner: c.owner,
@@ -310,6 +330,7 @@ export function ChangeOrdersTable({
   const pending = changeOrders.filter((c) => c.status === "Pending");
   const approvedRows = changeOrders.filter((c) => c.status === "Approved");
   const deniedRows = changeOrders.filter((c) => c.status === "Denied");
+  const pendingCredits = pending.filter((c) => c.financial_direction === "credit");
 
   const pendingContract = pending.reduce((s, c) => s + c.contract_amount, 0);
   const approvedContract =
@@ -354,18 +375,25 @@ export function ChangeOrdersTable({
     },
   ];
   const matchedTypes = (t: COType) => bucketDefs.some((b) => b.match(t));
+  const additiveChangeOrders = changeOrders.filter((c) => c.financial_direction !== "credit");
   const buckets = bucketDefs.map((b) => ({
     label: b.label,
     bar: b.bar,
-    sum: changeOrders.filter((c) => b.match(c.co_type)).reduce((s, c) => s + c.contract_amount, 0),
+    sum: additiveChangeOrders
+      .filter((c) => b.match(c.co_type))
+      .reduce((s, c) => s + c.contract_amount, 0),
   }));
-  const otherSum = changeOrders
+  const otherSum = additiveChangeOrders
     .filter((c) => !matchedTypes(c.co_type))
     .reduce((s, c) => s + c.contract_amount, 0);
   if (otherSum > 0) buckets.push({ label: "Other", bar: "bg-muted-foreground/50", sum: otherSum });
-  const maxBucket = Math.max(...buckets.map((b) => b.sum), 0);
+  const creditSum = changeOrders
+    .filter((c) => c.financial_direction === "credit")
+    .reduce((sum, c) => sum + c.contract_amount, 0);
+  if (creditSum < 0) buckets.push({ label: "Owner credits", bar: "bg-danger/70", sum: creditSum });
+  const maxBucket = Math.max(...buckets.map((b) => Math.abs(b.sum)), 0);
   const barWidth = (sum: number) =>
-    maxBucket > 0 && sum > 0 ? Math.max((sum / maxBucket) * 100, 8) : 0;
+    maxBucket > 0 && sum !== 0 ? Math.max((Math.abs(sum) / maxBucket) * 100, 8) : 0;
 
   const linksFor = (c: ChangeOrderRow) => {
     const parts = (allocations ?? [])
@@ -385,9 +413,12 @@ export function ChangeOrdersTable({
         <h2 className="max-w-[30ch] font-serif text-3xl font-normal leading-[1.15]">
           {pending.length > 0 ? (
             <>
-              {pending.length} change {pending.length === 1 ? "order is" : "orders are"} pending —{" "}
-              <b className="font-semibold text-warning">{fmtUSD(pendingContract)}</b> of contract
+              {pending.length} contract {pending.length === 1 ? "adjustment is" : "adjustments are"}{" "}
+              pending — <b className="font-semibold text-warning">{fmtUSD(pendingContract)}</b> net
               awaiting a decision.
+              {pendingCredits.length > 0
+                ? ` ${pendingCredits.length} ${pendingCredits.length === 1 ? "is an owner credit" : "are owner credits"}.`
+                : ""}
             </>
           ) : (
             <>No change orders are waiting on a decision.</>
@@ -430,6 +461,7 @@ export function ChangeOrdersTable({
                   <div className="flex flex-wrap items-center gap-2.5">
                     <span className="font-mono text-[10px] text-muted-foreground">{c.number}</span>
                     <ReasonChip type={c.co_type} />
+                    <DirectionChip direction={c.financial_direction} />
                     <PricingChip method={c.pricing_method} />
                     <ScheduleChip days={c.schedule_impact_days} />
                     <span className="whitespace-nowrap text-[10px] text-muted-foreground">
@@ -444,19 +476,25 @@ export function ChangeOrdersTable({
                   <div className="mt-2 text-[15px] font-semibold">{c.description}</div>
                   <div className="mt-2.5 flex gap-6 border-t border-hairline pt-2.5">
                     <div>
-                      <div className="text-[11px] text-muted-foreground">Contract</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {c.financial_direction === "credit" ? "Owner credit" : "Contract"}
+                      </div>
                       <div className="mt-0.5 font-serif text-[17px] tabular">
                         {fmtUSD(c.contract_amount)}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[11px] text-muted-foreground">Cost</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {c.financial_direction === "credit" ? "Cost removed" : "Cost"}
+                      </div>
                       <div className="mt-0.5 font-serif text-[17px] tabular text-muted-foreground">
                         {fmtUSD(c.cost_amount)}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[11px] text-clay">Margin</div>
+                      <div className="text-[11px] text-clay">
+                        {c.financial_direction === "credit" ? "Margin impact" : "Margin"}
+                      </div>
                       <div
                         className={`mt-0.5 font-serif text-[17px] tabular ${
                           margin < 0 ? "text-danger" : "text-success"
@@ -521,7 +559,7 @@ export function ChangeOrdersTable({
           </div>
           <div className="flex items-baseline justify-between border-t border-hairline py-2.5">
             <span className="text-[12.5px] text-muted-foreground">
-              + Approved change orders ({approvedRows.length} approved)
+              Approved contract adjustments ({approvedRows.length} approved)
             </span>
             <span className="font-serif text-[17px] tabular text-success">
               {fmtUSD(approvedContract, { sign: true })}
@@ -563,7 +601,8 @@ export function ChangeOrdersTable({
         <div className="rounded-xl border border-hairline bg-card px-5 py-4">
           <div className="eyebrow">By reason · all COs</div>
           <p className="mb-2 mt-1.5 max-w-[52ch] text-[11.5px] text-muted-foreground">
-            Design errors and omissions may not be billable — watch the margin.
+            Additions increase the contract. Owner credits deduct from it. Design errors and
+            omissions may not be billable — watch the margin.
           </p>
           {buckets.map((b) => (
             <div
@@ -610,7 +649,7 @@ export function ChangeOrdersTable({
         <div className="flex items-center gap-3 px-5 pb-3 pt-4">
           <div className="text-[13px] font-semibold">Full change order log</div>
           <span className="ml-auto text-xs text-muted-foreground">
-            {changeOrders.length} total · {fmtUSD(totalContract)} requested
+            {changeOrders.length} total · {fmtUSD(totalContract)} net contract adjustment
           </span>
         </div>
         <Table>
@@ -648,6 +687,7 @@ export function ChangeOrdersTable({
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <ReasonChip type={c.co_type} />
+                      <DirectionChip direction={c.financial_direction} />
                       <PricingChip method={c.pricing_method} />
                       <ScheduleChip days={c.schedule_impact_days} />
                     </div>
@@ -812,6 +852,40 @@ export function ChangeOrdersTable({
             title={editingId ? "Edit change order" : "Add change order"}
           />
           <div className="grid gap-4 py-2 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Financial direction</Label>
+              <Select
+                value={draft.financial_direction}
+                onValueChange={(value) => {
+                  const financial_direction = value as COFinancialDirection;
+                  const sign = financial_direction === "credit" ? -1 : 1;
+                  setDraft({
+                    ...draft,
+                    financial_direction,
+                    contract_amount: Math.abs(draft.contract_amount) * sign,
+                    cost_amount: Math.abs(draft.cost_amount) * sign,
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(FINANCIAL_DIRECTION_LABELS) as COFinancialDirection[]).map(
+                    (direction) => (
+                      <SelectItem key={direction} value={direction}>
+                        {FINANCIAL_DIRECTION_LABELS[direction]}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                Use Credit / deduct when money is returned to the owner or removed from the
+                contract. Enter positive amounts below; OverWatch carries the deduction through the
+                contract, SOV, billing, budget, and margin.
+              </p>
+            </div>
             <div className="grid grid-cols-3 gap-3 sm:col-span-2">
               <div className="space-y-1.5">
                 <Label>CO number</Label>
@@ -895,18 +969,44 @@ export function ChangeOrdersTable({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Contract amount (USD)</Label>
+              <Label>
+                {draft.financial_direction === "credit"
+                  ? "Owner credit (USD)"
+                  : "Contract amount (USD)"}
+              </Label>
               <MoneyInput
-                value={draft.contract_amount}
-                onValueChange={(v) => setDraft({ ...draft, contract_amount: v })}
+                value={Math.abs(draft.contract_amount)}
+                onValueChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    contract_amount:
+                      Math.abs(value) * (draft.financial_direction === "credit" ? -1 : 1),
+                  })
+                }
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Cost amount (USD)</Label>
+              <Label>
+                {draft.financial_direction === "credit"
+                  ? "Cost removed / avoided (USD)"
+                  : "Cost amount (USD)"}
+              </Label>
               <MoneyInput
-                value={draft.cost_amount}
-                onValueChange={(v) => setDraft({ ...draft, cost_amount: v })}
+                value={Math.abs(draft.cost_amount)}
+                onValueChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    cost_amount:
+                      Math.abs(value) * (draft.financial_direction === "credit" ? -1 : 1),
+                  })
+                }
               />
+              {draft.financial_direction === "credit" ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Enter only cost that truly leaves the forecast. If the credit does not reduce your
+                  cost, leave this at $0.
+                </p>
+              ) : null}
             </div>
             <div className="space-y-1.5">
               <Label>Days added to schedule</Label>

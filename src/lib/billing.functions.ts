@@ -12,6 +12,7 @@ import { buildBillingLinesFromBuckets } from "@/lib/billing-line-generation";
 import { computeBudgetLedger, type BudgetLedger, type BudgetLedgerRow } from "@/lib/budget-ledger";
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
 import { latestPercentBySubBucket } from "@/lib/daily-wip";
+import { unallocatedContract } from "@/lib/change-order-allocation";
 import type { ExposureLike, ExposureAllocationLike, HoldClass } from "@/lib/exposure-allocation";
 import type { Json } from "@/integrations/supabase/types";
 import {
@@ -595,9 +596,13 @@ function buildWIPForProject(input: {
     approvedChangeOrderIds.has(allocation.change_order_id),
   );
   const allocatedContractByBucket = new Map<string, number>();
-  let allocatedApprovedContract = 0;
+  const allocatedContractByChangeOrder = new Map<string, number>();
   approvedAllocations.forEach((allocation) => {
-    allocatedApprovedContract += allocation.contract_amount;
+    allocatedContractByChangeOrder.set(
+      allocation.change_order_id,
+      (allocatedContractByChangeOrder.get(allocation.change_order_id) ?? 0) +
+        allocation.contract_amount,
+    );
     if (!allocation.cost_bucket_id) return;
     allocatedContractByBucket.set(
       allocation.cost_bucket_id,
@@ -605,13 +610,14 @@ function buildWIPForProject(input: {
     );
   });
 
-  const approvedContractTotal = input.changeOrders
+  const unallocatedApprovedContract = input.changeOrders
     .filter((co) => co.status === "Approved")
-    .reduce((sum, co) => sum + co.contract_amount, 0);
-  const unallocatedApprovedContract = Math.max(
-    0,
-    approvedContractTotal - allocatedApprovedContract,
-  );
+    .reduce(
+      (sum, co) =>
+        sum +
+        unallocatedContract(co.contract_amount, allocatedContractByChangeOrder.get(co.id) ?? 0),
+      0,
+    );
 
   const latestLineByBucket = new Map<string, BillingLineItemRow>();
   input.lineItems.forEach((line) => {
@@ -678,7 +684,7 @@ function buildWIPForProject(input: {
     };
   });
 
-  if (unallocatedApprovedContract > 0.01) {
+  if (Math.abs(unallocatedApprovedContract) > 0.01) {
     bucketInputs.push({
       cost_bucket_id: "unallocated-change-orders",
       cost_code: "",

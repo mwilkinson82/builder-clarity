@@ -2991,6 +2991,7 @@ function ProjectPage() {
                 buckets={buckets}
                 scheduleActivities={scheduleData?.activities ?? []}
                 subcontracts={subcontractsQuery.data?.subcontracts ?? []}
+                allocations={subcontractsQuery.data?.allocations ?? []}
                 actualEntries={dailyWipEntriesQuery.data ?? []}
                 initialDate={
                   isHarborDemoProject(project as unknown as Record<string, unknown>)

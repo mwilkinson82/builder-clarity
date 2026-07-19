@@ -41,7 +41,7 @@ assert.deepEqual(
   ["1500", "0300", "0900"],
 );
 assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionMeasure, "LF");
-assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionTargetRate, 7.5);
+assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionTargetRate, 22);
 assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionPeriod.start, "2026-06-08");
 assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionPeriod.end, "2026-07-17");
 assert.equal(HARBOR_DEMO_PRODUCTION_DAYS.length, 30);
@@ -63,7 +63,7 @@ assert.deepEqual(
 );
 assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "daily-reports-wip")?.version, 3);
 assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "production-control")?.version, 3);
-assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "tomorrow-plan")?.version, 2);
+assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "tomorrow-plan")?.version, 3);
 assert.equal(
   HARBOR_DEMO_MODULES.find((module) => module.key === "tomorrow-plan")?.dependsOn.includes(
     "daily-reports-wip",

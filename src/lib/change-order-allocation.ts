@@ -12,6 +12,7 @@ export interface AllocationLike {
   change_order_id: string;
   cost_bucket_id: string | null;
   contract_amount: number;
+  cost_amount?: number;
 }
 
 // Total contract dollars allocated per change order (summed in integer
@@ -31,11 +32,14 @@ export function allocatedContractByChangeOrder(
   return out;
 }
 
-// Contract dollars of a change order not yet allocated to any cost code
-// (never negative — over-allocation clamps to zero remaining).
+// Contract dollars of a change order not yet allocated to any cost code.
+// Additions remain positive; credits remain negative. Over-allocation clamps
+// toward zero without flipping the adjustment's direction.
 export function unallocatedContract(coContract: number, allocatedContract: number): number {
+  const contractCents = dollarsToCents(coContract);
+  const remainingCents = contractCents - dollarsToCents(allocatedContract);
   return centsToDollars(
-    Math.max(0, dollarsToCents(coContract) - dollarsToCents(allocatedContract)),
+    contractCents < 0 ? Math.min(0, remainingCents) : Math.max(0, remainingCents),
   );
 }
 
@@ -44,6 +48,9 @@ export interface ApprovedCoSummary {
   contract: number;
   allocated: number;
   remaining: number;
+  cost: number;
+  allocatedCost: number;
+  remainingCost: number;
   fullyAllocated: boolean;
 }
 
@@ -52,16 +59,26 @@ export function summarizeApprovedCo(
   changeOrderId: string,
   contract: number,
   allocations: readonly AllocationLike[],
+  cost = 0,
 ): ApprovedCoSummary {
-  const allocated = allocatedContractByChangeOrder(allocations).get(changeOrderId) ?? 0;
+  const matching = allocations.filter((allocation) => allocation.change_order_id === changeOrderId);
+  const allocated = allocatedContractByChangeOrder(matching).get(changeOrderId) ?? 0;
+  const allocatedCost = centsToDollars(
+    matching.reduce((sum, allocation) => sum + dollarsToCents(allocation.cost_amount ?? 0), 0),
+  );
   const remaining = unallocatedContract(contract, allocated);
+  const remainingCost = unallocatedContract(cost, allocatedCost);
   return {
     changeOrderId,
     contract,
     allocated,
     remaining,
+    cost,
+    allocatedCost,
+    remainingCost,
     // A CO counts as fully allocated once the remaining unallocated amount is
     // under a cent — no dangling "allocate the rest" nudge from rounding.
-    fullyAllocated: dollarsToCents(remaining) <= 0,
+    fullyAllocated:
+      Math.abs(dollarsToCents(remaining)) === 0 && Math.abs(dollarsToCents(remainingCost)) === 0,
   };
 }
