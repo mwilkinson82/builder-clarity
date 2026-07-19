@@ -95,6 +95,8 @@ import {
 } from "@/lib/plan-room-scale-assurance";
 import { analyzePlanSheetMeasurementNotes } from "@/lib/plan-room-measurement-assistant.functions";
 import { generatePlanScopeBrief } from "@/lib/plan-scope-brief.functions";
+import { identifyPlanSheetsWithAi } from "@/lib/plan-sheet-identity.functions";
+import { isPlaceholderPlanSheet } from "@/lib/plan-sheet-identity";
 import type { PlanScopeBriefItem } from "@/lib/plan-scope-brief";
 import type { PlanScopeBriefNextAction, PlanScopeBriefReview } from "@/lib/plan-scope-brief-review";
 import {
@@ -213,6 +215,7 @@ import {
   getPdfPageCount,
   processPlanSetSheets,
 } from "./PdfSheetViewer";
+import { renderPlanSheetIdentityImages } from "./planSheetIdentityRender";
 import { FeetInchesHint, TakeoffTools } from "./TakeoffTools";
 import { SyncConflictDialog, TakeoffWorksheet, type SyncConflictState } from "./TakeoffWorksheet";
 import { LinkOrCreatePicker, TakeoffFinishPopover } from "./TakeoffClassify";
@@ -300,6 +303,7 @@ export function PlanRoomWorkspace({
   const recordScaleAssessmentFn = useServerFn(recordScaleAssessment);
   const analyzeMeasurementNotesFn = useServerFn(analyzePlanSheetMeasurementNotes);
   const generatePlanScopeBriefFn = useServerFn(generatePlanScopeBrief);
+  const identifyPlanSheetsWithAiFn = useServerFn(identifyPlanSheetsWithAi);
   const analyzeRevisionScopeFn = useServerFn(analyzeAcceptedPlanRevisionScope);
   const getMeasurementScopeQueueFn = useServerFn(getMeasurementScopeQueue);
   const saveMeasurementScopeDecisionFn = useServerFn(saveMeasurementScopeDecision);
@@ -384,6 +388,8 @@ export function PlanRoomWorkspace({
     currentLabel: string;
     detectedNumber: string;
     detectedName: string;
+    source: "Drawing text" | "AI image read";
+    confidence?: number;
     accepted: boolean;
   }> | null>(null);
   const [headerRename, setHeaderRename] = useState<{
@@ -418,6 +424,12 @@ export function PlanRoomWorkspace({
   } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [postProcessingPlanSetId, setPostProcessingPlanSetId] = useState("");
+  const [confirmSheetIdentityRead, setConfirmSheetIdentityRead] = useState(false);
+  const [sheetIdentityStatus, setSheetIdentityStatus] = useState<{
+    planSetId: string;
+    text: string;
+    tone: "working" | "warning" | "success" | "error";
+  } | null>(null);
   // The Plan Room is the Command Center. Contractors should not have to open
   // the route and then discover a second button before reaching the workbench.
   const [isCockpitMode, setIsCockpitMode] = useState(true);
@@ -495,6 +507,24 @@ export function PlanRoomWorkspace({
   const currentPlanSet = currentSheet
     ? (planSets.find((planSet) => planSet.id === currentSheet.plan_set_id) ?? null)
     : null;
+  const unresolvedCurrentSetNameCount = useMemo(() => {
+    if (!currentPlanSet) return 0;
+    return sheets.filter(
+      (sheet) =>
+        sheet.plan_set_id === currentPlanSet.id && isPlaceholderPlanSheet(sheet, currentPlanSet),
+    ).length;
+  }, [currentPlanSet, sheets]);
+  const currentSheetIdentityStatus = useMemo(() => {
+    if (sheetIdentityStatus?.planSetId === currentPlanSet?.id) return sheetIdentityStatus;
+    if (unresolvedCurrentSetNameCount > 0 && currentPlanSet) {
+      return {
+        planSetId: currentPlanSet.id,
+        text: `${unresolvedCurrentSetNameCount} sheet${unresolvedCurrentSetNameCount === 1 ? "" : "s"} still use${unresolvedCurrentSetNameCount === 1 ? "s" : ""} placeholder names. Read title blocks to resolve them; AI is used only where drawing text is unavailable.`,
+        tone: "warning" as const,
+      };
+    }
+    return null;
+  }, [currentPlanSet, sheetIdentityStatus, unresolvedCurrentSetNameCount]);
   const overlaySheet = overlaySheetId
     ? (sheets.find((sheet) => sheet.id === overlaySheetId) ?? null)
     : null;
@@ -1754,8 +1784,9 @@ export function PlanRoomWorkspace({
       toast.error(error instanceof Error ? error.message : "Sheet did not rename"),
   });
 
-  // "Detect sheet names": run title-block extraction across the set, then
-  // suggest — never silently rename sheets the user may already reference.
+  // Read vector title blocks first, then use a metered vision fallback only for
+  // unresolved image-only sheets. Every result remains a proposal until the
+  // estimator confirms it in the review dialog.
   const detectNamesMutation = useMutation({
     mutationFn: async () => {
       if (!currentPlanSet) throw new Error("Choose a plan set first.");
@@ -1764,14 +1795,22 @@ export function PlanRoomWorkspace({
       }
       const url = await planSetSignedUrl(currentPlanSet);
       const setSheets = sheets.filter((sheet) => sheet.plan_set_id === currentPlanSet.id);
+      setSheetIdentityStatus({
+        planSetId: currentPlanSet.id,
+        text: `Reading selectable title blocks · 0/${setSheets.length}`,
+        tone: "working",
+      });
       const processed = await processPlanSetSheets({
         source: { url },
         sheets: setSheets,
         extractIdentityText: true,
+        onProgress: (completed, total) =>
+          setSheetIdentityStatus({
+            planSetId: currentPlanSet.id,
+            text: `Reading selectable title blocks · ${completed}/${total}`,
+            tone: "working",
+          }),
       });
-      return { processed, setSheets };
-    },
-    onSuccess: ({ processed, setSheets }) => {
       const proposals = processed
         .map((page) => {
           const sheet = setSheets.find((item) => item.id === page.sheet_id);
@@ -1785,20 +1824,118 @@ export function PlanRoomWorkspace({
             currentLabel: `${sheet.sheet_number || `Page ${sheet.page_number}`} — ${sheet.sheet_name || "Unnamed sheet"}`,
             detectedNumber: page.sheet_number,
             detectedName: detectedName || "",
+            source: "Drawing text" as const,
             accepted: true,
           };
         })
         .filter((item): item is NonNullable<typeof item> => item !== null);
+
+      const vectorIdentityBySheet = new Map(
+        processed.filter((page) => page.sheet_number).map((page) => [page.sheet_id, page]),
+      );
+      const unresolved = setSheets.filter(
+        (sheet) =>
+          !vectorIdentityBySheet.has(sheet.id) && isPlaceholderPlanSheet(sheet, currentPlanSet),
+      );
+      if (unresolved.length === 0) {
+        return { proposals, unresolvedCount: 0, aiReadCount: 0, creditsCharged: 0 };
+      }
+
+      setSheetIdentityStatus({
+        planSetId: currentPlanSet.id,
+        text: `Preparing ${unresolved.length} image-only title block${unresolved.length === 1 ? "" : "s"} · 0/${unresolved.length}`,
+        tone: "working",
+      });
+      const identityImages = await renderPlanSheetIdentityImages({
+        source: { url },
+        sheets: unresolved,
+        onProgress: (completed, total) =>
+          setSheetIdentityStatus({
+            planSetId: currentPlanSet.id,
+            text: `Preparing image-only title blocks · ${completed}/${total}`,
+            tone: "working",
+          }),
+      });
+      if (identityImages.length === 0) {
+        return {
+          proposals,
+          unresolvedCount: unresolved.length,
+          aiReadCount: 0,
+          creditsCharged: 0,
+        };
+      }
+
+      setSheetIdentityStatus({
+        planSetId: currentPlanSet.id,
+        text: `AI is reading ${identityImages.length} image-only title block${identityImages.length === 1 ? "" : "s"} · 1 credit per set`,
+        tone: "working",
+      });
+      const aiResult = await identifyPlanSheetsWithAiFn({
+        data: {
+          estimate_id: estimate.id,
+          plan_set_id: currentPlanSet.id,
+          plan_set_name: currentPlanSet.name,
+          sheets: identityImages.map((image) => ({
+            plan_sheet_id: image.sheet_id,
+            page_number: image.page_number,
+            media_type: image.media_type,
+            base64: image.base64,
+          })),
+        },
+      });
+      const sheetById = new Map(setSheets.map((sheet) => [sheet.id, sheet]));
+      const aiProposals = aiResult.identities
+        .map((identity) => {
+          const sheet = sheetById.get(identity.plan_sheet_id);
+          if (!sheet) return null;
+          return {
+            sheetId: sheet.id,
+            currentLabel: `${sheet.sheet_number || `Page ${sheet.page_number}`} — ${sheet.sheet_name || "Unnamed sheet"}`,
+            detectedNumber: identity.sheet_number,
+            detectedName: identity.sheet_name,
+            source: "AI image read" as const,
+            confidence: identity.confidence,
+            accepted: true,
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
+      return {
+        proposals: [...proposals, ...aiProposals],
+        unresolvedCount: Math.max(0, unresolved.length - aiProposals.length),
+        aiReadCount: aiProposals.length,
+        creditsCharged: aiResult.credits_charged,
+      };
+    },
+    onSuccess: ({ proposals, unresolvedCount, aiReadCount, creditsCharged }) => {
       if (proposals.length === 0) {
+        setSheetIdentityStatus({
+          planSetId: currentPlanSet?.id ?? "",
+          text: "No reliable title-block identities were found. Placeholder names remain visible for manual rename.",
+          tone: "warning",
+        });
         toast.info(
-          "No title-block names found. Scanned sets keep their names — use the pencil to rename.",
+          "No reliable title-block names found. Use the pencil to rename unresolved sheets.",
         );
         return;
       }
+      setSheetIdentityStatus({
+        planSetId: currentPlanSet?.id ?? "",
+        text:
+          unresolvedCount > 0
+            ? `${proposals.length} rename proposal${proposals.length === 1 ? "" : "s"} ready; ${unresolvedCount} sheet${unresolvedCount === 1 ? "" : "s"} still need manual review.`
+            : `${proposals.length} rename proposal${proposals.length === 1 ? "" : "s"} ready for estimator confirmation${aiReadCount > 0 ? ` · ${creditsCharged} credit${creditsCharged === 1 ? "" : "s"} used` : ""}.`,
+        tone: unresolvedCount > 0 ? "warning" : "success",
+      });
       setDetectProposals(proposals);
     },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Sheet detection did not run"),
+    onError: (error) => {
+      setSheetIdentityStatus({
+        planSetId: currentPlanSet?.id ?? "",
+        text: error instanceof Error ? error.message : "Sheet-name reading stopped. Retry is safe.",
+        tone: "error",
+      });
+      toast.error(error instanceof Error ? error.message : "Sheet detection did not run");
+    },
   });
 
   const applyDetectedNames = useMutation({
@@ -1981,9 +2118,9 @@ export function PlanRoomWorkspace({
     return patches.length;
   };
 
-  // Upload post-processing: thumbnails + title-block identity in one pass over
-  // the file that is already in memory. Runs in the background after the set
-  // is created; placeholder names make overwriting safe.
+  // Upload post-processing is deliberately staged: persist readable vector
+  // identities first, then build thumbnails. A slow preview render can never
+  // hold every sheet name hostage or erase completed identity work.
   const postProcessUploadedSet = async (
     file: File,
     planSetId: string,
@@ -1991,23 +2128,63 @@ export function PlanRoomWorkspace({
   ) => {
     if (file.type !== "application/pdf" || createdSheets.length === 0) return;
     try {
-      const processed = await processPlanSetSheets({
-        source: { data: await file.arrayBuffer() },
+      const sourceData = await file.arrayBuffer();
+      setSheetIdentityStatus({
+        planSetId,
+        text: `Reading title blocks · 0/${createdSheets.length}`,
+        tone: "working",
+      });
+      const namedPages = await processPlanSetSheets({
+        source: { data: sourceData.slice(0) },
         sheets: createdSheets,
         extractIdentityText: true,
-        renderThumbnails: true,
+        onProgress: (completed, total) =>
+          setSheetIdentityStatus({
+            planSetId,
+            text: `Reading title blocks · ${completed}/${total}`,
+            tone: "working",
+          }),
       });
-      const patched = await uploadThumbnailsAndPatches(planSetId, processed);
-      if (patched > 0) {
-        const named = processed.filter((page) => page.sheet_number).length;
-        if (named > 0) {
-          toast.success(`Sheet names read from ${named} title block${named === 1 ? "" : "s"}`);
-        }
+      const namePatchCount = await uploadThumbnailsAndPatches(planSetId, namedPages);
+      const named = namedPages.filter((page) => page.sheet_number).length;
+      const unresolved = Math.max(0, createdSheets.length - named);
+      if (namePatchCount > 0) {
         invalidate();
       }
-    } catch {
-      // Thumbnails and names are conveniences; the upload itself already
-      // succeeded, so fail quietly rather than alarming the user.
+      setSheetIdentityStatus({
+        planSetId,
+        text:
+          unresolved > 0
+            ? `${named}/${createdSheets.length} sheet names found · ${unresolved} image-only title block${unresolved === 1 ? "" : "s"} can be read with AI`
+            : `All ${createdSheets.length} sheet names found · building previews`,
+        tone: unresolved > 0 ? "warning" : "success",
+      });
+
+      const thumbnailPages = await processPlanSetSheets({
+        source: { data: sourceData.slice(0) },
+        sheets: createdSheets,
+        renderThumbnails: true,
+      });
+      const thumbnailPatchCount = await uploadThumbnailsAndPatches(planSetId, thumbnailPages);
+      if (thumbnailPatchCount > 0) invalidate();
+      if (named > 0) {
+        toast.success(
+          unresolved > 0
+            ? `${named} sheet names found. ${unresolved} need AI or manual title review.`
+            : `Sheet names read from all ${named} title blocks`,
+        );
+      }
+    } catch (error) {
+      setSheetIdentityStatus({
+        planSetId,
+        text: "Sheet-name processing stopped before completion. The upload is safe; retry title-block reading.",
+        tone: "error",
+      });
+      toast.error(
+        error instanceof Error
+          ? `Drawing uploaded, but sheet-name processing stopped: ${error.message}`
+          : "Drawing uploaded, but sheet-name processing stopped. Retry is safe.",
+      );
     }
   };
 
@@ -3982,10 +4159,18 @@ export function PlanRoomWorkspace({
               !isCanonicalDemo &&
               currentPlanSet?.file_mime_type === "application/pdf" &&
               currentPlanSet.file_path
-                ? () => detectNamesMutation.mutate()
+                ? () => {
+                    if (unresolvedCurrentSetNameCount > 0) {
+                      setConfirmSheetIdentityRead(true);
+                    } else {
+                      detectNamesMutation.mutate();
+                    }
+                  }
                 : undefined
             }
             detectingNames={detectNamesMutation.isPending}
+            unresolvedNameCount={unresolvedCurrentSetNameCount}
+            sheetIdentityStatus={currentSheetIdentityStatus}
           />
 
           {!isCanonicalDemo && (
@@ -5651,6 +5836,12 @@ export function PlanRoomWorkspace({
                     <span className="block truncate font-medium">
                       {row.detectedNumber} — {row.detectedName || "(name unchanged)"}
                     </span>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      {row.source}
+                      {typeof row.confidence === "number"
+                        ? ` · ${Math.round(row.confidence * 100)}% confidence`
+                        : ""}
+                    </span>
                   </span>
                 </label>
               ))}
@@ -5677,6 +5868,40 @@ export function PlanRoomWorkspace({
           </DialogContent>
         </Dialog>
       )}
+      <Dialog open={confirmSheetIdentityRead} onOpenChange={setConfirmSheetIdentityRead}>
+        <DialogContent className="max-w-lg" data-testid="sheet-identity-credit-dialog">
+          <DialogHeader>
+            <div className="eyebrow">Plan Room · Sheet identity</div>
+            <DialogTitle className="font-serif text-2xl font-normal">
+              Read unresolved title blocks?
+            </DialogTitle>
+            <DialogDescription>
+              {unresolvedCurrentSetNameCount} sheet
+              {unresolvedCurrentSetNameCount === 1 ? " still uses" : "s still use"} placeholder
+              names. OverWatch first reads selectable PDF text at no AI cost. If those sheets are
+              image-only, one AI credit reads the remaining title blocks for this set.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border border-hairline bg-surface px-3 py-2 text-sm text-muted-foreground">
+            AI returns rename proposals only. You review every sheet number and title before any
+            name changes.
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmSheetIdentityRead(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirmSheetIdentityRead(false);
+                detectNamesMutation.mutate();
+              }}
+              data-testid="sheet-identity-credit-confirm"
+            >
+              Read and review names
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <SyncConflictDialog
         conflict={syncConflict}
         pending={syncLineMutation.isPending}

@@ -67,6 +67,8 @@ export function SheetSidebar({
   renamePending = false,
   onDetectSheetNames,
   detectingNames = false,
+  unresolvedNameCount = 0,
+  sheetIdentityStatus,
 }: {
   expanded?: boolean;
   sheets: PlanSheetRow[];
@@ -85,6 +87,8 @@ export function SheetSidebar({
   renamePending?: boolean;
   onDetectSheetNames?: () => void;
   detectingNames?: boolean;
+  unresolvedNameCount?: number;
+  sheetIdentityStatus?: { text: string; tone: "working" | "warning" | "success" | "error" } | null;
 }) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [editingSheetId, setEditingSheetId] = useState("");
@@ -274,16 +278,40 @@ export function SheetSidebar({
               size="sm"
               variant="outline"
               className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-              title="Read sheet numbers and names from each title block, then confirm"
+              title="Read vector title blocks first; unresolved image-only sheets use 1 AI credit per set. You confirm every rename."
               onClick={onDetectSheetNames}
               disabled={detectingNames}
               data-testid="detect-sheet-names"
             >
               <ScanSearch className="h-3.5 w-3.5" />
-              {detectingNames ? "Reading..." : "Detect sheet names"}
+              {detectingNames
+                ? "Reading..."
+                : unresolvedNameCount > 0
+                  ? `Read ${unresolvedNameCount} name${unresolvedNameCount === 1 ? "" : "s"}`
+                  : "Check sheet names"}
             </Button>
           )}
         </div>
+        {sheetIdentityStatus && (
+          <div
+            className={cn(
+              "mt-2 rounded-md border px-2.5 py-2 text-xs",
+              sheetIdentityStatus.tone === "working" &&
+                "border-blue-300/70 bg-blue-50 text-blue-900 dark:bg-blue-950/30 dark:text-blue-100",
+              sheetIdentityStatus.tone === "warning" &&
+                "border-amber-300/70 bg-amber-50 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100",
+              sheetIdentityStatus.tone === "success" &&
+                "border-emerald-300/70 bg-emerald-50 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-100",
+              sheetIdentityStatus.tone === "error" &&
+                "border-destructive/40 bg-destructive/10 text-destructive",
+            )}
+            role="status"
+            aria-live="polite"
+            data-testid="sheet-identity-status"
+          >
+            {sheetIdentityStatus.text}
+          </div>
+        )}
       </div>
       <div className="border-b border-hairline p-3" data-testid="plan-sheet-finder">
         <div className="relative">
