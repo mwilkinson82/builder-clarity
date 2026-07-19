@@ -30,6 +30,13 @@
     "test:schedule:import": "node --experimental-strip-types scripts/schedule-import-smoke.ts",
     "test:cpm:layout": "node --experimental-strip-types scripts/constructline-cpm-layout-smoke.ts",
     "test:cpm:print": "node --experimental-strip-types scripts/constructline-cpm-print-smoke.ts",
+    "video:install": "npm --prefix video install --no-package-lock",
+    "video:studio": "npm --prefix video run studio",
+    "video:captions": "node --experimental-strip-types scripts/generate-harbor-captions.ts",
+    "video:voice": "node --experimental-strip-types scripts/generate-harbor-voice.ts",
+    "test:onboarding-video": "node --experimental-strip-types scripts/harbor-onboarding-video-smoke.ts",
+    "video:render:pilot": "npm --prefix video run render:pilot",
+    "video:poster:pilot": "npm --prefix video run poster:pilot",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

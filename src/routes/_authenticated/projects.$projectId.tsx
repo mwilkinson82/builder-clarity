@@ -98,6 +98,10 @@ import {
 } from "@/lib/billing-local-store";
 import { EditFinancialsDialog } from "@/components/project/EditFinancialsDialog";
 import {
+  HarborStartHere,
+  type HarborStartHereTarget,
+} from "@/components/project/onboarding/HarborStartHere";
+import {
   SovImportHistory,
   SovMetric,
   WorkspaceHeader,
@@ -243,6 +247,7 @@ const SelectionsWorkspace = lazy(() =>
 );
 
 const PROJECT_TAB_VALUES = [
+  "start-here",
   "dashboard",
   "schedule",
   "selections",
@@ -2048,6 +2053,10 @@ function ProjectPage() {
   // The Harbor training project hides for the whole company instead of
   // hard-deleting (the demo seeders would just bring a deleted one back).
   const isDemoProject = isHarborDemoProject(project as unknown as Record<string, unknown>);
+  // A hand-typed Start Here deep link on a customer project falls back to the
+  // project IOR. The training tab is only a real destination inside Harbor.
+  const displayedProjectTab =
+    activeProjectTab === "start-here" && !isDemoProject ? "dashboard" : activeProjectTab;
   const openTodoCount = decisions.filter((d) => d.status !== "resolved").length;
   const openInspectionCount = inspections.filter(
     (inspection) => !["passed", "cancelled"].includes(inspection.status),
@@ -2416,9 +2425,9 @@ function ProjectPage() {
   // Persistent "you are here" title for the content stage: the active tab's
   // group + label (e.g. "Commercial · Billing").
   const activeNavGroup = PROJECT_NAV_GROUPS.find((group) =>
-    group.values.includes(activeProjectTab),
+    group.values.includes(displayedProjectTab),
   );
-  const activeNavItem = navItemByValue.get(activeProjectTab);
+  const activeNavItem = navItemByValue.get(displayedProjectTab);
   // A collapsed group shows one status hint on the right. If any item in the
   // group is alarming (live risk, slipped schedule), that item's detail wins in
   // danger tone. All hints read existing nav data — no new query.
@@ -2513,7 +2522,7 @@ function ProjectPage() {
 
       <main className="mx-auto w-full min-w-0 max-w-[1640px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
         <Tabs
-          value={activeProjectTab}
+          value={displayedProjectTab}
           onValueChange={setProjectTab}
           className="grid min-w-0 gap-6 lg:grid-cols-[248px_minmax(0,1fr)] lg:items-start"
         >
@@ -2575,12 +2584,40 @@ function ProjectPage() {
                   value remain unchanged. */}
               {/* Portfolio-level cross-links stay available inside a project so
                   users never have to back out just to reach CRM or Estimating. */}
+              {isDemoProject ? (
+                <TabsTrigger
+                  value="start-here"
+                  aria-label="Start Here: Harbor training course"
+                  className={cn(
+                    "flex w-auto shrink-0 self-start cursor-pointer items-center justify-between gap-3 rounded-lg border border-clay/25 bg-clay/[0.06] px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-clay/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink",
+                    "data-[state=active]:border-clay/40 data-[state=active]:bg-secondary data-[state=active]:font-semibold",
+                  )}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-dark-panel p-1">
+                      <img
+                        src="/overwatch-logo-master-reversed.svg"
+                        alt=""
+                        aria-hidden="true"
+                        className="h-full w-full"
+                      />
+                    </span>
+                    Start Here
+                  </span>
+                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.1em] text-clay">
+                    Course
+                  </span>
+                </TabsTrigger>
+              ) : null}
               <button
                 type="button"
                 onClick={() => navigate({ to: "/", search: { tab: "crm" } })}
                 aria-label="CRM: Relationships"
                 title="CRM: Relationships"
-                className="flex w-auto shrink-0 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink"
+                className={cn(
+                  "w-auto shrink-0 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink",
+                  displayedProjectTab === "start-here" ? "hidden lg:flex" : "flex",
+                )}
               >
                 <span className="font-medium">CRM</span>
                 <span className="text-[11.5px] text-muted-foreground">▸</span>
@@ -2590,7 +2627,10 @@ function ProjectPage() {
                 onClick={() => navigate({ to: "/estimates" })}
                 aria-label="Estimating: Estimates and Plan Room"
                 title="Estimating: Estimates and Plan Room"
-                className="flex w-auto shrink-0 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink"
+                className={cn(
+                  "w-auto shrink-0 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink",
+                  displayedProjectTab === "start-here" ? "hidden lg:flex" : "flex",
+                )}
               >
                 <span className="font-medium">Estimating</span>
                 <span className="text-[11.5px] text-muted-foreground">▸</span>
@@ -2604,7 +2644,10 @@ function ProjectPage() {
                   return (
                     <div
                       key={group.key}
-                      className="w-[240px] shrink-0 rounded-xl border border-hairline bg-surface p-1.5 lg:w-full lg:shrink"
+                      className={cn(
+                        "w-[240px] shrink-0 rounded-xl border border-hairline bg-surface p-1.5 lg:w-full lg:shrink",
+                        displayedProjectTab === "start-here" && "hidden lg:block",
+                      )}
                     >
                       <button
                         type="button"
@@ -2673,6 +2716,7 @@ function ProjectPage() {
                     title={`${group.label}: ${hint.text}`}
                     className={cn(
                       "flex w-auto shrink-0 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-secondary hover:text-foreground hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:shrink",
+                      displayedProjectTab === "start-here" && "hidden lg:flex",
                       isActiveGroup ? "font-semibold text-foreground" : "text-muted-foreground",
                     )}
                   >
@@ -2907,6 +2951,24 @@ function ProjectPage() {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+            {isDemoProject ? (
+              <TabsContent value="start-here" className="mt-0">
+                <HarborStartHere
+                  projectId={projectId}
+                  onOpenWorkspace={(target: HarborStartHereTarget) => {
+                    setProjectTab(target.tab);
+                    navigate({
+                      to: "/projects/$projectId",
+                      params: { projectId },
+                      search: {
+                        tab: target.tab,
+                        wipView: target.wipView,
+                      },
+                    });
+                  }}
+                />
+              </TabsContent>
+            ) : null}
             <TabsContent value="dashboard" className="mt-0">
               <ProjectDashboard
                 project={project}
