@@ -39,8 +39,9 @@ function isMissingTable(error: DynamicSupabaseError | null) {
 const NOT_ENABLED =
   "The file room isn't enabled on this workspace yet — the project_documents migration hasn't been applied.";
 
-// The category vocabulary the app supplies (the column is free text so this can
-// grow without a migration). `other` is the catch-all.
+// The preset category vocabulary the app supplies. The column is intentionally
+// free text so project teams can also create their own categories without a
+// migration. `other` remains available as a catch-all.
 export const PROJECT_DOC_CATEGORIES = [
   "prime_contract",
   "specifications",
@@ -54,6 +55,21 @@ export const PROJECT_DOC_CATEGORIES = [
   "other",
 ] as const;
 export type ProjectDocCategory = (typeof PROJECT_DOC_CATEGORIES)[number];
+export const PROJECT_DOC_CATEGORY_MAX_LENGTH = 80;
+
+const projectDocCategorySchema = z
+  .string()
+  .max(200)
+  .transform((value) => value.replace(/\s+/g, " ").trim())
+  .pipe(
+    z
+      .string()
+      .min(1, "Category is required")
+      .max(
+        PROJECT_DOC_CATEGORY_MAX_LENGTH,
+        `Category must be ${PROJECT_DOC_CATEGORY_MAX_LENGTH} characters or less`,
+      ),
+  );
 
 export interface ProjectDocumentRow {
   id: string;
@@ -108,7 +124,7 @@ export const listProjectDocuments = createServerFn({ method: "GET" })
 
 const recordInput = z.object({
   projectId: z.string().uuid(),
-  category: z.enum(PROJECT_DOC_CATEGORIES).default("other"),
+  category: projectDocCategorySchema.default("other"),
   title: z.string().max(300).default(""),
   description: z.string().max(2000).default(""),
   storage_path: z.string().min(1).max(500),
@@ -144,7 +160,7 @@ export const recordProjectDocument = createServerFn({ method: "POST" })
 
 const updateInput = z.object({
   id: z.string().uuid(),
-  category: z.enum(PROJECT_DOC_CATEGORIES).optional(),
+  category: projectDocCategorySchema.optional(),
   title: z.string().max(300).optional(),
   description: z.string().max(2000).optional(),
 });

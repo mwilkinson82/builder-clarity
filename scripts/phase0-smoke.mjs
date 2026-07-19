@@ -4233,13 +4233,28 @@ await expectContains(
     /export const recordProjectDocument/,
     /export const archiveProjectDocument/,
     /PROJECT_DOC_CATEGORIES/,
+    /projectDocCategorySchema/,
+    /category: projectDocCategorySchema/,
   ],
-  "file room server fns list/record/archive documents with a category vocabulary",
+  "file room server fns accept validated preset or user-created categories",
+);
+await expectNotContains(
+  "src/lib/project-documents.functions.ts",
+  [/category: z\.enum\(PROJECT_DOC_CATEGORIES\)/],
+  "file room server fns do not restrict documents to the preset category vocabulary",
 );
 await expectContains(
   "src/components/project/ProjectFileRoom.tsx",
-  [/project-docs/, /createSignedUrl/, /Upload document/, /prime_contract/],
-  "file room uploads to the private bucket + views via signed URL",
+  [
+    /project-docs/,
+    /createSignedUrl/,
+    /Upload document/,
+    /prime_contract/,
+    /Create a category…/,
+    /New category name/,
+    /categoryOptions\.map/,
+  ],
+  "file room uploads privately and creates, reuses, and filters custom categories",
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",

@@ -47,11 +47,14 @@ import {
   archiveProjectDocument,
   listProjectDocuments,
   PROJECT_DOC_CATEGORIES,
+  PROJECT_DOC_CATEGORY_MAX_LENGTH,
   recordProjectDocument,
   updateProjectDocument,
   type ProjectDocCategory,
   type ProjectDocumentRow,
 } from "@/lib/project-documents.functions";
+
+const CUSTOM_CATEGORY_VALUE = "__create_custom_category__";
 
 const CATEGORY_LABEL: Record<ProjectDocCategory, string> = {
   prime_contract: "Prime contract",
@@ -65,7 +68,25 @@ const CATEGORY_LABEL: Record<ProjectDocCategory, string> = {
 };
 
 function categoryLabel(value: string): string {
-  return CATEGORY_LABEL[value as ProjectDocCategory] ?? "Other";
+  return CATEGORY_LABEL[value as ProjectDocCategory] ?? (value.trim() || "Other");
+}
+
+function resolveCategoryChoice(
+  choice: string,
+  customName: string,
+  availableCategories: readonly string[],
+): string {
+  if (choice !== CUSTOM_CATEGORY_VALUE) return choice;
+  const typedName = customName.replace(/\s+/g, " ").trim();
+  if (!typedName) return "";
+
+  return (
+    availableCategories.find(
+      (category) =>
+        category.localeCompare(typedName, undefined, { sensitivity: "base" }) === 0 ||
+        categoryLabel(category).localeCompare(typedName, undefined, { sensitivity: "base" }) === 0,
+    ) ?? typedName
+  );
 }
 
 // A type-appropriate icon so the room scans quickly.
@@ -108,18 +129,30 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
   const docs = useMemo(() => docsQuery.data ?? [], [docsQuery.data]);
   const invalidate = () => qc.invalidateQueries({ queryKey: ["project-documents", projectId] });
 
-  const [filter, setFilter] = useState<"all" | ProjectDocCategory>("all");
+  const [filter, setFilter] = useState<string | null>(null);
   const countByCategory = useMemo(() => {
     const counts = new Map<string, number>();
     for (const d of docs) counts.set(d.category, (counts.get(d.category) ?? 0) + 1);
     return counts;
   }, [docs]);
-  const visible = filter === "all" ? docs : docs.filter((d) => d.category === filter);
+  const categoryOptions = useMemo(() => {
+    const presets = new Set<string>(PROJECT_DOC_CATEGORIES);
+    const custom = Array.from(
+      new Set(
+        docs
+          .map((doc) => doc.category.trim())
+          .filter((category) => category && !presets.has(category)),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+    return [...PROJECT_DOC_CATEGORIES, ...custom] as string[];
+  }, [docs]);
+  const visible = filter === null ? docs : docs.filter((d) => d.category === filter);
 
   // ── Upload flow ──
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [uploadCategory, setUploadCategory] = useState<ProjectDocCategory>("other");
+  const [uploadCategory, setUploadCategory] = useState<string>("other");
+  const [uploadCustomCategory, setUploadCustomCategory] = useState("");
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadDesc, setUploadDesc] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -127,12 +160,18 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
   const onFilePicked = (file: File) => {
     setPendingFile(file);
     setUploadTitle(file.name.replace(/\.[^.]+$/, ""));
-    setUploadCategory(filter === "all" ? "other" : filter);
+    setUploadCategory(filter ?? "other");
+    setUploadCustomCategory("");
     setUploadDesc("");
   };
 
   const doUpload = async () => {
     if (!pendingFile) return;
+    const category = resolveCategoryChoice(uploadCategory, uploadCustomCategory, categoryOptions);
+    if (!category) {
+      toast.error("Name the new category before uploading");
+      return;
+    }
     setUploading(true);
     const safeName = pendingFile.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
     const path = `${projectId}/${crypto.randomUUID()}-${safeName}`;
@@ -149,7 +188,7 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
       await recordFn({
         data: {
           projectId,
-          category: uploadCategory,
+          category,
           title: uploadTitle.trim() || pendingFile.name,
           description: uploadDesc,
           storage_path: path,
@@ -161,6 +200,7 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
       invalidate();
       toast.success("Document uploaded");
       setPendingFile(null);
+      setUploadCustomCategory("");
     } catch (err) {
       // The bytes landed but the record didn't — clean them up so we don't orphan.
       await supabase.storage.from("project-docs").remove([path]);
@@ -198,22 +238,20 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
 
   // ── Edit flow ──
   const [editing, setEditing] = useState<ProjectDocumentRow | null>(null);
-  const [editCategory, setEditCategory] = useState<ProjectDocCategory>("other");
+  const [editCategory, setEditCategory] = useState<string>("other");
+  const [editCustomCategory, setEditCustomCategory] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const openEdit = (doc: ProjectDocumentRow) => {
     setEditing(doc);
-    setEditCategory((doc.category as ProjectDocCategory) ?? "other");
+    setEditCategory(doc.category || "other");
+    setEditCustomCategory("");
     setEditTitle(doc.title);
     setEditDesc(doc.description);
   };
   const editMutation = useMutation({
-    mutationFn: (input: {
-      id: string;
-      category: ProjectDocCategory;
-      title: string;
-      description: string;
-    }) => updateFn({ data: input }),
+    mutationFn: (input: { id: string; category: string; title: string; description: string }) =>
+      updateFn({ data: input }),
     onSuccess: () => {
       invalidate();
       setEditing(null);
@@ -262,16 +300,16 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
         <FilterChip
           label="All"
           count={docs.length}
-          active={filter === "all"}
-          onClick={() => setFilter("all")}
+          active={filter === null}
+          onClick={() => setFilter(null)}
         />
-        {PROJECT_DOC_CATEGORIES.map((cat) => {
+        {categoryOptions.map((cat) => {
           const count = countByCategory.get(cat) ?? 0;
           if (count === 0 && filter !== cat) return null;
           return (
             <FilterChip
               key={cat}
-              label={CATEGORY_LABEL[cat]}
+              label={categoryLabel(cat)}
               count={count}
               active={filter === cat}
               onClick={() => setFilter(cat)}
@@ -292,7 +330,7 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
         </div>
       ) : visible.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
-          No documents in {categoryLabel(filter)} yet.
+          No documents in {categoryLabel(filter ?? "other")} yet.
         </p>
       ) : (
         <div className="overflow-hidden rounded-xl border border-hairline bg-card">
@@ -393,20 +431,39 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
               <span className="text-xs font-medium text-muted-foreground">Category</span>
               <Select
                 value={uploadCategory}
-                onValueChange={(v) => setUploadCategory(v as ProjectDocCategory)}
+                onValueChange={(value) => {
+                  setUploadCategory(value);
+                  if (value !== CUSTOM_CATEGORY_VALUE) setUploadCustomCategory("");
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PROJECT_DOC_CATEGORIES.map((cat) => (
+                  {categoryOptions.map((cat) => (
                     <SelectItem key={cat} value={cat}>
-                      {CATEGORY_LABEL[cat]}
+                      {categoryLabel(cat)}
                     </SelectItem>
                   ))}
+                  <SelectItem value={CUSTOM_CATEGORY_VALUE}>Create a category…</SelectItem>
                 </SelectContent>
               </Select>
             </label>
+            {uploadCategory === CUSTOM_CATEGORY_VALUE ? (
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">New category name</span>
+                <Input
+                  autoFocus
+                  value={uploadCustomCategory}
+                  onChange={(event) => setUploadCustomCategory(event.target.value)}
+                  placeholder="e.g. Warranty documents"
+                  maxLength={PROJECT_DOC_CATEGORY_MAX_LENGTH}
+                />
+                <span className="block text-[11px] text-muted-foreground">
+                  This category will be available for future documents in this file room.
+                </span>
+              </label>
+            ) : null}
             <label className="block space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Title</span>
               <Input value={uploadTitle} onChange={(e) => setUploadTitle(e.target.value)} />
@@ -426,7 +483,13 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
             <Button variant="outline" onClick={() => setPendingFile(null)} disabled={uploading}>
               Cancel
             </Button>
-            <Button onClick={doUpload} disabled={uploading}>
+            <Button
+              onClick={doUpload}
+              disabled={
+                uploading ||
+                !resolveCategoryChoice(uploadCategory, uploadCustomCategory, categoryOptions)
+              }
+            >
               {uploading ? "Uploading…" : "Upload"}
             </Button>
           </DialogFooter>
@@ -446,20 +509,36 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
               <span className="text-xs font-medium text-muted-foreground">Category</span>
               <Select
                 value={editCategory}
-                onValueChange={(v) => setEditCategory(v as ProjectDocCategory)}
+                onValueChange={(value) => {
+                  setEditCategory(value);
+                  if (value !== CUSTOM_CATEGORY_VALUE) setEditCustomCategory("");
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PROJECT_DOC_CATEGORIES.map((cat) => (
+                  {categoryOptions.map((cat) => (
                     <SelectItem key={cat} value={cat}>
-                      {CATEGORY_LABEL[cat]}
+                      {categoryLabel(cat)}
                     </SelectItem>
                   ))}
+                  <SelectItem value={CUSTOM_CATEGORY_VALUE}>Create a category…</SelectItem>
                 </SelectContent>
               </Select>
             </label>
+            {editCategory === CUSTOM_CATEGORY_VALUE ? (
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">New category name</span>
+                <Input
+                  autoFocus
+                  value={editCustomCategory}
+                  onChange={(event) => setEditCustomCategory(event.target.value)}
+                  placeholder="e.g. Warranty documents"
+                  maxLength={PROJECT_DOC_CATEGORY_MAX_LENGTH}
+                />
+              </label>
+            ) : null}
             <label className="block space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Title</span>
               <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
@@ -482,12 +561,19 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
                 editing &&
                 editMutation.mutate({
                   id: editing.id,
-                  category: editCategory,
+                  category: resolveCategoryChoice(
+                    editCategory,
+                    editCustomCategory,
+                    categoryOptions,
+                  ),
                   title: editTitle,
                   description: editDesc,
                 })
               }
-              disabled={editMutation.isPending}
+              disabled={
+                editMutation.isPending ||
+                !resolveCategoryChoice(editCategory, editCustomCategory, categoryOptions)
+              }
             >
               {editMutation.isPending ? "Saving…" : "Save"}
             </Button>
