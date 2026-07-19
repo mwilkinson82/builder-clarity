@@ -8590,6 +8590,149 @@ export type Database = {
         }
         Relationships: []
       }
+      tomorrow_plan_items: {
+        Row: {
+          activity: string
+          confirmation_status: string
+          confirmed_at: string | null
+          confirmed_by: string | null
+          constraint_owner: string
+          constraint_summary: string
+          cost_bucket_id: string | null
+          created_at: string
+          created_by: string | null
+          crew_count: number
+          equipment: string
+          equipment_ready: boolean
+          hours_per_person: number
+          id: string
+          information: string
+          information_ready: boolean
+          inspection: string
+          inspection_ready: boolean
+          materials: string
+          materials_ready: boolean
+          notes: string
+          people_per_crew: number
+          performer_name: string
+          performer_type: string
+          plan_date: string
+          planned_quantity: number
+          project_id: string
+          schedule_activity_id: string | null
+          status: string
+          subcontractor_id: string | null
+          target_rate: number | null
+          unit: string
+          updated_at: string
+          work_area: string
+          work_area_ready: boolean
+        }
+        Insert: {
+          activity?: string
+          confirmation_status?: string
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          constraint_owner?: string
+          constraint_summary?: string
+          cost_bucket_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          crew_count?: number
+          equipment?: string
+          equipment_ready?: boolean
+          hours_per_person?: number
+          id?: string
+          information?: string
+          information_ready?: boolean
+          inspection?: string
+          inspection_ready?: boolean
+          materials?: string
+          materials_ready?: boolean
+          notes?: string
+          people_per_crew?: number
+          performer_name?: string
+          performer_type?: string
+          plan_date: string
+          planned_quantity?: number
+          project_id: string
+          schedule_activity_id?: string | null
+          status?: string
+          subcontractor_id?: string | null
+          target_rate?: number | null
+          unit?: string
+          updated_at?: string
+          work_area?: string
+          work_area_ready?: boolean
+        }
+        Update: {
+          activity?: string
+          confirmation_status?: string
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          constraint_owner?: string
+          constraint_summary?: string
+          cost_bucket_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          crew_count?: number
+          equipment?: string
+          equipment_ready?: boolean
+          hours_per_person?: number
+          id?: string
+          information?: string
+          information_ready?: boolean
+          inspection?: string
+          inspection_ready?: boolean
+          materials?: string
+          materials_ready?: boolean
+          notes?: string
+          people_per_crew?: number
+          performer_name?: string
+          performer_type?: string
+          plan_date?: string
+          planned_quantity?: number
+          project_id?: string
+          schedule_activity_id?: string | null
+          status?: string
+          subcontractor_id?: string | null
+          target_rate?: number | null
+          unit?: string
+          updated_at?: string
+          work_area?: string
+          work_area_ready?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tomorrow_plan_items_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tomorrow_plan_items_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tomorrow_plan_items_schedule_activity_id_fkey"
+            columns: ["schedule_activity_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tomorrow_plan_items_subcontractor_id_fkey"
+            columns: ["subcontractor_id"]
+            isOneToOne: false
+            referencedRelation: "subcontractors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       transmittals: {
         Row: {
           attn: string
