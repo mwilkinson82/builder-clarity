@@ -66,7 +66,10 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   insert(values: unknown): DynamicSupabaseQuery;
   update(values: unknown): DynamicSupabaseQuery;
   delete(): DynamicSupabaseQuery;
-  upsert(values: unknown, options?: { onConflict?: string }): DynamicSupabaseQuery;
+  upsert(
+    values: unknown,
+    options?: { onConflict?: string; ignoreDuplicates?: boolean },
+  ): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): Promise<DynamicSupabaseResult<unknown[]>>;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
   is(column: string, value: unknown): DynamicSupabaseQuery;
@@ -7000,19 +7003,14 @@ const ensureHarborDemoDailyReportsWip = async (
     ]),
   );
 
+  const reportRows: Array<Record<string, unknown>> = [];
+  const wipRows: Array<Record<string, unknown>> = [];
+
   for (const day of HARBOR_DEMO_PRODUCTION_DAYS) {
     const reportPayload = buildHarborDemoFieldReportPayload(projectId, userId, day);
     const existingReportId = reportByDate.get(day.date);
-    if (!existingReportId) {
-      const { error } = await dynamicTable(supabase, "daily_reports").insert(reportPayload);
-      if (error?.code !== "23505" && error) throw new Error(error.message);
-    } else if (upgradeExistingFixtures) {
-      const { id: _id, ...patch } = reportPayload;
-      const { error } = await dynamicTable(supabase, "daily_reports")
-        .update(patch)
-        .eq("id", existingReportId);
-      if (error) throw new Error(error.message);
-    }
+    if (!existingReportId || upgradeExistingFixtures)
+      reportRows.push({ ...reportPayload, id: existingReportId || reportPayload.id });
 
     for (const line of day.lines) {
       const costBucketId = ids.bucketByCode.get(line.costCode);
@@ -7027,17 +7025,30 @@ const ensureHarborDemoDailyReportsWip = async (
         subcontractorId,
         activityIdByCode.get(line.scheduleActivityCode) || null,
       );
-      if (!wipIds.has(payload.id)) {
-        const { error } = await dynamicTable(supabase, "daily_wip_entries").insert(payload);
-        if (error?.code !== "23505" && error) throw new Error(error.message);
-      } else if (upgradeExistingFixtures) {
-        const { id: _id, ...patch } = payload;
-        const { error } = await dynamicTable(supabase, "daily_wip_entries")
-          .update(patch)
-          .eq("id", payload.id);
-        if (error) throw new Error(error.message);
-      }
+      if (!wipIds.has(payload.id) || upgradeExistingFixtures) wipRows.push(payload);
     }
+  }
+
+  // A full Harbor production story is 30 reports and 53 measured work lines.
+  // Writing them one at a time made the version adapter exceed the server
+  // request window, leaving the registry on v1 and every later visit repeating
+  // the same partial upgrade. Keep the canonical reset atomic at the table
+  // level so every company receives the whole teaching dataset in a handful of
+  // requests.
+  if (reportRows.length > 0) {
+    const reportWrite = await dynamicTable(supabase, "daily_reports").upsert(reportRows, {
+      onConflict: "project_id,report_date",
+      ignoreDuplicates: !upgradeExistingFixtures,
+    });
+    if (reportWrite.error) throw new Error(reportWrite.error.message);
+  }
+
+  if (wipRows.length > 0) {
+    const wipWrite = await dynamicTable(supabase, "daily_wip_entries").upsert(wipRows, {
+      onConflict: "id",
+      ignoreDuplicates: !upgradeExistingFixtures,
+    });
+    if (wipWrite.error) throw new Error(wipWrite.error.message);
   }
 };
 
