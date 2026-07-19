@@ -2991,7 +2991,11 @@ function ProjectPage() {
                 scheduleActivities={scheduleData?.activities ?? []}
                 subcontracts={subcontractsQuery.data?.subcontracts ?? []}
                 actualEntries={dailyWipEntriesQuery.data ?? []}
-                initialDate={isHarborDemoProject(project) ? "2026-07-14" : undefined}
+                initialDate={
+                  isHarborDemoProject(project as unknown as Record<string, unknown>)
+                    ? "2026-07-14"
+                    : undefined
+                }
               />
             </TabsContent>
 

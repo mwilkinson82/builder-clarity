@@ -209,7 +209,6 @@ type BillingEnhancementProps = {
   onUpdateBucketSettings: (id: string, patch: BucketSettingsPatch) => void;
 };
 
-const centsToDollars = (value: number) => value / 100;
 const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
 const parsePercentInput = (value: string | number) => {
   const parsed = typeof value === "number" ? value : Number(value);

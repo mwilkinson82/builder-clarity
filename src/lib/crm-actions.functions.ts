@@ -5,6 +5,7 @@ import {
   CRM_ONBOARDING_TASK_TEMPLATES,
   datePlusDays,
   followupEmailHtml,
+  type CrmMeetingBriefData,
 } from "@/lib/crm-action-suite-domain";
 import {
   currentOrganizationId,
@@ -43,7 +44,7 @@ export type CrmMeetingBrief = {
   meeting_at: string | null;
   attendee_names: string[];
   meeting_goal: string;
-  brief_data: Record<string, unknown>;
+  brief_data: CrmMeetingBriefData;
   status: "draft" | "final" | "archived";
   model_used: string;
   generated_at: string | null;
@@ -159,7 +160,17 @@ export const listCrmActionSuite = createServerFn({ method: "GET" })
           : [],
         meeting_goal: str(brief.meeting_goal),
         brief_data:
-          brief.brief_data && typeof brief.brief_data === "object" ? row(brief.brief_data) : {},
+          brief.brief_data && typeof brief.brief_data === "object"
+            ? (row(brief.brief_data) as CrmMeetingBriefData)
+            : {
+                executive_summary: "",
+                relationship_context: [],
+                desired_outcomes: [],
+                questions_to_ask: [],
+                risks_to_surface: [],
+                value_to_bring: [],
+                next_step_options: [],
+              },
         status: str(brief.status, "draft") as CrmMeetingBrief["status"],
         model_used: str(brief.model_used),
         generated_at: nullableStr(brief.generated_at),

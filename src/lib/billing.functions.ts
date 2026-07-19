@@ -13,6 +13,7 @@ import { computeBudgetLedger, type BudgetLedger, type BudgetLedgerRow } from "@/
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
 import { latestPercentBySubBucket } from "@/lib/daily-wip";
 import type { ExposureLike, ExposureAllocationLike, HoldClass } from "@/lib/exposure-allocation";
+import type { Json } from "@/integrations/supabase/types";
 import {
   normalizeProductionSovCertification,
   type ProductionSovCertificationRow,
@@ -1007,7 +1008,7 @@ export const applyCertifiedSovPositionToBilling = createServerFn({ method: "POST
       }
       throw new Error(result.error.message);
     }
-    return result.data as Record<string, unknown>;
+    return result.data as Json;
   });
 
 // Optional second slice for the contractor-facing cost ledger. Keeping it
@@ -1082,7 +1083,7 @@ export const recordCostActualPayment = createServerFn({ method: "POST" })
       }
       throw new Error(result.error.message);
     }
-    return result.data as Record<string, unknown>;
+    return result.data as Json;
   });
 
 const saveCostBudgetItemInput = z.object({

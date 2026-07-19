@@ -319,8 +319,8 @@ async function loadOrganizationStripe(
     connectStatus: selected.connectStatus,
     ready: selected.ready,
     stripePaymentLimitCents:
-      Number((data as Record<string, unknown> | null)?.stripe_payment_limit_cents) > 0
-        ? Number((data as Record<string, unknown>).stripe_payment_limit_cents)
+      Number((data as unknown as Record<string, unknown> | null)?.stripe_payment_limit_cents) > 0
+        ? Number((data as unknown as Record<string, unknown>).stripe_payment_limit_cents)
         : DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
   };
 }
