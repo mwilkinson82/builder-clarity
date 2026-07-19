@@ -10,6 +10,7 @@ export const AI_SCOPE_BRIEF_CREDITS_PER_PLAN_SET = 2;
 export const AI_ASSEMBLY_ASSIST_CREDITS_PER_REVIEW = 1;
 export const AI_REVISION_MATCH_CREDITS_PER_100_SHEETS = 1;
 export const AI_REVISION_SCOPE_REVIEW_CREDITS_PER_PAIR = 1;
+export const AI_SHEET_IDENTITY_CREDITS_PER_PLAN_SET = 1;
 export const DEFAULT_MAX_SHEETS_PER_SCAN = 30;
 
 export type CreditLedgerReason =
@@ -22,6 +23,7 @@ export type CreditLedgerReason =
   | "ai_assembly_assumptions"
   | "ai_revision_match"
   | "ai_revision_scope_review"
+  | "ai_sheet_identity"
   | "ai_crm_assist"
   | "refund"
   | "admin_adjustment";

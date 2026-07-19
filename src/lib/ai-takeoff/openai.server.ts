@@ -134,9 +134,11 @@ async function callOpenAiResponsesVision({
     model,
     input: [{ role: "user", content }],
     max_output_tokens: maxTokens,
-    reasoning: { effort: reasoningEffort },
     store: false,
   };
+  if (isReasoningModel(model)) {
+    requestBody.reasoning = { effort: reasoningEffort };
+  }
   if (responseJsonSchema) {
     requestBody.text = {
       format: {

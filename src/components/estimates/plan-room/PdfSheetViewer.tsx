@@ -291,12 +291,14 @@ export async function processPlanSetSheets({
   extractIdentityText = false,
   renderThumbnails = false,
   throttleMs = 0,
+  onProgress,
 }: {
   source: { url: string } | { data: ArrayBuffer };
   sheets: Array<Pick<PlanSheetRow, "id" | "page_number">>;
   extractIdentityText?: boolean;
   renderThumbnails?: boolean;
   throttleMs?: number;
+  onProgress?: (completed: number, total: number) => void;
 }): Promise<ProcessedSheetPage[]> {
   const pdfjs = await import("pdfjs-dist");
   configurePdfWorker(pdfjs);
@@ -344,6 +346,7 @@ export async function processPlanSetSheets({
       // A single unreadable page must not sink the rest of the set.
     }
     results.push(result);
+    onProgress?.(results.length, sheets.length);
     if (throttleMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, throttleMs));
     }
