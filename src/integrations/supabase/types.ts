@@ -570,7 +570,6 @@ export type Database = {
           cost_code: string
           created_at: string
           description: string
-          financial_direction: string
           id: string
           materials_stored_previous_cents: number
           materials_stored_this_period_cents: number
@@ -623,7 +622,6 @@ export type Database = {
           cost_code?: string
           created_at?: string
           description?: string
-          financial_direction?: string
           id?: string
           materials_stored_previous_cents?: number
           materials_stored_this_period_cents?: number
@@ -736,7 +734,6 @@ export type Database = {
           cost_code?: string
           created_at?: string
           description?: string
-          financial_direction?: string
           id?: string
           project_id: string
           updated_at?: string
@@ -908,6 +905,7 @@ export type Database = {
           created_at: string
           date_initiated: string | null
           description: string
+          financial_direction: string
           id: string
           linked_claim_id: string | null
           linked_exposure_id: string | null
@@ -934,6 +932,7 @@ export type Database = {
           created_at?: string
           date_initiated?: string | null
           description?: string
+          financial_direction?: string
           id?: string
           linked_claim_id?: string | null
           linked_exposure_id?: string | null
@@ -960,6 +959,7 @@ export type Database = {
           created_at?: string
           date_initiated?: string | null
           description?: string
+          financial_direction?: string
           id?: string
           linked_claim_id?: string | null
           linked_exposure_id?: string | null
