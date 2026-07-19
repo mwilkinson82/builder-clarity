@@ -57,6 +57,7 @@ import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
 import { DailyWipWorkspace } from "@/components/outcome/DailyWipWorkspace";
+import { TomorrowPlanWorkspace } from "@/components/outcome/TomorrowPlanWorkspace";
 import { ProjectFileRoom } from "@/components/project/ProjectFileRoom";
 import { SubmittalLog } from "@/components/project/SubmittalLog";
 import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
@@ -200,6 +201,7 @@ import { toast } from "sonner";
 import {
   Activity,
   ArrowLeft,
+  CalendarCheck2,
   CalendarClock,
   ChevronDown,
   ChevronRight,
@@ -257,6 +259,7 @@ const PROJECT_TAB_VALUES = [
   "client-portal",
   "ior-report",
   "daily-reports",
+  "tomorrow-plan",
   "daily-wip",
   "file-room",
   "rfi-submittals",
@@ -299,7 +302,7 @@ const PROJECT_NAV_GROUPS: ProjectNavGroup[] = [
   {
     key: "field",
     label: "Field",
-    values: ["daily-reports", "daily-wip", "inspections"],
+    values: ["daily-reports", "tomorrow-plan", "daily-wip", "inspections"],
   },
   {
     key: "client-records",
@@ -2393,6 +2396,12 @@ function ProjectPage() {
       icon: FileText,
     },
     {
+      value: "tomorrow-plan",
+      label: "Tomorrow Plan",
+      detail: "Ready the work",
+      icon: CalendarCheck2,
+    },
+    {
       value: "daily-wip",
       label: "Daily WIP",
       detail: "Work in place",
@@ -2972,6 +2981,17 @@ function ProjectPage() {
                   setFocusedWipDate(date);
                   setProjectTab("daily-wip");
                 }}
+              />
+            </TabsContent>
+
+            <TabsContent value="tomorrow-plan" className="mt-0">
+              <TomorrowPlanWorkspace
+                projectId={projectId}
+                buckets={buckets}
+                scheduleActivities={scheduleData?.activities ?? []}
+                subcontracts={subcontractsQuery.data?.subcontracts ?? []}
+                actualEntries={dailyWipEntriesQuery.data ?? []}
+                initialDate={isHarborDemoProject(project) ? "2026-07-14" : undefined}
               />
             </TabsContent>
 

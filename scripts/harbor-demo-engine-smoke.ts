@@ -5,6 +5,10 @@ import {
   HARBOR_DEMO_MODULES,
   planHarborDemoModules,
 } from "../src/lib/demo-seed.ts";
+import {
+  HARBOR_DEMO_PRODUCTION_DAYS,
+  HARBOR_DEMO_TOMORROW_PLAN_DATE,
+} from "../src/lib/harbor-production-demo.ts";
 
 const moduleKeys = HARBOR_DEMO_MODULES.map((module) => module.key);
 assert.equal(new Set(moduleKeys).size, moduleKeys.length, "Demo module keys must be unique.");
@@ -38,6 +42,30 @@ assert.deepEqual(
 );
 assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionMeasure, "LF");
 assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionTargetRate, 7.5);
+assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionPeriod.start, "2026-06-02");
+assert.equal(HARBOR_DEMO_PRODUCTION_DAYS.length, 30);
+assert.equal(HARBOR_DEMO_TOMORROW_PLAN_DATE, "2026-07-14");
+assert.ok(
+  HARBOR_DEMO_PRODUCTION_DAYS.every((day) => {
+    const weekday = new Date(`${day.date}T12:00:00Z`).getUTCDay();
+    return weekday !== 0 && weekday !== 6;
+  }),
+  "The Harbor production history must contain working days only.",
+);
+assert.deepEqual(
+  Array.from(
+    new Set(HARBOR_DEMO_PRODUCTION_DAYS.flatMap((day) => day.lines.map((line) => line.key))),
+  ).sort(),
+  ["concrete", "drywall", "electrical"],
+);
+assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "daily-reports-wip")?.version, 2);
+assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "production-control")?.version, 2);
+assert.equal(
+  HARBOR_DEMO_MODULES.find((module) => module.key === "tomorrow-plan")?.dependsOn.includes(
+    "daily-reports-wip",
+  ),
+  true,
+);
 assert.equal(
   HARBOR_DEMO_MODULES.find((module) => module.key === "billing-workspace")?.dependsOn.includes(
     "production-control",
@@ -79,11 +107,12 @@ assert.doesNotMatch(
 assert.match(projectsSource, /ensureHarborDemoBudgetSov/);
 assert.match(projectsSource, /ensureHarborDemoSubcontractBuyout/);
 assert.match(projectsSource, /ensureHarborDemoDailyReportsWip/);
+assert.match(projectsSource, /ensureHarborDemoTomorrowPlan/);
 assert.match(projectsSource, /ensureHarborDemoBillingWorkspace/);
 assert.match(projectsSource, /Progress payment #1/);
 assert.match(projectsSource, /Supplemental finishing crew/);
 assert.match(projectsSource, /the PM certifies production in Daily WIP; accounting chooses/);
-assert.match(projectsSource, /Production measure: LF of conduit per labor-hour/);
+assert.match(projectsSource, /Production measure: \$\{line\.unit\} installed per labor-hour/);
 
 const migrationSource = readFileSync(
   "supabase/migrations/20260715221232_harbor_demo_module_versions.sql",
@@ -97,6 +126,19 @@ assert.match(migrationSource, /can_manage_project\(project_id\)/i);
 assert.match(
   migrationSource,
   /revoke all on table public\.demo_seed_module_versions from public, anon/i,
+);
+
+const tomorrowPlanMigration = readFileSync(
+  "supabase/migrations/20260719172142_tomorrow_plan.sql",
+  "utf8",
+);
+assert.match(tomorrowPlanMigration, /create table if not exists public\.tomorrow_plan_items/i);
+assert.match(tomorrowPlanMigration, /enable row level security/i);
+assert.match(tomorrowPlanMigration, /to authenticated[\s\S]*can_read_project\(project_id\)/i);
+assert.match(tomorrowPlanMigration, /can_manage_project\(project_id\)/i);
+assert.match(
+  tomorrowPlanMigration,
+  /revoke all on table public\.tomorrow_plan_items from public, anon/i,
 );
 
 console.log("Harbor demo engine smoke passed.");

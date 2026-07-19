@@ -24,6 +24,12 @@ import {
   type HarborDemoModuleKey,
 } from "@/lib/demo-seed";
 import {
+  HARBOR_DEMO_PRODUCTION_DAYS,
+  HARBOR_DEMO_TOMORROW_PLAN_DATE,
+  type HarborProductionDay,
+  type HarborProductionLine,
+} from "@/lib/harbor-production-demo";
+import {
   computeRollup,
   computeScheduleVarianceWeeks,
   evaluateWarnings,
@@ -6857,40 +6863,10 @@ const resetHarborDemoSubcontractBuyout = async (
   }
 };
 
-const harborDemoFieldDays = [
-  {
-    date: "2026-07-11",
-    activity: "Electrical rough-in — main lobby north",
-    crews: 3,
-    quantity: 350,
-    percent: 7,
-    weather: "Clear, 82F",
-    narrative: "ALP Electric began main-lobby conduit and junction-box rough-in.",
-  },
-  {
-    date: "2026-07-12",
-    activity: "Electrical rough-in — main lobby north",
-    crews: 4,
-    quantity: 450,
-    percent: 11,
-    weather: "Clear, 84F",
-    narrative: "ALP Electric continued conduit, wire, and junction-box installation.",
-  },
-  {
-    date: "2026-07-13",
-    activity: "Northeast Electric - Main Lobby Area North - Rough-in",
-    crews: 4,
-    quantity: 500,
-    percent: 15,
-    weather: "Sunny, 80F",
-    narrative: "Electrical rough-in continued in the main lobby north area.",
-  },
-] as const;
-
 const buildHarborDemoFieldReportPayload = (
   projectId: string,
   userId: string,
-  day: (typeof harborDemoFieldDays)[number],
+  day: HarborProductionDay,
 ) => ({
   id: harborDemoStableId(projectId, `daily-report-${day.date}`),
   project_id: projectId,
@@ -6898,13 +6874,20 @@ const buildHarborDemoFieldReportPayload = (
   author: HARBOR_DEMO_PROJECT_MANAGER,
   created_by: userId,
   weather: day.weather,
-  crew_count: day.crews,
-  manpower: `${day.crews} electrical crews; 2 people per crew; 8 hours per person.`,
-  work_performed: day.narrative,
-  delays: "No impacts to the electrical rough-in sequence.",
+  crew_count: day.lines.reduce((sum, line) => sum + line.crews, 0),
+  manpower: day.lines
+    .map(
+      (line) =>
+        `${line.crews} ${line.key} crew${line.crews === 1 ? "" : "s"}; ${line.peoplePerCrew} people per crew; ${line.hours} hours per person`,
+    )
+    .join(". "),
+  work_performed: day.lines.map((line) => `${line.activity}: ${line.note}`).join(" "),
+  delays: day.lines.some((line) => /slowed|fell below/i.test(line.note))
+    ? "Field constraint affected production; see the linked WIP line and Tomorrow Plan."
+    : "No material impact to the planned sequence.",
   safety_notes: "Pre-task planning complete; no incidents.",
-  quality_notes: "Supports and box elevations checked before close-in.",
-  visitors: "Project manager and electrical foreman.",
+  quality_notes: "Foremen verified installed quantities and released work before close-in.",
+  visitors: "Project manager and trade foremen.",
   notes: harborDemoSourceNote,
   client_visible: false,
 });
@@ -6912,45 +6895,45 @@ const buildHarborDemoFieldReportPayload = (
 const buildHarborDemoFieldWipPayload = (
   projectId: string,
   userId: string,
-  day: (typeof harborDemoFieldDays)[number],
+  day: HarborProductionDay,
+  line: HarborProductionLine,
   costBucketId: string,
   subcontractorId: string,
   scheduleActivityId: string | null,
 ) => ({
-  id: harborDemoStableId(projectId, `daily-wip-${day.date}`),
+  id: harborDemoStableId(projectId, `daily-wip-${day.date}-${line.key}`),
   project_id: projectId,
   cost_bucket_id: costBucketId,
   schedule_activity_id: scheduleActivityId,
   subcontractor_id: subcontractorId,
   unmatched_vendor_name: "",
   entry_date: day.date,
-  activity: day.activity,
-  crew_count: day.crews,
-  people_per_crew: 2,
-  hours: 8,
+  activity: line.activity,
+  crew_count: line.crews,
+  people_per_crew: line.peoplePerCrew,
+  hours: line.hours,
   labor_rate: 110,
-  material_cost: day.date === "2026-07-13" ? 0 : 2500,
-  equipment_cost: day.date === "2026-07-13" ? 1000 : 0,
+  material_cost: line.materialCost,
+  equipment_cost: line.equipmentCost,
   material_items:
-    day.date === "2026-07-13"
-      ? []
-      : [{ description: "Conduit, boxes, fittings, and wire", amount: 2500 }],
-  equipment_items: day.date === "2026-07-13" ? [{ description: "Man Lift", amount: 1000 }] : [],
-  quantity: day.quantity,
-  unit: HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionMeasure,
-  quantity_items: [
-    { quantity: day.quantity, unit: "LF", description: "Conduit" },
-    { quantity: day.quantity, unit: "LF", description: "Wire" },
-    { quantity: 25, unit: "EA", description: "Junction Boxes" },
-  ],
-  target_production_rate: HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionTargetRate,
+    line.materialCost > 0
+      ? [{ description: `${line.key} material release`, amount: line.materialCost }]
+      : [],
+  equipment_items:
+    line.equipmentCost > 0
+      ? [{ description: `${line.key} access equipment`, amount: line.equipmentCost }]
+      : [],
+  quantity: line.quantity,
+  unit: line.unit,
+  quantity_items: [{ quantity: line.quantity, unit: line.unit, description: line.activity }],
+  target_production_rate: line.targetRate,
   percent_basis: "sov",
-  field_percent_complete: day.percent,
-  percent_complete: day.percent,
+  field_percent_complete: line.percent,
+  percent_complete: line.percent,
   percent_overridden_at: null,
   wip_reviewed_at: `${day.date}T20:00:00.000Z`,
   wip_reviewed_by: userId,
-  notes: `${harborDemoSourceNote} Production measure: LF of conduit per labor-hour.`,
+  notes: `${harborDemoSourceNote} ${line.note} Production measure: ${line.unit} installed per labor-hour.`,
   created_by: userId,
 });
 
@@ -6958,12 +6941,34 @@ const ensureHarborDemoDailyReportsWip = async (
   supabase: unknown,
   projectId: string,
   userId: string,
+  upgradeExistingFixtures = false,
 ) => {
   const ids = await ensureHarborDemoSubcontractBuyout(supabase, projectId, userId);
-  const costBucketId = ids.bucketByCode.get("1500");
-  const subcontractorId = ids.subcontractorByKey.get("electrical");
-  if (!costBucketId || !subcontractorId)
-    throw new Error("Harbor electrical production prerequisites are missing.");
+  for (const key of ["electrical", "concrete", "drywall"] as const) {
+    if (!ids.subcontractorByKey.get(key))
+      throw new Error(`Harbor ${key} production prerequisites are missing.`);
+  }
+
+  if (upgradeExistingFixtures) {
+    const legacyWipDelete = await dynamicTable(supabase, "daily_wip_entries")
+      .delete()
+      .in(
+        "id",
+        ["2026-07-11", "2026-07-12", "2026-07-13"].map((date) =>
+          harborDemoStableId(projectId, `daily-wip-${date}`),
+        ),
+      );
+    if (legacyWipDelete.error) throw new Error(legacyWipDelete.error.message);
+    const legacyReportDelete = await dynamicTable(supabase, "daily_reports")
+      .delete()
+      .in(
+        "id",
+        ["2026-07-11", "2026-07-12"].map((date) =>
+          harborDemoStableId(projectId, `daily-report-${date}`),
+        ),
+      );
+    if (legacyReportDelete.error) throw new Error(legacyReportDelete.error.message);
+  }
 
   const [reportResult, wipResult, activityResult] = await Promise.all([
     dynamicTable(supabase, "daily_reports").select("id,report_date").eq("project_id", projectId),
@@ -6971,51 +6976,67 @@ const ensureHarborDemoDailyReportsWip = async (
       .select("id,entry_date,cost_bucket_id,subcontractor_id")
       .eq("project_id", projectId),
     dynamicTable(supabase, "schedule_activities")
-      .select("id")
-      .eq("project_id", projectId)
-      .eq("activity_id", "26-010")
-      .maybeSingle(),
+      .select("id,activity_id")
+      .eq("project_id", projectId),
   ]);
   if (reportResult.error) throw new Error(reportResult.error.message);
   if (wipResult.error) throw new Error(wipResult.error.message);
   if (activityResult.error && !isScheduleActivitiesSchemaError(activityResult.error))
     throw new Error(activityResult.error.message);
 
-  const reportDates = new Set(
-    ((reportResult.data ?? []) as Array<Record<string, unknown>>).map((row) =>
+  const reportByDate = new Map(
+    ((reportResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
       str(row.report_date),
-    ),
+      str(row.id),
+    ]),
   );
-  const wipRows = (wipResult.data ?? []) as Array<Record<string, unknown>>;
-  const scheduleActivityId =
-    str((activityResult.data as Record<string, unknown> | null)?.id) || null;
+  const wipIds = new Set(
+    ((wipResult.data ?? []) as Array<Record<string, unknown>>).map((row) => str(row.id)),
+  );
+  const activityIdByCode = new Map(
+    ((activityResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
+      str(row.activity_id),
+      str(row.id),
+    ]),
+  );
 
-  for (const day of harborDemoFieldDays) {
-    if (!reportDates.has(day.date)) {
-      const { error } = await dynamicTable(supabase, "daily_reports").insert(
-        buildHarborDemoFieldReportPayload(projectId, userId, day),
-      );
+  for (const day of HARBOR_DEMO_PRODUCTION_DAYS) {
+    const reportPayload = buildHarborDemoFieldReportPayload(projectId, userId, day);
+    const existingReportId = reportByDate.get(day.date);
+    if (!existingReportId) {
+      const { error } = await dynamicTable(supabase, "daily_reports").insert(reportPayload);
       if (error?.code !== "23505" && error) throw new Error(error.message);
+    } else if (upgradeExistingFixtures) {
+      const { id: _id, ...patch } = reportPayload;
+      const { error } = await dynamicTable(supabase, "daily_reports")
+        .update(patch)
+        .eq("id", existingReportId);
+      if (error) throw new Error(error.message);
     }
 
-    const existingWip = wipRows.find(
-      (row) =>
-        str(row.entry_date) === day.date &&
-        str(row.cost_bucket_id) === costBucketId &&
-        str(row.subcontractor_id) === subcontractorId,
-    );
-    if (!existingWip) {
-      const { error } = await dynamicTable(supabase, "daily_wip_entries").insert(
-        buildHarborDemoFieldWipPayload(
-          projectId,
-          userId,
-          day,
-          costBucketId,
-          subcontractorId,
-          scheduleActivityId,
-        ),
+    for (const line of day.lines) {
+      const costBucketId = ids.bucketByCode.get(line.costCode);
+      const subcontractorId = ids.subcontractorByKey.get(line.key);
+      if (!costBucketId || !subcontractorId) continue;
+      const payload = buildHarborDemoFieldWipPayload(
+        projectId,
+        userId,
+        day,
+        line,
+        costBucketId,
+        subcontractorId,
+        activityIdByCode.get(line.scheduleActivityCode) || null,
       );
-      if (error?.code !== "23505" && error) throw new Error(error.message);
+      if (!wipIds.has(payload.id)) {
+        const { error } = await dynamicTable(supabase, "daily_wip_entries").insert(payload);
+        if (error?.code !== "23505" && error) throw new Error(error.message);
+      } else if (upgradeExistingFixtures) {
+        const { id: _id, ...patch } = payload;
+        const { error } = await dynamicTable(supabase, "daily_wip_entries")
+          .update(patch)
+          .eq("id", payload.id);
+        if (error) throw new Error(error.message);
+      }
     }
   }
 };
@@ -7025,46 +7046,216 @@ const resetHarborDemoDailyReportsWip = async (
   projectId: string,
   userId: string,
 ) => {
-  await ensureHarborDemoDailyReportsWip(supabase, projectId, userId);
+  await ensureHarborDemoDailyReportsWip(supabase, projectId, userId, true);
+};
+
+const ensureHarborDemoTomorrowPlan = async (
+  supabase: unknown,
+  projectId: string,
+  userId: string,
+  overwrite = false,
+) => {
   const ids = await ensureHarborDemoSubcontractBuyout(supabase, projectId, userId);
-  const costBucketId = ids.bucketByCode.get("1500");
-  const subcontractorId = ids.subcontractorByKey.get("electrical");
-  if (!costBucketId || !subcontractorId) return;
-  const activityResult = await dynamicTable(supabase, "schedule_activities")
-    .select("id")
-    .eq("project_id", projectId)
-    .eq("activity_id", "26-010")
-    .maybeSingle();
-  if (activityResult.error && !isScheduleActivitiesSchemaError(activityResult.error))
-    throw new Error(activityResult.error.message);
-  const scheduleActivityId =
-    str((activityResult.data as Record<string, unknown> | null)?.id) || null;
+  const [activityResult, existingResult] = await Promise.all([
+    dynamicTable(supabase, "schedule_activities")
+      .select("id,activity_id")
+      .eq("project_id", projectId),
+    dynamicTable(supabase, "tomorrow_plan_items").select("id").eq("project_id", projectId),
+  ]);
+  if (activityResult.error) throw new Error(activityResult.error.message);
+  if (existingResult.error) throw new Error(existingResult.error.message);
 
-  for (const day of harborDemoFieldDays) {
-    const reportPayload = buildHarborDemoFieldReportPayload(projectId, userId, day);
-    const { id: _reportId, ...reportPatch } = reportPayload;
-    const { error: reportError } = await dynamicTable(supabase, "daily_reports")
-      .update(reportPatch)
-      .eq("project_id", projectId)
-      .eq("report_date", day.date);
-    if (reportError) throw new Error(reportError.message);
+  const activityIdByCode = new Map(
+    ((activityResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
+      str(row.activity_id),
+      str(row.id),
+    ]),
+  );
+  const existingIds = new Set(
+    ((existingResult.data ?? []) as Array<Record<string, unknown>>).map((row) => str(row.id)),
+  );
+  const fixtures = [
+    {
+      seedKey: "actual-comparison-electrical-2026-07-13",
+      plan_date: "2026-07-13",
+      scheduleCode: "26-010",
+      costCode: "1500",
+      performerKey: "electrical",
+      activity: "Branch wiring and device rough-in",
+      work_area: "Second floor and service corridor",
+      performer_type: "subcontractor",
+      performer_name: "ALP Electric",
+      crew_count: 2,
+      people_per_crew: 3,
+      hours_per_person: 8,
+      planned_quantity: 410,
+      unit: "LF",
+      target_rate: 7.5,
+      materials: "Branch wire, conduit, boxes, and fittings staged by area",
+      materials_ready: true,
+      equipment: "Scissor lift and gang boxes",
+      equipment_ready: true,
+      information: "Released reflected ceiling and lighting-control drawings",
+      information_ready: true,
+      inspection: "Rough-in inspection walk scheduled after lunch",
+      inspection_ready: true,
+      work_area_ready: true,
+      status: "ready",
+      constraint_summary: "",
+      constraint_owner: "",
+      confirmation_status: "confirmed",
+      notes:
+        "Teaching comparison: the next Daily WIP line closes this promise against actual output.",
+    },
+    {
+      seedKey: "electrical-2026-07-14",
+      plan_date: HARBOR_DEMO_TOMORROW_PLAN_DATE,
+      scheduleCode: "26-010",
+      costCode: "1500",
+      performerKey: "electrical",
+      activity: "Complete east-wing branch wiring",
+      work_area: "East wing bedrooms and corridor",
+      performer_type: "subcontractor",
+      performer_name: "ALP Electric",
+      crew_count: 2,
+      people_per_crew: 3,
+      hours_per_person: 8,
+      planned_quantity: 420,
+      unit: "LF",
+      target_rate: 7.5,
+      materials: "Wire, conduit, boxes, and fittings staged in the east wing",
+      materials_ready: true,
+      equipment: "Scissor lift charged and released",
+      equipment_ready: true,
+      information: "Released lighting and device layout",
+      information_ready: true,
+      inspection: "Foreman quality walk before rough inspection",
+      inspection_ready: true,
+      work_area_ready: true,
+      status: "ready",
+      constraint_summary: "",
+      constraint_owner: "",
+      confirmation_status: "confirmed",
+      notes: "Ready means the work can start without waiting when the crew arrives.",
+    },
+    {
+      seedKey: "drywall-2026-07-14",
+      plan_date: HARBOR_DEMO_TOMORROW_PLAN_DATE,
+      scheduleCode: "09-020",
+      costCode: "0900",
+      performerKey: "drywall",
+      activity: "Finish and sand main-level drywall",
+      work_area: "Main level and stair hall",
+      performer_type: "subcontractor",
+      performer_name: "Summit Drywall & Finishes",
+      crew_count: 1,
+      people_per_crew: 4,
+      hours_per_person: 8,
+      planned_quantity: 850,
+      unit: "SF",
+      target_rate: 25,
+      materials: "Compound, corner bead, and sanding media staged",
+      materials_ready: true,
+      equipment: "Rolling scaffold and dust-control equipment",
+      equipment_ready: true,
+      information: "Final MEP penetration closeout list is due before 7 AM",
+      information_ready: false,
+      inspection: "PM finish-quality mockup review at 10 AM",
+      inspection_ready: true,
+      work_area_ready: true,
+      status: "at_risk",
+      constraint_summary:
+        "MEP must close the remaining penetrations before the finish crew reaches the stair hall.",
+      constraint_owner: "MEP coordinator",
+      confirmation_status: "planned",
+      notes:
+        "Treat the constraint tonight; do not discover it with four finishers standing idle tomorrow.",
+    },
+    {
+      seedKey: "cabinet-delivery-2026-07-14",
+      plan_date: HARBOR_DEMO_TOMORROW_PLAN_DATE,
+      scheduleCode: "12-020",
+      costCode: "0130",
+      performerKey: null,
+      activity: "Receive and inspect replacement cabinet package",
+      work_area: "Loading area and kitchen",
+      performer_type: "vendor",
+      performer_name: "Millwork manufacturer",
+      crew_count: 1,
+      people_per_crew: 2,
+      hours_per_person: 4,
+      planned_quantity: 1,
+      unit: "delivery",
+      target_rate: null,
+      materials: "Replacement cabinet package has not been released from the manufacturer",
+      materials_ready: false,
+      equipment: "Protected laydown area and pallet jack",
+      equipment_ready: true,
+      information: "Approved shop drawings and damage checklist",
+      information_ready: true,
+      inspection: "PM and superintendent receiving inspection",
+      inspection_ready: true,
+      work_area_ready: true,
+      status: "blocked",
+      constraint_summary:
+        "Do not mobilize the receiving crew until the manufacturer confirms the replacement shipment.",
+      constraint_owner: "Procurement lead",
+      confirmation_status: "planned",
+      notes:
+        "This blocked commitment is the bridge to procurement, schedule exposure, contract notice, and Risk Tally treatment.",
+    },
+  ] as const;
 
-    const wipPayload = buildHarborDemoFieldWipPayload(
-      projectId,
-      userId,
-      day,
-      costBucketId,
-      subcontractorId,
-      scheduleActivityId,
-    );
-    const { id: _wipId, ...wipPatch } = wipPayload;
-    const { error: wipError } = await dynamicTable(supabase, "daily_wip_entries")
-      .update(wipPatch)
-      .eq("project_id", projectId)
-      .eq("entry_date", day.date)
-      .eq("cost_bucket_id", costBucketId)
-      .eq("subcontractor_id", subcontractorId);
-    if (wipError) throw new Error(wipError.message);
+  for (const fixture of fixtures) {
+    const id = harborDemoStableId(projectId, `tomorrow-plan-${fixture.seedKey}`);
+    const payload = {
+      id,
+      project_id: projectId,
+      plan_date: fixture.plan_date,
+      schedule_activity_id: activityIdByCode.get(fixture.scheduleCode) || null,
+      cost_bucket_id: ids.bucketByCode.get(fixture.costCode) || null,
+      subcontractor_id: fixture.performerKey
+        ? ids.subcontractorByKey.get(fixture.performerKey) || null
+        : null,
+      activity: fixture.activity,
+      work_area: fixture.work_area,
+      performer_type: fixture.performer_type,
+      performer_name: fixture.performer_name,
+      crew_count: fixture.crew_count,
+      people_per_crew: fixture.people_per_crew,
+      hours_per_person: fixture.hours_per_person,
+      planned_quantity: fixture.planned_quantity,
+      unit: fixture.unit,
+      target_rate: fixture.target_rate,
+      materials: fixture.materials,
+      materials_ready: fixture.materials_ready,
+      equipment: fixture.equipment,
+      equipment_ready: fixture.equipment_ready,
+      information: fixture.information,
+      information_ready: fixture.information_ready,
+      inspection: fixture.inspection,
+      inspection_ready: fixture.inspection_ready,
+      work_area_ready: fixture.work_area_ready,
+      status: fixture.status,
+      constraint_summary: fixture.constraint_summary,
+      constraint_owner: fixture.constraint_owner,
+      confirmation_status: fixture.confirmation_status,
+      confirmed_by: fixture.confirmation_status === "confirmed" ? userId : null,
+      confirmed_at:
+        fixture.confirmation_status === "confirmed" ? `${fixture.plan_date}T20:00:00.000Z` : null,
+      notes: `${harborDemoSourceNote} ${fixture.notes}`,
+      created_by: userId,
+    };
+    if (!existingIds.has(id)) {
+      const { error } = await dynamicTable(supabase, "tomorrow_plan_items").insert(payload);
+      if (error?.code !== "23505" && error) throw new Error(error.message);
+    } else if (overwrite) {
+      const { id: _id, ...patch } = payload;
+      const { error } = await dynamicTable(supabase, "tomorrow_plan_items")
+        .update(patch)
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    }
   }
 };
 
@@ -7329,10 +7520,23 @@ const ensureVersionedHarborDemoModules = async (
         moduleNeedsUpgrade("subcontract-buyout"),
       ),
     "cpm-schedule": () => seedHarborDemoCpmActivities(supabase, projectId, seedWarnings),
-    "daily-reports-wip": () => ensureHarborDemoDailyReportsWip(supabase, projectId, userId),
+    "daily-reports-wip": () =>
+      ensureHarborDemoDailyReportsWip(
+        supabase,
+        projectId,
+        userId,
+        moduleNeedsUpgrade("daily-reports-wip"),
+      ),
     "daily-wip-cpm-evidence": () =>
       seedHarborDemoCpmEvidence(supabase, projectId, userId, seedWarnings),
-    "production-control": () => ensureHarborDemoDailyReportsWip(supabase, projectId, userId),
+    "production-control": () =>
+      ensureHarborDemoDailyReportsWip(
+        supabase,
+        projectId,
+        userId,
+        moduleNeedsUpgrade("production-control"),
+      ),
+    "tomorrow-plan": () => ensureHarborDemoTomorrowPlan(supabase, projectId, userId),
     "billing-workspace": () => ensureHarborDemoBillingWorkspace(supabase, projectId),
     inspections: () => seedHarborDemoInspections(supabase, projectId, seedWarnings),
     claims: () => seedHarborDemoClaims(supabase, projectId, seedWarnings),
@@ -7482,6 +7686,11 @@ const resetHarborDemoModuleFixtures = async (
     return;
   }
 
+  if (moduleKey === "tomorrow-plan") {
+    await ensureHarborDemoTomorrowPlan(supabase, projectId, userId, true);
+    return;
+  }
+
   if (moduleKey === "billing-workspace") {
     await resetHarborDemoBillingWorkspace(supabase, projectId);
     return;
@@ -7527,6 +7736,7 @@ const resetHarborDemoModuleInput = z.object({
     "daily-reports-wip",
     "daily-wip-cpm-evidence",
     "production-control",
+    "tomorrow-plan",
     "billing-workspace",
     "inspections",
     "claims",

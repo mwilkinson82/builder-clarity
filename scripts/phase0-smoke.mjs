@@ -754,7 +754,7 @@ await expectContains(
     /"dashboard", "risk-tally", "todos", "claims", "ior-report"/,
     /"schedule", "selections", "rfi-submittals"/,
     /"sov", "subcontractors", "change-orders", "billing"/,
-    /"daily-reports", "daily-wip", "inspections"/,
+    /"daily-reports", "tomorrow-plan", "daily-wip", "inspections"/,
     /"client-portal", "file-room"/,
     /const companyName = project\.organization_name \|\| "Overwatch company"/,
     // v2 shell: mobile slim top bar; on desktop the rail head carries company +
