@@ -78,6 +78,12 @@ assert.equal(
 );
 
 const projectsSource = readFileSync("src/lib/projects.functions.ts", "utf8");
+const projectRouteSource = readFileSync(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  "utf8",
+);
+assert.match(projectRouteSource, /HARBOR_DEMO_TOMORROW_PLAN_DATE/);
+assert.doesNotMatch(projectRouteSource, /initialDate=\{[\s\S]{0,200}"2026-07-14"/);
 assert.match(projectsSource, /ensureVersionedHarborDemoModules/);
 assert.match(projectsSource, /export const resetHarborDemoModule/);
 assert.match(projectsSource, /resetHarborDemoModuleFixtures/);
