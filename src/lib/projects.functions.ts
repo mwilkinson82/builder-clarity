@@ -6974,9 +6974,11 @@ const ensureHarborDemoDailyReportsWip = async (
   }
 
   const [reportResult, wipResult, activityResult] = await Promise.all([
-    dynamicTable(supabase, "daily_reports").select("id,report_date").eq("project_id", projectId),
+    dynamicTable(supabase, "daily_reports")
+      .select("id,report_date,notes")
+      .eq("project_id", projectId),
     dynamicTable(supabase, "daily_wip_entries")
-      .select("id,entry_date,cost_bucket_id,subcontractor_id")
+      .select("id,entry_date,cost_bucket_id,subcontractor_id,notes")
       .eq("project_id", projectId),
     dynamicTable(supabase, "schedule_activities")
       .select("id,activity_id")
@@ -6986,6 +6988,38 @@ const ensureHarborDemoDailyReportsWip = async (
   if (wipResult.error) throw new Error(wipResult.error.message);
   if (activityResult.error && !isScheduleActivitiesSchemaError(activityResult.error))
     throw new Error(activityResult.error.message);
+
+  if (upgradeExistingFixtures) {
+    const canonicalDates = new Set(HARBOR_DEMO_PRODUCTION_DAYS.map((day) => day.date));
+    const staleReportIds = ((reportResult.data ?? []) as Array<Record<string, unknown>>)
+      .filter(
+        (row) =>
+          str(row.notes).startsWith(harborDemoSourceNote) &&
+          !canonicalDates.has(str(row.report_date)),
+      )
+      .map((row) => str(row.id))
+      .filter(Boolean);
+    const staleWipIds = ((wipResult.data ?? []) as Array<Record<string, unknown>>)
+      .filter(
+        (row) =>
+          str(row.notes).startsWith(harborDemoSourceNote) &&
+          !canonicalDates.has(str(row.entry_date)),
+      )
+      .map((row) => str(row.id))
+      .filter(Boolean);
+    if (staleWipIds.length) {
+      const staleWipDelete = await dynamicTable(supabase, "daily_wip_entries")
+        .delete()
+        .in("id", staleWipIds);
+      if (staleWipDelete.error) throw new Error(staleWipDelete.error.message);
+    }
+    if (staleReportIds.length) {
+      const staleReportDelete = await dynamicTable(supabase, "daily_reports")
+        .delete()
+        .in("id", staleReportIds);
+      if (staleReportDelete.error) throw new Error(staleReportDelete.error.message);
+    }
+  }
 
   const reportByDate = new Map(
     ((reportResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
@@ -7071,7 +7105,7 @@ const ensureHarborDemoTomorrowPlan = async (
     dynamicTable(supabase, "schedule_activities")
       .select("id,activity_id")
       .eq("project_id", projectId),
-    dynamicTable(supabase, "tomorrow_plan_items").select("id").eq("project_id", projectId),
+    dynamicTable(supabase, "tomorrow_plan_items").select("id,notes").eq("project_id", projectId),
   ]);
   if (activityResult.error) throw new Error(activityResult.error.message);
   if (existingResult.error) throw new Error(existingResult.error.message);
@@ -7087,8 +7121,8 @@ const ensureHarborDemoTomorrowPlan = async (
   );
   const fixtures = [
     {
-      seedKey: "actual-comparison-electrical-2026-07-13",
-      plan_date: "2026-07-13",
+      seedKey: "actual-comparison-electrical-2026-07-17",
+      plan_date: "2026-07-17",
       scheduleCode: "26-010",
       costCode: "1500",
       performerKey: "electrical",
@@ -7119,7 +7153,7 @@ const ensureHarborDemoTomorrowPlan = async (
         "Teaching comparison: the next Daily WIP line closes this promise against actual output.",
     },
     {
-      seedKey: "electrical-2026-07-14",
+      seedKey: "electrical-2026-07-20",
       plan_date: HARBOR_DEMO_TOMORROW_PLAN_DATE,
       scheduleCode: "26-010",
       costCode: "1500",
@@ -7150,7 +7184,7 @@ const ensureHarborDemoTomorrowPlan = async (
       notes: "Ready means the work can start without waiting when the crew arrives.",
     },
     {
-      seedKey: "drywall-2026-07-14",
+      seedKey: "drywall-2026-07-20",
       plan_date: HARBOR_DEMO_TOMORROW_PLAN_DATE,
       scheduleCode: "09-020",
       costCode: "0900",
@@ -7183,7 +7217,7 @@ const ensureHarborDemoTomorrowPlan = async (
         "Treat the constraint tonight; do not discover it with four finishers standing idle tomorrow.",
     },
     {
-      seedKey: "cabinet-delivery-2026-07-14",
+      seedKey: "cabinet-delivery-2026-07-20",
       plan_date: HARBOR_DEMO_TOMORROW_PLAN_DATE,
       scheduleCode: "12-020",
       costCode: "0130",
@@ -7216,6 +7250,25 @@ const ensureHarborDemoTomorrowPlan = async (
         "This blocked commitment is the bridge to procurement, schedule exposure, contract notice, and Risk Tally treatment.",
     },
   ] as const;
+
+  if (overwrite) {
+    const canonicalIds = new Set(
+      fixtures.map((fixture) => harborDemoStableId(projectId, `tomorrow-plan-${fixture.seedKey}`)),
+    );
+    const staleIds = ((existingResult.data ?? []) as Array<Record<string, unknown>>)
+      .filter(
+        (row) => str(row.notes).startsWith(harborDemoSourceNote) && !canonicalIds.has(str(row.id)),
+      )
+      .map((row) => str(row.id))
+      .filter(Boolean);
+    if (staleIds.length) {
+      const staleDelete = await dynamicTable(supabase, "tomorrow_plan_items")
+        .delete()
+        .in("id", staleIds);
+      if (staleDelete.error) throw new Error(staleDelete.error.message);
+      for (const id of staleIds) existingIds.delete(id);
+    }
+  }
 
   for (const fixture of fixtures) {
     const id = harborDemoStableId(projectId, `tomorrow-plan-${fixture.seedKey}`);
@@ -7547,7 +7600,13 @@ const ensureVersionedHarborDemoModules = async (
         userId,
         moduleNeedsUpgrade("production-control"),
       ),
-    "tomorrow-plan": () => ensureHarborDemoTomorrowPlan(supabase, projectId, userId),
+    "tomorrow-plan": () =>
+      ensureHarborDemoTomorrowPlan(
+        supabase,
+        projectId,
+        userId,
+        moduleNeedsUpgrade("tomorrow-plan"),
+      ),
     "billing-workspace": () => ensureHarborDemoBillingWorkspace(supabase, projectId),
     inspections: () => seedHarborDemoInspections(supabase, projectId, seedWarnings),
     claims: () => seedHarborDemoClaims(supabase, projectId, seedWarnings),

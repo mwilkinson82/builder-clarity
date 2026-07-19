@@ -25,10 +25,6 @@ export interface HarborProductionDay {
 }
 
 const WORKING_DATES = [
-  "2026-06-02",
-  "2026-06-03",
-  "2026-06-04",
-  "2026-06-05",
   "2026-06-08",
   "2026-06-09",
   "2026-06-10",
@@ -55,6 +51,10 @@ const WORKING_DATES = [
   "2026-07-09",
   "2026-07-10",
   "2026-07-13",
+  "2026-07-14",
+  "2026-07-15",
+  "2026-07-16",
+  "2026-07-17",
 ] as const;
 
 const concreteQuantities = [72, 76, 78, 82, 84, 80, 86, 88, 92, 90] as const;
@@ -153,4 +153,4 @@ export const HARBOR_DEMO_PRODUCTION_DAYS: readonly HarborProductionDay[] = WORKI
   },
 );
 
-export const HARBOR_DEMO_TOMORROW_PLAN_DATE = "2026-07-14";
+export const HARBOR_DEMO_TOMORROW_PLAN_DATE = "2026-07-20";

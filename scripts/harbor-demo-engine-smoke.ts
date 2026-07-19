@@ -42,9 +42,12 @@ assert.deepEqual(
 );
 assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionMeasure, "LF");
 assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionTargetRate, 7.5);
-assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionPeriod.start, "2026-06-02");
+assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionPeriod.start, "2026-06-08");
+assert.equal(HARBOR_DEMO_COMMERCIAL_WORKFLOW.productionPeriod.end, "2026-07-17");
 assert.equal(HARBOR_DEMO_PRODUCTION_DAYS.length, 30);
-assert.equal(HARBOR_DEMO_TOMORROW_PLAN_DATE, "2026-07-14");
+assert.equal(HARBOR_DEMO_PRODUCTION_DAYS.at(0)?.date, "2026-06-08");
+assert.equal(HARBOR_DEMO_PRODUCTION_DAYS.at(-1)?.date, "2026-07-17");
+assert.equal(HARBOR_DEMO_TOMORROW_PLAN_DATE, "2026-07-20");
 assert.ok(
   HARBOR_DEMO_PRODUCTION_DAYS.every((day) => {
     const weekday = new Date(`${day.date}T12:00:00Z`).getUTCDay();
@@ -58,8 +61,9 @@ assert.deepEqual(
   ).sort(),
   ["concrete", "drywall", "electrical"],
 );
-assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "daily-reports-wip")?.version, 2);
-assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "production-control")?.version, 2);
+assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "daily-reports-wip")?.version, 3);
+assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "production-control")?.version, 3);
+assert.equal(HARBOR_DEMO_MODULES.find((module) => module.key === "tomorrow-plan")?.version, 2);
 assert.equal(
   HARBOR_DEMO_MODULES.find((module) => module.key === "tomorrow-plan")?.dependsOn.includes(
     "daily-reports-wip",

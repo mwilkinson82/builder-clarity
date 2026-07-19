@@ -30,7 +30,7 @@ export const HARBOR_DEMO_MODULES = [
   { key: "cpm-schedule", version: 1, dependsOn: ["project-foundation"] },
   {
     key: "daily-reports-wip",
-    version: 2,
+    version: 3,
     dependsOn: ["budget-sov", "subcontract-buyout", "cpm-schedule"],
   },
   {
@@ -40,12 +40,12 @@ export const HARBOR_DEMO_MODULES = [
   },
   {
     key: "production-control",
-    version: 2,
+    version: 3,
     dependsOn: ["subcontract-buyout", "daily-reports-wip", "daily-wip-cpm-evidence"],
   },
   {
     key: "tomorrow-plan",
-    version: 1,
+    version: 2,
     dependsOn: ["subcontract-buyout", "cpm-schedule", "daily-reports-wip"],
   },
   {
@@ -66,8 +66,8 @@ export const HARBOR_DEMO_COMMERCIAL_WORKFLOW = {
   productionMeasure: "LF",
   productionTargetRate: 7.5,
   productionPeriod: {
-    start: "2026-06-02",
-    end: "2026-07-13",
+    start: "2026-06-08",
+    end: "2026-07-17",
   },
   subcontractors: [
     {
