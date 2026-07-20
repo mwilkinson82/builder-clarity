@@ -8,7 +8,9 @@ export type PlanSheetIdentityImage = {
   base64: string;
 };
 
-const IDENTITY_IMAGE_LONG_EDGE_PX = 1400;
+const IDENTITY_SOURCE_LONG_EDGE_PX = 2200;
+const IDENTITY_CONTACT_WIDTH_PX = 1000;
+const IDENTITY_CONTACT_HEIGHT_PX = 700;
 
 const dataUrlToArrayBuffer = (url: string) => {
   const commaIndex = url.indexOf(",");
@@ -33,10 +35,92 @@ const blobToBase64 = async (blob: Blob) => {
   return btoa(binary);
 };
 
+function drawContained(
+  context: CanvasRenderingContext2D,
+  source: CanvasImageSource,
+  sourceWidth: number,
+  sourceHeight: number,
+  targetX: number,
+  targetY: number,
+  targetWidth: number,
+  targetHeight: number,
+) {
+  const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+  context.drawImage(
+    source,
+    targetX + (targetWidth - width) / 2,
+    targetY + (targetHeight - height) / 2,
+    width,
+    height,
+  );
+}
+
+function titleBlockContactSheet(source: HTMLCanvasElement) {
+  const contact = document.createElement("canvas");
+  contact.width = IDENTITY_CONTACT_WIDTH_PX;
+  contact.height = IDENTITY_CONTACT_HEIGHT_PX;
+  const context = contact.getContext("2d");
+  if (!context) throw new Error("The title-block canvas is unavailable.");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, contact.width, contact.height);
+
+  // Construction title blocks most commonly live in a bottom band or a
+  // vertical right-edge strip. Present both at useful scale instead of asking
+  // vision to spend its context on the entire drawing. Rotate the right strip
+  // so both candidates read as wide horizontal bands.
+  const bottomY = Math.floor(source.height * 0.62);
+  const bottomHeight = Math.max(1, source.height - bottomY);
+  const bottom = document.createElement("canvas");
+  bottom.width = source.width;
+  bottom.height = bottomHeight;
+  bottom
+    .getContext("2d")
+    ?.drawImage(source, 0, bottomY, source.width, bottomHeight, 0, 0, bottom.width, bottom.height);
+
+  const rightX = Math.floor(source.width * 0.68);
+  const rightWidth = Math.max(1, source.width - rightX);
+  const rightRotated = document.createElement("canvas");
+  rightRotated.width = source.height;
+  rightRotated.height = rightWidth;
+  const rightContext = rightRotated.getContext("2d");
+  if (!rightContext) throw new Error("The title-block canvas is unavailable.");
+  rightContext.translate(rightRotated.width, 0);
+  rightContext.rotate(Math.PI / 2);
+  rightContext.drawImage(
+    source,
+    rightX,
+    0,
+    rightWidth,
+    source.height,
+    0,
+    0,
+    rightWidth,
+    source.height,
+  );
+
+  drawContained(context, bottom, bottom.width, bottom.height, 0, 0, contact.width, 340);
+  context.fillStyle = "#e5e7eb";
+  context.fillRect(0, 349, contact.width, 2);
+  drawContained(
+    context,
+    rightRotated,
+    rightRotated.width,
+    rightRotated.height,
+    0,
+    360,
+    contact.width,
+    340,
+  );
+  return contact;
+}
+
 /**
- * Render legible full-sheet images only for pages whose vector title-block
- * text could not be read. The images are proposals input; the estimator still
- * confirms every returned identity before anything is renamed.
+ * Render compact title-block contact sheets only for pages whose vector text
+ * could not be read. The top band is the drawing's bottom region; the lower
+ * band is its right edge rotated for reading. This keeps vision context bounded
+ * while the estimator still confirms every identity before anything changes.
  */
 export async function renderPlanSheetIdentityImages({
   source,
@@ -63,7 +147,7 @@ export async function renderPlanSheetIdentityImages({
       const baseViewport = page.getViewport({ scale: 1 });
       const longEdge = Math.max(baseViewport.width, baseViewport.height);
       if (!Number.isFinite(longEdge) || longEdge <= 0) continue;
-      const viewport = page.getViewport({ scale: IDENTITY_IMAGE_LONG_EDGE_PX / longEdge });
+      const viewport = page.getViewport({ scale: IDENTITY_SOURCE_LONG_EDGE_PX / longEdge });
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(viewport.width));
       canvas.height = Math.max(1, Math.round(viewport.height));
@@ -72,8 +156,9 @@ export async function renderPlanSheetIdentityImages({
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvas, canvasContext: context, viewport }).promise;
+      const contact = titleBlockContactSheet(canvas);
       const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, "image/jpeg", 0.76),
+        contact.toBlob(resolve, "image/jpeg", 0.82),
       );
       if (blob) {
         images.push({
