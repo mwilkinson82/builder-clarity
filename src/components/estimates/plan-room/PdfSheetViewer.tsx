@@ -1746,13 +1746,13 @@ export function PlanCanvas({
         // Full-canvas positioning context: the panel drags anywhere over the
         // canvas and clamps itself to this box (AITAKEOFF2 Task 3). The
         // wrapper ignores pointer events; the panel re-enables its own.
-        <div className="pointer-events-none absolute inset-0 z-40 [&>*]:pointer-events-auto">
+        <div className="pointer-events-none absolute inset-0 z-[60] [&>*]:pointer-events-auto">
           {aiPanel}
         </div>
       )}
       {aiReviewBar && (
         <div
-          className="pointer-events-none absolute inset-x-3 bottom-16 z-40 flex justify-center"
+          className="pointer-events-none absolute inset-x-3 bottom-16 z-[60] flex justify-center"
           data-plan-zoom-through="true"
         >
           <div className="pointer-events-auto min-w-0 max-w-full">{aiReviewBar}</div>
@@ -1760,7 +1760,7 @@ export function PlanCanvas({
       )}
       {measurementGuideControls && (
         <div
-          className="pointer-events-none absolute inset-x-3 top-20 z-40 flex justify-center"
+          className="pointer-events-none absolute inset-x-3 top-20 z-[60] flex justify-center"
           data-plan-zoom-through="true"
         >
           <div className="pointer-events-auto min-w-0 max-w-full">{measurementGuideControls}</div>
