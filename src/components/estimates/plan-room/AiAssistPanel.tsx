@@ -88,7 +88,7 @@ const PANEL_DEFAULT_TOP = 112;
 
 function CreditBalanceChip({ balance, loading }: { balance: number | null; loading: boolean }) {
   return (
-    <Badge variant="outline" className="gap-1" data-testid="ai-credit-balance">
+    <Badge variant="outline" className="shrink-0 gap-1" data-testid="ai-credit-balance">
       <Coins className="h-3 w-3" />
       {loading || balance === null ? "…" : `${balance} credit${balance === 1 ? "" : "s"}`}
     </Badge>
@@ -104,11 +104,11 @@ export function AiAssistPanel({
   onDiscoverSymbols?: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const positionRef = useRef<PanelPosition | null>(null);
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const [position, setPositionState] = useState<PanelPosition | null>(() =>
     readStoredPanelPosition(),
   );
+  const positionRef = useRef<PanelPosition | null>(position);
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
@@ -128,13 +128,59 @@ export function AiAssistPanel({
     if (!panel || !parent) return next;
     const parentRect = parent.getBoundingClientRect();
     const maxX = Math.max(PANEL_EDGE_GAP, parentRect.width - panel.offsetWidth - PANEL_EDGE_GAP);
-    // Keep at least the header on screen vertically.
-    const maxY = Math.max(PANEL_EDGE_GAP, parentRect.height - 56);
+    const maxY = Math.max(PANEL_EDGE_GAP, parentRect.height - panel.offsetHeight - PANEL_EDGE_GAP);
     return {
       x: Math.min(maxX, Math.max(PANEL_EDGE_GAP, next.x)),
       y: Math.min(maxY, Math.max(PANEL_EDGE_GAP, next.y)),
     };
   }, []);
+
+  const clampVisiblePanel = useCallback(
+    (preferStoredPosition = false) => {
+      if (!ai.open) return;
+      const panel = panelRef.current;
+      const parent = panel?.parentElement;
+      if (!panel || !parent) return;
+      const parentRect = parent.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const storedPosition = preferStoredPosition ? readStoredPanelPosition() : null;
+      const next = clampToParent(
+        storedPosition ??
+          positionRef.current ?? {
+            x: panelRect.left - parentRect.left,
+            y: panelRect.top - parentRect.top,
+          },
+      );
+      const current = positionRef.current;
+      if (!current || current.x !== next.x || current.y !== next.y) setPosition(next);
+      writeStoredPanelPosition(next);
+    },
+    [ai.open, clampToParent, setPosition],
+  );
+
+  // A remembered coordinate can become invalid after docking a side panel,
+  // rotating a tablet, or reopening on a smaller viewport. Re-clamp on every
+  // open, every panel shape change, and every viewport/parent resize.
+  useEffect(() => {
+    if (!ai.open) return;
+    let frame = window.requestAnimationFrame(() => clampVisiblePanel(true));
+    const scheduleClamp = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => clampVisiblePanel());
+    };
+    window.addEventListener("resize", scheduleClamp);
+    const panel = panelRef.current;
+    const parent = panel?.parentElement;
+    const resizeObserver =
+      parent && typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleClamp) : null;
+    if (parent) resizeObserver?.observe(parent);
+    if (panel) resizeObserver?.observe(panel);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", scheduleClamp);
+      resizeObserver?.disconnect();
+    };
+  }, [ai.open, ai.phase, clampVisiblePanel, reviewExpanded]);
 
   const onHeaderPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     // Buttons inside the header keep their own clicks.
@@ -205,15 +251,21 @@ export function AiAssistPanel({
   // panel shrinks to a pill so the takeoff toolbar stays reachable.
   if (ai.phase === "review" && !reviewExpanded) {
     return (
-      <div ref={panelRef} className="absolute" style={positionStyle} data-testid="ai-assist-pill">
+      <div
+        ref={panelRef}
+        className="absolute max-w-[calc(100%-1rem)]"
+        style={positionStyle}
+        data-testid="ai-assist-pill"
+      >
         <button
           type="button"
-          className="flex items-center gap-2 rounded-full border border-hairline bg-card/95 px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur"
+          className="flex max-w-full items-center gap-2 rounded-full border border-hairline bg-card/95 px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur"
           onClick={() => setReviewExpanded(true)}
           title="Expand the AI Assist panel"
+          aria-label={`Expand AI Markups review panel, ${ai.pendingCount} proposal${ai.pendingCount === 1 ? "" : "s"} left`}
         >
           <img src="/favicon.svg" alt="" aria-hidden className="h-3.5 w-3.5" />
-          Reviewing — {ai.pendingCount} left
+          <span className="truncate">Reviewing — {ai.pendingCount} left</span>
           <ChevronsUpDown className="h-3 w-3 text-muted-foreground" />
         </button>
       </div>
@@ -223,7 +275,7 @@ export function AiAssistPanel({
   return (
     <div
       ref={panelRef}
-      className="absolute w-[330px] max-w-[calc(100vw-2rem)] rounded-lg border border-hairline bg-card/95 shadow-2xl backdrop-blur"
+      className="absolute flex max-h-[calc(100%-1rem)] w-[330px] max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-lg border border-hairline bg-card/95 shadow-2xl backdrop-blur"
       style={positionStyle}
       data-testid="ai-assist-panel"
     >
@@ -232,7 +284,7 @@ export function AiAssistPanel({
         data-testid="ai-assist-panel-header"
         {...dragHandleProps}
       >
-        <div className="flex items-center gap-1.5 text-sm font-semibold">
+        <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
           <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
           <img src="/favicon.svg" alt="" aria-hidden className="h-4 w-4" />
           AI Markups
@@ -246,6 +298,7 @@ export function AiAssistPanel({
               variant="ghost"
               className="h-7 w-7"
               title="Collapse to a pill while reviewing"
+              aria-label="Collapse AI Markups review panel"
               onClick={() => setReviewExpanded(false)}
             >
               <ChevronsUpDown className="h-3.5 w-3.5" />
@@ -257,6 +310,7 @@ export function AiAssistPanel({
             variant="ghost"
             className="h-7 w-7"
             title="Close AI Assist"
+            aria-label="Close AI Markups"
             onClick={ai.closePanel}
             data-testid="ai-assist-close"
           >
@@ -265,7 +319,7 @@ export function AiAssistPanel({
         </div>
       </div>
 
-      <div className="p-3 pt-2">
+      <div className="min-h-0 overflow-y-auto p-3 pt-2">
         {summary && !summary.aiAssistConfigured ? (
           <div className="mt-1 rounded-md border border-hairline bg-surface px-3 py-4 text-sm">
             <p className="font-medium" data-testid="ai-assist-not-configured">

@@ -75,43 +75,65 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
 
   return (
     <div
-      className="flex max-w-[min(640px,calc(100vw-2rem))] flex-wrap items-center gap-2 rounded-md border border-hairline bg-card/95 px-3 py-2 shadow-2xl backdrop-blur"
+      className="w-[min(640px,calc(100vw-1rem))] max-w-full rounded-md border border-hairline bg-card/95 px-3 py-2 shadow-2xl backdrop-blur"
       data-testid="ai-review-bar"
     >
-      <div className="flex items-center gap-1.5 text-sm font-medium">
-        <Sparkles className="h-3.5 w-3.5 text-warning" />
-        {total} found · Reviewing {currentNumber} of {total} · {ai.acceptedCount} accepted
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-start gap-1.5 text-xs font-medium leading-5 sm:text-sm">
+          <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+          <span>
+            {total} found · Reviewing {currentNumber} of {total} · {ai.acceptedCount} accepted
+          </span>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-8 shrink-0 gap-1 px-2 text-xs text-muted-foreground"
+          title="End review and discard all proposals that are still pending (Escape)"
+          aria-label="End AI review and discard pending proposals"
+          disabled={ai.isAccepting}
+          onClick={() => ai.endReview()}
+          data-testid="ai-review-end"
+        >
+          <X className="h-3.5 w-3.5" />
+          End review
+        </Button>
       </div>
       {lowConfidence && (
         <Badge
           variant="outline"
-          className="border-warning/30 bg-warning/10 text-warning"
+          className="mt-1 border-warning/30 bg-warning/10 text-warning"
           data-testid="ai-review-low-confidence"
         >
           Low confidence — look closely
         </Badge>
       )}
-      <div className="flex items-center gap-1">
-        <Button
-          type="button"
-          size="icon"
-          variant="outline"
-          className="h-8 w-8"
-          title="Previous proposal (Left arrow)"
-          onClick={() => ai.navigateReview(-1)}
-        >
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          type="button"
-          size="icon"
-          variant="outline"
-          className="h-8 w-8"
-          title="Next proposal (Right arrow)"
-          onClick={() => ai.navigateReview(1)}
-        >
-          <ChevronRight className="h-3.5 w-3.5" />
-        </Button>
+      <div className="mt-2 flex w-full max-w-full flex-wrap items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="h-8 w-8"
+            title="Previous proposal (Left arrow)"
+            aria-label="Previous AI proposal"
+            onClick={() => ai.navigateReview(-1)}
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="h-8 w-8"
+            title="Next proposal (Right arrow)"
+            aria-label="Next AI proposal"
+            onClick={() => ai.navigateReview(1)}
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
         <Button
           type="button"
           size="sm"
@@ -165,6 +187,7 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
             size="icon"
             variant="ghost"
             className="h-6 w-6"
+            aria-label="Nudge AI proposal left"
             disabled={ai.isAccepting || !ai.activeProposal}
             onClick={() => ai.nudgeActiveProposal(-NUDGE_STEP_NORMALIZED, 0)}
           >
@@ -175,6 +198,7 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
             size="icon"
             variant="ghost"
             className="h-6 w-6"
+            aria-label="Nudge AI proposal up"
             disabled={ai.isAccepting || !ai.activeProposal}
             onClick={() => ai.nudgeActiveProposal(0, -NUDGE_STEP_NORMALIZED)}
           >
@@ -185,6 +209,7 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
             size="icon"
             variant="ghost"
             className="h-6 w-6"
+            aria-label="Nudge AI proposal down"
             disabled={ai.isAccepting || !ai.activeProposal}
             onClick={() => ai.nudgeActiveProposal(0, NUDGE_STEP_NORMALIZED)}
           >
@@ -195,6 +220,7 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
             size="icon"
             variant="ghost"
             className="h-6 w-6"
+            aria-label="Nudge AI proposal right"
             disabled={ai.isAccepting || !ai.activeProposal}
             onClick={() => ai.nudgeActiveProposal(NUDGE_STEP_NORMALIZED, 0)}
           >
@@ -220,9 +246,6 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
               data-testid="ai-review-accept-all"
             >
               Accept all remaining ({ai.pendingCount})
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => ai.endReview()}>
-              End review (discard remaining — no verdicts recorded)
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

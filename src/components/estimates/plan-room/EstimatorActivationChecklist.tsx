@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type ActivationStep = {
+  id: "drawings" | "scale" | "takeoff" | "worksheet";
   label: string;
   detail: string;
   complete: boolean;
@@ -12,7 +13,9 @@ type ActivationStep = {
 
 export function EstimatorActivationChecklist({
   hasDrawings,
+  hasScale,
   scaleVerified,
+  scaleCheckCount,
   hasTakeoff,
   hasLinkedTakeoff,
   onOpenDrawings,
@@ -22,7 +25,9 @@ export function EstimatorActivationChecklist({
   onHide,
 }: {
   hasDrawings: boolean;
+  hasScale: boolean;
   scaleVerified: boolean;
+  scaleCheckCount: number;
   hasTakeoff: boolean;
   hasLinkedTakeoff: boolean;
   onOpenDrawings: () => void;
@@ -33,6 +38,7 @@ export function EstimatorActivationChecklist({
 }) {
   const steps: ActivationStep[] = [
     {
+      id: "drawings",
       label: "Open a drawing",
       detail: "Choose the sheet where you want a trusted quantity.",
       complete: hasDrawings,
@@ -40,20 +46,33 @@ export function EstimatorActivationChecklist({
       onAction: onOpenDrawings,
     },
     {
-      label: "Confirm the scale",
-      detail: "Use two printed dimensions so the measurement can be defended.",
+      id: "scale",
+      label: "Confirm this sheet's scale",
+      detail: scaleVerified
+        ? "Two independent dimensions agree on this sheet."
+        : hasScale
+          ? `${Math.min(scaleCheckCount, 1)} of 2 dimension checks recorded. Use a different printed dimension for each check.`
+          : "Set the drawing scale, then confirm it with two printed dimensions.",
       complete: scaleVerified,
-      actionLabel: "Verify scale",
+      actionLabel: scaleVerified
+        ? "Review scale"
+        : !hasScale
+          ? "Set scale"
+          : scaleCheckCount === 1
+            ? "Record check 2"
+            : "Start check 1",
       onAction: onVerifyScale,
     },
     {
-      label: "Create or review a markup",
-      detail: "Draw it yourself or let AI mark candidates for your approval.",
+      id: "takeoff",
+      label: "Create a trusted takeoff",
+      detail: "Draw it yourself or use AI & Scope to identify where you should measure.",
       complete: hasTakeoff,
-      actionLabel: "AI Markups",
+      actionLabel: "AI & Scope",
       onAction: onOpenAiMarkups,
     },
     {
+      id: "worksheet",
       label: "Link the quantity",
       detail: "Name the work and connect it to the estimate worksheet.",
       complete: hasLinkedTakeoff,
@@ -111,6 +130,7 @@ export function EstimatorActivationChecklist({
                 variant="ghost"
                 className="mt-1 h-6 px-0 text-[11px] text-clay"
                 onClick={step.onAction}
+                data-testid={`estimator-activation-${step.id}`}
               >
                 {step.actionLabel}
               </Button>

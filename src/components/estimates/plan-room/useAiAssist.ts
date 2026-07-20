@@ -298,11 +298,6 @@ export function useAiAssist({
     setScanError("");
   }, []);
 
-  const closePanel = useCallback(() => {
-    setOpen(false);
-    setPickingExemplar(false);
-  }, []);
-
   /** Canvas clicks flow through here while the panel is arming an exemplar. */
   const handleMeasurementSelected = useCallback(
     (measurement: TakeoffMeasurementRow) => {
@@ -402,6 +397,15 @@ export function useAiAssist({
     },
     [notifyExternalReviewComplete, onTakeoffsChanged, proposals],
   );
+
+  // The panel toggle is also the owner of the count-review layer. Closing it
+  // during review must end that review, otherwise the panel disappears while
+  // its proposal ghosts and review bar remain stranded on the drawing.
+  const closePanel = useCallback(() => {
+    if (phase === "review") endReview({ silent: true });
+    setOpen(false);
+    setPickingExemplar(false);
+  }, [endReview, phase]);
 
   const runScan = useCallback(async () => {
     if (phase === "scanning") return;

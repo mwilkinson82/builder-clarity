@@ -19,7 +19,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { decimalFeetHint, distancePx, formatFeetInches } from "@/lib/plan-room-math";
+import {
+  decimalFeetHint,
+  distancePx,
+  formatFeetInches,
+  formatGeometricLinearFeet,
+} from "@/lib/plan-room-math";
 import type { TakeoffMeasurementRow } from "@/lib/plan-room.functions";
 import {
   formatQty,
@@ -453,7 +458,7 @@ export function MeasurementShape({
         x={labelPoint.x + 10}
         y={labelPoint.y - 10}
         color={measurement.color}
-        text={formatQty(measurement.quantity, measurement.unit)}
+        text={formatGeometricLinearFeet(measurement.quantity)}
       />
     </g>
   );
@@ -582,7 +587,7 @@ export function DraftShape({
               key={`${point.x}-${point.y}-${index}`}
               x={(point.x + previous.x) / 2}
               y={(point.y + previous.y) / 2}
-              text={formatQty(length, unit)}
+              text={formatGeometricLinearFeet(length)}
             />
           );
         })}

@@ -92,6 +92,78 @@ export function scopeItemAsSuggestion(item: MeasurementScopeQueueItem) {
   } satisfies MeasurementAssistantSuggestion;
 }
 
+/**
+ * Resolve a suggestion back to its durable queue row. Restored suggestions use
+ * `scope-item-${id}` because their editable label is not a stable identity.
+ * Falling back to the generated key keeps fresh AI proposals working before a
+ * queue row exists.
+ */
+export function measurementScopeItemForSuggestion(
+  items: MeasurementScopeQueueItem[],
+  sheetId: string,
+  suggestion: MeasurementAssistantSuggestion,
+) {
+  const generatedKey = measurementSuggestionKey(sheetId, suggestion);
+  return items.find(
+    (item) =>
+      item.plan_sheet_id === sheetId &&
+      (suggestion.id === `scope-item-${item.id}` || item.suggestion_key === generatedKey),
+  );
+}
+
+export function measurementSuggestionIdentity(
+  items: MeasurementScopeQueueItem[],
+  sheetId: string,
+  suggestion: MeasurementAssistantSuggestion,
+) {
+  const item = measurementScopeItemForSuggestion(items, sheetId, suggestion);
+  return {
+    item,
+    suggestionKey: item?.suggestion_key ?? measurementSuggestionKey(sheetId, suggestion),
+    scopeKey: item?.scope_key ?? measurementScopeKey(suggestion),
+  };
+}
+
+/** Keep an accepted guide visible only while the estimator is actively tracing it. */
+export function measurementCanvasGuides(
+  reviewable: MeasurementAssistantSuggestion[],
+  prepared: MeasurementAssistantSuggestion | null,
+) {
+  if (!prepared?.guide || reviewable.some((suggestion) => suggestion.id === prepared.id)) {
+    return reviewable;
+  }
+  return [...reviewable, prepared];
+}
+
+export function nextMeasurementGuideAfterDecision({
+  suggestions,
+  items,
+  sheetId,
+  decidedSuggestionKey,
+}: {
+  suggestions: MeasurementAssistantSuggestion[];
+  items: MeasurementScopeQueueItem[];
+  sheetId: string;
+  decidedSuggestionKey: string;
+}) {
+  const decidedIndex = suggestions.findIndex(
+    (suggestion) =>
+      measurementSuggestionIdentity(items, sheetId, suggestion).suggestionKey ===
+      decidedSuggestionKey,
+  );
+  if (decidedIndex < 0) return null;
+  const candidates = [
+    ...suggestions.slice(decidedIndex + 1),
+    ...suggestions.slice(0, decidedIndex),
+  ];
+  return (
+    candidates.find((suggestion) => {
+      const status = measurementScopeItemForSuggestion(items, sheetId, suggestion)?.status;
+      return !status || status === "deferred";
+    }) ?? null
+  );
+}
+
 export function duplicateScopeCounts(items: MeasurementScopeQueueItem[]) {
   const counts = new Map<string, number>();
   for (const item of items) {

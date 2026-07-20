@@ -5,6 +5,7 @@ import {
   DEFAULT_INK_SNAP_OPTIONS,
   type GrayRaster,
 } from "../src/lib/plan-room-ink-snap";
+import { resolveInkSnapOnCanvas } from "../src/lib/plan-room-ink-snap-raster";
 
 // --- synthetic raster helpers (white ground = 255, ink = 0) ---
 function blank(width: number, height: number): GrayRaster {
@@ -117,5 +118,81 @@ describe("snapToInkLine — grounded in the A-100 wall probe", () => {
     // cursor 100px below the only line, well beyond the 24px default window
     const hit = snapToInkLine(r, { x: 100, y: 120 }, DEFAULT_INK_SNAP_OPTIONS);
     expect(hit).toBeNull();
+  });
+});
+
+describe("Verify Scale drawing-line acquisition", () => {
+  function canvasWithHorizontalLine(width: number, height: number, lineY: number) {
+    return {
+      width,
+      height,
+      getContext: () => ({
+        getImageData: (x0: number, y0: number, cropWidth: number, cropHeight: number) => {
+          const data = new Uint8ClampedArray(cropWidth * cropHeight * 4).fill(255);
+          for (let localY = 0; localY < cropHeight; localY += 1) {
+            const globalY = y0 + localY;
+            if (globalY !== lineY) continue;
+            for (let localX = 0; localX < cropWidth; localX += 1) {
+              const globalX = x0 + localX;
+              if (globalX < 10 || globalX > width - 10) continue;
+              const index = (localY * cropWidth + localX) * 4;
+              data[index] = 0;
+              data[index + 1] = 0;
+              data[index + 2] = 0;
+            }
+          }
+          return { data } as ImageData;
+        },
+      }),
+    } as unknown as HTMLCanvasElement;
+  }
+
+  it("lands Verify Scale on drawing ink, reports the green snap state, and lets Alt bypass", () => {
+    const cursor = { x: 0.5, y: 34 / 80 };
+    const base = {
+      point: cursor,
+      angleDeg: 0,
+      orthoSnapped: false,
+      geometrySnapped: false,
+    };
+    const canvas = canvasWithHorizontalLine(200, 80, 40);
+
+    const snapped = resolveInkSnapOnCanvas({
+      canvas,
+      cursor,
+      tool: "verify",
+      altKey: false,
+      base,
+    });
+    expect(snapped.point.x).toBeCloseTo(0.5, 2);
+    expect(snapped.point.y).toBeCloseTo(0.5, 2);
+    expect(snapped.geometrySnapped).toBe(true);
+    expect(snapped.orthoSnapped).toBe(false);
+
+    expect(resolveInkSnapOnCanvas({ canvas, cursor, tool: "verify", altKey: true, base })).toBe(
+      base,
+    );
+  });
+
+  it("does not let nearby ink pull a square Verify Scale second point off axis", () => {
+    const cursor = { x: 0.5, y: 34 / 80 };
+    const constrained = {
+      point: { x: 0.5, y: 0.5 },
+      angleDeg: 0,
+      orthoSnapped: true,
+      geometrySnapped: false,
+    };
+
+    const snapped = resolveInkSnapOnCanvas({
+      canvas: canvasWithHorizontalLine(200, 80, 40),
+      cursor,
+      tool: "verify",
+      altKey: false,
+      base: constrained,
+    });
+
+    expect(snapped.point).toEqual(constrained.point);
+    expect(snapped.orthoSnapped).toBe(true);
+    expect(snapped.geometrySnapped).toBe(true);
   });
 });

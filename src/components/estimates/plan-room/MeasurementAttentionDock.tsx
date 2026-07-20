@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Eye, EyeOff, Focus, ScanLine, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, EyeOff, Focus, ScanLine, Sparkles, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -15,6 +15,8 @@ export function MeasurementAttentionDock({
   onModeChange,
   onOpacityChange,
   onReplay,
+  onExit,
+  navigationEnabled = true,
 }: {
   count: number;
   activeIndex: number;
@@ -25,12 +27,14 @@ export function MeasurementAttentionDock({
   onModeChange: (mode: MeasurementAttentionMode) => void;
   onOpacityChange: (opacity: number) => void;
   onReplay: () => void;
+  onExit: () => void;
+  navigationEnabled?: boolean;
 }) {
   if (count === 0) return null;
   const visibleIndex = Math.max(0, activeIndex) + 1;
   return (
     <section
-      className="pointer-events-auto w-[min(680px,calc(100vw-2rem))] rounded-lg border border-clay/30 bg-card/95 p-2 shadow-nav backdrop-blur"
+      className="pointer-events-auto w-[min(680px,calc(100vw-2rem))] max-w-full rounded-lg border border-clay/30 bg-card/95 p-2 shadow-nav backdrop-blur"
       aria-label="AI drawing attention controls"
       data-testid="measurement-attention-dock"
     >
@@ -57,6 +61,7 @@ export function MeasurementAttentionDock({
             variant="ghost"
             className="h-7 w-7"
             onClick={onPrevious}
+            disabled={!navigationEnabled}
             aria-label="Previous AI callout"
             data-testid="measurement-attention-previous"
           >
@@ -68,6 +73,7 @@ export function MeasurementAttentionDock({
             variant="ghost"
             className="h-7 w-7"
             onClick={onNext}
+            disabled={!navigationEnabled}
             aria-label="Next AI callout"
             data-testid="measurement-attention-next"
           >
@@ -82,6 +88,16 @@ export function MeasurementAttentionDock({
             data-testid="measurement-attention-replay"
           >
             <ScanLine className="h-3 w-3" /> Replay scan
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 px-2 text-[10px]"
+            onClick={onExit}
+            data-testid="measurement-attention-exit"
+          >
+            <X className="h-3 w-3" /> Done
           </Button>
         </div>
       </div>

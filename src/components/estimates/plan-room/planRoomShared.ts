@@ -8,6 +8,7 @@ import {
   calculateTakeoffQuantity,
   distancePx,
   formatFeetInches,
+  formatGeometricLinearFeet,
   type PlanRoomPoint,
   type PlanRoomViewSize,
   normalizeTakeoffUnit,
@@ -378,6 +379,15 @@ export const formatQty = (value: number, unit: string) =>
   `${new Intl.NumberFormat(undefined, {
     maximumFractionDigits: value >= 100 ? 0 : 2,
   }).format(value)}${unit ? ` ${unit}` : ""}`;
+
+// Drawing-derived linear quantities read like construction dimensions in the
+// takeoff UI. The stored decimal feet stay untouched for rollups, pricing,
+// exports, and sync conflict math.
+export const formatTakeoffDisplayQuantity = (
+  value: number,
+  unit: string,
+  toolType: TakeoffToolType,
+) => (toolType === "linear" ? formatGeometricLinearFeet(value) : formatQty(value, unit));
 
 export const centsToDollars = (value: number) => Math.round(value) / 100;
 

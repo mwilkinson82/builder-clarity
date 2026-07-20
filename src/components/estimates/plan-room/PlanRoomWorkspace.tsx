@@ -75,6 +75,7 @@ import {
   defaultPlanRoomSheetId,
   distancePx,
   findTakeoffGroupMatch,
+  formatGeometricLinearFeet,
   groupTakeoffWorksheet,
   groupUnlinkedTakeoffs,
   normalizeTakeoffLabel,
@@ -118,8 +119,12 @@ import {
 } from "@/lib/plan-room-measurement-scope.functions";
 import {
   duplicateScopeCounts,
+  measurementCanvasGuides,
+  measurementScopeItemForSuggestion,
   measurementScopeKey,
+  measurementSuggestionIdentity,
   measurementSuggestionKey,
+  nextMeasurementGuideAfterDecision,
   scopeItemAsSuggestion,
   type MeasurementScopeDecisionStatus,
   type MeasurementScopeQueueItem,
@@ -286,6 +291,8 @@ export function PlanRoomWorkspace({
   const isCanonicalDemo = estimate.is_canonical_demo === true;
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const scaleWorkflowRef = useRef<HTMLDivElement | null>(null);
+  const aiScopeWorkflowRef = useRef<HTMLDivElement | null>(null);
   const focusTargetAppliedRef = useRef(false);
   const autoUploadTriggeredRef = useRef(false);
   const thumbBackfillRef = useRef<Set<string>>(new Set());
@@ -556,27 +563,33 @@ export function PlanRoomWorkspace({
   }, [currentSheet, measurementAssistantPlan, measurementScopeItems]);
   const measurementGuideSuggestions = useMemo(() => {
     const currentPlanGuides =
-      measurementAssistantPlan?.suggestions.filter((suggestion) => suggestion.guide) ?? [];
+      measurementAssistantPlan?.suggestions.filter((suggestion) => {
+        if (!suggestion.guide) return false;
+        const queueStatus = queueItemBySuggestionId[suggestion.id]?.status;
+        return !queueStatus || queueStatus === "deferred";
+      }) ?? [];
     if (currentPlanGuides.length > 0) return currentPlanGuides;
     if (!currentSheet) return [];
     return measurementScopeItems
       .filter(
         (item) =>
-          item.plan_sheet_id === currentSheet.id && item.status !== "rejected" && item.guide,
+          item.plan_sheet_id === currentSheet.id && item.status === "deferred" && item.guide,
       )
       .map(scopeItemAsSuggestion);
-  }, [currentSheet, measurementAssistantPlan, measurementScopeItems]);
+  }, [currentSheet, measurementAssistantPlan, measurementScopeItems, queueItemBySuggestionId]);
+  const measurementCanvasGuideSuggestions = useMemo(
+    () => measurementCanvasGuides(measurementGuideSuggestions, preparedMeasurementSuggestion),
+    [measurementGuideSuggestions, preparedMeasurementSuggestion],
+  );
   const activeMeasurementGuideSuggestion =
     measurementGuideSuggestions.find(
       (suggestion) => suggestion.id === activeMeasurementGuideId && suggestion.guide,
     ) ?? null;
   const activeMeasurementGuideQueueItem = activeMeasurementGuideSuggestion
-    ? measurementScopeItems.find(
-        (item) =>
-          item.plan_sheet_id === currentSheet?.id &&
-          (activeMeasurementGuideSuggestion.id === `scope-item-${item.id}` ||
-            item.suggestion_key ===
-              measurementSuggestionKey(currentSheet?.id ?? "", activeMeasurementGuideSuggestion)),
+    ? measurementScopeItemForSuggestion(
+        measurementScopeItems,
+        currentSheet?.id ?? "",
+        activeMeasurementGuideSuggestion,
       )
     : undefined;
   const resolvedFocusedMeasurementGuideId = measurementGuideSuggestions.some(
@@ -584,12 +597,24 @@ export function PlanRoomWorkspace({
   )
     ? focusedMeasurementGuideId
     : (measurementGuideSuggestions[0]?.id ?? "");
+  const resolvedCanvasMeasurementGuideId = measurementCanvasGuideSuggestions.some(
+    (suggestion) => suggestion.id === focusedMeasurementGuideId,
+  )
+    ? focusedMeasurementGuideId
+    : resolvedFocusedMeasurementGuideId;
   const focusedMeasurementGuideIndex = Math.max(
     0,
     measurementGuideSuggestions.findIndex(
       (suggestion) => suggestion.id === resolvedFocusedMeasurementGuideId,
     ),
   );
+  const focusedCanvasMeasurementGuideIndex = Math.max(
+    0,
+    measurementCanvasGuideSuggestions.findIndex(
+      (suggestion) => suggestion.id === resolvedCanvasMeasurementGuideId,
+    ),
+  );
+  const preparedMeasurementGuideActive = Boolean(preparedMeasurementSuggestion?.guide);
   const duplicateCountBySuggestionId = useMemo(() => {
     if (!measurementAssistantPlan) return {};
     return Object.fromEntries(
@@ -785,6 +810,11 @@ export function PlanRoomWorkspace({
   const selectedMeasurementLine = selectedMeasurement?.estimate_line_item_id
     ? (lineItems.find((line) => line.id === selectedMeasurement.estimate_line_item_id) ?? null)
     : null;
+  const currentSheetIsStructural = Boolean(
+    currentSheet &&
+    (/^S[-\s]?\d/i.test(currentSheet.sheet_number.trim()) ||
+      /\bstructural\b/i.test(`${currentSheet.sheet_number} ${currentSheet.sheet_name}`)),
+  );
   const finishPopoverMeasurement = finishPopover
     ? (measurements.find((item) => item.id === finishPopover.measurementId) ?? null)
     : null;
@@ -2010,6 +2040,7 @@ export function PlanRoomWorkspace({
               wastePct: measurement.waste_pct,
               quantity: measurement.quantity,
               unit: measurement.unit,
+              toolType: measurement.tool_type,
             };
           });
         setSyncConflict({
@@ -2444,13 +2475,54 @@ export function PlanRoomWorkspace({
       }),
     onSuccess: ({ item }, variables) => {
       cacheMeasurementScopeItem(item);
-      toast.success(
-        variables.status === "accepted"
-          ? "Scope added to the estimate queue."
-          : variables.status === "deferred"
-            ? "Scope deferred for later review."
+      const activeSuggestionKey = activeMeasurementGuideSuggestion
+        ? measurementSuggestionIdentity(
+            measurementScopeItems,
+            variables.sheetId,
+            activeMeasurementGuideSuggestion,
+          ).suggestionKey
+        : "";
+      const decidedSuggestionKey =
+        variables.suggestionKey ??
+        measurementSuggestionKey(variables.sheetId, variables.suggestion);
+      const decidedActiveGuide =
+        Boolean(activeMeasurementGuideSuggestion) && activeSuggestionKey === decidedSuggestionKey;
+
+      if (decidedActiveGuide) {
+        const nextGuide = nextMeasurementGuideAfterDecision({
+          suggestions: measurementGuideSuggestions,
+          items: measurementScopeItems,
+          sheetId: variables.sheetId,
+          decidedSuggestionKey,
+        });
+        if (nextGuide) {
+          setActiveMeasurementGuideId(nextGuide.id);
+          setFocusedMeasurementGuideId(nextGuide.id);
+          setMeasurementGuideLabel(queueItemBySuggestionId[nextGuide.id]?.label ?? nextGuide.label);
+          setMeasurementAttentionMode("spotlight");
+        } else {
+          setActiveMeasurementGuideId("");
+          setFocusedMeasurementGuideId("");
+          setMeasurementGuideLabel("");
+          setMeasurementAttentionMode("hidden");
+        }
+      }
+
+      if (variables.status === "accepted") {
+        toast.success(
+          decidedActiveGuide
+            ? "Callout accepted. Review advanced; the trusted trace is ready in Scope Queue."
+            : "Scope added to the estimate queue.",
+        );
+      } else if (variables.status === "deferred") {
+        toast.success("Scope deferred for later review.");
+      } else {
+        toast.success(
+          decidedActiveGuide
+            ? "Callout rejected. It was removed from the drawing and review advanced."
             : "Scope rejected and retained in the review history.",
-      );
+        );
+      }
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Scope decision did not save"),
@@ -2533,10 +2605,11 @@ export function PlanRoomWorkspace({
     labelOverride?: string,
   ) => {
     if (!currentSheet) return;
-    const suggestionKey = measurementSuggestionKey(currentSheet.id, suggestion);
-    const existingItem = measurementScopeItems.find(
-      (item) => item.plan_sheet_id === currentSheet.id && item.suggestion_key === suggestionKey,
-    );
+    const {
+      item: existingItem,
+      suggestionKey,
+      scopeKey,
+    } = measurementSuggestionIdentity(measurementScopeItems, currentSheet.id, suggestion);
     const decidedSuggestion = labelOverride?.trim()
       ? { ...suggestion, label: labelOverride.trim() }
       : suggestion;
@@ -2549,15 +2622,15 @@ export function PlanRoomWorkspace({
       anchor:
         measurementEvidenceAnchors[suggestion.source_line] ?? existingItem?.source_anchor ?? null,
       suggestionKey,
+      scopeKey,
     });
   };
 
   const selectMeasurementGuide = (suggestion: MeasurementAssistantSuggestion) => {
-    const queueItem = measurementScopeItems.find(
-      (item) =>
-        item.plan_sheet_id === currentSheet?.id &&
-        (suggestion.id === `scope-item-${item.id}` ||
-          item.suggestion_key === measurementSuggestionKey(currentSheet?.id ?? "", suggestion)),
+    const queueItem = measurementScopeItemForSuggestion(
+      measurementScopeItems,
+      currentSheet?.id ?? "",
+      suggestion,
     );
     setActiveMeasurementGuideId(suggestion.id);
     setFocusedMeasurementGuideId(suggestion.id);
@@ -2789,6 +2862,10 @@ export function PlanRoomWorkspace({
     setTool("select");
     setPendingPoints([]);
     setCalibrationPoints([]);
+    if (isCockpitMode) {
+      restoreCockpitPanel("tools");
+      setCockpitToolsView("review");
+    }
     if (measurement.plan_sheet_id !== currentSheet?.id) {
       setSelectedSheetId(measurement.plan_sheet_id);
     }
@@ -3714,17 +3791,26 @@ export function PlanRoomWorkspace({
     if (sheets.length === 0) fileInputRef.current?.click();
     restoreCockpitPanel("drawings");
   };
+  const focusWorkflowTarget = (target: { current: HTMLDivElement | null }) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        target.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        target.current?.focus({ preventScroll: true });
+      });
+    });
+  };
   const openActivationScale = () => {
     restoreCockpitPanel("tools");
     setCockpitToolsView("measure");
     setTool(currentSheet?.scale_feet_per_pixel ? "verify" : "calibrate");
     setPendingPoints([]);
     setCalibrationPoints([]);
+    focusWorkflowTarget(scaleWorkflowRef);
   };
   const openActivationAiMarkups = () => {
     restoreCockpitPanel("tools");
     setCockpitToolsView("ai");
-    if (!aiAssist.open) aiAssist.openPanel();
+    focusWorkflowTarget(aiScopeWorkflowRef);
   };
   const openActivationWorksheet = () => selectCockpitToolsView("worksheet");
   const startGuidedActivation = () => {
@@ -4534,6 +4620,21 @@ export function PlanRoomWorkspace({
               isCockpitMode && cockpitChromeVisible ? (
                 <div className="flex max-w-[min(620px,calc(100vw-2rem))] flex-wrap items-center justify-center gap-1.5">
                   {cockpitTakeoffToolButtons}
+                  {selectedMeasurement && !isCanonicalDemo && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 border-danger/40 px-2 text-danger"
+                      onClick={() => deleteMeasurementMutation.mutate(selectedMeasurement.id)}
+                      disabled={deleteMeasurementMutation.isPending}
+                      aria-label={`Delete selected takeoff ${selectedMeasurement.label}`}
+                      data-testid="plan-canvas-delete-selected"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete selected
+                    </Button>
+                  )}
                 </div>
               ) : null
             }
@@ -4543,8 +4644,8 @@ export function PlanRoomWorkspace({
             discoveryMarkups={symbolDiscovery.markupsForSheet(currentSheet?.id ?? null)}
             activeDiscoveryClusterIndex={symbolDiscovery.selectedClusterIndex}
             onDiscoveryGroupSelect={symbolDiscovery.selectGroup}
-            measurementGuideSuggestions={measurementGuideSuggestions}
-            activeMeasurementGuideId={resolvedFocusedMeasurementGuideId}
+            measurementGuideSuggestions={measurementCanvasGuideSuggestions}
+            activeMeasurementGuideId={resolvedCanvasMeasurementGuideId}
             measurementGuideMode={measurementAttentionMode}
             measurementGuideOpacity={measurementAttentionOpacity}
             measurementGuideScanNonce={measurementAttentionScanNonce}
@@ -4555,22 +4656,32 @@ export function PlanRoomWorkspace({
               if (suggestion) selectMeasurementGuide(suggestion);
             }}
             measurementGuideControls={
-              <MeasurementAttentionDock
-                count={measurementGuideSuggestions.length}
-                activeIndex={focusedMeasurementGuideIndex}
-                mode={measurementAttentionMode}
-                opacity={measurementAttentionOpacity}
-                onPrevious={() => moveMeasurementGuideFocus(-1)}
-                onNext={() => moveMeasurementGuideFocus(1)}
-                onModeChange={setMeasurementAttentionMode}
-                onOpacityChange={setMeasurementAttentionOpacity}
-                onReplay={() => {
-                  setMeasurementAttentionMode((current) =>
-                    current === "hidden" ? "all" : current,
-                  );
-                  setMeasurementAttentionScanNonce((current) => current + 1);
-                }}
-              />
+              measurementAttentionMode === "hidden" ? null : (
+                <MeasurementAttentionDock
+                  count={
+                    preparedMeasurementGuideActive ? 1 : measurementCanvasGuideSuggestions.length
+                  }
+                  activeIndex={
+                    preparedMeasurementGuideActive ? 0 : focusedCanvasMeasurementGuideIndex
+                  }
+                  mode={measurementAttentionMode}
+                  opacity={measurementAttentionOpacity}
+                  onPrevious={() => moveMeasurementGuideFocus(-1)}
+                  onNext={() => moveMeasurementGuideFocus(1)}
+                  onModeChange={setMeasurementAttentionMode}
+                  onOpacityChange={setMeasurementAttentionOpacity}
+                  onReplay={() => {
+                    setMeasurementAttentionScanNonce((current) => current + 1);
+                  }}
+                  onExit={() => {
+                    setActiveMeasurementGuideId("");
+                    setFocusedMeasurementGuideId("");
+                    setMeasurementGuideLabel("");
+                    setMeasurementAttentionMode("hidden");
+                  }}
+                  navigationEnabled={!preparedMeasurementGuideActive}
+                />
+              )
             }
             aiPanel={
               symbolDiscovery.open ? (
@@ -4591,6 +4702,7 @@ export function PlanRoomWorkspace({
                     label={measurementGuideLabel}
                     queueStatus={activeMeasurementGuideQueueItem?.status ?? null}
                     scaleVerified={currentSheetScaleStatus === "verified"}
+                    structuralSheet={currentSheetIsStructural}
                     pending={measurementScopeDecisionMutation.isPending}
                     onLabelChange={setMeasurementGuideLabel}
                     onShowEvidence={showActiveMeasurementGuideEvidence}
@@ -4600,6 +4712,7 @@ export function PlanRoomWorkspace({
                     onClose={() => {
                       setActiveMeasurementGuideId("");
                       setMeasurementGuideLabel("");
+                      setMeasurementAttentionMode("hidden");
                     }}
                   />
                 )}
@@ -4666,7 +4779,9 @@ export function PlanRoomWorkspace({
               >
                 <EstimatorActivationChecklist
                   hasDrawings={sheets.length > 0}
+                  hasScale={Boolean(currentSheet?.scale_feet_per_pixel)}
                   scaleVerified={currentSheetScaleStatus === "verified"}
+                  scaleCheckCount={scaleCheckDrafts.length}
                   hasTakeoff={measurements.length > 0}
                   hasLinkedTakeoff={linkedCount > 0}
                   onOpenDrawings={openActivationDrawings}
@@ -4716,60 +4831,67 @@ export function PlanRoomWorkspace({
               >
                 {(!isCockpitMode || cockpitToolsView === "ai") && (
                   <>
-                    <MeasurementAssistantPanel
-                      expanded={toolsWorkspaceMaximized}
-                      plan={measurementAssistantPlan}
-                      pending={measurementAssistantMutation.isPending}
-                      canAnalyze={Boolean(
-                        workspaceWritable &&
-                        currentSheet &&
-                        currentPlanSet?.file_mime_type === "application/pdf" &&
-                        currentPlanSet.file_path,
-                      )}
-                      scaleVerified={currentSheetScaleStatus === "verified"}
-                      preparedSuggestionId={preparedMeasurementSuggestionId}
-                      completedSuggestionIds={completedMeasurementSuggestionIds}
-                      queueItemBySuggestionId={queueItemBySuggestionId}
-                      duplicateCountBySuggestionId={duplicateCountBySuggestionId}
-                      activeEvidenceSourceLine={activeMeasurementEvidenceSourceLine(
-                        measurementEvidenceFocus,
-                        currentSheet?.id,
-                      )}
-                      activeGuideSuggestionId={resolvedFocusedMeasurementGuideId}
-                      decisionPending={measurementScopeDecisionMutation.isPending}
-                      onAnalyze={() => measurementAssistantMutation.mutate(undefined)}
-                      onPrepare={(suggestion) => {
-                        setPreparedMeasurementScopeItemId(
-                          queueItemBySuggestionId[suggestion.id]?.id ?? "",
-                        );
-                        prepareMeasurementSuggestion(suggestion);
-                      }}
-                      onShowEvidence={(suggestion) => {
-                        if (!currentSheet) return;
-                        showMeasurementEvidence({
-                          sheetId: currentSheet.id,
-                          sourceLine: suggestion.source_line,
-                          label: suggestion.label,
-                          anchor: measurementEvidenceAnchors[suggestion.source_line] ?? null,
-                        });
-                      }}
-                      onShowGuide={selectMeasurementGuide}
-                      onDecision={decideMeasurementSuggestion}
-                      onClear={() => {
-                        setMeasurementAssistantPlan(null);
-                        setActiveMeasurementGuideId("");
-                        setFocusedMeasurementGuideId("");
-                        setMeasurementAttentionMode("all");
-                        setMeasurementGuideLabel("");
-                        setPreparedMeasurementSuggestionId("");
-                        setPreparedMeasurementSuggestion(null);
-                        setPreparedScopeBriefTakeoff(null);
-                        setPreparedMeasurementScopeItemId("");
-                        setCompletedMeasurementSuggestionIds([]);
-                        setMeasurementSourceNote("");
-                        setMeasurementEvidenceAnchors({});
-                      }}
-                    />
+                    <div
+                      ref={aiScopeWorkflowRef}
+                      tabIndex={-1}
+                      className="scroll-mt-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      data-testid="estimator-ai-scope-workflow"
+                    >
+                      <MeasurementAssistantPanel
+                        expanded={toolsWorkspaceMaximized}
+                        plan={measurementAssistantPlan}
+                        pending={measurementAssistantMutation.isPending}
+                        canAnalyze={Boolean(
+                          workspaceWritable &&
+                          currentSheet &&
+                          currentPlanSet?.file_mime_type === "application/pdf" &&
+                          currentPlanSet.file_path,
+                        )}
+                        scaleVerified={currentSheetScaleStatus === "verified"}
+                        preparedSuggestionId={preparedMeasurementSuggestionId}
+                        completedSuggestionIds={completedMeasurementSuggestionIds}
+                        queueItemBySuggestionId={queueItemBySuggestionId}
+                        duplicateCountBySuggestionId={duplicateCountBySuggestionId}
+                        activeEvidenceSourceLine={activeMeasurementEvidenceSourceLine(
+                          measurementEvidenceFocus,
+                          currentSheet?.id,
+                        )}
+                        activeGuideSuggestionId={resolvedFocusedMeasurementGuideId}
+                        decisionPending={measurementScopeDecisionMutation.isPending}
+                        onAnalyze={() => measurementAssistantMutation.mutate(undefined)}
+                        onPrepare={(suggestion) => {
+                          setPreparedMeasurementScopeItemId(
+                            queueItemBySuggestionId[suggestion.id]?.id ?? "",
+                          );
+                          prepareMeasurementSuggestion(suggestion);
+                        }}
+                        onShowEvidence={(suggestion) => {
+                          if (!currentSheet) return;
+                          showMeasurementEvidence({
+                            sheetId: currentSheet.id,
+                            sourceLine: suggestion.source_line,
+                            label: suggestion.label,
+                            anchor: measurementEvidenceAnchors[suggestion.source_line] ?? null,
+                          });
+                        }}
+                        onShowGuide={selectMeasurementGuide}
+                        onDecision={decideMeasurementSuggestion}
+                        onClear={() => {
+                          setMeasurementAssistantPlan(null);
+                          setActiveMeasurementGuideId("");
+                          setFocusedMeasurementGuideId("");
+                          setMeasurementAttentionMode("all");
+                          setMeasurementGuideLabel("");
+                          setPreparedMeasurementSuggestionId("");
+                          setPreparedMeasurementSuggestion(null);
+                          setPreparedScopeBriefTakeoff(null);
+                          setPreparedMeasurementScopeItemId("");
+                          setCompletedMeasurementSuggestionIds([]);
+                          setMeasurementSourceNote("");
+                          setMeasurementEvidenceAnchors({});
+                        }}
+                      />
+                    </div>
                     <MeasurementScopeQueuePanel
                       expanded={toolsWorkspaceMaximized}
                       items={measurementScopeItems}
@@ -4831,11 +4953,14 @@ export function PlanRoomWorkspace({
                     </div>
                     {!toolsWorkspaceMaximized && <Separator />}
                     <div
+                      ref={scaleWorkflowRef}
+                      tabIndex={-1}
                       className={cn(
-                        "space-y-2",
+                        "scroll-mt-3 space-y-2 outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         toolsWorkspaceMaximized &&
                           "rounded-lg border border-hairline bg-surface p-4",
                       )}
+                      data-testid="estimator-scale-workflow"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <Label>Set drawing scale</Label>
@@ -5262,7 +5387,9 @@ export function PlanRoomWorkspace({
                     </Badge>
                     <Badge variant="secondary">
                       {toolLabel(selectedMeasurement.tool_type)} ·{" "}
-                      {formatQty(selectedMeasurement.quantity, selectedMeasurement.unit)}
+                      {selectedMeasurement.tool_type === "linear"
+                        ? formatGeometricLinearFeet(selectedMeasurement.quantity)
+                        : formatQty(selectedMeasurement.quantity, selectedMeasurement.unit)}
                     </Badge>
                   </div>
                 )}
@@ -5532,6 +5659,7 @@ export function PlanRoomWorkspace({
                           className="gap-1.5"
                           onClick={() => deleteMeasurementMutation.mutate(selectedMeasurement.id)}
                           disabled={deleteMeasurementMutation.isPending}
+                          data-testid="selected-takeoff-delete"
                         >
                           <Trash2 className="h-3.5 w-3.5 text-danger" /> Delete
                         </Button>
