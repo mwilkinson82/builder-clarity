@@ -363,6 +363,23 @@ test("Accept/Reject review permits zooming out below its one-time focus scale", 
   expect(Number(zoomThumb?.getAttribute("aria-valuenow"))).toBeLessThan(110);
 });
 
+test("AI panels and review controls stack above movable cockpit panels", async () => {
+  await mountHost([persistedCount], true, true);
+  const openButton = document.querySelector<HTMLButtonElement>('[data-testid="open-ai-panel"]');
+  expect(openButton).not.toBeNull();
+  act(() => openButton!.click());
+
+  const panel = document.querySelector<HTMLElement>('[data-testid="ai-assist-panel"]');
+  const review = document.querySelector<HTMLElement>('[data-testid="ai-review-bar"]');
+  const attention = document.querySelector<HTMLElement>(
+    '[data-testid="measurement-attention-dock"]',
+  );
+
+  expect(panel?.parentElement?.className).toContain("z-[60]");
+  expect(review?.parentElement?.parentElement?.className).toContain("z-[60]");
+  expect(attention?.parentElement?.parentElement?.className).toContain("z-[60]");
+});
+
 test("Verify Scale previews an orthogonal second point before the click", async () => {
   await mountHost([], false, false, {
     tool: "verify",
