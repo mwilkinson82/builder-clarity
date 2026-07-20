@@ -26,7 +26,7 @@ import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { AiAssistPanel } from "@/components/estimates/plan-room/AiAssistPanel";
 import { PlanCanvas } from "@/components/estimates/plan-room/PdfSheetViewer";
 import { useAiAssist } from "@/components/estimates/plan-room/useAiAssist";
-import type { ViewSize } from "@/components/estimates/plan-room/planRoomShared";
+import type { Point, ToolMode, ViewSize } from "@/components/estimates/plan-room/planRoomShared";
 import type { PlanSetRow, PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
 
 // React 19 requires an explicit opt-in before act() is usable.
@@ -198,10 +198,14 @@ function Host({
   measurements,
   showAttentionDock = false,
   showAiReview = false,
+  tool = "select",
+  calibrationPoints = [],
 }: {
   measurements: TakeoffMeasurementRow[];
   showAttentionDock?: boolean;
   showAiReview?: boolean;
+  tool?: ToolMode;
+  calibrationPoints?: Point[];
 }) {
   const [viewSize, setViewSize] = useState<ViewSize>({ width: 1000, height: 700 });
   const [selectedMeasurementId, setSelectedMeasurementId] = useState("");
@@ -245,12 +249,12 @@ function Host({
         overlayMode="overlay"
         measurements={measurements}
         pendingPoints={[]}
-        calibrationPoints={[]}
+        calibrationPoints={calibrationPoints}
         draftCommand={null}
         draftUnit="EA"
         draftActionDisabled={false}
         onFinishDraft={() => {}}
-        tool="select"
+        tool={tool}
         viewSize={viewSize}
         onViewSizeChange={setViewSize}
         onPoint={() => {}}
@@ -293,6 +297,7 @@ async function mountHost(
   measurements: TakeoffMeasurementRow[],
   showAttentionDock = false,
   showAiReview = false,
+  interaction?: { tool: ToolMode; calibrationPoints: Point[] },
 ) {
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -306,6 +311,8 @@ async function mountHost(
           measurements={measurements}
           showAttentionDock={showAttentionDock}
           showAiReview={showAiReview}
+          tool={interaction?.tool}
+          calibrationPoints={interaction?.calibrationPoints}
         />
       </QueryClientProvider>
     ),
@@ -354,6 +361,64 @@ test("Accept/Reject review permits zooming out below its one-time focus scale", 
   });
 
   expect(Number(zoomThumb?.getAttribute("aria-valuenow"))).toBeLessThan(110);
+});
+
+test("Verify Scale previews an orthogonal second point before the click", async () => {
+  await mountHost([], false, false, {
+    tool: "verify",
+    calibrationPoints: [{ x: 0.2, y: 0.5 }],
+  });
+  const canvas = document.querySelector<SVGSVGElement>('[data-testid="plan-canvas"]');
+  expect(canvas).not.toBeNull();
+  canvas!.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, right: 1000, bottom: 700, width: 1000, height: 700 }) as DOMRect;
+
+  act(() => {
+    canvas!.dispatchEvent(
+      new PointerEvent("pointermove", {
+        ...pointerInit(31, 800, 352),
+        shiftKey: false,
+      }),
+    );
+  });
+
+  expect(document.querySelector('[data-testid="takeoff-run-preview"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="linear-angle-guide"]')).not.toBeNull();
+});
+
+test("Verify Scale permits right-drag panning while the second point is active", async () => {
+  await mountHost([], false, false, {
+    tool: "verify",
+    calibrationPoints: [{ x: 0.2, y: 0.5 }],
+  });
+  const canvas = document.querySelector<SVGSVGElement>('[data-testid="plan-canvas"]');
+  const viewport = document.querySelector<HTMLElement>('[data-testid="plan-viewport"]');
+  expect(canvas).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  viewport!.scrollLeft = 100;
+
+  act(() => {
+    canvas!.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        ...pointerInit(32, 300, 300),
+        button: 2,
+      }),
+    );
+    canvas!.dispatchEvent(
+      new PointerEvent("pointermove", {
+        ...pointerInit(32, 250, 300),
+        button: 2,
+      }),
+    );
+    canvas!.dispatchEvent(
+      new PointerEvent("pointerup", {
+        ...pointerInit(32, 250, 300),
+        button: 2,
+      }),
+    );
+  });
+
+  expect(viewport!.scrollLeft).toBe(150);
 });
 
 afterEach(() => {

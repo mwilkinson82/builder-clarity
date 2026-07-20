@@ -142,7 +142,10 @@ const responseSchema = {
   },
 };
 
-const AI_SHEET_IDENTITY_BATCH_SIZE = 4;
+// A full construction sheet can consume a surprisingly large vision context
+// even after raster compression. One sheet per call is the safe boundary for
+// the configured gpt-4o path; all calls still belong to one charged operation.
+const AI_SHEET_IDENTITY_BATCH_SIZE = 1;
 
 function batchSheets<T>(sheets: T[]) {
   const batches: T[][] = [];
