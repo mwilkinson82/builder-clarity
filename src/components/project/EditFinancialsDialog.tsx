@@ -39,6 +39,15 @@ export type EditableProject = {
   default_output_format: BillingOutputFormat;
 };
 
+export type ProjectHeaderSaveAttempt = {
+  patch: Partial<EditableProject>;
+  overrideReason?: string;
+  expectedUpdatedAt: string;
+  operationKey: string;
+};
+
+const newProjectHeaderOperationKey = () => globalThis.crypto.randomUUID();
+
 export function EditFinancialsDialog({
   project,
   rollup,
@@ -49,7 +58,7 @@ export function EditFinancialsDialog({
   project: ProjectRow;
   rollup: Rollup;
   guidance: { ePct: number; cPct: number; eTarget: number; cTarget: number };
-  onSave: (patch: Partial<EditableProject>) => void;
+  onSave: (attempt: ProjectHeaderSaveAttempt) => Promise<unknown>;
   pending: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -76,6 +85,59 @@ export function EditFinancialsDialog({
     default_output_format: project.default_output_format ?? "invoice",
   });
   const [form, setForm] = useState<EditableProject>(init);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [expectedUpdatedAt, setExpectedUpdatedAt] = useState(project.updated_at);
+  const [operationKey, setOperationKey] = useState(newProjectHeaderOperationKey);
+  const [attempted, setAttempted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const busy = pending || saving;
+  const changeForm = (next: EditableProject) => {
+    setForm(next);
+    setSaveError(null);
+    if (attempted) {
+      setOperationKey(newProjectHeaderOperationKey());
+      setAttempted(false);
+    }
+  };
+  const changeOverrideReason = (next: string) => {
+    setOverrideReason(next);
+    setSaveError(null);
+    if (attempted) {
+      setOperationKey(newProjectHeaderOperationKey());
+      setAttempted(false);
+    }
+  };
+  const resetDraft = () => {
+    setForm(init());
+    setOverrideReason("");
+    setExpectedUpdatedAt(project.updated_at);
+    setOperationKey(newProjectHeaderOperationKey());
+    setAttempted(false);
+    setSaveError(null);
+  };
+  const save = async () => {
+    setSaving(true);
+    setAttempted(true);
+    setSaveError(null);
+    try {
+      await onSave({
+        patch: {
+          ...form,
+          hold_variance_note: form.hold_variance_note.trim() || defaultHoldNote(),
+        },
+        overrideReason: overrideReason.trim() || undefined,
+        expectedUpdatedAt,
+        operationKey,
+      });
+      setOpen(false);
+      resetDraft();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "The project did not save. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
   const calculatedScheduleVariance = computeScheduleVarianceWeeks(
     form.baseline_completion_date,
     form.forecast_completion_date,
@@ -85,8 +147,9 @@ export function EditFinancialsDialog({
     <Dialog
       open={open}
       onOpenChange={(o) => {
+        if (!o && busy) return;
         setOpen(o);
-        if (o) setForm(init());
+        if (o) resetDraft();
       }}
     >
       <DialogTrigger asChild>
@@ -94,18 +157,23 @@ export function EditFinancialsDialog({
           <Pencil className="h-3.5 w-3.5" /> Edit
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeaderV2 eyebrow="Project" title="Edit project" />
         <div className="grid gap-4 py-2 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Project name</Label>
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <Input
+              value={form.name}
+              disabled={busy}
+              onChange={(e) => changeForm({ ...form, name: e.target.value })}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Job number</Label>
             <Input
               value={form.job_number}
-              onChange={(e) => setForm({ ...form, job_number: e.target.value })}
+              disabled={busy}
+              onChange={(e) => changeForm({ ...form, job_number: e.target.value })}
               placeholder="e.g. 26-014"
             />
           </div>
@@ -113,14 +181,16 @@ export function EditFinancialsDialog({
             <Label>Client</Label>
             <Input
               value={form.client}
-              onChange={(e) => setForm({ ...form, client: e.target.value })}
+              disabled={busy}
+              onChange={(e) => changeForm({ ...form, client: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
             <Label>Project manager</Label>
             <Input
               value={form.project_manager}
-              onChange={(e) => setForm({ ...form, project_manager: e.target.value })}
+              disabled={busy}
+              onChange={(e) => changeForm({ ...form, project_manager: e.target.value })}
               placeholder="e.g. Marshall Wilkinson"
             />
           </div>
@@ -128,21 +198,24 @@ export function EditFinancialsDialog({
             <Label>Original contract</Label>
             <MoneyInput
               value={form.original_contract}
-              onValueChange={(v) => setForm({ ...form, original_contract: v })}
+              disabled={busy}
+              onValueChange={(v) => changeForm({ ...form, original_contract: v })}
             />
           </div>
           <div className="space-y-1.5">
             <Label>Original cost budget</Label>
             <MoneyInput
               value={form.original_cost_budget}
-              onValueChange={(v) => setForm({ ...form, original_cost_budget: v })}
+              disabled={busy}
+              onValueChange={(v) => changeForm({ ...form, original_cost_budget: v })}
             />
           </div>
           <div className="space-y-1.5">
             <Label>Phase</Label>
             <Select
               value={form.phase}
-              onValueChange={(v) => setForm({ ...form, phase: v as Phase })}
+              disabled={busy}
+              onValueChange={(v) => changeForm({ ...form, phase: v as Phase })}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -161,15 +234,17 @@ export function EditFinancialsDialog({
               min={0}
               max={100}
               value={form.percent_complete}
-              onChange={(e) => setForm({ ...form, percent_complete: Number(e.target.value) })}
+              disabled={busy}
+              onChange={(e) => changeForm({ ...form, percent_complete: Number(e.target.value) })}
             />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label>Default billing document</Label>
             <Select
               value={form.default_output_format}
+              disabled={busy}
               onValueChange={(v) =>
-                setForm({ ...form, default_output_format: v as BillingOutputFormat })
+                changeForm({ ...form, default_output_format: v as BillingOutputFormat })
               }
             >
               <SelectTrigger>
@@ -191,8 +266,9 @@ export function EditFinancialsDialog({
               <Input
                 type="date"
                 value={form.baseline_completion_date ?? ""}
+                disabled={busy}
                 onChange={(e) =>
-                  setForm({ ...form, baseline_completion_date: e.target.value || null })
+                  changeForm({ ...form, baseline_completion_date: e.target.value || null })
                 }
               />
             </div>
@@ -201,8 +277,9 @@ export function EditFinancialsDialog({
               <Input
                 type="date"
                 value={form.forecast_completion_date ?? ""}
+                disabled={busy}
                 onChange={(e) =>
-                  setForm({ ...form, forecast_completion_date: e.target.value || null })
+                  changeForm({ ...form, forecast_completion_date: e.target.value || null })
                 }
               />
             </div>
@@ -237,26 +314,50 @@ export function EditFinancialsDialog({
             <Textarea
               rows={2}
               value={form.hold_variance_note}
+              disabled={busy}
               placeholder={defaultHoldNote()}
-              onChange={(e) => setForm({ ...form, hold_variance_note: e.target.value })}
+              onChange={(e) => changeForm({ ...form, hold_variance_note: e.target.value })}
             />
           </div>
+          {(form.name !== project.name ||
+            form.job_number !== project.job_number ||
+            form.client !== project.client ||
+            form.project_manager !== project.project_manager ||
+            form.original_contract !== project.original_contract ||
+            form.original_cost_budget !== project.original_cost_budget) && (
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Protected-header change reason</Label>
+              <Textarea
+                rows={2}
+                maxLength={500}
+                value={overrideReason}
+                disabled={busy}
+                onChange={(event) => changeOverrideReason(event.target.value)}
+                placeholder="Required once project financial activity has begun; saved with immutable before/after evidence."
+              />
+              <p className="text-xs text-muted-foreground">
+                Project identity and original financial baselines become controlled records after
+                lifecycle activity begins. The reason is retained with the revision audit.
+              </p>
+            </div>
+          )}
         </div>
+        {saveError ? (
+          <div
+            role="alert"
+            className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger"
+          >
+            <p className="font-semibold">Project did not save</p>
+            <p>{saveError}</p>
+            <p className="mt-1 text-xs">Your entries and protected-header reason are still here.</p>
+          </div>
+        ) : null}
         <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>
+          <Button variant="ghost" disabled={busy} onClick={() => setOpen(false)}>
             Cancel
           </Button>
-          <Button
-            disabled={pending}
-            onClick={() => {
-              onSave({
-                ...form,
-                hold_variance_note: form.hold_variance_note.trim() || defaultHoldNote(),
-              });
-              setOpen(false);
-            }}
-          >
-            {pending ? "Saving…" : "Save changes"}
+          <Button disabled={busy} onClick={() => void save()}>
+            {busy ? "Saving…" : "Save changes"}
           </Button>
         </DialogFooter>
       </DialogContent>

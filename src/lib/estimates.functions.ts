@@ -33,10 +33,62 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
 };
 type DynamicSupabaseClient = {
   from(relation: string): DynamicSupabaseQuery;
+  rpc(functionName: string, args?: Record<string, unknown>): Promise<DynamicSupabaseResult>;
 };
 
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
+const dynamicRpc = (supabase: unknown, functionName: string, args?: Record<string, unknown>) =>
+  (supabase as DynamicSupabaseClient).rpc(functionName, args);
+
+const ATOMIC_ESTIMATE_IMPORT_PENDING =
+  "The atomic estimate-import update is still being applied. The original worksheet was not changed; try again after the Lovable migration completes.";
+
+function isMissingAtomicEstimateImport(error: DynamicSupabaseError | null) {
+  const message = error?.message ?? "";
+  return (
+    error?.code === "PGRST202" ||
+    error?.code === "42883" ||
+    /schema cache|could not find the function|function .* does not exist/i.test(message)
+  );
+}
+
+const ESTIMATE_CREATE_COMMAND_PENDING =
+  "Estimate creation is still being enabled on the backend. Nothing was saved; wait for Lovable to finish the migration, then try again.";
+
+// Raw INSERT authority on public.estimates and public.estimate_line_items is
+// revoked in the same migration batch that ships the create commands, so there
+// is deliberately no direct-insert fallback anywhere in this module.
+function isMissingEstimateCreateCommand(error: DynamicSupabaseError | null) {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST202" ||
+      error.code === "42883" ||
+      /could not find the function|schema cache|does not exist/i.test(message)),
+  );
+}
+
+// Header keys create_estimate_atomic accepts. project_id is intentionally not
+// creatable: a non-null project marks an estimate as converted (its financial
+// content becomes immutable), so project linking happens after creation via
+// update_estimate_header_atomic instead.
+const ESTIMATE_CREATE_HEADER_KEYS = [
+  "name",
+  "description",
+  "opportunity_id",
+  "project_type",
+  "kind",
+  "region",
+  "region_multiplier",
+  "overhead_pct",
+  "profit_pct",
+  "contingency_pct",
+  "bond_pct",
+  "tax_pct",
+  "general_conditions_pct",
+  "custom_markups",
+] as const;
 
 const chunk = <T>(items: readonly T[], size: number) => {
   const chunks: T[][] = [];
@@ -54,6 +106,7 @@ const num = (value: unknown, fallback = 0) => {
 const arr = (value: unknown): Json[] => (Array.isArray(value) ? (value as Json[]) : []);
 const clean = (value: string, max = 500) => value.trim().slice(0, max);
 const centsToDollars = (value: number) => Math.round(value) / 100;
+const MAX_SAFE_CENTS = Number.MAX_SAFE_INTEGER;
 
 export type EstimateStatus = "draft" | "final" | "awarded" | "lost";
 const ESTIMATE_FOLDER_VALUES = ["sales_process", "won", "not_won", "archived"] as const;
@@ -754,18 +807,20 @@ async function ensureHarborDemoEstimate(
     ]),
   );
 
-  const { data: estimateRow, error: estimateError } = await dynamicTable(
-    context.supabase,
-    "estimates",
-  )
-    .insert({
-      organization_id: organizationId,
-      created_by: context.userId,
+  // The estimate row, every canonical line, and the authoritative totals are
+  // one create_estimate_atomic transaction. The deterministic key plus the
+  // command's content fingerprint make the seed idempotent: a crash between
+  // create and protect resumes with the same estimate id, never a duplicate.
+  // The command always creates a draft; the worksheet is frozen further down
+  // only after all lines and totals exist (final estimates reject line DML).
+  const summary = await createEstimateAtomicCommand(context, {
+    organizationId,
+    header: {
       name: HARBOR_CANONICAL_ESTIMATE_NAME,
       description:
         "Read-only estimating workbench sample. Create a working copy before changing quantities, pricing, takeoffs, or drawings.",
-      project_id: null,
       project_type: "residential",
+      kind: "estimate",
       region: "national",
       region_multiplier: 1,
       overhead_pct: 800,
@@ -774,44 +829,36 @@ async function ensureHarborDemoEstimate(
       bond_pct: 0,
       tax_pct: 0,
       general_conditions_pct: 450,
-      custom_markups: [] as unknown as Json,
-      status: "final",
-      is_canonical_demo: false,
-      canonical_demo_key: null,
-      canonical_demo_version: null,
-      canonical_expected_total_cents: null,
-    })
-    .select("id")
-    .single();
-  if (estimateError || !estimateRow) {
-    throw new Error(estimateError?.message ?? "Harbor sample estimate did not save.");
+      custom_markups: [],
+    },
+    initialLines: harborSeedLineInputs(
+      HARBOR_CANONICAL_ESTIMATE_LINES,
+      libraryIds,
+      "Canonical Harbor Residence learning estimate. Duplicate before editing.",
+    ),
+    // Org-scoped: the create-operation journal is unique per (actor, key) and
+    // the fingerprint includes the organization, so a super admin seeding a
+    // second company must not collide with the first seed's key.
+    operationKey: `canonical:harbor-residence-v1:create:${organizationId}`,
+    fallbackMessage: "Harbor sample estimate did not save.",
+  });
+
+  const estimateId = str(summary.id);
+  const commandTotals =
+    summary.totals && typeof summary.totals === "object" && !Array.isArray(summary.totals)
+      ? (summary.totals as Record<string, unknown>)
+      : {};
+  const totalCents = Math.round(num(commandTotals.total_with_markups_cents));
+  if (totalCents !== HARBOR_CANONICAL_TOTAL_CENTS) {
+    throw new Error(`Canonical Harbor sample total drifted to ${totalCents} cents.`);
   }
 
-  const estimateId = str((estimateRow as Record<string, unknown>).id);
-  const { error: linesError } = await dynamicTable(context.supabase, "estimate_line_items").insert(
-    HARBOR_CANONICAL_ESTIMATE_LINES.map((line, index) => ({
-      estimate_id: estimateId,
-      csi_division: line.csi_division,
-      cost_code: line.cost_code,
-      description: line.description,
-      unit: line.unit,
-      quantity: line.unit === "LS" ? 1 : line.quantity,
-      material_unit_cost_cents: line.material_unit_cost_cents,
-      labor_unit_cost_cents: line.labor_unit_cost_cents,
-      library_item_id: line.external_id ? (libraryIds.get(line.external_id) ?? null) : null,
-      scope_group: line.scope_group,
-      sort_order: index + 1,
-      notes: "Canonical Harbor Residence learning estimate. Duplicate before editing.",
-    })),
-  );
-  if (linesError) throw new Error(linesError.message);
-
-  const recalculated = await recalculateEstimateTotalsInternal(context, estimateId);
-  if (recalculated.totals.total_cents !== HARBOR_CANONICAL_TOTAL_CENTS) {
-    throw new Error(
-      `Canonical Harbor sample total drifted to ${recalculated.totals.total_cents} cents.`,
-    );
-  }
+  const finalizeResult = await dynamicRpc(context.supabase, "update_estimate_header_atomic", {
+    p_estimate_id: estimateId,
+    p_patch: { status: "final" },
+    p_operation_key: `canonical:${estimateId}:finalize:v1`,
+  });
+  if (finalizeResult.error) throw new Error(finalizeResult.error.message);
 
   const { error: protectError } = await dynamicTable(context.supabase, "estimates")
     .update({
@@ -832,33 +879,86 @@ async function ensureHarborDemoEstimate(
     .neq("id", estimateId);
 }
 
+// Estimate creation is one database command: header validation, optional
+// initial lines, authoritative totals, and the idempotency journal all commit
+// together, keyed per (user, operation_key) with a content fingerprint.
+async function createEstimateAtomicCommand(
+  context: { supabase: unknown },
+  input: {
+    organizationId: string;
+    header: Record<string, unknown>;
+    initialLines?: Array<Record<string, unknown>>;
+    operationKey: string;
+    fallbackMessage: string;
+  },
+): Promise<Record<string, unknown>> {
+  const header: Record<string, unknown> = {};
+  for (const key of ESTIMATE_CREATE_HEADER_KEYS) {
+    if (input.header[key] !== undefined) header[key] = input.header[key];
+  }
+  const result = await dynamicRpc(context.supabase, "create_estimate_atomic", {
+    p_organization_id: input.organizationId,
+    p_header: header,
+    p_initial_lines: input.initialLines ?? [],
+    p_operation_key: input.operationKey,
+  });
+  if (result.error) {
+    if (isMissingEstimateCreateCommand(result.error)) {
+      throw new Error(ESTIMATE_CREATE_COMMAND_PENDING);
+    }
+    throw new Error(result.error.message);
+  }
+  if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+    throw new Error(input.fallbackMessage);
+  }
+  const summary = result.data as Record<string, unknown>;
+  if (!str(summary.id)) throw new Error(input.fallbackMessage);
+  return summary;
+}
+
+// Same idempotency pattern for appending lines to a draft estimate: the rows,
+// the sort-order assignment, and the totals recalculation are one transaction.
+async function createEstimateLineItemsAtomicCommand(
+  context: { supabase: unknown },
+  input: {
+    estimateId: string;
+    lines: Array<Record<string, unknown>>;
+    operationKey: string;
+    fallbackMessage: string;
+  },
+): Promise<Record<string, unknown>> {
+  const result = await dynamicRpc(context.supabase, "create_estimate_line_items_atomic", {
+    p_estimate_id: input.estimateId,
+    p_lines: input.lines,
+    p_operation_key: input.operationKey,
+  });
+  if (result.error) {
+    if (isMissingEstimateCreateCommand(result.error)) {
+      throw new Error(ESTIMATE_CREATE_COMMAND_PENDING);
+    }
+    throw new Error(result.error.message);
+  }
+  if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+    throw new Error(input.fallbackMessage);
+  }
+  return result.data as Record<string, unknown>;
+}
+
 async function insertEstimateRow(
   context: { supabase: unknown },
   insert: Record<string, unknown> & { kind: EstimateKind },
   fallbackMessage: string,
+  operationKey?: string,
 ) {
-  let result = await dynamicTable(context.supabase, "estimates")
-    .insert(insert)
-    .select("id")
-    .single();
-  if (result.error && isMissingEstimateKindColumn(result.error)) {
-    // The kind column has not landed in this environment yet; fall back to
-    // the legacy project_type overload so master sheets never leak into the
-    // estimates list.
-    const { kind, ...legacy } = insert;
-    result = await dynamicTable(context.supabase, "estimates")
-      .insert(
-        kind === "master_sheet"
-          ? { ...legacy, project_type: MASTER_ESTIMATE_PROJECT_TYPE }
-          : legacy,
-      )
-      .select("id")
-      .single();
-  }
-  if (result.error || !result.data) {
-    throw new Error(result.error?.message ?? fallbackMessage);
-  }
-  return str((result.data as Record<string, unknown>).id);
+  // Callers with a natural retry identity pass a deterministic operationKey;
+  // user-initiated creates mint a fresh key per request.
+  const summary = await createEstimateAtomicCommand(context, {
+    organizationId: str(insert.organization_id),
+    header: insert,
+    operationKey: operationKey ?? crypto.randomUUID(),
+    fallbackMessage,
+  });
+  return str(summary.id);
 }
 
 async function loadEstimate(context: { supabase: unknown }, id: string): Promise<EstimateRow> {
@@ -1030,43 +1130,28 @@ async function loadEstimateQuantitySourceReview(
   });
 }
 
-async function getNextLineSortOrder(context: { supabase: unknown }, estimateId: string) {
-  const { data: existing, error: existingError } = await dynamicTable(
-    context.supabase,
-    "estimate_line_items",
-  )
-    .select("sort_order")
-    .eq("estimate_id", estimateId)
-    .order("sort_order", { ascending: false })
-    .limit(1);
-  if (existingError) throw new Error(existingError.message);
-  return (
-    ((existing as Record<string, unknown>[] | null)?.reduce(
-      (max, row) => Math.max(max, Math.round(num(row.sort_order))),
-      0,
-    ) ?? 0) + 1
-  );
-}
-
 export async function recalculateEstimateTotalsInternal(
   context: { supabase: unknown },
   estimateId: string,
 ) {
+  const result = await dynamicRpc(context.supabase, "recalculate_estimate_totals_atomic", {
+    p_estimate_id: estimateId,
+  });
+  if (result.error) throw new Error(result.error.message);
+  if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+    throw new Error("Estimate totals did not update.");
+  }
+  const summary = result.data as Record<string, unknown>;
   const estimate = await loadEstimate(context, estimateId);
-  const lines = await loadEstimateLines(context, estimateId);
-  const totals = calculateEstimateTotals(estimate, lines);
-  const { data, error } = await dynamicTable(context.supabase, "estimates")
-    .update({
-      subtotal_material_cents: totals.material_cents,
-      subtotal_labor_cents: totals.labor_cents,
-      subtotal_cents: totals.direct_cents,
-      total_with_markups_cents: totals.total_cents,
-    })
-    .eq("id", estimateId)
-    .select("*")
-    .single();
-  if (error || !data) throw new Error(error?.message ?? "Estimate totals did not update.");
-  return { estimate: normalizeEstimate(data as Record<string, unknown>), totals };
+  return {
+    estimate,
+    totals: {
+      material_cents: Math.round(num(summary.subtotal_material_cents)),
+      labor_cents: Math.round(num(summary.subtotal_labor_cents)),
+      direct_cents: Math.round(num(summary.subtotal_cents)),
+      total_cents: Math.round(num(summary.total_with_markups_cents)),
+    },
+  };
 }
 
 const customMarkupSchema = z.object({
@@ -1098,6 +1183,7 @@ const createEstimateInput = z.object({
 
 const updateEstimateInput = z.object({
   id: z.string().uuid(),
+  operation_key: z.string().uuid(),
   patch: z
     .object({
       name: z.string().min(1).max(200).optional(),
@@ -1114,23 +1200,53 @@ const updateEstimateInput = z.object({
     .refine((patch) => Object.keys(patch).length > 0, "No estimate changes were provided."),
 });
 
-const lineItemInput = z.object({
+const lineItemObject = z.object({
   estimate_id: z.string().uuid(),
   csi_division: z.string().max(8).optional().default(""),
   cost_code: z.string().max(32).optional().default(""),
   description: z.string().min(1).max(500),
   unit: z.string().min(1).max(16),
   quantity: z.number().min(0).max(999999999).default(0),
-  material_unit_cost_cents: z.number().int().min(0).max(999999999).default(0),
-  labor_unit_cost_cents: z.number().int().min(0).max(999999999).default(0),
+  material_unit_cost_cents: z.number().int().min(0).max(MAX_SAFE_CENTS).default(0),
+  labor_unit_cost_cents: z.number().int().min(0).max(MAX_SAFE_CENTS).default(0),
   library_item_id: z.string().uuid().nullable().optional(),
   scope_group: z.string().max(200).optional().default(""),
   notes: z.string().max(2000).optional().default(""),
 });
 
+function validateEstimateLineExtension(
+  line: { quantity: number; material_unit_cost_cents: number; labor_unit_cost_cents: number },
+  context: z.RefinementCtx,
+) {
+  const materialExtension = Math.round(line.quantity * line.material_unit_cost_cents);
+  const laborExtension = Math.round(line.quantity * line.labor_unit_cost_cents);
+  const totalExtension = materialExtension + laborExtension;
+  if (
+    !Number.isSafeInteger(materialExtension) ||
+    !Number.isSafeInteger(laborExtension) ||
+    !Number.isSafeInteger(totalExtension) ||
+    totalExtension > MAX_SAFE_CENTS
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "The extended estimate-line value exceeds the supported accounting range.",
+      path: ["quantity"],
+    });
+  }
+}
+
+const lineItemInput = lineItemObject
+  .extend({
+    // Optional today so a client that retries can already deduplicate;
+    // caller-owned deterministic keys are the follow-up.
+    operation_key: z.string().trim().min(1).max(200).optional(),
+  })
+  .superRefine(validateEstimateLineExtension);
+
 const updateLineItemInput = z.object({
   id: z.string().uuid(),
-  patch: lineItemInput
+  operation_key: z.string().uuid(),
+  patch: lineItemObject
     .omit({ estimate_id: true })
     .partial()
     .refine((patch) => Object.keys(patch).length > 0, "No line item changes were provided."),
@@ -1155,8 +1271,8 @@ const costLibraryItemInput = z.object({
   category: z.string().max(64).optional().default(""),
   description: z.string().min(1).max(500),
   unit: z.string().min(1).max(16),
-  material_cost_cents: z.number().int().min(0).max(999999999).default(0),
-  labor_cost_cents: z.number().int().min(0).max(999999999).default(0),
+  material_cost_cents: z.number().int().min(0).max(MAX_SAFE_CENTS).default(0),
+  labor_cost_cents: z.number().int().min(0).max(MAX_SAFE_CENTS).default(0),
   labor_basis: z.enum(["per_unit", "per_hour", "installed"]).optional().default("per_unit"),
   crew_size: z.number().min(0).max(999).nullable().optional(),
   productivity_per_hour: z.number().min(0).max(999999).nullable().optional(),
@@ -1173,26 +1289,37 @@ const importCostLibraryItemsInput = z.object({
   items: z.array(costLibraryItemInput).min(1).max(500),
 });
 
-const estimateLineImportItemInput = lineItemInput.omit({ estimate_id: true });
+const estimateLineImportItemInput = lineItemObject
+  .omit({ estimate_id: true })
+  .extend({
+    quantity: z.number().gt(0).max(999999999),
+  })
+  .superRefine(validateEstimateLineExtension);
 
 const importEstimateLineItemsInput = z.object({
   estimate_id: z.string().uuid(),
   mode: z.enum(["append", "replace"]).optional().default("append"),
   rows: z.array(estimateLineImportItemInput).min(1).max(500),
+  idempotency_key: z.string().trim().min(1).max(200),
 });
 
 const createBlankLineItemsInput = z.object({
   estimate_id: z.string().uuid(),
   count: z.number().int().min(1).max(25),
+  // Optional today so a client that retries can already deduplicate;
+  // caller-owned deterministic keys are the follow-up.
+  operation_key: z.string().trim().min(1).max(200).optional(),
 });
 
 const duplicateEstimateInput = z.object({
   id: z.string().uuid(),
   as_project_estimate: z.boolean().optional().default(false),
+  operation_key: z.string().uuid(),
 });
 
 const deleteEstimateInput = z.object({
   id: z.string().uuid(),
+  operation_key: z.string().uuid(),
 });
 
 const saveMarkupDefaultsInput = z.object({
@@ -1521,6 +1648,39 @@ const HARBOR_CANONICAL_ESTIMATE_LINES = HARBOR_SAMPLE_MASTER_SHEET_LINES.map((li
   line.cost_code === "31-220" ? { ...line, material_unit_cost_cents: 1_632_523 } : { ...line },
 );
 
+type HarborSeedLine = {
+  external_id: string;
+  csi_division: string;
+  cost_code: string;
+  scope_group: string;
+  description: string;
+  unit: string;
+  quantity: number;
+  material_unit_cost_cents: number;
+  labor_unit_cost_cents: number;
+};
+
+// Maps seed rows onto the line keys create_estimate_atomic accepts. Sort order
+// is assigned by the command from array position, matching the seed order.
+function harborSeedLineInputs(
+  lines: readonly HarborSeedLine[],
+  libraryIds: Map<string, string>,
+  notes: string,
+) {
+  return lines.map((line) => ({
+    csi_division: line.csi_division,
+    cost_code: line.cost_code,
+    description: line.description,
+    unit: line.unit,
+    quantity: line.unit === "LS" ? 1 : line.quantity,
+    material_unit_cost_cents: line.material_unit_cost_cents,
+    labor_unit_cost_cents: line.labor_unit_cost_cents,
+    library_item_id: line.external_id ? (libraryIds.get(line.external_id) ?? null) : null,
+    scope_group: line.scope_group,
+    notes,
+  }));
+}
+
 async function ensureHarborSampleMasterSheet(
   context: { supabase: unknown; userId: string },
   organizationId: string,
@@ -1578,15 +1738,16 @@ async function ensureHarborSampleMasterSheet(
     ]),
   );
 
-  const masterId = await insertEstimateRow(
-    context,
-    {
-      organization_id: organizationId,
-      created_by: context.userId,
+  // One create_estimate_atomic transaction seeds the master sheet and all of
+  // its sample lines; the org-scoped deterministic key makes reseeds no-ops.
+  // The sample is no longer linked to the demo project: a non-null project_id
+  // marks an estimate as converted, which would freeze this editable sample.
+  await createEstimateAtomicCommand(context, {
+    organizationId,
+    header: {
       name: HARBOR_SAMPLE_MASTER_SHEET_NAME,
       description:
         "Sample reusable master sheet seeded from Harbor Residence. Open it to see the format, copy it for your company, or create a project estimate from it.",
-      project_id: str(harborProject?.id) || null,
       project_type: "commercial",
       kind: "master_sheet",
       region: "national",
@@ -1597,30 +1758,16 @@ async function ensureHarborSampleMasterSheet(
       bond_pct: 0,
       tax_pct: 0,
       general_conditions_pct: 450,
-      custom_markups: [] as unknown as Json,
-      status: "draft",
+      custom_markups: [],
     },
-    "Harbor sample master sheet did not save.",
-  );
-  const { error: linesError } = await dynamicTable(context.supabase, "estimate_line_items").insert(
-    HARBOR_SAMPLE_MASTER_SHEET_LINES.map((line, index) => ({
-      estimate_id: masterId,
-      csi_division: line.csi_division,
-      cost_code: line.cost_code,
-      description: line.description,
-      unit: line.unit,
-      quantity: line.unit === "LS" ? 1 : line.quantity,
-      material_unit_cost_cents: line.material_unit_cost_cents,
-      labor_unit_cost_cents: line.labor_unit_cost_cents,
-      library_item_id: line.external_id ? (libraryIds.get(line.external_id) ?? null) : null,
-      scope_group: line.scope_group,
-      sort_order: index + 1,
-      notes: "Sample master sheet line. Copy the master, update pricing, then create an estimate.",
-    })),
-  );
-  if (linesError) throw new Error(linesError.message);
-
-  await recalculateEstimateTotalsInternal(context, masterId);
+    initialLines: harborSeedLineInputs(
+      HARBOR_SAMPLE_MASTER_SHEET_LINES,
+      libraryIds,
+      "Sample master sheet line. Copy the master, update pricing, then create an estimate.",
+    ),
+    operationKey: `harbor-sample-master-sheet:v1:${organizationId}`,
+    fallbackMessage: "Harbor sample master sheet did not save.",
+  });
 }
 
 export const listEstimateRegions = createServerFn({ method: "GET" }).handler(async () => ({
@@ -1800,15 +1947,16 @@ export const createEstimate = createServerFn({ method: "POST" })
       data.kind === "master_sheet" || projectType === MASTER_ESTIMATE_PROJECT_TYPE
         ? "master_sheet"
         : "estimate";
+    // data.project_id is deliberately not sent: creation cannot link a project
+    // (a non-null project marks the estimate as converted and freezes its
+    // lines). Linking happens afterwards through updateEstimate.
     const id = await insertEstimateRow(
       context,
       {
         organization_id: organizationId,
-        created_by: context.userId,
         name: clean(data.name, 200),
         description: clean(data.description ?? "", 2000),
         opportunity_id: data.opportunity_id ?? null,
-        project_id: data.project_id ?? null,
         project_type: projectType === MASTER_ESTIMATE_PROJECT_TYPE ? "commercial" : projectType,
         kind,
         region,
@@ -1843,17 +1991,17 @@ export const updateEstimate = createServerFn({ method: "POST" })
       patch.custom_markups = normalizeCustomMarkup(patch.custom_markups) as unknown as Json;
     }
 
-    const { data: row, error } = await dynamicTable(context.supabase, "estimates")
-      .update(patch)
-      .eq("id", data.id)
-      .select("*")
-      .single();
-    if (error && "folder" in patch && isMissingEstimateFolderColumn(error)) {
+    const result = await dynamicRpc(context.supabase, "update_estimate_header_atomic", {
+      p_estimate_id: data.id,
+      p_patch: patch,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error && "folder" in patch && isMissingEstimateFolderColumn(result.error)) {
       throw new Error(
         "Estimate folders are still being enabled on the backend. Wait for Lovable to finish the migration, then try again.",
       );
     }
-    if (error || !row) throw new Error(error?.message ?? "Estimate did not update.");
+    if (result.error) throw new Error(result.error.message);
     const totals = await recalculateEstimateTotalsInternal(context, data.id);
     return { estimate: totals.estimate };
   });
@@ -1871,20 +2019,22 @@ export const deleteEstimate = createServerFn({ method: "POST" })
     if (current.error) throw new Error(current.error.message);
     if (!current.data) throw new Error("Estimate was not found.");
 
-    const { error: lineError } = await dynamicTable(context.supabase, "estimate_line_items")
-      .delete()
-      .eq("estimate_id", data.id);
-    if (lineError) throw new Error(lineError.message);
-
-    const { error } = await dynamicTable(context.supabase, "estimates")
-      .delete()
-      .eq("id", data.id)
-      .eq("organization_id", organizationId);
-    if (error) throw new Error(error.message);
+    const result = await dynamicRpc(context.supabase, "update_estimate_header_atomic", {
+      p_estimate_id: data.id,
+      p_patch: { folder: "archived" },
+      p_operation_key: data.operation_key,
+    });
+    if (result.error && isMissingEstimateFolderColumn(result.error)) {
+      throw new Error(
+        "Estimate archiving is still being enabled on the backend. Wait for Lovable to finish the migration, then try again.",
+      );
+    }
+    if (result.error) throw new Error(result.error.message);
 
     const row = current.data as Record<string, unknown>;
     return {
       ok: true,
+      archived: true,
       name: str(row.name),
       project_type: str(row.project_type, "commercial"),
     };
@@ -1899,24 +2049,34 @@ export const createLineItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof lineItemInput>) => lineItemInput.parse(input))
   .handler(async ({ data, context }) => {
-    const nextOrder = await getNextLineSortOrder(context, data.estimate_id);
-    const quantity = data.unit.toUpperCase() === "LS" ? 1 : data.quantity;
-    const { data: row, error } = await dynamicTable(context.supabase, "estimate_line_items")
-      .insert({
-        ...data,
-        quantity,
-        csi_division: clean(data.csi_division, 8),
-        cost_code: clean(data.cost_code, 32),
-        description: clean(data.description, 500),
-        unit: clean(data.unit.toUpperCase(), 16),
-        scope_group: clean(data.scope_group, 200),
-        notes: clean(data.notes, 2000),
-        sort_order: nextOrder,
-      })
-      .select("*")
-      .single();
-    if (error || !row) throw new Error(error?.message ?? "Line item did not save.");
-    await recalculateEstimateTotalsInternal(context, data.estimate_id);
+    // Caller-owned deterministic operation keys are the follow-up; until then
+    // mint one per request so database-side retries can never double-insert.
+    const operationKey = data.operation_key ?? crypto.randomUUID();
+    const unit = clean(data.unit.toUpperCase(), 16);
+    const summary = await createEstimateLineItemsAtomicCommand(context, {
+      estimateId: data.estimate_id,
+      lines: [
+        {
+          csi_division: clean(data.csi_division, 8),
+          cost_code: clean(data.cost_code, 32),
+          description: clean(data.description, 500),
+          unit,
+          quantity: unit === "LS" ? 1 : data.quantity,
+          material_unit_cost_cents: data.material_unit_cost_cents,
+          labor_unit_cost_cents: data.labor_unit_cost_cents,
+          library_item_id: data.library_item_id ?? null,
+          scope_group: clean(data.scope_group, 200),
+          notes: clean(data.notes, 2000),
+        },
+      ],
+      operationKey,
+      fallbackMessage: "Line item did not save.",
+    });
+    const created = Array.isArray(summary.line_items) ? summary.line_items : [];
+    const row = created[0];
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new Error("Line item did not save.");
+    }
     return { line_item: normalizeLineItem(row as Record<string, unknown>) };
   });
 
@@ -1926,10 +2086,10 @@ export const createBlankLineItems = createServerFn({ method: "POST" })
     createBlankLineItemsInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    await loadEstimate(context, data.estimate_id);
-    const nextOrder = await getNextLineSortOrder(context, data.estimate_id);
-    const rows = Array.from({ length: data.count }, (_, index) => ({
-      estimate_id: data.estimate_id,
+    // Caller-owned deterministic operation keys are the follow-up; until then
+    // mint one per request so database-side retries can never double-insert.
+    const operationKey = data.operation_key ?? crypto.randomUUID();
+    const rows = Array.from({ length: data.count }, () => ({
       csi_division: "",
       cost_code: "",
       description: "New estimate item",
@@ -1940,17 +2100,18 @@ export const createBlankLineItems = createServerFn({ method: "POST" })
       library_item_id: null,
       scope_group: "",
       notes: "",
-      sort_order: nextOrder + index,
     }));
 
-    const { data: createdRows, error } = await dynamicTable(context.supabase, "estimate_line_items")
-      .insert(rows)
-      .select("*");
-    if (error) throw new Error(error.message);
-    await recalculateEstimateTotalsInternal(context, data.estimate_id);
+    const summary = await createEstimateLineItemsAtomicCommand(context, {
+      estimateId: data.estimate_id,
+      lines: rows,
+      operationKey,
+      fallbackMessage: "Blank estimate rows did not save.",
+    });
+    const created = Array.isArray(summary.line_items) ? summary.line_items : [];
     return {
-      created_count: rows.length,
-      line_items: ((createdRows ?? []) as Record<string, unknown>[]).map(normalizeLineItem),
+      created_count: Math.max(0, Math.round(num(summary.created_count))),
+      line_items: (created as Record<string, unknown>[]).map(normalizeLineItem),
     };
   });
 
@@ -1960,21 +2121,9 @@ export const importEstimateLineItems = createServerFn({ method: "POST" })
     importEstimateLineItemsInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    await loadEstimate(context, data.estimate_id);
-
-    if (data.mode === "replace") {
-      const { error: deleteError } = await dynamicTable(context.supabase, "estimate_line_items")
-        .delete()
-        .eq("estimate_id", data.estimate_id);
-      if (deleteError) throw new Error(deleteError.message);
-    }
-
-    const nextOrder = await getNextLineSortOrder(context, data.estimate_id);
-
-    const rows = data.rows.map((line, index) => {
+    const rows = data.rows.map((line) => {
       const unit = clean(line.unit.toUpperCase(), 16);
       return {
-        estimate_id: data.estimate_id,
         csi_division: clean(line.csi_division, 8),
         cost_code: clean(line.cost_code, 32),
         description: clean(line.description, 500),
@@ -1985,15 +2134,33 @@ export const importEstimateLineItems = createServerFn({ method: "POST" })
         library_item_id: line.library_item_id ?? null,
         scope_group: clean(line.scope_group, 200),
         notes: clean(line.notes, 2000),
-        sort_order: nextOrder + index,
       };
     });
 
-    const { error } = await dynamicTable(context.supabase, "estimate_line_items").insert(rows);
-    if (error) throw new Error(error.message);
-
-    await recalculateEstimateTotalsInternal(context, data.estimate_id);
-    return { created_count: rows.length };
+    // Replace/delete, insert, and total recalculation are one database
+    // transaction. There is deliberately no direct-query fallback because a
+    // failed replacement must leave the original worksheet untouched.
+    const result = await dynamicRpc(context.supabase, "import_estimate_line_items_atomic", {
+      p_estimate_id: data.estimate_id,
+      p_mode: data.mode,
+      p_rows: rows,
+      p_idempotency_key: data.idempotency_key,
+    });
+    if (result.error) {
+      if (isMissingAtomicEstimateImport(result.error)) {
+        throw new Error(ATOMIC_ESTIMATE_IMPORT_PENDING);
+      }
+      throw new Error(result.error.message);
+    }
+    if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+      throw new Error("The estimate import completed without returning its transaction summary.");
+    }
+    return {
+      created_count: Math.max(
+        0,
+        Math.round(num((result.data as Record<string, unknown>).created_count)),
+      ),
+    };
   });
 
 export const updateLineItem = createServerFn({ method: "POST" })
@@ -2021,36 +2188,33 @@ export const updateLineItem = createServerFn({ method: "POST" })
     // not to clobber them silently.
     if (patch.quantity != null) patch.quantity_source = "manual";
 
-    let result = await dynamicTable(context.supabase, "estimate_line_items")
-      .update(patch)
-      .eq("id", data.id)
-      .select("*")
-      .single();
-    if (
-      result.error &&
-      "quantity_source" in patch &&
-      isMissingQuantityProvenanceColumn(result.error)
-    ) {
-      const { quantity_source: _quantitySource, ...legacyPatch } = patch;
-      result = await dynamicTable(context.supabase, "estimate_line_items")
-        .update(legacyPatch)
-        .eq("id", data.id)
-        .select("*")
-        .single();
+    const result = await dynamicRpc(context.supabase, "update_estimate_line_item_atomic", {
+      p_line_item_id: data.id,
+      p_patch: patch,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throw new Error(result.error.message);
+    if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+      throw new Error("Line item update completed without an authoritative result.");
     }
-    if (result.error || !result.data) {
-      throw new Error(result.error?.message ?? "Line item did not update.");
+    const lineItem = (result.data as Record<string, unknown>).line_item;
+    if (!lineItem || typeof lineItem !== "object" || Array.isArray(lineItem)) {
+      throw new Error("Line item update did not return the saved row.");
     }
-    await recalculateEstimateTotalsInternal(
-      context,
-      str((current.data as Record<string, unknown>).estimate_id),
-    );
-    return { line_item: normalizeLineItem(result.data as Record<string, unknown>) };
+    return { line_item: normalizeLineItem(lineItem as Record<string, unknown>) };
   });
 
 export const deleteLineItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input: { id: string; estimate_id: string; operation_key: string }) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        estimate_id: z.string().uuid(),
+        operation_key: z.string().uuid(),
+      })
+      .parse(input),
+  )
   .handler(async ({ data, context }) => {
     const current = await dynamicTable(context.supabase, "estimate_line_items")
       .select("estimate_id")
@@ -2059,33 +2223,41 @@ export const deleteLineItem = createServerFn({ method: "POST" })
     if (current.error || !current.data) {
       throw new Error(current.error?.message ?? "Line item was not found.");
     }
-    const estimateId = str((current.data as Record<string, unknown>).estimate_id);
-    const { error } = await dynamicTable(context.supabase, "estimate_line_items")
-      .delete()
-      .eq("id", data.id);
-    if (error) throw new Error(error.message);
-    await recalculateEstimateTotalsInternal(context, estimateId);
+    const result = await dynamicRpc(context.supabase, "delete_estimate_line_item_atomic", {
+      p_estimate_id: data.estimate_id,
+      p_line_item_id: data.id,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throw new Error(result.error.message);
     return { ok: true };
   });
 
 export const reorderLineItems = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { estimate_id: string; item_ids: string[] }) =>
-    z
-      .object({
-        estimate_id: z.string().uuid(),
-        item_ids: z.array(z.string().uuid()).max(500),
-      })
-      .parse(input),
+  .inputValidator(
+    (input: {
+      estimate_id: string;
+      expected_item_ids: string[];
+      item_ids: string[];
+      operation_key: string;
+    }) =>
+      z
+        .object({
+          estimate_id: z.string().uuid(),
+          expected_item_ids: z.array(z.string().uuid()).max(500),
+          item_ids: z.array(z.string().uuid()).max(500),
+          operation_key: z.string().uuid(),
+        })
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
-    for (let index = 0; index < data.item_ids.length; index += 1) {
-      const { error } = await dynamicTable(context.supabase, "estimate_line_items")
-        .update({ sort_order: index + 1 })
-        .eq("id", data.item_ids[index]);
-      if (error) throw new Error(error.message);
-    }
-    await recalculateEstimateTotalsInternal(context, data.estimate_id);
+    const result = await dynamicRpc(context.supabase, "reorder_estimate_line_items_atomic", {
+      p_estimate_id: data.estimate_id,
+      p_expected_item_ids: data.expected_item_ids,
+      p_item_ids: data.item_ids,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throw new Error(result.error.message);
     return { ok: true };
   });
 
@@ -2095,214 +2267,16 @@ export const duplicateEstimate = createServerFn({ method: "POST" })
     duplicateEstimateInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    const estimate = await loadEstimate(context, data.id);
-    const lines = await loadEstimateLines(context, data.id);
-    const copyAsProjectEstimate = data.as_project_estimate === true;
-    const copyName = estimate.is_canonical_demo
-      ? HARBOR_WORKING_COPY_NAME
-      : copyAsProjectEstimate
-        ? `${estimate.name.replace(/\s*master\s*(estimate|sheet)?\s*/gi, " ").trim()} Estimate`
-            .replace(/\s+/g, " ")
-            .slice(0, 200) || `Estimate from ${estimate.name}`.slice(0, 200)
-        : `Copy of ${estimate.name}`.slice(0, 200);
-    const copyId = await insertEstimateRow(
-      context,
-      {
-        organization_id: estimate.organization_id,
-        created_by: context.userId,
-        name: copyName,
-        description: estimate.description,
-        opportunity_id: estimate.opportunity_id,
-        project_id: null,
-        project_type:
-          copyAsProjectEstimate || estimate.project_type === MASTER_ESTIMATE_PROJECT_TYPE
-            ? "commercial"
-            : estimate.project_type,
-        kind: copyAsProjectEstimate ? "estimate" : estimate.kind,
-        region: estimate.region,
-        region_multiplier: estimate.region_multiplier,
-        overhead_pct: estimate.overhead_pct,
-        profit_pct: estimate.profit_pct,
-        contingency_pct: estimate.contingency_pct,
-        bond_pct: estimate.bond_pct,
-        tax_pct: estimate.tax_pct,
-        general_conditions_pct: estimate.general_conditions_pct,
-        custom_markups: estimate.custom_markups as unknown as Json,
-        status: "draft",
-      },
-      "Estimate copy did not save.",
-    );
-    try {
-      const lineIdMap = new Map<string, string>();
-      if (lines.length > 0) {
-        const lineCopies = lines.map((line) => {
-          const id = crypto.randomUUID();
-          lineIdMap.set(line.id, id);
-          return {
-            id,
-            estimate_id: copyId,
-            csi_division: line.csi_division,
-            cost_code: line.cost_code,
-            description: line.description,
-            unit: line.unit,
-            quantity: line.quantity,
-            material_unit_cost_cents: line.material_unit_cost_cents,
-            labor_unit_cost_cents: line.labor_unit_cost_cents,
-            library_item_id: line.library_item_id,
-            scope_group: line.scope_group,
-            sort_order: line.sort_order,
-            notes: line.notes,
-          };
-        });
-        const { error: lineError } = await dynamicTable(
-          context.supabase,
-          "estimate_line_items",
-        ).insert(lineCopies);
-        if (lineError) throw new Error(lineError.message);
-      }
-
-      // A canonical copy must remain useful in the Plan Room. Reuse immutable
-      // source files, but clone every database-owned drawing, sheet, markup,
-      // and estimate-row link so one estimator can never change another's
-      // learning workspace. Scales deliberately require a fresh two-check
-      // verification in the copy; count geometry remains current.
-      if (estimate.is_canonical_demo) {
-        const [planSetResult, sheetResult, measurementResult] = await Promise.all([
-          dynamicTable(context.supabase, "estimate_plan_sets")
-            .select("*")
-            .eq("estimate_id", estimate.id),
-          dynamicTable(context.supabase, "estimate_plan_sheets")
-            .select("*")
-            .eq("estimate_id", estimate.id),
-          dynamicTable(context.supabase, "estimate_takeoff_measurements")
-            .select("*")
-            .eq("estimate_id", estimate.id),
-        ]);
-        if (planSetResult.error) throw new Error(planSetResult.error.message);
-        if (sheetResult.error) throw new Error(sheetResult.error.message);
-        if (measurementResult.error) throw new Error(measurementResult.error.message);
-
-        const planSets = (planSetResult.data ?? []) as Record<string, unknown>[];
-        const sheets = (sheetResult.data ?? []) as Record<string, unknown>[];
-        const measurements = (measurementResult.data ?? []) as Record<string, unknown>[];
-        const planSetIdMap = new Map<string, string>();
-        const sheetIdMap = new Map<string, string>();
-
-        if (planSets.length > 0) {
-          const planSetCopies = planSets.map((planSet) => {
-            const id = crypto.randomUUID();
-            planSetIdMap.set(str(planSet.id), id);
-            return {
-              id,
-              organization_id: estimate.organization_id,
-              estimate_id: copyId,
-              created_by: context.userId,
-              name: str(planSet.name),
-              description: str(planSet.description),
-              source_file_name: str(planSet.source_file_name),
-              file_path: str(planSet.file_path),
-              file_mime_type: str(planSet.file_mime_type),
-              file_size_bytes: Math.max(0, Math.round(num(planSet.file_size_bytes))),
-              page_count: Math.max(1, Math.round(num(planSet.page_count, 1))),
-              sample_key: "",
-              status: str(planSet.status, "current"),
-            };
-          });
-          const { error } = await dynamicTable(context.supabase, "estimate_plan_sets").insert(
-            planSetCopies,
-          );
-          if (error) throw new Error(error.message);
-        }
-
-        if (sheets.length > 0) {
-          const sheetCopies = sheets.map((sheet) => {
-            const id = crypto.randomUUID();
-            sheetIdMap.set(str(sheet.id), id);
-            return {
-              id,
-              plan_set_id: planSetIdMap.get(str(sheet.plan_set_id)),
-              estimate_id: copyId,
-              sheet_number: str(sheet.sheet_number),
-              sheet_name: str(sheet.sheet_name),
-              discipline: str(sheet.discipline),
-              page_number: Math.max(1, Math.round(num(sheet.page_number, 1))),
-              sort_order: Math.max(1, Math.round(num(sheet.sort_order, 1))),
-              scale_label: str(sheet.scale_label),
-              scale_feet_per_pixel: Math.max(0, num(sheet.scale_feet_per_pixel)),
-              scale_source: str(sheet.scale_source, "unset"),
-              scale_verified_at: null,
-              thumbnail_path: str(sheet.thumbnail_path),
-              width_px: Math.max(0, Math.round(num(sheet.width_px))),
-              height_px: Math.max(0, Math.round(num(sheet.height_px))),
-              scale_revision: Math.max(1, Math.round(num(sheet.scale_revision, 1))),
-              scale_changed_at: sheet.scale_changed_at ?? null,
-            };
-          });
-          const { error } = await dynamicTable(context.supabase, "estimate_plan_sheets").insert(
-            sheetCopies,
-          );
-          if (error) throw new Error(error.message);
-        }
-
-        if (measurements.length > 0) {
-          const measurementCopies = measurements.map((measurement) => {
-            const toolType = str(measurement.tool_type, "count");
-            const isCount = toolType === "count";
-            return {
-              id: crypto.randomUUID(),
-              estimate_id: copyId,
-              plan_sheet_id: sheetIdMap.get(str(measurement.plan_sheet_id)),
-              estimate_line_item_id: measurement.estimate_line_item_id
-                ? (lineIdMap.get(str(measurement.estimate_line_item_id)) ?? null)
-                : null,
-              library_item_id: measurement.library_item_id ?? null,
-              created_by: context.userId,
-              tool_type: toolType,
-              label: str(measurement.label),
-              unit: str(measurement.unit),
-              quantity: Math.max(0, num(measurement.quantity)),
-              waste_pct: Math.max(0, Math.round(num(measurement.waste_pct))),
-              color: str(measurement.color, "#1b7a6e"),
-              geometry: (measurement.geometry ?? {}) as Json,
-              notes: str(measurement.notes),
-              created_by_ai: measurement.created_by_ai === true,
-              calculation_method: isCount ? "count" : "geometry",
-              calculation_status: isCount ? "current" : "unverified_scale",
-              calculated_quantity: isCount ? Math.max(0, num(measurement.quantity)) : null,
-              calculation_scale_revision: isCount
-                ? null
-                : Math.max(1, Math.round(num(measurement.calculation_scale_revision, 1))),
-              calculated_at: isCount ? new Date().toISOString() : null,
-              calculation_context: {
-                source: "canonical_working_copy",
-                copied_from_measurement_id: str(measurement.id),
-              },
-              override_reason: "",
-              ai_operation_id: null,
-              ai_proposal_source:
-                measurement.created_by_ai === true ? "canonical_working_copy" : null,
-              ai_confidence: measurement.ai_confidence ?? null,
-              ai_original_geometry: (measurement.ai_original_geometry ?? null) as Json | null,
-              ai_review_action: measurement.ai_review_action ?? null,
-              ai_reviewed_by: measurement.ai_reviewed_by ?? null,
-              ai_reviewed_at: measurement.ai_reviewed_at ?? null,
-              scope_brief_review_id: null,
-            };
-          });
-          const { error } = await dynamicTable(
-            context.supabase,
-            "estimate_takeoff_measurements",
-          ).insert(measurementCopies);
-          if (error) throw new Error(error.message);
-        }
-      }
-
-      await recalculateEstimateTotalsInternal(context, copyId);
-      return { id: copyId };
-    } catch (error) {
-      await dynamicTable(context.supabase, "estimates").delete().eq("id", copyId);
-      throw error;
-    }
+    const result = await dynamicRpc(context.supabase, "duplicate_estimate_atomic", {
+      p_source_estimate_id: data.id,
+      p_mode: data.as_project_estimate ? "project_estimate" : "same_kind",
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throw new Error(result.error.message);
+    const response = result.data as Record<string, unknown> | null;
+    const id = str(response?.id);
+    if (!id) throw new Error("Estimate copy did not return its saved record.");
+    return { id, deduplicated: response?.deduplicated === true };
   });
 
 const scoreLibraryItem = (item: CostLibraryItemRow, query: string) => {
@@ -2727,114 +2701,71 @@ export const saveEstimateMarkupDefaults = createServerFn({ method: "POST" })
 async function convertEstimateToSovInternal(
   context: { supabase: unknown; userId: string },
   estimateId: string,
-  projectId: string,
+  projectId: string | null,
+  client: string,
+  operationKey: string,
 ) {
-  const estimate = await loadEstimate(context, estimateId);
-  const lines = await loadEstimateLines(context, estimateId);
-  if (lines.length === 0)
-    throw new Error("Add at least one line item before pushing to a project.");
-  const totals = calculateEstimateTotals(estimate, lines);
-
-  const groups = new Map<string, { label: string; code: string; cents: number }>();
-  for (const line of lines) {
-    const code = line.scope_group ? "" : line.csi_division || "00";
-    const key = line.scope_group || line.csi_division || "Uncoded";
-    const label =
-      line.scope_group ||
-      (line.csi_division ? `CSI ${line.csi_division}` : "Uncoded Estimate Scope");
-    const group = groups.get(key) ?? { label, code, cents: 0 };
-    group.cents += Math.round(line.total_extended_cents * estimate.region_multiplier);
-    groups.set(key, group);
+  const { data: result, error } = await dynamicRpc(
+    context.supabase,
+    "convert_estimate_to_sov_atomic",
+    {
+      p_estimate_id: estimateId,
+      p_project_id: projectId,
+      p_client: client,
+      p_operation_key: operationKey,
+    },
+  );
+  if (error) {
+    throw new Error(
+      `Estimate was not pushed and the prior project budget was preserved: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
+    );
   }
-
-  const { error: deleteError } = await dynamicTable(context.supabase, "cost_buckets")
-    .delete()
-    .eq("project_id", projectId);
-  if (deleteError) throw new Error(deleteError.message);
-
-  const rows = Array.from(groups.values()).map((group, index) => ({
-    project_id: projectId,
-    cost_code: group.code,
-    bucket: group.label,
-    original_budget: centsToDollars(group.cents),
-    actual_to_date: 0,
-    ftc: centsToDollars(group.cents),
-    source_type: "original_sov",
-    source_date: new Date().toISOString().slice(0, 10),
-    source_note: `Estimate: ${estimate.name}`,
-    sort_order: index + 1,
-  }));
-  const { error: insertError } = await dynamicTable(context.supabase, "cost_buckets").insert(rows);
-  if (insertError) throw new Error(insertError.message);
-
-  const { error: projectError } = await dynamicTable(context.supabase, "projects")
-    .update({
-      original_cost_budget: centsToDollars(totals.adjusted_direct_cents),
-      original_contract: centsToDollars(totals.total_cents),
-    })
-    .eq("id", projectId);
-  if (projectError) throw new Error(projectError.message);
-
-  await dynamicTable(context.supabase, "estimates")
-    .update({
-      project_id: projectId,
-      status: estimate.status === "draft" ? "final" : estimate.status,
-    })
-    .eq("id", estimateId);
-
-  const history = await dynamicTable(context.supabase, "sov_imports").insert({
-    project_id: projectId,
-    imported_by: context.userId,
-    mode: "replace",
-    source_type: "estimate",
-    source_name: estimate.name,
-    source_sheet: "Estimate",
-    profile: "estimate",
-    confidence: "high",
-    has_header: true,
-    raw_rows: lines.length,
-    staged_rows: rows.length,
-    inserted_count: rows.length,
-    updated_count: 0,
-    skipped_count: 0,
-    merged_rows: Math.max(0, lines.length - rows.length),
-    total_budget: centsToDollars(totals.adjusted_direct_cents),
-    original_cost_budget: centsToDollars(totals.adjusted_direct_cents),
-    selected_budget_column: null,
-    selected_budget_label: "Estimate total",
-    column_map: {},
-    amount_choices: [],
-    warnings: [],
-  });
-
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error("Estimate push did not return a committed operation result.");
+  }
+  const returnedProjectId = str((result as Record<string, unknown>).project_id);
+  if (!returnedProjectId) {
+    throw new Error("Estimate push committed without returning the destination project.");
+  }
   return {
-    ok: true,
-    bucket_count: rows.length,
-    import_history_saved: !history.error,
-    import_history_error: history.error?.message ?? "",
+    ...(result as Record<string, Json>),
+    project_id: returnedProjectId,
   };
 }
 
 export const convertEstimateToSOV = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { estimate_id: string; project_id: string }) =>
-    z.object({ estimate_id: z.string().uuid(), project_id: z.string().uuid() }).parse(input),
+  .inputValidator((input: { estimate_id: string; project_id: string; operation_key: string }) =>
+    z
+      .object({
+        estimate_id: z.string().uuid(),
+        project_id: z.string().uuid(),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) =>
-    convertEstimateToSovInternal(context, data.estimate_id, data.project_id),
+    convertEstimateToSovInternal(
+      context,
+      data.estimate_id,
+      data.project_id,
+      "",
+      data.operation_key,
+    ),
   );
 
 export const convertEstimateToProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { estimate_id: string }) =>
-    z.object({ estimate_id: z.string().uuid() }).parse(input),
+  .inputValidator((input: { estimate_id: string; operation_key: string }) =>
+    z
+      .object({
+        estimate_id: z.string().uuid(),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const estimate = await loadEstimate(context, data.estimate_id);
-    const lines = await loadEstimateLines(context, data.estimate_id);
-    if (lines.length === 0)
-      throw new Error("Add at least one line item before creating a project.");
-    const totals = calculateEstimateTotals(estimate, lines);
     let client = "";
     if (estimate.opportunity_id) {
       const opportunity = await dynamicTable(context.supabase, "pipeline_opportunities")
@@ -2845,32 +2776,11 @@ export const convertEstimateToProject = createServerFn({ method: "POST" })
         client = str((opportunity.data as Record<string, unknown>).client);
       }
     }
-    const { data: project, error } = await dynamicTable(context.supabase, "projects")
-      .insert({
-        owner_id: context.userId,
-        organization_id: estimate.organization_id,
-        name: estimate.name,
-        job_number: "",
-        client: client || estimate.description || estimate.name,
-        project_manager: "",
-        phase: "Early",
-        original_contract: centsToDollars(totals.total_cents),
-        original_cost_budget: centsToDollars(totals.adjusted_direct_cents),
-      })
-      .select("id")
-      .single();
-    if (error || !project) throw new Error(error?.message ?? "Project did not save.");
-    const projectId = str((project as Record<string, unknown>).id);
-    await convertEstimateToSovInternal(context, data.estimate_id, projectId);
-    if (estimate.opportunity_id) {
-      await dynamicTable(context.supabase, "pipeline_opportunities")
-        .update({
-          converted_project_id: projectId,
-          converted_at: new Date().toISOString(),
-          estimated_contract: centsToDollars(totals.total_cents),
-          estimated_cost: centsToDollars(totals.adjusted_direct_cents),
-        })
-        .eq("id", estimate.opportunity_id);
-    }
-    return { project_id: projectId };
+    return convertEstimateToSovInternal(
+      context,
+      data.estimate_id,
+      null,
+      client,
+      data.operation_key,
+    );
   });

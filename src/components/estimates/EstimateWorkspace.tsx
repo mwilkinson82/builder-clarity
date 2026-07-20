@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import {
   AlertTriangle,
@@ -117,6 +117,16 @@ import {
   type EstimateQuantitySourceReviewItem,
 } from "@/lib/estimate-quantity-source-review";
 
+function newEstimateImportOperationKey(estimateId: string) {
+  const nonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  return `estimate-import:${estimateId}:${nonce}`;
+}
+
+function newEstimatePushOperationKey(estimateId: string) {
+  const nonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  return `estimate-project-push:${estimateId}:${nonce}`;
+}
+
 type EstimatePatch = Partial<
   Pick<
     EstimateRow,
@@ -138,7 +148,7 @@ type EstimatePatch = Partial<
     | "custom_markups"
   >
 >;
-type UpdateEstimatePayload = { id: string; patch: EstimatePatch };
+type UpdateEstimatePayload = { id: string; patch: EstimatePatch; operation_key: string };
 type LinePatch = Partial<
   Pick<
     EstimateLineItemRow,
@@ -154,7 +164,32 @@ type LinePatch = Partial<
     | "notes"
   >
 >;
-type UpdateLinePayload = { id: string; patch: LinePatch };
+type UpdateLinePayload = { id: string; patch: LinePatch; operation_key: string };
+type DeleteLinePayload = {
+  id: string;
+  estimate_id: string;
+  operation_key: string;
+};
+type ReorderLinePayload = {
+  estimate_id: string;
+  expected_item_ids: string[];
+  item_ids: string[];
+  operation_key: string;
+};
+
+function retainOperationKey(keys: Map<string, string>, requestFingerprint: string) {
+  const existing = keys.get(requestFingerprint);
+  if (existing) return existing;
+  const operationKey = crypto.randomUUID();
+  keys.set(requestFingerprint, operationKey);
+  return operationKey;
+}
+
+function releaseOperationKey(keys: Map<string, string>, operationKey: string) {
+  for (const [fingerprint, retainedKey] of keys) {
+    if (retainedKey === operationKey) keys.delete(fingerprint);
+  }
+}
 
 type GridCellProps = {
   "data-estimate-grid-cell": true;
@@ -344,6 +379,14 @@ export function EstimateWorkspace({
   const [pasteText, setPasteText] = useState("");
   const [importRows, setImportRows] = useState<EstimateLineImportRow[]>([]);
   const [importSource, setImportSource] = useState("");
+  const [importOperationKey, setImportOperationKey] = useState(() =>
+    newEstimateImportOperationKey(estimate.id),
+  );
+  const pushOperationKeyRef = useRef(newEstimatePushOperationKey(estimate.id));
+  const archiveOperationKeyRef = useRef(crypto.randomUUID());
+  const estimateOperationKeysRef = useRef(new Map<string, string>());
+  const lineOperationKeysRef = useRef(new Map<string, string>());
+  const duplicateOperationKeysRef = useRef(new Map<string, string>());
   const [releaseAction, setReleaseAction] = useState<EstimateReleaseAction | null>(null);
   const [releaseOverrideReason, setReleaseOverrideReason] = useState("");
   const [pendingGridFocus, setPendingGridFocus] = useState<{
@@ -355,6 +398,12 @@ export function EstimateWorkspace({
   const titleRows = Math.min(3, Math.max(1, Math.ceil(Math.max(nameDraft.length, 1) / 42)));
 
   useEffect(() => setNameDraft(estimate.name), [estimate.name]);
+
+  // An unchanged failed submission reuses its key; editing the mode or parsed
+  // rows starts a new operation so intentional repeated appends still work.
+  useEffect(() => {
+    setImportOperationKey(newEstimateImportOperationKey(estimate.id));
+  }, [estimate.id, importMode, importRows]);
 
   useEffect(() => {
     if (!isSheetExpanded) return;
@@ -373,19 +422,26 @@ export function EstimateWorkspace({
 
   const updateEstimateMutation = useMutation({
     mutationFn: (payload: UpdateEstimatePayload) => updateEstimateFn({ data: payload }),
-    onSuccess: invalidate,
+    onSuccess: async (_result, payload) => {
+      releaseOperationKey(estimateOperationKeysRef.current, payload.operation_key);
+      await invalidate();
+    },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Estimate did not save"),
   });
 
   const deleteEstimateMutation = useMutation({
-    mutationFn: () => deleteEstimateFn({ data: { id: estimate.id } }),
+    mutationFn: () =>
+      deleteEstimateFn({
+        data: { id: estimate.id, operation_key: archiveOperationKeyRef.current },
+      }),
     onSuccess: () => {
-      toast.success(isMasterSheet ? "Master sheet deleted" : "Estimate deleted");
+      archiveOperationKeyRef.current = crypto.randomUUID();
+      toast.success(isMasterSheet ? "Master sheet archived" : "Estimate archived");
       navigate({ to: isMasterSheet ? "/estimate-masters" : "/estimates" });
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Estimate did not delete"),
+      toast.error(error instanceof Error ? error.message : "Estimate did not archive"),
   });
 
   const createLinesMutation = useMutation({
@@ -406,22 +462,30 @@ export function EstimateWorkspace({
 
   const updateLineMutation = useMutation({
     mutationFn: (payload: UpdateLinePayload) => updateLineFn({ data: payload }),
-    onSuccess: invalidate,
+    onSuccess: async (_result, payload) => {
+      releaseOperationKey(lineOperationKeysRef.current, payload.operation_key);
+      await invalidate();
+    },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Line item did not save"),
   });
 
   const deleteLineMutation = useMutation({
-    mutationFn: (id: string) => deleteLineFn({ data: { id } }),
-    onSuccess: invalidate,
+    mutationFn: (payload: DeleteLinePayload) => deleteLineFn({ data: payload }),
+    onSuccess: async (_result, payload) => {
+      releaseOperationKey(lineOperationKeysRef.current, payload.operation_key);
+      await invalidate();
+    },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Line item did not delete"),
   });
 
   const reorderMutation = useMutation({
-    mutationFn: (item_ids: string[]) =>
-      reorderLineFn({ data: { estimate_id: estimate.id, item_ids } }),
-    onSuccess: invalidate,
+    mutationFn: (payload: ReorderLinePayload) => reorderLineFn({ data: payload }),
+    onSuccess: async (_result, payload) => {
+      releaseOperationKey(lineOperationKeysRef.current, payload.operation_key);
+      await invalidate();
+    },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Rows did not reorder"),
   });
@@ -434,6 +498,7 @@ export function EstimateWorkspace({
         data: {
           estimate_id: estimate.id,
           mode: importMode,
+          idempotency_key: importOperationKey,
           rows: importableRows.map((row) => ({
             csi_division: row.csi_division,
             cost_code: row.cost_code,
@@ -461,9 +526,20 @@ export function EstimateWorkspace({
   });
 
   const duplicateMutation = useMutation({
-    mutationFn: (asProjectEstimate: boolean) =>
-      duplicateFn({ data: { id: estimate.id, as_project_estimate: asProjectEstimate } }),
+    mutationFn: (asProjectEstimate: boolean) => {
+      const fingerprint = asProjectEstimate ? "project_estimate" : "same_kind";
+      return duplicateFn({
+        data: {
+          id: estimate.id,
+          as_project_estimate: asProjectEstimate,
+          operation_key: retainOperationKey(duplicateOperationKeysRef.current, fingerprint),
+        },
+      });
+    },
     onSuccess: (result, asProjectEstimate) => {
+      duplicateOperationKeysRef.current.delete(
+        asProjectEstimate ? "project_estimate" : "same_kind",
+      );
       toast.success(
         isCanonicalDemo
           ? "Your isolated Harbor working copy is ready"
@@ -483,15 +559,25 @@ export function EstimateWorkspace({
     mutationFn: async () => {
       if (estimate.project_id) {
         await convertToSovFn({
-          data: { estimate_id: estimate.id, project_id: estimate.project_id },
+          data: {
+            estimate_id: estimate.id,
+            project_id: estimate.project_id,
+            operation_key: pushOperationKeyRef.current,
+          },
         });
         return { project_id: estimate.project_id };
       }
-      const result = await convertToProjectFn({ data: { estimate_id: estimate.id } });
+      const result = await convertToProjectFn({
+        data: {
+          estimate_id: estimate.id,
+          operation_key: pushOperationKeyRef.current,
+        },
+      });
       return result;
     },
     onSuccess: (result) => {
       if (!result?.project_id) return;
+      pushOperationKeyRef.current = newEstimatePushOperationKey(estimate.id);
       toast.success("Estimate pushed to project");
       navigate({ to: "/projects/$projectId", params: { projectId: result.project_id } });
     },
@@ -628,7 +714,14 @@ export function EstimateWorkspace({
   }, [estimate.id, isMasterSheet, orderedLines.length, realPlanSetCount]);
 
   const updateEstimatePatch = (patch: UpdateEstimatePayload["patch"]) =>
-    updateEstimateMutation.mutate({ id: estimate.id, patch });
+    updateEstimateMutation.mutate({
+      id: estimate.id,
+      patch,
+      operation_key: retainOperationKey(
+        estimateOperationKeysRef.current,
+        `header:${JSON.stringify(patch)}`,
+      ),
+    });
 
   const addBlankRows = (count: number, colIndex = 2) => {
     if (createLinesMutation.isPending) return;
@@ -644,7 +737,17 @@ export function EstimateWorkspace({
     if (from === -1 || to === -1) return;
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
-    reorderMutation.mutate(next.map((line) => line.id));
+    const expectedItemIds = orderedLines.map((line) => line.id);
+    const itemIds = next.map((line) => line.id);
+    reorderMutation.mutate({
+      estimate_id: estimate.id,
+      expected_item_ids: expectedItemIds,
+      item_ids: itemIds,
+      operation_key: retainOperationKey(
+        lineOperationKeysRef.current,
+        `reorder:${JSON.stringify([expectedItemIds, itemIds])}`,
+      ),
+    });
     setDraggingId(null);
   };
 
@@ -800,10 +903,7 @@ export function EstimateWorkspace({
                       onChange={(event) => setNameDraft(event.target.value)}
                       onBlur={() => {
                         if (nameDraft.trim() && nameDraft !== estimate.name) {
-                          updateEstimateMutation.mutate({
-                            id: estimate.id,
-                            patch: { name: nameDraft },
-                          });
+                          updateEstimatePatch({ name: nameDraft });
                         }
                       }}
                       className="min-h-[2rem] w-full max-w-[560px] resize-none overflow-hidden border-0 bg-transparent p-0 font-serif text-[26px] leading-tight shadow-none focus-visible:ring-0"
@@ -898,7 +998,7 @@ export function EstimateWorkspace({
                           onClick={() => setDeleteOpen(true)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
-                          {isMasterSheet ? "Delete Master" : "Delete Estimate"}
+                          {isMasterSheet ? "Archive Master" : "Archive Estimate"}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -1179,9 +1279,25 @@ export function EstimateWorkspace({
                               takeoffIssue={takeoffIssueByLineId.get(line.id)}
                               index={index}
                               onUpdate={(patch) =>
-                                updateLineMutation.mutate({ id: line.id, patch })
+                                updateLineMutation.mutate({
+                                  id: line.id,
+                                  patch,
+                                  operation_key: retainOperationKey(
+                                    lineOperationKeysRef.current,
+                                    `line:${line.id}:${JSON.stringify(patch)}`,
+                                  ),
+                                })
                               }
-                              onDelete={() => deleteLineMutation.mutate(line.id)}
+                              onDelete={() =>
+                                deleteLineMutation.mutate({
+                                  id: line.id,
+                                  estimate_id: estimate.id,
+                                  operation_key: retainOperationKey(
+                                    lineOperationKeysRef.current,
+                                    `delete:${line.id}`,
+                                  ),
+                                })
+                              }
                               onDragStart={() => setDraggingId(line.id)}
                               onDragEnd={() => setDraggingId(null)}
                               onDrop={() => onDropRow(line.id)}
@@ -1246,8 +1362,8 @@ export function EstimateWorkspace({
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeaderV2
-            title={isMasterSheet ? "Delete Master Sheet?" : "Delete Estimate?"}
-            description={`This permanently removes "${estimate.name}" and all of its worksheet rows from Overwatch. This does not move it to Archived. Use the Archived folder instead if you want to keep the record out of the way.`}
+            title={isMasterSheet ? "Archive Master Sheet?" : "Archive Estimate?"}
+            description={`This moves "${estimate.name}" and its worksheet history to Archived. The financial record and its audit history remain available.`}
           />
           <DialogFooter>
             <Button
@@ -1262,7 +1378,7 @@ export function EstimateWorkspace({
               onClick={() => deleteEstimateMutation.mutate()}
               disabled={deleteEstimateMutation.isPending}
             >
-              {isMasterSheet ? "Delete Master Sheet" : "Delete Estimate"}
+              {isMasterSheet ? "Archive Master Sheet" : "Archive Estimate"}
             </Button>
           </DialogFooter>
         </DialogContent>

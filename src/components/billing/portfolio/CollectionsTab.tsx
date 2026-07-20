@@ -187,9 +187,17 @@ export function CollectionsTab({
           )}
           <div className="mt-4 border-t border-dark-panel-foreground/15 pt-3.5 text-[11.5px] text-dark-panel-foreground/60">
             Cash-in forecast · next 30d
-            <div className="mt-1 font-serif text-[22px] tabular text-dark-panel-foreground">
-              ≈ {fmtUSD(cashIn30dCents / 100)}
-            </div>
+            {cockpitLoading ? (
+              <div className="mt-1 text-sm text-dark-panel-foreground/60">Loading invoices...</div>
+            ) : cockpitError ? (
+              <div className="mt-1 text-sm text-dark-panel-foreground/60">
+                Unavailable until open invoices load
+              </div>
+            ) : (
+              <div className="mt-1 font-serif text-[22px] tabular text-dark-panel-foreground">
+                ≈ {fmtUSD(cashIn30dCents / 100)}
+              </div>
+            )}
           </div>
         </section>
       </div>

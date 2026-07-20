@@ -3,13 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
-import { aggregateEstimateToBudget, estimateHasDistributableMarkup } from "@/lib/estimate-budget";
-import {
-  centsToDollars,
-  dollarsToCents,
-  quantizeDollars,
-  sumDollarsToCents,
-} from "@/lib/payments-domain";
+import { centsToDollars, dollarsToCents, quantizeDollars } from "@/lib/payments-domain";
 import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 import {
   HARBOR_DEMO_CLIENT,
@@ -84,9 +78,19 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
 type DynamicSupabaseClient = {
   from(relation: string): DynamicSupabaseQuery;
 };
+type DynamicSupabaseRpcClient = {
+  rpc(
+    functionName: string,
+    args?: Record<string, unknown>,
+  ): PromiseLike<DynamicSupabaseResult<unknown>>;
+};
 
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
+const dynamicRpc = (supabase: unknown, functionName: string, args?: Record<string, unknown>) =>
+  (supabase as DynamicSupabaseRpcClient).rpc(functionName, args);
+const MAX_SAFE_CENTS = Number.MAX_SAFE_INTEGER;
+const MAX_SAFE_DOLLARS = MAX_SAFE_CENTS / 100;
 
 export type COStatus = "Approved" | "Pending" | "Denied";
 export type DecisionStatus = "open" | "in_progress" | "resolved" | "overdue";
@@ -103,6 +107,8 @@ export interface DecisionOwnerOption {
 
 export interface ProjectRow {
   id: string;
+  /** Optimistic-concurrency version for audited project-header commands. */
+  updated_at: string;
   organization_id: string | null;
   organization_name: string;
   organization_logo_url: string;
@@ -216,6 +222,8 @@ export interface ChangeOrderRow {
   linked_exposure_id: string | null;
   /** CLAIM↔CO link: the claim this change order was promoted from, or null. */
   linked_claim_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export type InspectionStatus =
@@ -575,6 +583,53 @@ export interface ReviewRow {
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
+
+/**
+ * Financial authority must never turn a missing, redacted, or malformed value
+ * into a healthy-looking zero. Optional product metadata can keep using `num`,
+ * but every value that contributes to Budget, SOV, Billing, or cash truth goes
+ * through this fail-closed reader.
+ */
+export function financialNum(value: unknown, field: string): number {
+  if (value === null || value === undefined || value === "") {
+    throw new Error(`Financial data unavailable: ${field} is missing.`);
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Financial data unavailable: ${field} is not a valid number.`);
+  }
+  return parsed;
+}
+
+function requireFinancialRows<T>(
+  data: T[] | null,
+  error: { message?: string } | null,
+  relation: string,
+): T[] {
+  if (error) {
+    throw new Error(
+      `Financial data unavailable: ${relation} could not be loaded (${error.message ?? "unknown database error"}). Do not rely on Budget, SOV, Billing, or cash totals until this is corrected.`,
+    );
+  }
+  if (!Array.isArray(data)) {
+    throw new Error(
+      `Financial data unavailable: ${relation} returned no authoritative result. Do not rely on Budget, SOV, Billing, or cash totals until this is corrected.`,
+    );
+  }
+  return data;
+}
+
+const exactCentMoney = z
+  .number()
+  .finite()
+  .min(0)
+  .refine((value) => Number.isSafeInteger(Math.round(value * 100)), {
+    message: "Money exceeds the supported accounting range.",
+  })
+  .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-7, {
+    message: "Money must be exact to the cent.",
+  })
+  .transform((value) => Math.round(value * 100) / 100);
 
 type SupabaseWithStorage = {
   storage: {
@@ -1039,16 +1094,29 @@ const throwIfProjectSchemaError = (error: { code?: string; message?: string } | 
   }
 };
 
+function requireProjectBudgetLock(row: Record<string, unknown>): string | null {
+  if (!Object.prototype.hasOwnProperty.call(row, "budget_locked_at")) {
+    throw new Error(
+      "Financial data unavailable: projects.budget_locked_at was not returned. Apply the budget/SOV authority migration and refresh the Supabase schema cache before relying on the budget.",
+    );
+  }
+  const value = row.budget_locked_at;
+  if (value === null) return null;
+  if (typeof value === "string" && value.trim()) return value;
+  throw new Error("Financial data unavailable: projects.budget_locked_at is malformed.");
+}
+
 const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   id: p.id as string,
+  updated_at: str(p.updated_at),
   organization_id: (p.organization_id as string | null) ?? null,
   organization_name: str(p.organization_name),
   organization_logo_url: str(p.organization_logo_url),
   job_number: str(p.job_number),
   name: p.name as string,
   client: str(p.client),
-  original_contract: num(p.original_contract),
-  original_cost_budget: num(p.original_cost_budget),
+  original_contract: financialNum(p.original_contract, "projects.original_contract"),
+  original_cost_budget: financialNum(p.original_cost_budget, "projects.original_cost_budget"),
   default_retainage_pct: num(p.default_retainage_pct ?? 10),
   default_output_format:
     str(p.default_output_format, "invoice") === "aia_g702" ? "aia_g702" : "invoice",
@@ -1066,8 +1134,7 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   archived_at: (p.archived_at as string | null) ?? null,
   // Missing column (migration not applied yet) reads as open/active.
   closed_at: (p.closed_at as string | null | undefined) ?? null,
-  // Missing column (migration not applied yet) reads as unlocked.
-  budget_locked_at: (p.budget_locked_at as string | null) ?? null,
+  budget_locked_at: requireProjectBudgetLock(p),
 });
 
 async function loadDecisionOwnerOptions(
@@ -1391,40 +1458,36 @@ export interface BudgetCostActualRow {
   cost_date: string;
 }
 
+export async function readCostActualsForBudget(
+  supabase: unknown,
+  projectId: string,
+): Promise<BudgetCostActualRow[]> {
+  const { data: rows, error } = await dynamicTable(supabase, "cost_actuals")
+    .select("id, cost_bucket_id, description, vendor, reference_number, amount, cost_date, status")
+    .eq("project_id", projectId)
+    .order("cost_date", { ascending: false });
+  return requireFinancialRows(rows as Record<string, unknown>[] | null, error, "cost_actuals")
+    .filter((row) => str(row.status) !== "void" && str(row.status) !== "draft")
+    .map((row) => ({
+      id: str(row.id),
+      cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+      description: str(row.description),
+      vendor: str(row.vendor),
+      reference_number: str(row.reference_number),
+      amount: financialNum(row.amount, "cost_actuals.amount"),
+      cost_date: str(row.cost_date),
+    }));
+}
+
 export const listCostActualsForBudget = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string }) =>
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }): Promise<BudgetCostActualRow[]> => {
-    const { data: rows, error } = await dynamicTable(context.supabase, "cost_actuals")
-      .select(
-        "id, cost_bucket_id, description, vendor, reference_number, amount, cost_date, status",
-      )
-      .eq("project_id", data.projectId)
-      .order("cost_date", { ascending: false });
-    if (error) {
-      // Workspaces provisioned before the billing job-cost tables degrade to
-      // "no invoices" rather than breaking the Budget drawer.
-      if (isMissingRestRelation(error, "cost_actuals")) return [];
-      throw new Error(error.message);
-    }
-    return (
-      ((rows ?? []) as Record<string, unknown>[])
-        // Mirror cost_actual_rollup_amount exactly: void AND draft rows don't
-        // fold into actual_to_date (a draft is an unvetted invoice), so listing
-        // them here would itemize money that isn't in the number being explained.
-        .filter((row) => str(row.status) !== "void" && str(row.status) !== "draft")
-        .map((row) => ({
-          id: str(row.id),
-          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
-          description: str(row.description),
-          vendor: str(row.vendor),
-          reference_number: str(row.reference_number),
-          amount: num(row.amount),
-          cost_date: str(row.cost_date),
-        }))
-    );
+    // Mirror cost_actual_rollup_amount exactly: void AND draft rows don't fold
+    // into actual_to_date. A failed read is not equivalent to no invoices.
+    return readCostActualsForBudget(context.supabase, data.projectId);
   });
 
 export const listProjects = createServerFn({ method: "GET" })
@@ -1480,8 +1543,9 @@ export const listProjects = createServerFn({ method: "GET" })
             .select("id,name,logo_url,updated_at")
             .in("id", organizationIds),
       // Subcontractor layer so the portfolio GP matches each project's own
-      // dashboard (a buyout that pops a code pulls GP down here too). Degrades to
-      // empty where the subcontract tables aren't provisioned.
+      // dashboard (a buyout that pops a code pulls GP down here too). These are
+      // authoritative money inputs: a failed read must fail the rollup instead
+      // of silently converting committed/paid cost to $0.
       dynamicTable(context.supabase, "subcontracts").select("*").in("project_id", ids),
       dynamicTable(context.supabase, "subcontract_allocations").select("*").in("project_id", ids),
       dynamicTable(context.supabase, "subcontract_payments").select("*").in("project_id", ids),
@@ -1490,13 +1554,13 @@ export const listProjects = createServerFn({ method: "GET" })
         .select("*")
         .in("project_id", ids),
       // Self-perform daily WIP so the portfolio GP folds self-perform cost the
-      // same way each project's dashboard does. Degrades to empty if absent.
+      // same way each project's dashboard does.
       dynamicTable(context.supabase, "daily_wip_entries").select("*").in("project_id", ids),
       // Recorded costs carry a per-line daily_wip_offset that settles the daily
       // WIP they cover → the portfolio nets out the double-count the same way the
       // project dashboard does. Only cost_bucket_id/status/daily_wip_offset are
-      // needed. Degrades to empty pre-billing-tables; daily_wip_offset read
-      // defensively so a pre-migration project nets 0.
+      // needed. daily_wip_offset is read defensively for legacy rows, but a
+      // failed table/RLS query is surfaced rather than represented as no cost.
       dynamicTable(context.supabase, "cost_actuals").select("*").in("project_id", ids),
     ]);
     if (expRes.error) throw new Error(expRes.error.message);
@@ -1550,35 +1614,36 @@ export const listProjects = createServerFn({ method: "GET" })
     const bByP = groupBy<{ project_id: string } & Record<string, unknown>>(bucketsRes.data ?? []);
     const dByP = groupBy<{ project_id: string } & Record<string, unknown>>(decisionsRes.data ?? []);
     const drByP = groupBy<{ project_id: string } & Record<string, unknown>>(dailyReportRows);
-    // Subcontractor rows degrade to empty when the tables aren't provisioned, so
-    // the portfolio never breaks ahead of the subcontract migrations.
-    const subDegrade = (res: { data: unknown; error: unknown }, relation: string) =>
-      res.error && isMissingRestRelation(res.error as { code?: string; message: string }, relation)
-        ? []
-        : ((res.data ?? []) as ({ project_id: string } & Record<string, unknown>)[]);
+    const financialRows = (res: { data: unknown; error: unknown }, relation: string) => {
+      if (res.error) {
+        const message = str((res.error as { message?: unknown }).message, "Unknown database error");
+        throw new Error(`Financial rollup could not load ${relation}: ${message}`);
+      }
+      return (res.data ?? []) as ({ project_id: string } & Record<string, unknown>)[];
+    };
     const scByP = groupBy<{ project_id: string } & Record<string, unknown>>(
-      subDegrade(subRes, "subcontracts"),
+      financialRows(subRes, "subcontracts"),
     );
     const saByP = groupBy<{ project_id: string } & Record<string, unknown>>(
-      subDegrade(subAllocRes, "subcontract_allocations"),
+      financialRows(subAllocRes, "subcontract_allocations"),
     );
     const spByP = groupBy<{ project_id: string } & Record<string, unknown>>(
-      subDegrade(subPayRes, "subcontract_payments"),
+      financialRows(subPayRes, "subcontract_payments"),
     );
     const scoByP = groupBy<{ project_id: string } & Record<string, unknown>>(
-      subDegrade(subCoRes, "subcontract_change_orders"),
+      financialRows(subCoRes, "subcontract_change_orders"),
     );
     const splitByP = groupBy<{ project_id: string } & Record<string, unknown>>(
-      subDegrade(subSplitRes, "subcontract_payment_allocations"),
+      financialRows(subSplitRes, "subcontract_payment_allocations"),
     );
     const wipByP = groupBy<{ project_id: string } & Record<string, unknown>>(
-      subDegrade(wipRes, "daily_wip_entries"),
+      financialRows(wipRes, "daily_wip_entries"),
     );
-    // Recorded costs (for the daily_wip_offset netting). subDegrade swallows a
-    // missing-table OR missing-column error to [] → pre-migration the portfolio
-    // simply nets 0, matching the additive pre-fix behavior.
+    // Recorded costs are authoritative for the daily_wip_offset netting. A
+    // missing relation, stale schema cache, or RLS failure blocks the summary;
+    // otherwise GP can be overstated while looking healthy.
     const caByP = groupBy<{ project_id: string } & Record<string, unknown>>(
-      subDegrade(caRes, "cost_actuals"),
+      financialRows(caRes, "cost_actuals"),
     );
     const organizationsById = new Map(
       organizationRows.map((organization) => {
@@ -1875,24 +1940,28 @@ export const getProject = createServerFn({ method: "GET" })
       .order("uploaded_at", { ascending: false });
     if (eRes.error) throw new Error(eRes.error.message);
     if (cRes.error) throw new Error(cRes.error.message);
-    if (bRes.error) throw new Error(bRes.error.message);
+    const bucketRows = requireFinancialRows(
+      bRes.data as Record<string, unknown>[] | null,
+      bRes.error,
+      "cost_buckets",
+    );
     if (dRes.error) throw new Error(dRes.error.message);
     if (rRes.error) throw new Error(rRes.error.message);
-    const sovImportsTableMissing =
-      siRes.error &&
-      (siRes.error.message.includes("sov_imports") || siRes.error.message.includes("schema cache"));
-    if (siRes.error && !sovImportsTableMissing) throw new Error(siRes.error.message);
-    const billingTableMissing =
-      billRes.error &&
-      (billRes.error.message.includes("billing_applications") ||
-        billRes.error.message.includes("schema cache"));
-    if (billRes.error && !billingTableMissing) throw new Error(billRes.error.message);
-    const billingInvoicesTableMissing =
-      invoiceRes.error &&
-      (isMissingRestRelation(invoiceRes.error, "billing_invoices") ||
-        invoiceRes.error.message.includes("billing_invoices") ||
-        invoiceRes.error.message.includes("schema cache"));
-    if (invoiceRes.error && !billingInvoicesTableMissing) throw new Error(invoiceRes.error.message);
+    const sovImportRows = requireFinancialRows(
+      siRes.data as Record<string, unknown>[] | null,
+      siRes.error,
+      "sov_imports",
+    );
+    const billingApplicationRows = requireFinancialRows(
+      billRes.data as Record<string, unknown>[] | null,
+      billRes.error,
+      "billing_applications",
+    );
+    const billingInvoiceRows = requireFinancialRows(
+      invoiceRes.data as Record<string, unknown>[] | null,
+      invoiceRes.error,
+      "billing_invoices",
+    );
     const inspectionsTableMissing =
       inspectionRes.error &&
       (isMissingRestRelation(inspectionRes.error, "project_inspections") ||
@@ -1938,41 +2007,28 @@ export const getProject = createServerFn({ method: "GET" })
     }
 
     let billingEventRows: BillingApplicationEventRow[] = [];
-    if (!billingTableMissing && (billRes.data ?? []).length > 0) {
+    if (billingApplicationRows.length > 0) {
       const billingEventRes = await dynamicTable(context.supabase, "billing_application_events")
         .select("*")
         .eq("project_id", pid)
         .order("created_at", { ascending: false });
-      const billingEventsTableMissing =
-        billingEventRes.error &&
-        (billingEventRes.error.message.includes("billing_application_events") ||
-          billingEventRes.error.message.includes("schema cache"));
-      if (billingEventRes.error && !billingEventsTableMissing) {
-        throw new Error(billingEventRes.error.message);
-      }
-      billingEventRows = billingEventsTableMissing
-        ? []
-        : ((billingEventRes.data ?? []) as unknown[]).map((row) =>
-            normalizeBillingApplicationEvent(row as Record<string, unknown>),
-          );
+      billingEventRows = requireFinancialRows(
+        billingEventRes.data as Record<string, unknown>[] | null,
+        billingEventRes.error,
+        "billing_application_events",
+      ).map((row) => normalizeBillingApplicationEvent(row));
     }
     let paymentRows: PaymentLedgerRow[] = [];
-    if (!billingInvoicesTableMissing && (invoiceRes.data ?? []).length > 0) {
+    if (billingInvoiceRows.length > 0) {
       const paymentRes = await dynamicTable(context.supabase, "payment_ledger")
         .select("*")
         .eq("project_id", pid)
         .order("paid_at", { ascending: false });
-      const paymentTableMissing =
-        paymentRes.error &&
-        (isMissingRestRelation(paymentRes.error, "payment_ledger") ||
-          paymentRes.error.message.includes("payment_ledger") ||
-          paymentRes.error.message.includes("schema cache"));
-      if (paymentRes.error && !paymentTableMissing) throw new Error(paymentRes.error.message);
-      paymentRows = paymentTableMissing
-        ? []
-        : ((paymentRes.data ?? []) as unknown[]).map((row) =>
-            normalizePaymentLedger(row as Record<string, unknown>),
-          );
+      paymentRows = requireFinancialRows(
+        paymentRes.data as Record<string, unknown>[] | null,
+        paymentRes.error,
+        "payment_ledger",
+      ).map((row) => normalizePaymentLedger(row));
     }
 
     let project = normalizeProject(pRes.data as Record<string, unknown>);
@@ -2030,19 +2086,53 @@ export const getProject = createServerFn({ method: "GET" })
     );
     const changeOrders: ChangeOrderRow[] = (cRes.data ?? []).map((c) => {
       const o = c as Record<string, unknown>;
+      const contractAmount =
+        typeof o.contract_amount === "number" ||
+        (typeof o.contract_amount === "string" && o.contract_amount.trim())
+          ? Number(o.contract_amount)
+          : Number.NaN;
+      const costAmount =
+        typeof o.cost_amount === "number" ||
+        (typeof o.cost_amount === "string" && o.cost_amount.trim())
+          ? Number(o.cost_amount)
+          : Number.NaN;
+      const probability =
+        typeof o.probability === "number" ||
+        (typeof o.probability === "string" && o.probability.trim())
+          ? Number(o.probability)
+          : Number.NaN;
+      const financialDirection = o.financial_direction;
+      const status = o.status;
+      const updatedAt = str(o.updated_at);
+      if (
+        !Number.isFinite(contractAmount) ||
+        !Number.isFinite(costAmount) ||
+        !Number.isFinite(probability) ||
+        probability < 0 ||
+        probability > 100 ||
+        Math.abs(contractAmount * 100 - Math.round(contractAmount * 100)) >= 1e-7 ||
+        Math.abs(costAmount * 100 - Math.round(costAmount * 100)) >= 1e-7 ||
+        (financialDirection !== "addition" && financialDirection !== "credit") ||
+        (status !== "Approved" && status !== "Pending" && status !== "Denied") ||
+        (financialDirection === "credit" && (contractAmount > 0 || costAmount > 0)) ||
+        (financialDirection === "addition" && (contractAmount < 0 || costAmount < 0)) ||
+        !updatedAt ||
+        Number.isNaN(new Date(updatedAt).getTime())
+      ) {
+        throw new Error(
+          `Change order ${str(o.number, str(o.id))} has invalid financial data. The project was not summarized.`,
+        );
+      }
       return {
         id: o.id as string,
         project_id: o.project_id as string,
         number: str(o.number),
         description: str(o.description),
-        contract_amount: num(o.contract_amount),
-        cost_amount: num(o.cost_amount),
-        financial_direction: str(
-          o.financial_direction,
-          num(o.contract_amount) < 0 || num(o.cost_amount) < 0 ? "credit" : "addition",
-        ) as COFinancialDirection,
-        status: (o.status as COStatus) ?? "Pending",
-        probability: num(o.probability),
+        contract_amount: contractAmount,
+        cost_amount: costAmount,
+        financial_direction: financialDirection,
+        status,
+        probability,
         owner: str(o.owner),
         notes: str(o.notes),
         co_type: str(o.co_type, "other") as COType,
@@ -2059,30 +2149,33 @@ export const getProject = createServerFn({ method: "GET" })
         client_decided_at: (o.client_decided_at as string | null) ?? null,
         linked_exposure_id: (o.linked_exposure_id as string | null) ?? null,
         linked_claim_id: (o.linked_claim_id as string | null) ?? null,
+        created_at: str(o.created_at),
+        updated_at: updatedAt,
       };
     });
 
-    const buckets: BucketRow[] = (bRes.data ?? []).map((b) => {
-      const o = b as Record<string, unknown>;
+    const buckets: BucketRow[] = bucketRows.map((o) => {
       return {
         id: o.id as string,
         project_id: o.project_id as string,
         cost_code: str(o.cost_code),
         bucket: str(o.bucket),
-        // Missing column (migration not applied yet) reads as 0 = unpriced.
-        contract_value: num(o.contract_value),
-        original_budget: num(o.original_budget),
-        actual_to_date: num(o.actual_to_date),
-        ftc: num(o.ftc),
-        sort_order: num(o.sort_order),
+        contract_value: financialNum(o.contract_value, "cost_buckets.contract_value"),
+        original_budget: financialNum(o.original_budget, "cost_buckets.original_budget"),
+        actual_to_date: financialNum(o.actual_to_date, "cost_buckets.actual_to_date"),
+        ftc: financialNum(o.ftc, "cost_buckets.ftc"),
+        sort_order: financialNum(o.sort_order, "cost_buckets.sort_order"),
         source_type: str(o.source_type, "original_sov") as BucketRow["source_type"],
         source_date: (o.source_date as string | null) ?? null,
         source_note: str(o.source_note),
-        retainage_pct: num(o.retainage_pct ?? 10),
+        retainage_pct: financialNum(o.retainage_pct, "cost_buckets.retainage_pct"),
         billing_method: str(o.billing_method, "percent") as BucketRow["billing_method"],
-        contract_quantity: num(o.contract_quantity),
+        contract_quantity: financialNum(o.contract_quantity, "cost_buckets.contract_quantity"),
         unit: str(o.unit),
-        earned_percent_complete: num(o.earned_percent_complete),
+        earned_percent_complete: financialNum(
+          o.earned_percent_complete,
+          "cost_buckets.earned_percent_complete",
+        ),
       };
     });
     const billingEventsByApplication = new Map<string, BillingApplicationEventRow[]>();
@@ -2091,30 +2184,26 @@ export const getProject = createServerFn({ method: "GET" })
       existing.push(event);
       billingEventsByApplication.set(event.billing_application_id, existing);
     });
-    const billingApplications: BillingApplicationRow[] = billingTableMissing
-      ? []
-      : (billRes.data ?? []).map((b) => {
-          const app = normalizeBillingApplication(b as Record<string, unknown>);
-          return {
-            ...app,
-            status_events: billingEventsByApplication.get(app.id) ?? [],
-          };
-        });
+    const billingApplications: BillingApplicationRow[] = billingApplicationRows.map((b) => {
+      const app = normalizeBillingApplication(b as Record<string, unknown>);
+      return {
+        ...app,
+        status_events: billingEventsByApplication.get(app.id) ?? [],
+      };
+    });
     const paymentsByInvoice = new Map<string, PaymentLedgerRow[]>();
     paymentRows.forEach((payment) => {
       const existing = paymentsByInvoice.get(payment.invoice_id) ?? [];
       existing.push(payment);
       paymentsByInvoice.set(payment.invoice_id, existing);
     });
-    const billingInvoices: BillingInvoiceRow[] = billingInvoicesTableMissing
-      ? []
-      : ((invoiceRes.data ?? []) as unknown[]).map((row) => {
-          const invoice = normalizeBillingInvoice(row as Record<string, unknown>);
-          return {
-            ...invoice,
-            payment_events: paymentsByInvoice.get(invoice.id) ?? [],
-          };
-        });
+    const billingInvoices: BillingInvoiceRow[] = billingInvoiceRows.map((row) => {
+      const invoice = normalizeBillingInvoice(row as Record<string, unknown>);
+      return {
+        ...invoice,
+        payment_events: paymentsByInvoice.get(invoice.id) ?? [],
+      };
+    });
     const tableInspections: InspectionRow[] = inspectionsTableMissing
       ? []
       : ((inspectionRes.data ?? []) as unknown[]).map((row) =>
@@ -2181,47 +2270,50 @@ export const getProject = createServerFn({ method: "GET" })
         last_sent_at: (o.last_sent_at as string | null) ?? null,
       };
     });
-    const sovImports: SovImportRow[] = sovImportsTableMissing
-      ? []
-      : ((siRes.data ?? []) as unknown[]).map((r) => {
-          const o = r as Record<string, unknown>;
-          return {
-            id: o.id as string,
-            project_id: o.project_id as string,
-            imported_by: (o.imported_by as string | null) ?? null,
-            mode: str(o.mode, "replace") as SovImportRow["mode"],
-            source_type: str(o.source_type),
-            source_name: str(o.source_name),
-            source_sheet: str(o.source_sheet),
-            profile: str(o.profile),
-            confidence: str(o.confidence, "unknown") as SovImportRow["confidence"],
-            has_header: Boolean(o.has_header ?? true),
-            raw_rows: num(o.raw_rows),
-            staged_rows: num(o.staged_rows),
-            inserted_count: num(o.inserted_count),
-            updated_count: num(o.updated_count),
-            skipped_count: num(o.skipped_count),
-            merged_rows: num(o.merged_rows),
-            total_budget: num(o.total_budget),
-            original_cost_budget: num(o.original_cost_budget),
-            selected_budget_column:
-              o.selected_budget_column == null ? null : num(o.selected_budget_column),
-            selected_budget_label: str(o.selected_budget_label),
-            column_map: (o.column_map ?? {}) as Json,
-            amount_choices: (o.amount_choices ?? []) as Json,
-            warnings: (o.warnings ?? []) as Json,
-            created_at: str(o.created_at),
-          };
-        });
+    const sovImports: SovImportRow[] = sovImportRows.map((o) => {
+      return {
+        id: o.id as string,
+        project_id: o.project_id as string,
+        imported_by: (o.imported_by as string | null) ?? null,
+        mode: str(o.mode, "replace") as SovImportRow["mode"],
+        source_type: str(o.source_type),
+        source_name: str(o.source_name),
+        source_sheet: str(o.source_sheet),
+        profile: str(o.profile),
+        confidence: str(o.confidence, "unknown") as SovImportRow["confidence"],
+        has_header: Boolean(o.has_header ?? true),
+        raw_rows: num(o.raw_rows),
+        staged_rows: num(o.staged_rows),
+        inserted_count: num(o.inserted_count),
+        updated_count: num(o.updated_count),
+        skipped_count: num(o.skipped_count),
+        merged_rows: num(o.merged_rows),
+        total_budget: financialNum(o.total_budget, "sov_imports.total_budget"),
+        original_cost_budget: financialNum(
+          o.original_cost_budget,
+          "sov_imports.original_cost_budget",
+        ),
+        selected_budget_column:
+          o.selected_budget_column == null ? null : num(o.selected_budget_column),
+        selected_budget_label: str(o.selected_budget_label),
+        column_map: (o.column_map ?? {}) as Json,
+        amount_choices: (o.amount_choices ?? []) as Json,
+        warnings: (o.warnings ?? []) as Json,
+        created_at: str(o.created_at),
+      };
+    });
 
     // Subcontractor cost layer → the IOR rollup, so committed sub cost moves the
-    // dashboard GP (not just the Budget tab). Degrades to empty where the
-    // subcontract tables aren't provisioned.
+    // dashboard GP (not just the Budget tab). Every relation below contributes
+    // authoritative cost. Query/RLS/schema failures must block the rollup rather
+    // than turn real cost into a healthy-looking $0.
     const subRows = async (relation: string) => {
       const { data: rows, error } = await dynamicTable(context.supabase, relation)
         .select("*")
         .eq("project_id", pid);
-      if (error) return [] as Record<string, unknown>[];
+      if (error) {
+        throw new Error(`Financial rollup could not load ${relation}: ${error.message}`);
+      }
       return (rows ?? []) as Record<string, unknown>[];
     };
     const [
@@ -2246,8 +2338,8 @@ export const getProject = createServerFn({ method: "GET" })
       subRows("daily_wip_entries"),
       // Recorded costs carry a per-line daily_wip_offset that SETTLES the daily
       // WIP they cover, so buildSelfPerformByBucket can net out the double-count
-      // (subRows degrades to [] pre-billing-tables, and daily_wip_offset is read
-      // defensively so a pre-migration project nets 0).
+      // daily_wip_offset is read defensively for legacy rows, but the table read
+      // itself must succeed before any cost rollup is shown.
       subRows("cost_actuals"),
     ]);
     type SummarizeArgs = Parameters<typeof summarizeSubCostByBucket>;
@@ -2315,16 +2407,15 @@ export const getProject = createServerFn({ method: "GET" })
 
 // ---------------- PROJECT CRUD ----------------
 
-const DEFAULT_BUCKETS = ["Sitework", "Structure", "Envelope", "MEP", "Finishes", "GC/OH"];
-
 const createProjectInput = z.object({
+  operationKey: z.string().uuid(),
   name: z.string().min(1).max(200),
   job_number: z.string().max(100).default(""),
   client: z.string().max(200).default(""),
   project_manager: z.string().max(200).default(""),
   phase: z.enum(["Early", "Middle", "Late"]).default("Early"),
-  original_contract: z.number().min(0),
-  original_cost_budget: z.number().min(0),
+  original_contract: exactCentMoney,
+  original_cost_budget: exactCentMoney,
   baseline_completion_date: z.string().nullable().optional(),
   forecast_completion_date: z.string().nullable().optional(),
 });
@@ -2381,9 +2472,7 @@ export const createProject = createServerFn({ method: "POST" })
 
     const baselineCompletion = cleanOptionalDate(data.baseline_completion_date);
     const forecastCompletion = cleanOptionalDate(data.forecast_completion_date);
-    const baseInsert = {
-      owner_id: context.userId,
-      organization_id: organizationId,
+    const projectHeader = {
       name: data.name,
       job_number: data.job_number.trim(),
       client: data.client,
@@ -2396,40 +2485,38 @@ export const createProject = createServerFn({ method: "POST" })
       schedule_variance_weeks:
         computeScheduleVarianceWeeks(baselineCompletion, forecastCompletion) ?? 0,
     };
-    const { data: row, error } = await context.supabase
-      .from("projects")
-      .insert(baseInsert)
-      .select("id")
-      .single();
-    throwIfProjectSchemaError(error);
-    if (error) throw new Error(error.message);
-    if (!row) throw new Error("Project did not save.");
-
-    const per = data.original_cost_budget / DEFAULT_BUCKETS.length;
-    const { error: bErr } = await context.supabase.from("cost_buckets").insert(
-      DEFAULT_BUCKETS.map((bucket, i) => ({
-        project_id: row.id,
-        cost_code: "",
-        bucket,
-        original_budget: per,
-        actual_to_date: 0,
-        ftc: per,
-        sort_order: i + 1,
-      })),
-    );
-    if (bErr) throw new Error(bErr.message);
-
-    return { id: row.id };
+    const result = await dynamicRpc(context.supabase, "create_project_financial_atomic", {
+      p_organization_id: organizationId,
+      p_header: projectHeader,
+      p_operation_key: data.operationKey,
+    });
+    if (result.error) {
+      if (/schema cache|could not find the function|does not exist/i.test(result.error.message)) {
+        throw new Error(
+          "Project financial commands are still being enabled. No project or budget line was created; try again after Lovable finishes the migration.",
+        );
+      }
+      throw new Error(result.error.message);
+    }
+    if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+      throw new Error("Project creation completed without an authoritative project result.");
+    }
+    const projectId = str((result.data as Record<string, unknown>).projectId);
+    if (!projectId) throw new Error("Project creation did not return a project identifier.");
+    return { id: projectId };
   });
 
 const updateFinancialsInput = z.object({
   projectId: z.string().uuid(),
+  expectedUpdatedAt: z.string().datetime(),
+  operationKey: z.string().uuid(),
+  overrideReason: z.string().max(500).optional(),
   patch: z.object({
     name: z.string().min(1).max(200).optional(),
     job_number: z.string().max(100).optional(),
     client: z.string().max(200).optional(),
-    original_contract: z.number().min(0).optional(),
-    original_cost_budget: z.number().min(0).optional(),
+    original_contract: exactCentMoney.optional(),
+    original_cost_budget: exactCentMoney.optional(),
     schedule_variance_weeks: z.number().int().optional(),
     phase: z.enum(["Early", "Middle", "Late"]).optional(),
     percent_complete: z.number().min(0).max(100).optional(),
@@ -2456,50 +2543,28 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
       patch.forecast_completion_date = cleanOptionalDate(patch.forecast_completion_date);
     }
 
-    if ("baseline_completion_date" in patch || "forecast_completion_date" in patch) {
-      const { data: current, error: loadError } = await context.supabase
-        .from("projects")
-        .select("baseline_completion_date, forecast_completion_date")
-        .eq("id", data.projectId)
-        .single();
-      throwIfProjectSchemaError(loadError);
-      if (loadError) throw new Error(loadError.message);
-
-      const baseline =
-        patch.baseline_completion_date !== undefined
-          ? patch.baseline_completion_date
-          : ((current.baseline_completion_date as string | null) ?? null);
-      const forecast =
-        patch.forecast_completion_date !== undefined
-          ? patch.forecast_completion_date
-          : ((current.forecast_completion_date as string | null) ?? null);
-      patch.schedule_variance_weeks = computeScheduleVarianceWeeks(baseline, forecast) ?? 0;
+    const result = await dynamicRpc(context.supabase, "update_project_financial_header_atomic", {
+      p_project_id: data.projectId,
+      p_patch: patch,
+      p_override_reason: data.overrideReason?.trim() || null,
+      p_expected_updated_at: data.expectedUpdatedAt,
+      p_operation_key: data.operationKey,
+    });
+    if (result.error) {
+      if (/schema cache|could not find the function|does not exist/i.test(result.error.message)) {
+        throw new Error(
+          "Project financial commands are still being enabled. No project header was changed; try again after Lovable finishes the migration.",
+        );
+      }
+      throw new Error(result.error.message);
     }
-
-    const savePatch = (nextPatch: typeof patch) =>
-      context.supabase
-        // default_output_format is not in the generated types until the
-        // GETTINGPAID3 migration regenerates them; cast at the boundary only.
-        .from("projects")
-        .update(nextPatch as never)
-        .eq("id", data.projectId)
-        .select("*")
-        .single();
-
-    let { data: updated, error } = await savePatch(patch);
-    // GETTINGPAID3 column may be ahead of the database; retry without it so
-    // the rest of the financials still save while the migration lands.
-    if (
-      error &&
-      "default_output_format" in patch &&
-      isMissingRestColumn(error, "default_output_format")
-    ) {
-      const { default_output_format: _dropped, ...rest } = patch;
-      void _dropped;
-      ({ data: updated, error } = await savePatch(rest as typeof patch));
+    if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+      throw new Error("Project update completed without an authoritative result.");
     }
-    throwIfProjectSchemaError(error);
-    if (error) throw new Error(error.message);
+    const updated = (result.data as Record<string, unknown>).project;
+    if (!updated || typeof updated !== "object" || Array.isArray(updated)) {
+      throw new Error("Project update did not return the saved project header.");
+    }
     return {
       ok: true,
       project: normalizeProject(updated as Record<string, unknown>),
@@ -2572,19 +2637,20 @@ export const deleteProject = createServerFn({ method: "POST" })
       .eq("id", data.projectId)
       .maybeSingle();
     if (lookupError) throw new Error(lookupError.message);
-    if (projectRow && isHarborDemoProject(projectRow as Record<string, unknown>)) {
-      const { error } = await context.supabase
-        .from("projects")
-        .update({
-          archived_at: projectRow.archived_at ?? new Date().toISOString(),
-        } as never)
-        .eq("id", data.projectId);
-      if (error) throw new Error(error.message);
-      return { ok: true, demoArchived: true };
-    }
-    const { error } = await context.supabase.from("projects").delete().eq("id", data.projectId);
+    if (!projectRow) throw new Error("Project was not found.");
+    // Project financial journals are permanent evidence and intentionally
+    // RESTRICT parent deletion. Archive is therefore the supported lifecycle
+    // for every project; Harbor uses the same row as its durable opt-out flag.
+    const { error } = await context.supabase
+      .from("projects")
+      .update({ archived_at: projectRow.archived_at ?? new Date().toISOString() } as never)
+      .eq("id", data.projectId);
     if (error) throw new Error(error.message);
-    return { ok: true, demoArchived: false };
+    return {
+      ok: true,
+      demoArchived: isHarborDemoProject(projectRow as Record<string, unknown>),
+      archived: true,
+    };
   });
 
 // ---------------- EXPOSURES ----------------
@@ -2726,12 +2792,20 @@ const CO_TYPES = [
   "other",
 ] as const;
 const CO_FINANCIAL_DIRECTIONS = ["addition", "credit"] as const;
+const exactCentSignedMoney = z
+  .number()
+  .min(-MAX_SAFE_DOLLARS)
+  .max(MAX_SAFE_DOLLARS)
+  .refine(
+    (value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-7,
+    "Enter an amount with no more than two decimal places.",
+  );
 
-const coInput = z.object({
+const coInputFields = z.object({
   number: z.string().max(50).default(""),
   description: z.string().min(1).max(500),
-  contract_amount: z.number(),
-  cost_amount: z.number(),
+  contract_amount: exactCentSignedMoney,
+  cost_amount: exactCentSignedMoney,
   financial_direction: z.enum(CO_FINANCIAL_DIRECTIONS).default("addition"),
   status: z.enum(["Approved", "Pending", "Denied"]).default("Pending"),
   probability: z.number().min(0).max(100).default(100),
@@ -2742,109 +2816,205 @@ const coInput = z.object({
   pricing_method: z
     .enum(["lump_sum", "time_and_materials", "unit_price", "allowance", "other"])
     .default("lump_sum"),
-  schedule_impact_days: z.number().int().default(0),
+  schedule_impact_days: z.number().int().min(0).max(36500).default(0),
   requested_by: z.string().max(200).default(""),
   date_initiated: z.string().nullable().optional(),
 });
 
-// The columns that ship in the structured-fields migration. If the code deploys
-// before the migration lands, writing them 400s with a missing-column error;
-// we strip them and retry so CO create/edit still works (the values simply
-// aren't persisted until the migration applies).
-const CO_STRUCTURED_COLUMNS = [
-  "pricing_method",
-  "schedule_impact_days",
-  "requested_by",
-  "date_initiated",
-  "financial_direction",
-] as const;
-
-const stripCoStructuredColumns = <T extends Record<string, unknown>>(payload: T): Partial<T> => {
-  const clone: Record<string, unknown> = { ...payload };
-  for (const col of CO_STRUCTURED_COLUMNS) delete clone[col];
-  return clone as Partial<T>;
+const refineChangeOrderDirection = (
+  row: z.infer<typeof coInputFields>,
+  context: z.RefinementCtx,
+) => {
+  const invalidAddition =
+    row.financial_direction === "addition" && (row.contract_amount < 0 || row.cost_amount < 0);
+  const invalidCredit =
+    row.financial_direction === "credit" && (row.contract_amount > 0 || row.cost_amount > 0);
+  if (invalidAddition || invalidCredit) {
+    context.addIssue({
+      code: "custom",
+      path: ["financial_direction"],
+      message:
+        "Change-order direction and signed amounts disagree. Additions must be positive and credits must be negative.",
+    });
+  }
 };
 
-const isMissingCoStructuredColumn = (error: { code?: string; message?: string } | null) =>
-  CO_STRUCTURED_COLUMNS.some((col) => isMissingRestColumn(error, col));
+const coInput = coInputFields.superRefine(refineChangeOrderDirection);
+
+const changeOrderOperationKey = z.string().min(1).max(200);
+
+const changeOrderCommandArgs = (row: z.infer<typeof coInput>) => {
+  const directionSign = row.financial_direction === "credit" ? -1 : 1;
+  return {
+    p_number: row.number,
+    p_description: row.description,
+    p_contract_amount_cents: dollarsToCents(row.contract_amount) * directionSign,
+    p_cost_amount_cents: dollarsToCents(row.cost_amount) * directionSign,
+    p_financial_direction: row.financial_direction,
+    p_status: row.status,
+    p_probability: row.probability,
+    p_owner: row.owner,
+    p_notes: row.notes,
+    p_co_type: row.co_type,
+    p_pricing_method: row.pricing_method,
+    p_schedule_impact_days: row.schedule_impact_days,
+    p_requested_by: row.requested_by,
+    p_date_initiated: row.date_initiated ?? null,
+  };
+};
+
+const requireChangeOrderCommandResult = (value: unknown) => {
+  const result = (value ?? {}) as Record<string, unknown>;
+  const changeOrderId = str(result.changeOrderId);
+  if (!changeOrderId) throw new Error("The change-order command returned no record.");
+  return {
+    changeOrderId,
+    updatedAt: str(result.updatedAt),
+    deduplicated: Boolean(result.deduplicated),
+  };
+};
 
 export const createChangeOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { projectId: string } & z.input<typeof coInput>) =>
-    z.object({ projectId: z.string().uuid() }).merge(coInput).parse(input),
+  .inputValidator(
+    (
+      input: {
+        projectId: string;
+        operationKey: string;
+        requestedId?: string;
+      } & z.input<typeof coInput>,
+    ) =>
+      z
+        .object({
+          projectId: z.string().uuid(),
+          operationKey: changeOrderOperationKey,
+          requestedId: z.string().uuid().optional(),
+        })
+        .merge(coInputFields)
+        .superRefine(refineChangeOrderDirection)
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { projectId, ...rest } = data;
-    const sign = rest.financial_direction === "credit" ? -1 : 1;
-    const row = {
-      project_id: projectId,
-      ...rest,
-      contract_amount: Math.abs(rest.contract_amount) * sign,
-      cost_amount: Math.abs(rest.cost_amount) * sign,
-    };
-    // Cast to `never`: the structured columns land with a migration that may be
-    // behind the generated Database types (same pattern as linkChangeOrderExposure).
-    let { data: inserted, error } = await context.supabase
-      .from("change_orders")
-      .insert(row as never)
-      .select("id")
-      .single();
-    if (error && isMissingCoStructuredColumn(error)) {
-      // Pre-migration: retry without the structured columns so the CO still saves.
-      ({ data: inserted, error } = await context.supabase
-        .from("change_orders")
-        .insert(stripCoStructuredColumns(row) as never)
-        .select("id")
-        .single());
-    }
+    const { projectId, operationKey, requestedId, ...rest } = data;
+    const { data: command, error } = await dynamicRpc(
+      context.supabase,
+      "create_change_order_atomic",
+      {
+        p_project_id: projectId,
+        ...changeOrderCommandArgs(rest),
+        p_operation_key: operationKey,
+        p_requested_id: requestedId ?? null,
+      },
+    );
     if (error) throw new Error(error.message);
-    return { ok: true, id: (inserted as { id: string } | null)?.id ?? "" };
+    const result = requireChangeOrderCommandResult(command);
+    return { ok: true, id: result.changeOrderId, ...result };
   });
 
 export const updateChangeOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string } & Partial<z.input<typeof coInput>>) =>
-    z.object({ id: z.string().uuid() }).merge(coInput.partial()).parse(input),
+  .inputValidator(
+    (
+      input: {
+        id: string;
+        projectId: string;
+        expectedUpdatedAt: string;
+        operationKey: string;
+      } & Partial<z.input<typeof coInput>>,
+    ) =>
+      z
+        .object({
+          id: z.string().uuid(),
+          projectId: z.string().uuid(),
+          expectedUpdatedAt: z.string().datetime(),
+          operationKey: changeOrderOperationKey,
+        })
+        .merge(coInputFields.partial())
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { id, ...patch } = data;
-    if (patch.financial_direction) {
-      const sign = patch.financial_direction === "credit" ? -1 : 1;
-      if (patch.contract_amount != null)
-        patch.contract_amount = Math.abs(patch.contract_amount) * sign;
-      if (patch.cost_amount != null) patch.cost_amount = Math.abs(patch.cost_amount) * sign;
-    }
-    // Cast to `never`: structured columns may be a migration behind the generated
-    // Database types (same pattern as linkChangeOrderExposure).
-    let { error } = await context.supabase
+    const { id, projectId, expectedUpdatedAt, operationKey, ...patch } = data;
+    const { data: stored, error: loadError } = await context.supabase
       .from("change_orders")
-      .update(patch as never)
-      .eq("id", id);
-    if (error && isMissingCoStructuredColumn(error)) {
-      // Pre-migration: retry without the structured columns so the edit still lands.
-      ({ error } = await context.supabase
-        .from("change_orders")
-        .update(stripCoStructuredColumns(patch) as never)
-        .eq("id", id));
+      .select(
+        "project_id,number,description,contract_amount,cost_amount,financial_direction,status,probability,owner,notes,co_type,pricing_method,schedule_impact_days,requested_by,date_initiated,updated_at",
+      )
+      .eq("id", id)
+      .single();
+    if (loadError) throw new Error(loadError.message);
+    if (!stored) throw new Error("Change order not found.");
+    const storedRow = stored as Record<string, unknown>;
+    if (str(storedRow.project_id) !== projectId) {
+      throw new Error("Change order not found on this project.");
     }
+    const next = coInput.parse({
+      number: str(storedRow.number),
+      description: str(storedRow.description),
+      contract_amount: num(storedRow.contract_amount),
+      cost_amount: num(storedRow.cost_amount),
+      financial_direction: storedRow.financial_direction,
+      status: storedRow.status,
+      probability: num(storedRow.probability),
+      owner: str(storedRow.owner),
+      notes: str(storedRow.notes),
+      co_type: storedRow.co_type,
+      pricing_method: storedRow.pricing_method,
+      schedule_impact_days: num(storedRow.schedule_impact_days),
+      requested_by: str(storedRow.requested_by),
+      date_initiated: (storedRow.date_initiated as string | null) ?? null,
+      ...patch,
+    });
+    const { data: command, error } = await dynamicRpc(
+      context.supabase,
+      "update_change_order_atomic",
+      {
+        p_project_id: projectId,
+        p_change_order_id: id,
+        p_expected_updated_at: expectedUpdatedAt,
+        ...changeOrderCommandArgs(next),
+        p_operation_key: operationKey,
+      },
+    );
     if (error) throw new Error(error.message);
-    return { ok: true };
+    const result = requireChangeOrderCommandResult(command);
+    return { ok: true, id: result.changeOrderId, ...result };
   });
+
+const deleteChangeOrderInput = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  expectedUpdatedAt: z.string().datetime(),
+  operationKey: changeOrderOperationKey,
+});
 
 export const deleteChangeOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input: z.input<typeof deleteChangeOrderInput>) =>
+    deleteChangeOrderInput.parse(input),
+  )
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.from("change_orders").delete().eq("id", data.id);
+    const { data: command, error } = await dynamicRpc(
+      context.supabase,
+      "delete_change_order_atomic",
+      {
+        p_project_id: data.projectId,
+        p_change_order_id: data.id,
+        p_expected_updated_at: data.expectedUpdatedAt,
+        p_operation_key: data.operationKey,
+      },
+    );
     if (error) throw new Error(error.message);
-    return { ok: true };
+    const result = requireChangeOrderCommandResult(command);
+    if (!(command as Record<string, unknown> | null)?.deleted) {
+      throw new Error("Change order did not delete. Refresh and try again.");
+    }
+    return { ok: true, id: result.changeOrderId, ...result };
   });
 
 // ---------------- CO ↔ RISK LINK ----------------
-// Cross-reference a change order and a risk-tally exposure both ways. Pure
-// pointer wiring — money is untouched. The columns land with the CO↔RISK
-// migration; until it applies the update no-ops gracefully (linked=false) so the
-// CO/exposure it was created alongside still stands, just unlinked.
+// Cross-reference a change order and a risk-tally exposure both ways. Money is
+// untouched, but both pointers must commit together through the project-scoped
+// database command so a failed second write can never leave a half-link.
 
 const coExposureLinkInput = z.object({
   changeOrderId: z.string().uuid(),
@@ -2856,19 +3026,17 @@ export const linkChangeOrderExposure = createServerFn({ method: "POST" })
   .inputValidator((input: z.input<typeof coExposureLinkInput>) => coExposureLinkInput.parse(input))
   .handler(async ({ data, context }) => {
     const { changeOrderId, exposureId } = data;
-    const { error: coErr } = await context.supabase
-      .from("change_orders")
-      .update({ linked_exposure_id: exposureId } as never)
-      .eq("id", changeOrderId);
-    if (coErr && !isMissingRestColumn(coErr, "linked_exposure_id")) throw new Error(coErr.message);
-    const { error: expErr } = await context.supabase
-      .from("exposures")
-      .update({ linked_change_order_id: changeOrderId } as never)
-      .eq("id", exposureId);
-    if (expErr && !isMissingRestColumn(expErr, "linked_change_order_id")) {
-      throw new Error(expErr.message);
-    }
-    return { ok: true, linked: !coErr && !expErr };
+    const { data: command, error } = await dynamicRpc(
+      context.supabase,
+      "link_change_order_exposure_atomic",
+      {
+        p_change_order_id: changeOrderId,
+        p_exposure_id: exposureId,
+      },
+    );
+    if (error) throw new Error(error.message);
+    const result = requireChangeOrderCommandResult(command);
+    return { ok: true, linked: true, ...result };
   });
 
 export const unlinkChangeOrderExposure = createServerFn({ method: "POST" })
@@ -2876,19 +3044,17 @@ export const unlinkChangeOrderExposure = createServerFn({ method: "POST" })
   .inputValidator((input: z.input<typeof coExposureLinkInput>) => coExposureLinkInput.parse(input))
   .handler(async ({ data, context }) => {
     const { changeOrderId, exposureId } = data;
-    const { error: coErr } = await context.supabase
-      .from("change_orders")
-      .update({ linked_exposure_id: null } as never)
-      .eq("id", changeOrderId);
-    if (coErr && !isMissingRestColumn(coErr, "linked_exposure_id")) throw new Error(coErr.message);
-    const { error: expErr } = await context.supabase
-      .from("exposures")
-      .update({ linked_change_order_id: null } as never)
-      .eq("id", exposureId);
-    if (expErr && !isMissingRestColumn(expErr, "linked_change_order_id")) {
-      throw new Error(expErr.message);
-    }
-    return { ok: true };
+    const { data: command, error } = await dynamicRpc(
+      context.supabase,
+      "unlink_change_order_exposure_atomic",
+      {
+        p_change_order_id: changeOrderId,
+        p_exposure_id: exposureId,
+      },
+    );
+    if (error) throw new Error(error.message);
+    const result = requireChangeOrderCommandResult(command);
+    return { ok: true, linked: false, ...result };
   });
 
 // ---------------- CLAIM ↔ RISK / CO LINKS ----------------
@@ -2896,7 +3062,8 @@ export const unlinkChangeOrderExposure = createServerFn({ method: "POST" })
 // promoted into. Pure pointer wiring — the claim keeps its outgoing pointer
 // (project_claims.risk_exposure_id / change_order_id, added in slice 2), and
 // these set the REVERSE pointer on exposures/change_orders (added in slice 5).
-// Reverse column may be a migration behind → that side no-ops gracefully.
+// Claim ↔ CO uses the atomic database command below; claim ↔ risk remains the
+// older reference-only workflow until its own command migration lands.
 
 export const linkClaimExposure = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -2926,18 +3093,17 @@ export const linkClaimChangeOrder = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { claimId, changeOrderId } = data;
-    const { error: claimErr } = await dynamicTable(context.supabase, "project_claims")
-      .update({ change_order_id: changeOrderId })
-      .eq("id", claimId);
-    if (claimErr && !isMissingRestColumn(claimErr, "change_order_id")) {
-      throw new Error(claimErr.message);
-    }
-    const { error: coErr } = await context.supabase
-      .from("change_orders")
-      .update({ linked_claim_id: claimId } as never)
-      .eq("id", changeOrderId);
-    if (coErr && !isMissingRestColumn(coErr, "linked_claim_id")) throw new Error(coErr.message);
-    return { ok: true, linked: !claimErr && !coErr };
+    const { data: command, error } = await dynamicRpc(
+      context.supabase,
+      "link_claim_change_order_atomic",
+      {
+        p_claim_id: claimId,
+        p_change_order_id: changeOrderId,
+      },
+    );
+    if (error) throw new Error(error.message);
+    const result = requireChangeOrderCommandResult(command);
+    return { ok: true, linked: true, ...result };
   });
 
 // ---------------- CHANGE ORDER ALLOCATIONS ----------------
@@ -2946,13 +3112,23 @@ export const linkClaimChangeOrder = createServerFn({ method: "POST" })
 // the next application). Before this, the app nudged "allocate to a cost
 // code" with nowhere to do it; this is that missing control.
 
-const changeOrderAllocationInput = z.object({
-  projectId: z.string().uuid(),
-  changeOrderId: z.string().uuid(),
-  costBucketId: z.string().uuid(),
-  contractAmount: z.number(),
-  costAmount: z.number().default(0),
-});
+const changeOrderAllocationInput = z
+  .object({
+    projectId: z.string().uuid(),
+    changeOrderId: z.string().uuid(),
+    costBucketId: z.string().uuid(),
+    contractAmount: exactCentSignedMoney,
+    costAmount: exactCentSignedMoney.default(0),
+    idempotencyKey: z.string().trim().min(1).max(200),
+  })
+  .refine(
+    (input) =>
+      Math.abs(dollarsToCents(input.contractAmount)) > 0 ||
+      Math.abs(dollarsToCents(input.costAmount)) > 0,
+    {
+      message: "An allocation must include contract or cost value.",
+    },
+  );
 
 export const allocateChangeOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -2960,54 +3136,50 @@ export const allocateChangeOrder = createServerFn({ method: "POST" })
     changeOrderAllocationInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    // RLS-scoped reads gate access: no cost bucket / CO in a project the
-    // caller cannot manage means no allocation. The bucket supplies the cost
-    // code and the CO its label, so the allocation carries readable context.
-    const bucketRes = await dynamicTable(context.supabase, "cost_buckets")
-      .select("id,project_id,cost_code,bucket")
-      .eq("id", data.costBucketId)
-      .maybeSingle();
-    if (bucketRes.error) throw new Error(bucketRes.error.message);
-    const bucket = bucketRes.data as Record<string, unknown> | null;
-    if (!bucket || (bucket.project_id as string) !== data.projectId) {
-      throw new Error("Cost code not found on this project.");
+    // The RPC and its table trigger lock the parent CO, re-check Approved state,
+    // and enforce cumulative contract/cost caps in one transaction. This cannot
+    // be safely composed from browser-side reads followed by a REST insert.
+    const { data: result, error } = await dynamicRpc(
+      context.supabase,
+      "allocate_change_order_atomic",
+      {
+        p_project_id: data.projectId,
+        p_change_order_id: data.changeOrderId,
+        p_cost_bucket_id: data.costBucketId,
+        // The current credit UI passes signed negatives; the RPC derives the
+        // authoritative sign from the locked change order itself.
+        p_contract_amount_cents: Math.abs(dollarsToCents(data.contractAmount)),
+        p_cost_amount_cents: Math.abs(dollarsToCents(data.costAmount)),
+        p_idempotency_key: data.idempotencyKey,
+      },
+    );
+    if (error) {
+      if (
+        error.code === "PGRST202" ||
+        /allocate_change_order_atomic|schema cache|function/i.test(error.message)
+      ) {
+        throw new Error(
+          "Change-order allocation integrity is not enabled on this workspace yet. Apply the project financial integrity migration before allocating.",
+        );
+      }
+      throw new Error(error.message);
     }
-    const coRes = await dynamicTable(context.supabase, "change_orders")
-      .select("id,project_id,number,description,contract_amount,cost_amount,financial_direction")
-      .eq("id", data.changeOrderId)
-      .maybeSingle();
-    if (coRes.error) throw new Error(coRes.error.message);
-    const co = coRes.data as Record<string, unknown> | null;
-    if (!co || (co.project_id as string) !== data.projectId) {
-      throw new Error("Change order not found on this project.");
-    }
-    const isCredit =
-      str(co.financial_direction) === "credit" ||
-      num(co.contract_amount) < 0 ||
-      num(co.cost_amount) < 0;
-    const contractAmount = Math.abs(data.contractAmount) * (isCredit ? -1 : 1);
-    const costAmount = Math.abs(data.costAmount) * (isCredit ? -1 : 1);
-
-    const { error } = await dynamicTable(context.supabase, "change_order_allocations").insert({
-      project_id: data.projectId,
-      change_order_id: data.changeOrderId,
-      cost_bucket_id: data.costBucketId,
-      cost_code: str(bucket.cost_code),
-      description: [str(co.number, "CO"), str(co.description)].filter(Boolean).join(" - "),
-      contract_amount: contractAmount,
-      cost_amount: costAmount,
-    });
-    if (error) throw new Error(error.message);
-    return { ok: true };
+    const allocation = (result ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      allocationId: str(allocation.allocationId),
+      contractAmount: num(allocation.contractAmount),
+      costAmount: num(allocation.costAmount),
+    };
   });
 
 export const deleteChangeOrderAllocation = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await dynamicTable(context.supabase, "change_order_allocations")
-      .delete()
-      .eq("id", data.id);
+    const { error } = await dynamicRpc(context.supabase, "delete_change_order_allocation_atomic", {
+      p_allocation_id: data.id,
+    });
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -3025,31 +3197,35 @@ export interface ChangeOrderAllocationListRow {
   cost_amount: number;
 }
 
+export async function readChangeOrderAllocations(
+  supabase: unknown,
+  projectId: string,
+): Promise<ChangeOrderAllocationListRow[]> {
+  const { data: rows, error } = await dynamicTable(supabase, "change_order_allocations")
+    .select("id,project_id,change_order_id,cost_bucket_id,cost_code,contract_amount,cost_amount")
+    .eq("project_id", projectId);
+  return requireFinancialRows(
+    rows as Record<string, unknown>[] | null,
+    error,
+    "change_order_allocations",
+  ).map((row) => ({
+    id: str(row.id),
+    project_id: str(row.project_id),
+    change_order_id: str(row.change_order_id),
+    cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+    cost_code: str(row.cost_code),
+    contract_amount: financialNum(row.contract_amount, "change_order_allocations.contract_amount"),
+    cost_amount: financialNum(row.cost_amount, "change_order_allocations.cost_amount"),
+  }));
+}
+
 export const listChangeOrderAllocations = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string }) =>
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }): Promise<ChangeOrderAllocationListRow[]> => {
-    const { data: rows, error } = await dynamicTable(context.supabase, "change_order_allocations")
-      .select("id,project_id,change_order_id,cost_bucket_id,cost_code,contract_amount,cost_amount")
-      .eq("project_id", data.projectId);
-    if (error) {
-      // Table shipped in an earlier desk migration; degrade to empty if absent.
-      if (/change_order_allocations|does not exist|schema cache|relation/i.test(error.message)) {
-        return [];
-      }
-      throw new Error(error.message);
-    }
-    return ((rows ?? []) as Record<string, unknown>[]).map((row) => ({
-      id: str(row.id),
-      project_id: str(row.project_id),
-      change_order_id: str(row.change_order_id),
-      cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
-      cost_code: str(row.cost_code),
-      contract_amount: num(row.contract_amount),
-      cost_amount: num(row.cost_amount),
-    }));
+    return readChangeOrderAllocations(context.supabase, data.projectId);
   });
 
 // BUDGETLOCK1: explicit lock. Idempotent — locking an already-locked budget is
@@ -3057,25 +3233,32 @@ export const listChangeOrderAllocations = createServerFn({ method: "GET" })
 // operation by design.
 export const lockProjectBudget = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { projectId: string }) =>
-    z.object({ projectId: z.string().uuid() }).parse(input),
+  .inputValidator((input: { projectId: string; operationKey: string }) =>
+    z.object({ projectId: z.string().uuid(), operationKey: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    // dynamicTable: the generated DB types don't carry budget_locked_at until
-    // the desk applies the migration and types regenerate.
-    const { error } = await dynamicTable(context.supabase, "projects")
-      .update({ budget_locked_at: new Date().toISOString() })
-      .eq("id", data.projectId)
-      .is("budget_locked_at", null);
-    if (error) {
-      if (/budget_locked_at|schema cache|column/i.test(error.message)) {
+    const result = await dynamicRpc(context.supabase, "lock_project_budget_atomic", {
+      p_project_id: data.projectId,
+      p_operation_key: data.operationKey,
+    });
+    if (result.error) {
+      if (
+        /budget_locked_at|schema cache|could not find the function|does not exist/i.test(
+          result.error.message,
+        )
+      ) {
         throw new Error(
-          "Budget locking isn't enabled on this workspace yet — the budget_locked_at migration hasn't been applied.",
+          "Budget locking is still being enabled. No lock state changed; try again after Lovable finishes the migration.",
         );
       }
-      throw new Error(error.message);
+      throw new Error(result.error.message);
     }
-    return { ok: true };
+    if (!(await readProjectBudgetLock(context.supabase, data.projectId))) {
+      throw new Error(
+        "Budget lock did not commit. No baseline mutation is permitted until the locked state is confirmed.",
+      );
+    }
+    return { ok: true, locked: true };
   });
 
 // ---------------- EXPOSURE → COST-CODE ALLOCATION (BUDGETENGINE Phase 1) ----------------
@@ -3194,135 +3377,39 @@ export const listExposureAllocations = createServerFn({ method: "GET" })
 // and write to a project the caller can manage.
 export const buildBudgetFromEstimate = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { projectId: string; pricing?: "unpriced" | "auto" }) =>
-    z
-      .object({
-        projectId: z.string().uuid(),
-        // BUDGETVSCONTRACT2: "auto" pre-fills each line's contract value by
-        // distributing the estimate's markup pro-rata by cost (an editable
-        // starting point); "unpriced" (default) leaves contract values 0 so
-        // the user enters the contract SOV themselves.
-        pricing: z.enum(["unpriced", "auto"]).default("unpriced"),
-      })
-      .parse(input),
+  .inputValidator(
+    (input: { projectId: string; pricing?: "unpriced" | "auto"; operation_key: string }) =>
+      z
+        .object({
+          projectId: z.string().uuid(),
+          // BUDGETVSCONTRACT2: "auto" pre-fills each line's contract value by
+          // distributing the estimate's markup pro-rata by cost (an editable
+          // starting point); "unpriced" (default) leaves contract values 0 so
+          // the user enters the contract SOV themselves.
+          pricing: z.enum(["unpriced", "auto"]).default("unpriced"),
+          operation_key: z.string().trim().min(1).max(200),
+        })
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
-    // BUDGETLOCK1: the carry writes original_budget — refused once locked.
-    if (await isProjectBudgetLocked(context.supabase, data.projectId)) {
-      throw new Error(BUDGET_LOCKED_MESSAGE);
-    }
-    // Read the estimate's contract/sell total (cost + markups) so auto-pricing
-    // can distribute the markup. select("*") tolerates schema variation.
-    const estRes = await dynamicTable(context.supabase, "estimates")
-      .select("*")
-      .eq("project_id", data.projectId)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (estRes.error) throw new Error(estRes.error.message);
-    const estimate = estRes.data as Record<string, unknown> | null;
-    if (!estimate) {
+    const { data: result, error } = await dynamicRpc(
+      context.supabase,
+      "build_budget_from_estimate_atomic",
+      {
+        p_project_id: data.projectId,
+        p_pricing: data.pricing,
+        p_operation_key: data.operation_key,
+      },
+    );
+    if (error) {
       throw new Error(
-        "No Overwatch estimate is linked to this project. Enter the budget manually in the cost lines below.",
+        `Budget build did not commit: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
       );
     }
-
-    const linesRes = await dynamicTable(context.supabase, "estimate_line_items")
-      .select("cost_code,csi_division,scope_group,description,total_extended_cents")
-      .eq("estimate_id", str(estimate.id));
-    if (linesRes.error) throw new Error(linesRes.error.message);
-    const lines = ((linesRes.data as Record<string, unknown>[]) ?? []).map((row) => ({
-      cost_code: str(row.cost_code),
-      csi_division: str(row.csi_division),
-      scope_group: str(row.scope_group),
-      description: str(row.description),
-      total_extended_cents: num(row.total_extended_cents),
-    }));
-
-    // Only distribute a real markup. If the estimate has none (or the user
-    // chose manual), lines carry cost only and stay unpriced.
-    const contractTotalCents = num(estimate.total_with_markups_cents);
-    const wantsAuto = data.pricing === "auto";
-    const priced = wantsAuto && estimateHasDistributableMarkup(lines, contractTotalCents);
-    const budgetLines = aggregateEstimateToBudget(lines, priced ? { contractTotalCents } : {});
-    if (budgetLines.length === 0) {
-      throw new Error("The linked estimate has no line items to carry into the budget.");
+    if (!result || typeof result !== "object") {
+      throw new Error("Budget build did not return a committed operation result.");
     }
-
-    const bucketsRes = await dynamicTable(context.supabase, "cost_buckets")
-      .select("id,cost_code,sort_order")
-      .eq("project_id", data.projectId);
-    if (bucketsRes.error) throw new Error(bucketsRes.error.message);
-    const existingBuckets = (bucketsRes.data as Record<string, unknown>[]) ?? [];
-    const idByCode = new Map<string, string>();
-    let maxSort = 0;
-    for (const bucket of existingBuckets) {
-      const code = str(bucket.cost_code).trim();
-      if (code) idByCode.set(code, str(bucket.id));
-      maxSort = Math.max(maxSort, num(bucket.sort_order));
-    }
-
-    // Pre-migration grace: if contract_value doesn't exist yet, fall back to
-    // writing budget only (the whole carry still succeeds, just unpriced).
-    let contractColumnMissing = false;
-    const withContract = (payload: Record<string, unknown>, contractValue?: number) =>
-      priced && contractValue !== undefined && !contractColumnMissing
-        ? { ...payload, contract_value: contractValue }
-        : payload;
-
-    let updated = 0;
-    let created = 0;
-    for (const line of budgetLines) {
-      const code = line.costCode.trim();
-      const existingId = code ? idByCode.get(code) : undefined;
-      if (existingId) {
-        // Only the budget/contract baselines move; actuals and
-        // forecast-to-complete are tracked as the job runs and must not be
-        // disturbed by a re-carry.
-        const basePayload = { original_budget: line.budget };
-        let { error } = await dynamicTable(context.supabase, "cost_buckets")
-          .update(withContract(basePayload, line.contractValue))
-          .eq("id", existingId);
-        if (error && /contract_value|schema cache|column/i.test(error.message)) {
-          contractColumnMissing = true;
-          ({ error } = await dynamicTable(context.supabase, "cost_buckets")
-            .update(basePayload)
-            .eq("id", existingId));
-        }
-        if (error) throw new Error(error.message);
-        updated += 1;
-      } else {
-        maxSort += 1;
-        const basePayload = {
-          project_id: data.projectId,
-          bucket: line.description,
-          cost_code: code,
-          original_budget: line.budget,
-          actual_to_date: 0,
-          ftc: line.budget,
-          sort_order: maxSort,
-        };
-        let { error } = await dynamicTable(context.supabase, "cost_buckets").insert(
-          withContract(basePayload, line.contractValue),
-        );
-        if (error && /contract_value|schema cache|column/i.test(error.message)) {
-          contractColumnMissing = true;
-          ({ error } = await dynamicTable(context.supabase, "cost_buckets").insert(basePayload));
-        }
-        if (error) throw new Error(error.message);
-        created += 1;
-      }
-    }
-    return {
-      ok: true,
-      updated,
-      created,
-      codes: budgetLines.length,
-      priced: priced && !contractColumnMissing,
-      // Distinguishes "you asked to auto-price but the estimate has no markup"
-      // from "you chose manual" — the UI explains the former.
-      pricingRequested: wantsAuto,
-    };
+    return result as Json;
   });
 
 // ---------------- INSPECTIONS ----------------
@@ -3729,29 +3816,37 @@ export const deleteChangeOrderDocument = createServerFn({ method: "POST" })
 // BUDGETLOCK1 (founder decision 2026-07-06): the budget is a locked baseline.
 // Once projects.budget_locked_at is set, original_budget never changes — the
 // only budget movement is an approved change order's budgeted cost (priced on
-// the CO, allocated to cost codes). Reads tolerate the column not existing yet
-// (migration pending) by treating the project as unlocked.
-const BUDGET_LOCKED_MESSAGE =
-  "The budget is locked. Budget changes come through change orders — price the change order, and its budgeted cost adds to (or deducts from) the locked budget.";
-
-async function isProjectBudgetLocked(supabase: unknown, projectId: string): Promise<boolean> {
+// the CO, allocated to cost codes). Lock authority always fails closed.
+export async function readProjectBudgetLock(
+  supabase: unknown,
+  projectId: string,
+): Promise<boolean> {
   const { data, error } = await dynamicTable(supabase, "projects")
     .select("budget_locked_at")
     .eq("id", projectId)
     .maybeSingle();
-  if (error) return false; // pre-migration (column missing) reads as unlocked
-  return Boolean((data as { budget_locked_at?: string | null } | null)?.budget_locked_at);
+  if (error) {
+    throw new Error(
+      `Budget lock state is unavailable: ${error.message}. No budget mutation is permitted until projects.budget_locked_at can be read.`,
+    );
+  }
+  if (!data || typeof data !== "object") {
+    throw new Error("Budget lock state is unavailable: the project was not returned.");
+  }
+  return requireProjectBudgetLock(data as Record<string, unknown>) !== null;
 }
 
 const bucketInput = z.object({
   id: z.string().uuid(),
+  operation_key: z.string().trim().min(1).max(200),
+  note: z.string().max(500).default(""),
   patch: z.object({
     cost_code: z.string().max(80).optional(),
     bucket: z.string().min(1).max(100).optional(),
-    contract_value: z.number().min(0).optional(),
-    original_budget: z.number().min(0).optional(),
-    actual_to_date: z.number().min(0).optional(),
-    ftc: z.number().min(0).optional(),
+    contract_value: exactCentMoney.optional(),
+    original_budget: exactCentMoney.optional(),
+    actual_to_date: exactCentMoney.optional(),
+    ftc: exactCentMoney.optional(),
     source_type: z.enum(["original_sov", "change_order", "added_cost"]).optional(),
     source_date: z.string().nullable().optional(),
     source_note: z.string().max(500).optional(),
@@ -3762,149 +3857,103 @@ export const updateBucket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => bucketInput.parse(input))
   .handler(async ({ data, context }) => {
-    // BUDGETLOCK1 + BUDGETVSCONTRACT1: a locked baseline refuses changes to
-    // BOTH money baselines — the budget (our cost) and the contract value
-    // (what the owner pays); after lock, both move only through approved
-    // change orders. Unchanged re-commits (blur-commit UIs resend the same
-    // value) pass through.
-    if (data.patch.original_budget !== undefined || data.patch.contract_value !== undefined) {
-      // select("*") so a not-yet-migrated contract_value column can't error
-      // the read — it's simply absent and reads as 0.
-      const { data: bucketRow, error: bucketError } = await dynamicTable(
-        context.supabase,
-        "cost_buckets",
-      )
-        .select("*")
-        .eq("id", data.id)
-        .single();
-      if (bucketError) throw new Error(bucketError.message);
-      const row = bucketRow as Record<string, unknown>;
-      const budgetChanged =
-        data.patch.original_budget !== undefined &&
-        num(row.original_budget) !== data.patch.original_budget;
-      const contractChanged =
-        data.patch.contract_value !== undefined &&
-        num(row.contract_value) !== data.patch.contract_value;
-      if (
-        (budgetChanged || contractChanged) &&
-        (await isProjectBudgetLocked(context.supabase, str(row.project_id)))
-      ) {
-        throw new Error(BUDGET_LOCKED_MESSAGE);
-      }
-    }
-    // dynamicTable: the generated DB types don't carry contract_value until
-    // the desk applies the migration and types regenerate. Pre-migration, a
-    // contract_value patch retries without it so the rest of the edit lands.
-    const { error } = await dynamicTable(context.supabase, "cost_buckets")
-      .update(data.patch)
-      .eq("id", data.id);
+    const { data: result, error } = await dynamicRpc(
+      context.supabase,
+      "update_cost_bucket_atomic",
+      {
+        p_bucket_id: data.id,
+        p_patch: data.patch,
+        p_operation_key: data.operation_key,
+        p_note: data.note,
+      },
+    );
     if (error) {
-      if (
-        data.patch.contract_value !== undefined &&
-        /contract_value|schema cache|column/i.test(error.message)
-      ) {
-        const { contract_value: _dropped, ...rest } = data.patch;
-        void _dropped;
-        if (Object.keys(rest).length > 0) {
-          const { error: retryError } = await dynamicTable(context.supabase, "cost_buckets")
-            .update(rest)
-            .eq("id", data.id);
-          if (retryError) throw new Error(retryError.message);
-          return { ok: true };
-        }
-        throw new Error(
-          "Contract value isn't enabled on this workspace yet — the cost_buckets.contract_value migration hasn't been applied.",
-        );
-      }
-      throw new Error(error.message);
+      throw new Error(
+        `Budget line did not commit: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
+      );
     }
-    return { ok: true };
+    if (!result || typeof result !== "object") {
+      throw new Error("Budget line did not return a committed operation result.");
+    }
+    return result as Json;
   });
 
 const createBucketInput = z.object({
   projectId: z.string().uuid(),
   cost_code: z.string().max(80).default(""),
   bucket: z.string().min(1).max(100),
-  contract_value: z.number().min(0).default(0),
-  original_budget: z.number().min(0).default(0),
-  actual_to_date: z.number().min(0).default(0),
-  ftc: z.number().min(0).default(0),
+  contract_value: exactCentMoney.default(0),
+  original_budget: exactCentMoney.default(0),
+  actual_to_date: exactCentMoney.default(0),
+  ftc: exactCentMoney.default(0),
   source_type: z.enum(["original_sov", "change_order", "added_cost"]).default("added_cost"),
   source_date: z.string().nullable().optional(),
   source_note: z.string().max(500).default(""),
+  operation_key: z.string().trim().min(1).max(200),
 });
 
 export const createBucket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof createBucketInput>) => createBucketInput.parse(input))
   .handler(async ({ data, context }) => {
-    // BUDGETLOCK1 + BUDGETVSCONTRACT1: new lines may be added under a locked
-    // baseline (they hold CO allocations or track added cost), but they arrive
-    // with zero budget AND zero contract value — both baselines only move
-    // through change orders after lock.
-    if (
-      (data.original_budget > 0 || data.contract_value > 0) &&
-      (await isProjectBudgetLocked(context.supabase, data.projectId))
-    ) {
-      throw new Error(BUDGET_LOCKED_MESSAGE);
+    const { projectId, operation_key, ...bucket } = data;
+    const { data: result, error } = await dynamicRpc(
+      context.supabase,
+      "create_cost_bucket_atomic",
+      {
+        p_project_id: projectId,
+        p_payload: bucket,
+        p_operation_key: operation_key,
+      },
+    );
+    if (error) {
+      throw new Error(
+        `Budget line was not created: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
+      );
     }
-    const { data: last } = await context.supabase
-      .from("cost_buckets")
-      .select("sort_order")
-      .eq("project_id", data.projectId)
-      .order("sort_order", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const sort_order = ((last?.sort_order as number | undefined) ?? 0) + 1;
-    const insertPayload: Record<string, unknown> = {
-      project_id: data.projectId,
-      cost_code: data.cost_code.trim(),
-      bucket: data.bucket,
-      contract_value: data.contract_value,
-      original_budget: data.original_budget,
-      actual_to_date: data.actual_to_date,
-      ftc: data.ftc,
-      source_type: data.source_type,
-      source_date: data.source_date ?? new Date().toISOString().slice(0, 10),
-      source_note: data.source_note,
-      sort_order,
-    };
-    let { error } = await dynamicTable(context.supabase, "cost_buckets").insert(insertPayload);
-    if (error && /contract_value|schema cache|column/i.test(error.message)) {
-      // Pre-migration grace: create the line without contract_value.
-      delete insertPayload.contract_value;
-      ({ error } = await dynamicTable(context.supabase, "cost_buckets").insert(insertPayload));
+    if (!result || typeof result !== "object") {
+      throw new Error("Budget line creation did not return a committed operation result.");
     }
-    if (error) throw new Error(error.message);
-    return { ok: true };
+    return result as Json;
   });
 
 export const deleteBucket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input: { projectId: string; id: string; operation_key: string }) =>
+    z
+      .object({
+        projectId: z.string().uuid(),
+        id: z.string().uuid(),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
+  )
   .handler(async ({ data, context }) => {
-    // BUDGETLOCK1 + BUDGETVSCONTRACT1: deleting a line that carries budget or
-    // contract value changes a locked baseline. Zero/zero lines (CO receivers,
-    // added-cost tracking rows) may still be removed.
-    const { data: bucketRow, error: bucketError } = await dynamicTable(
+    const { data: result, error } = await dynamicRpc(
       context.supabase,
-      "cost_buckets",
-    )
-      .select("*")
-      .eq("id", data.id)
-      .single();
-    if (bucketError) throw new Error(bucketError.message);
-    const row = bucketRow as Record<string, unknown>;
-    if (
-      (num(row.original_budget) !== 0 || num(row.contract_value) !== 0) &&
-      (await isProjectBudgetLocked(context.supabase, str(row.project_id)))
-    ) {
-      throw new Error(BUDGET_LOCKED_MESSAGE);
+      "delete_cost_bucket_atomic",
+      {
+        p_project_id: data.projectId,
+        p_bucket_id: data.id,
+        p_operation_key: data.operation_key,
+      },
+    );
+    if (error) {
+      throw new Error(
+        `Budget line was not deleted: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
+      );
     }
-    const { error } = await context.supabase.from("cost_buckets").delete().eq("id", data.id);
-    if (error) throw new Error(error.message);
-    return { ok: true };
+    if (!result || typeof result !== "object") {
+      throw new Error("Budget line deletion did not return a committed operation result.");
+    }
+    return result as Json;
   });
+
+/*
+ * Bucket writes and override history intentionally share the same database
+ * transaction in update_cost_bucket_atomic. There is no standalone audit write:
+ * returning success without durable history would misstate financial truth.
+ */
 
 // -------- BUDGETCONSOLIDATE1: budget line override audit log --------
 // The Budget tab is one ledger you open a line to edit. A line's cost figures
@@ -3924,41 +3973,6 @@ export interface BudgetOverrideRow {
   created_at: string;
 }
 
-const OVERRIDE_FIELDS = ["actual_to_date", "ftc", "contract_value", "original_budget"] as const;
-
-const recordBudgetOverrideInput = z.object({
-  projectId: z.string().uuid(),
-  costBucketId: z.string().uuid(),
-  field: z.enum(OVERRIDE_FIELDS),
-  oldValue: z.number(),
-  newValue: z.number(),
-  note: z.string().max(500).optional(),
-});
-
-export const recordBudgetOverride = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: z.input<typeof recordBudgetOverrideInput>) =>
-    recordBudgetOverrideInput.parse(input),
-  )
-  .handler(async ({ data, context }) => {
-    const { error } = await dynamicTable(context.supabase, "budget_line_overrides").insert({
-      project_id: data.projectId,
-      cost_bucket_id: data.costBucketId,
-      field: data.field,
-      old_value: data.oldValue,
-      new_value: data.newValue,
-      note: data.note ?? null,
-      changed_by: context.userId,
-    });
-    if (error) {
-      // The edit itself already landed via updateBucket; if the audit table
-      // isn't applied yet, swallow the log miss rather than fail the save.
-      if (isMissingRestRelation(error, "budget_line_overrides")) return { ok: true, logged: false };
-      throw new Error(error.message);
-    }
-    return { ok: true, logged: true };
-  });
-
 export const listBudgetOverrides = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string }) =>
@@ -3970,18 +3984,17 @@ export const listBudgetOverrides = createServerFn({ method: "GET" })
       .eq("project_id", data.projectId)
       .order("created_at", { ascending: false })
       .limit(200);
-    if (error) {
-      // Audit table ships in a desk migration; degrade to empty if absent.
-      if (isMissingRestRelation(error, "budget_line_overrides")) return [];
-      throw new Error(error.message);
-    }
-    return ((rows ?? []) as Record<string, unknown>[]).map((row) => ({
+    return requireFinancialRows(
+      rows as Record<string, unknown>[] | null,
+      error,
+      "budget_line_overrides",
+    ).map((row) => ({
       id: str(row.id),
       project_id: str(row.project_id),
       cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
       field: str(row.field),
-      old_value: num(row.old_value),
-      new_value: num(row.new_value),
+      old_value: financialNum(row.old_value, "budget_line_overrides.old_value"),
+      new_value: financialNum(row.new_value, "budget_line_overrides.new_value"),
       note: (row.note as string | null) ?? null,
       changed_by: (row.changed_by as string | null) ?? null,
       created_at: str(row.created_at),
@@ -4076,117 +4089,104 @@ const billingApplicationInput = z.object({
   submitted_date: z.string().nullable().optional(),
   due_date: z.string().nullable().optional(),
   billing_period: z.string().max(100).default(""),
-  contract_amount: z.number().min(0).default(0),
-  change_order_amount: z.number().min(0).default(0),
-  amount_billed: z.number().min(0).default(0),
-  paid_to_date: z.number().min(0).default(0),
-  retainage: z.number().min(0).default(0),
+  contract_amount: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
+  // Owner credits are signed. The database command rejects a negative revised
+  // contract, so a legitimate deductive CO does not have to be falsified as a
+  // positive value here.
+  change_order_amount: z.number().min(-MAX_SAFE_DOLLARS).max(MAX_SAFE_DOLLARS).default(0),
+  amount_billed: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
+  paid_to_date: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
+  retainage: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
   status: z.enum(BILLING_STATUSES).default("draft"),
   output_format: z.enum(["invoice", "aia_g702"]).default("invoice"),
   notes: z.string().max(2000).default(""),
   sort_order: z.number().int().optional(),
 });
 
-function isMissingBillingEventsTable(error: unknown) {
-  const message =
-    error instanceof Error ? error.message : str((error as { message?: unknown })?.message);
-  return /billing_application_events|schema cache/i.test(message);
-}
-
-async function recordBillingApplicationEvent(
-  supabase: unknown,
-  input: {
-    billing_application_id: string;
-    project_id: string;
-    event_type: string;
-    from_status?: string;
-    to_status?: string;
-    amount?: number;
-    notes?: string;
-  },
-) {
-  const { error } = await dynamicTable(supabase, "billing_application_events").insert({
-    billing_application_id: input.billing_application_id,
-    project_id: input.project_id,
-    event_type: input.event_type,
-    from_status: input.from_status ?? "",
-    to_status: input.to_status ?? "",
-    amount: input.amount ?? 0,
-    notes: input.notes ?? "",
-  });
-  if (error && !isMissingBillingEventsTable(error)) throw new Error(error.message);
-}
+const billingCommandIdempotencyKey = z.string().trim().min(1).max(200);
 
 export const createBillingApplication = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { projectId: string } & z.input<typeof billingApplicationInput>) =>
-    z.object({ projectId: z.string().uuid() }).merge(billingApplicationInput).parse(input),
+  .inputValidator(
+    (
+      input: { projectId: string; idempotency_key: string } & z.input<
+        typeof billingApplicationInput
+      >,
+    ) =>
+      z
+        .object({ projectId: z.string().uuid(), idempotency_key: billingCommandIdempotencyKey })
+        .merge(billingApplicationInput)
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { projectId, ...rest } = data;
+    const { projectId, idempotency_key, sort_order: _ignoredSortOrder, ...rest } = data;
+    if (rest.paid_to_date !== 0 || rest.status !== "draft") {
+      throw new Error(
+        "A pay application must be created as a cash-free draft. Submit or reject it through its lifecycle control after creation.",
+      );
+    }
     const billingPayload = {
       ...rest,
       application_number: normalizeBillingNumberLabel(rest.application_number),
       invoice_number: normalizeBillingNumberLabel(rest.invoice_number),
+      contract_amount: quantizeDollars(rest.contract_amount),
+      change_order_amount: quantizeDollars(rest.change_order_amount),
+      amount_billed: quantizeDollars(rest.amount_billed),
+      paid_to_date: 0,
+      retainage: quantizeDollars(rest.retainage),
     };
-    const { data: last } = await context.supabase
-      .from("billing_applications")
-      .select("sort_order")
-      .eq("project_id", projectId)
-      .order("sort_order", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const sort_order = rest.sort_order ?? ((last?.sort_order as number | undefined) ?? 0) + 1;
-    const insertPayload: Record<string, unknown> = {
-      project_id: projectId,
-      ...billingPayload,
-      sort_order,
-    };
-    let { data: created, error } = await context.supabase
-      .from("billing_applications")
-      .insert(insertPayload as never)
-      .select("*")
-      .single();
-    if (error && "output_format" in insertPayload && isMissingPaymentColumn(error)) {
-      // GETTINGPAID1 migration not applied yet: retry without the new column.
-      delete insertPayload.output_format;
-      ({ data: created, error } = await context.supabase
-        .from("billing_applications")
-        .insert(insertPayload as never)
-        .select("*")
-        .single());
+    if (billingPayload.contract_amount + billingPayload.change_order_amount < 0) {
+      throw new Error("The revised contract cannot be negative after owner credits.");
     }
+
+    const { data: result, error } = await dynamicRpc(
+      context.supabase,
+      "create_billing_application_atomic",
+      {
+        p_project_id: projectId,
+        p_payload: billingPayload,
+        p_idempotency_key: idempotency_key,
+      },
+    );
     if (error) throw new Error(error.message);
-    const createdRow = normalizeBillingApplication(created as Record<string, unknown>);
-    await recordBillingApplicationEvent(context.supabase, {
-      billing_application_id: createdRow.id,
-      project_id: projectId,
-      event_type: "created",
-      from_status: "",
-      to_status: createdRow.status,
-      amount: createdRow.amount_billed,
-      notes: createdRow.notes || "Pay application created.",
-    });
-    // BUDGETLOCK1: the first pay application freezes the budget baseline — you
-    // don't bill against an unfrozen budget. Best-effort via dynamicTable: if
-    // the migration hasn't landed (column missing) this silently no-ops, and
-    // billing is never blocked by it.
-    const { error: lockError } = await dynamicTable(context.supabase, "projects")
-      .update({ budget_locked_at: new Date().toISOString() })
-      .eq("id", projectId)
-      .is("budget_locked_at", null);
-    void lockError;
-    return { ok: true };
+    const command = (result ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      id: str(command.billingApplicationId),
+      deduplicated: Boolean(command.deduplicated),
+    };
   });
 
 export const updateBillingApplication = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(
-    (input: { id: string; patch: Partial<z.input<typeof billingApplicationInput>> }) =>
-      z.object({ id: z.string().uuid(), patch: billingApplicationInput.partial() }).parse(input),
+    (input: {
+      id: string;
+      patch: Partial<z.input<typeof billingApplicationInput>>;
+      idempotency_key: string;
+    }) =>
+      z
+        .object({
+          id: z.string().uuid(),
+          patch: billingApplicationInput.partial(),
+          idempotency_key: billingCommandIdempotencyKey,
+        })
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
     const normalizedPatch = { ...data.patch };
+    if (
+      "paid_to_date" in normalizedPatch ||
+      normalizedPatch.status === "partial" ||
+      normalizedPatch.status === "paid"
+    ) {
+      throw new Error(
+        "Payments received and paid status are ledger-controlled. Record or reconcile the linked invoice payment instead.",
+      );
+    }
+    if ("sort_order" in normalizedPatch) {
+      throw new Error("Pay-application order is assigned by the financial ledger.");
+    }
     if (typeof normalizedPatch.application_number === "string") {
       normalizedPatch.application_number = normalizeBillingNumberLabel(
         normalizedPatch.application_number,
@@ -4195,64 +4195,71 @@ export const updateBillingApplication = createServerFn({ method: "POST" })
     if (typeof normalizedPatch.invoice_number === "string") {
       normalizedPatch.invoice_number = normalizeBillingNumberLabel(normalizedPatch.invoice_number);
     }
-    const { data: before, error: beforeError } = await context.supabase
-      .from("billing_applications")
-      .select("id,project_id,status,amount_billed,paid_to_date,application_number")
-      .eq("id", data.id)
-      .maybeSingle();
-    if (beforeError) throw new Error(beforeError.message);
-    if (!before) throw new Error("Pay app not found.");
-
-    let { error } = await context.supabase
-      .from("billing_applications")
-      .update(normalizedPatch)
-      .eq("id", data.id);
-    if (error && "output_format" in normalizedPatch && isMissingPaymentColumn(error)) {
-      // GETTINGPAID1 migration not applied yet: retry without the new column.
-      delete normalizedPatch.output_format;
-      ({ error } = await context.supabase
-        .from("billing_applications")
-        .update(normalizedPatch)
-        .eq("id", data.id));
+    for (const moneyKey of [
+      "contract_amount",
+      "change_order_amount",
+      "amount_billed",
+      "retainage",
+    ] as const) {
+      if (typeof normalizedPatch[moneyKey] === "number") {
+        normalizedPatch[moneyKey] = quantizeDollars(normalizedPatch[moneyKey] as number);
+      }
     }
+
+    if (normalizedPatch.status) {
+      if (Object.keys(normalizedPatch).length !== 1) {
+        throw new Error("Change pay-application status separately from draft field edits.");
+      }
+      const { data: result, error } = await dynamicRpc(
+        context.supabase,
+        "transition_billing_application_atomic",
+        {
+          p_billing_application_id: data.id,
+          p_to_status: normalizedPatch.status,
+          p_reason: "",
+          p_idempotency_key: data.idempotency_key,
+        },
+      );
+      if (error) throw new Error(error.message);
+      const command = (result ?? {}) as Record<string, unknown>;
+      return {
+        ok: true,
+        status: str(command.toStatus),
+        deduplicated: Boolean(command.deduplicated),
+      };
+    }
+
+    const { data: result, error } = await dynamicRpc(
+      context.supabase,
+      "update_billing_application_atomic",
+      {
+        p_billing_application_id: data.id,
+        p_patch: normalizedPatch,
+        p_idempotency_key: data.idempotency_key,
+      },
+    );
     if (error) throw new Error(error.message);
-
-    const previousStatus = str(before.status, "draft");
-    const nextStatus = normalizedPatch.status;
-    const statusChanged = typeof nextStatus === "string" && nextStatus !== previousStatus;
-    const previousPaid = num(before.paid_to_date);
-    const nextPaid = normalizedPatch.paid_to_date;
-    const paidChanged = typeof nextPaid === "number" && nextPaid !== previousPaid;
-
-    if (statusChanged || paidChanged) {
-      const eventType = statusChanged ? "status_change" : "payment_update";
-      const eventNotes = statusChanged
-        ? `${normalizeBillingNumberLabel(str(before.application_number, "Pay app"))} moved from ${previousStatus} to ${nextStatus}.`
-        : `${normalizeBillingNumberLabel(str(before.application_number, "Pay app"))} paid-to-date updated from ${previousPaid} to ${nextPaid}.`;
-      await recordBillingApplicationEvent(context.supabase, {
-        billing_application_id: data.id,
-        project_id: before.project_id as string,
-        event_type: eventType,
-        from_status: previousStatus,
-        to_status: statusChanged ? nextStatus : previousStatus,
-        amount: paidChanged ? nextPaid : num(before.amount_billed),
-        notes: eventNotes,
-      });
-    }
-
-    return { ok: true };
+    const command = (result ?? {}) as Record<string, unknown>;
+    return { ok: true, deduplicated: Boolean(command.deduplicated) };
   });
 
 export const deleteBillingApplication = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input: { id: string; idempotency_key: string }) =>
+    z.object({ id: z.string().uuid(), idempotency_key: billingCommandIdempotencyKey }).parse(input),
+  )
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase
-      .from("billing_applications")
-      .delete()
-      .eq("id", data.id);
+    const { data: result, error } = await dynamicRpc(
+      context.supabase,
+      "delete_billing_application_draft_atomic",
+      {
+        p_billing_application_id: data.id,
+        p_idempotency_key: data.idempotency_key,
+      },
+    );
     if (error) throw new Error(error.message);
-    return { ok: true };
+    const command = (result ?? {}) as Record<string, unknown>;
+    return { ok: true, deduplicated: Boolean(command.deduplicated) };
   });
 
 // ---------------- BILLING INVOICES + PAYMENTS ----------------
@@ -4273,14 +4280,13 @@ const billingInvoiceInput = z.object({
   title: z.string().max(200).default(""),
   issue_date: z.string().nullable().optional(),
   due_date: z.string().nullable().optional(),
-  subtotal: z.number().min(0).default(0),
-  retainage: z.number().min(0).default(0),
-  total_due: z.number().min(0).default(0),
-  paid_amount: z.number().min(0).default(0),
+  subtotal: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
+  retainage: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
+  total_due: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
+  paid_amount: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
   status: z.enum(INVOICE_STATUSES).default("draft"),
   client_visible: z.boolean().default(false),
   sent_recipients: z.array(z.string().max(254)).max(50).optional(),
-  collections_log: z.string().max(20000).optional(),
   notes: z.string().max(4000).default(""),
   enabled_payment_methods: z
     .object({
@@ -4295,158 +4301,99 @@ const billingInvoiceInput = z.object({
 
 const paymentLedgerInput = z.object({
   invoiceId: z.string().uuid(),
-  amount: z.number().positive(),
-  processor_fee: z.number().min(0).default(0),
-  overwatch_fee: z.number().min(0).default(0),
+  amount: z.number().positive().max(MAX_SAFE_DOLLARS),
+  processor_fee: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
+  overwatch_fee: z.number().min(0).max(MAX_SAFE_DOLLARS).default(0),
   paid_at: z.string().optional(),
   payment_method: z.string().max(100).default("manual"),
   processor: z.string().max(100).default("manual"),
   processor_payment_id: z.string().max(200).default(""),
   reference: z.string().max(200).default(""),
   notes: z.string().max(4000).default(""),
+  // The caller owns operation identity: keep this key stable across retries,
+  // and mint a fresh key for each genuinely new payment.
+  idempotency_key: z.string().trim().min(1).max(200),
 });
 
-// Columns that may be ahead of the database (Payments Phase 1 +
-// GETTINGPAID1 tracking); writes retry without them while the deploy is
-// ahead of the migration.
-const OPTIONAL_INVOICE_COLUMNS = [
-  "enabled_payment_methods",
-  "sent_recipients",
-  "collections_log",
-] as const;
-
-/**
- * Payments Phase 1 columns land with this PR and are applied outside the
- * repo; retry writes without them while the deploy is ahead of the database.
- */
-function isMissingPaymentColumn(error: { code?: string; message?: string } | null): boolean {
-  const message = (error?.message ?? "").toLowerCase();
-  return (
-    error?.code === "PGRST204" ||
-    message.includes("could not find the") ||
-    message.includes("does not exist")
-  );
-}
-
-function isInvoiceSentStatus(status: InvoiceStatus) {
-  return status !== "draft" && status !== "void";
-}
-
-function paymentAdjustedInvoiceStatus(totalDue: number, paidAmount: number): InvoiceStatus {
-  const totalDueCents = dollarsToCents(totalDue);
-  const paidCents = dollarsToCents(paidAmount);
-  if (totalDueCents > 0 && paidCents >= totalDueCents) return "paid";
-  if (paidCents > 0) return "partially_paid";
-  return "sent";
-}
-
-function firstActiveInvoice(data: unknown) {
-  const rows = Array.isArray(data) ? data : data ? [data] : [];
-  return rows.find(
-    (row): row is Record<string, unknown> =>
-      Boolean(row) &&
-      typeof row === "object" &&
-      str((row as Record<string, unknown>).status, "draft") !== "void",
-  );
-}
+const billingInvoiceCommandKey = z.string().trim().min(1).max(200);
+const billingInvoiceExpectedVersion = z.string().datetime({ offset: true });
 
 export const createBillingInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { projectId: string } & z.input<typeof billingInvoiceInput>) =>
-    z.object({ projectId: z.string().uuid() }).merge(billingInvoiceInput).parse(input),
+  .inputValidator(
+    (input: { projectId: string; idempotency_key: string } & z.input<typeof billingInvoiceInput>) =>
+      z
+        .object({ projectId: z.string().uuid(), idempotency_key: billingInvoiceCommandKey })
+        .merge(billingInvoiceInput)
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { projectId, ...rest } = data;
-    const status = rest.status as InvoiceStatus;
-    const sentAt = isInvoiceSentStatus(status) ? new Date().toISOString() : null;
-    const paidAt = status === "paid" ? new Date().toISOString() : null;
-    if (rest.billing_application_id) {
-      const { data: existingPayAppInvoices, error: existingPayAppInvoiceError } =
-        await dynamicTable(context.supabase, "billing_invoices")
-          .select("id,invoice_number,status")
-          .eq("project_id", projectId)
-          .eq("billing_application_id", rest.billing_application_id)
-          .limit(5);
-      if (existingPayAppInvoiceError) throw new Error(existingPayAppInvoiceError.message);
-      const existingPayAppInvoice = firstActiveInvoice(existingPayAppInvoices);
-      if (existingPayAppInvoice) {
-        throw new Error(
-          `This pay app already has invoice ${normalizeBillingNumberLabel(str(existingPayAppInvoice.invoice_number, ""))}. Void or edit the existing invoice before creating another.`,
-        );
-      }
+    const { projectId, idempotency_key, ...rest } = data;
+    if (rest.paid_amount !== 0 || rest.status !== "draft" || rest.client_visible) {
+      throw new Error(
+        "Invoices are created as hidden, cash-free drafts. Send the saved invoice through the audited send command.",
+      );
     }
     const invoiceNumber = normalizeBillingNumberLabel(rest.invoice_number);
-    // Boundary defense: stored invoice money is always exact cents, no matter
-    // what float the client derivation produced (the 2601-001 penny bug).
-    const invoicePayload = {
-      ...rest,
+    const payload = {
+      billing_application_id: rest.billing_application_id ?? null,
+      invoice_number: invoiceNumber,
+      title: normalizeBillingNumberLabel(rest.title),
+      issue_date: rest.issue_date ?? null,
+      due_date: rest.due_date ?? null,
       subtotal: quantizeDollars(rest.subtotal),
       retainage: quantizeDollars(rest.retainage),
       total_due: quantizeDollars(rest.total_due),
-      paid_amount: quantizeDollars(rest.paid_amount),
-      invoice_number: invoiceNumber,
-      title: normalizeBillingNumberLabel(rest.title),
+      paid_amount: 0,
+      status: "draft",
+      client_visible: false,
+      sent_recipients: [],
+      notes: rest.notes,
+      enabled_payment_methods: rest.enabled_payment_methods ?? {},
     };
-    if (invoiceNumber) {
-      const { data: existingInvoiceNumbers, error: existingInvoiceNumberError } =
-        await dynamicTable(context.supabase, "billing_invoices")
-          .select("id,invoice_number,status")
-          .eq("project_id", projectId)
-          .eq("invoice_number", invoiceNumber)
-          .limit(5);
-      if (existingInvoiceNumberError) throw new Error(existingInvoiceNumberError.message);
-      const existingInvoiceNumber = firstActiveInvoice(existingInvoiceNumbers);
-      if (existingInvoiceNumber) {
-        throw new Error(
-          `Invoice ${invoiceNumber} already exists for this project. Use a unique invoice number or edit the existing invoice.`,
-        );
-      }
-    }
-    const insertPayload: Record<string, unknown> = {
-      project_id: projectId,
-      ...invoicePayload,
-      invoice_number: invoiceNumber,
-      sent_at: sentAt,
-      paid_at: paidAt,
-    };
-    let { data: created, error } = await dynamicTable(context.supabase, "billing_invoices")
-      .insert(insertPayload)
-      .select("*")
-      .single();
-    if (
-      error &&
-      isMissingPaymentColumn(error) &&
-      OPTIONAL_INVOICE_COLUMNS.some((column) => column in insertPayload)
-    ) {
-      for (const column of OPTIONAL_INVOICE_COLUMNS) delete insertPayload[column];
-      ({ data: created, error } = await dynamicTable(context.supabase, "billing_invoices")
-        .insert(insertPayload)
-        .select("*")
-        .single());
-    }
+    const { data: command, error } = await dynamicRpc(
+      context.supabase,
+      "create_billing_invoice_atomic",
+      {
+        p_project_id: projectId,
+        p_payload: payload,
+        p_idempotency_key: idempotency_key,
+      },
+    );
     if (error) throw new Error(error.message);
-    return {
-      ok: true,
-      invoice: normalizeBillingInvoice(created as Record<string, unknown>),
-    };
+    return { ok: true, ...(command as Record<string, unknown>) };
   });
 
 export const updateBillingInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string; patch: Partial<z.input<typeof billingInvoiceInput>> }) =>
-    z.object({ id: z.string().uuid(), patch: billingInvoiceInput.partial() }).parse(input),
+  .inputValidator(
+    (input: {
+      id: string;
+      patch: Partial<z.input<typeof billingInvoiceInput>>;
+      expected_updated_at: string;
+      idempotency_key: string;
+      reason?: string;
+    }) =>
+      z
+        .object({
+          id: z.string().uuid(),
+          patch: billingInvoiceInput.partial(),
+          expected_updated_at: billingInvoiceExpectedVersion,
+          idempotency_key: billingInvoiceCommandKey,
+          reason: z.string().trim().max(2000).optional(),
+        })
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { data: before, error: loadError } = await dynamicTable(
-      context.supabase,
-      "billing_invoices",
-    )
-      .select("status,sent_at,paid_at")
-      .eq("id", data.id)
-      .single();
-    if (loadError) throw new Error(loadError.message);
-    if (!before) throw new Error("Invoice not found.");
-
+    if (
+      "paid_amount" in data.patch ||
+      data.patch.status === "partially_paid" ||
+      data.patch.status === "paid"
+    ) {
+      throw new Error(
+        "Paid amount and paid status are ledger-controlled. Record or reconcile a payment instead.",
+      );
+    }
     const patch: Record<string, unknown> = { ...data.patch };
     for (const moneyKey of ["subtotal", "retainage", "total_due", "paid_amount"] as const) {
       if (typeof patch[moneyKey] === "number") {
@@ -4460,168 +4407,169 @@ export const updateBillingInvoice = createServerFn({ method: "POST" })
       patch.title = normalizeBillingNumberLabel(patch.title);
     }
     const nextStatus = data.patch.status as InvoiceStatus | undefined;
-    if (nextStatus && isInvoiceSentStatus(nextStatus) && !before.sent_at) {
-      patch.sent_at = new Date().toISOString();
-    }
-    if (nextStatus === "paid" && !before.paid_at) {
-      patch.paid_at = new Date().toISOString();
-    }
-
-    let { data: updated, error } = await dynamicTable(context.supabase, "billing_invoices")
-      .update(patch)
-      .eq("id", data.id)
-      .select("*")
-      .single();
-    if (
-      error &&
-      isMissingPaymentColumn(error) &&
-      OPTIONAL_INVOICE_COLUMNS.some((column) => column in patch)
-    ) {
-      for (const column of OPTIONAL_INVOICE_COLUMNS) delete patch[column];
-      ({ data: updated, error } = await dynamicTable(context.supabase, "billing_invoices")
-        .update(patch)
-        .eq("id", data.id)
-        .select("*")
-        .single());
+    let command: unknown;
+    let error: { message: string } | null;
+    if (nextStatus) {
+      const unsupportedTransitionFields = Object.keys(patch).filter(
+        (key) => !["status", "client_visible", "sent_recipients"].includes(key),
+      );
+      if (unsupportedTransitionFields.length > 0) {
+        throw new Error("Save invoice edits before changing its lifecycle.");
+      }
+      if (!["sent", "overdue", "void"].includes(nextStatus)) {
+        throw new Error(
+          "Invoice status can move to sent, overdue, or void. Viewed and paid status come from client/payment evidence.",
+        );
+      }
+      ({ data: command, error } = await dynamicRpc(
+        context.supabase,
+        "transition_billing_invoice_atomic",
+        {
+          p_billing_invoice_id: data.id,
+          p_to_status: nextStatus,
+          p_sent_recipients: data.patch.sent_recipients ?? [],
+          p_reason:
+            data.reason ??
+            (nextStatus === "void"
+              ? "Voided from the invoice workspace."
+              : "Invoice lifecycle updated from the billing workspace."),
+          p_expected_updated_at: data.expected_updated_at,
+          p_idempotency_key: data.idempotency_key,
+        },
+      ));
+    } else {
+      ({ data: command, error } = await dynamicRpc(
+        context.supabase,
+        "update_billing_invoice_atomic",
+        {
+          p_billing_invoice_id: data.id,
+          p_patch: patch,
+          p_expected_updated_at: data.expected_updated_at,
+          p_idempotency_key: data.idempotency_key,
+        },
+      ));
     }
     if (error) throw new Error(error.message);
-    return {
-      ok: true,
-      invoice: normalizeBillingInvoice(updated as Record<string, unknown>),
-    };
+    return { ok: true, ...(command as Record<string, unknown>) };
   });
 
 export const deleteBillingInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input: { id: string; idempotency_key: string }) =>
+    z.object({ id: z.string().uuid(), idempotency_key: billingInvoiceCommandKey }).parse(input),
+  )
   .handler(async ({ data, context }) => {
-    const { error } = await dynamicTable(context.supabase, "billing_invoices")
-      .delete()
-      .eq("id", data.id);
+    const { data: command, error } = await dynamicRpc(
+      context.supabase,
+      "delete_billing_invoice_draft_atomic",
+      {
+        p_billing_invoice_id: data.id,
+        p_idempotency_key: data.idempotency_key,
+      },
+    );
     if (error) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, ...(command as Record<string, unknown>) };
+  });
+
+export const correctBillingInvoice = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: {
+      id: string;
+      replacement: z.input<typeof billingInvoiceInput>;
+      reason: string;
+      expected_updated_at: string;
+      idempotency_key: string;
+    }) =>
+      z
+        .object({
+          id: z.string().uuid(),
+          replacement: billingInvoiceInput,
+          reason: z.string().trim().min(3).max(2000),
+          expected_updated_at: billingInvoiceExpectedVersion,
+          idempotency_key: billingInvoiceCommandKey,
+        })
+        .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const replacement = {
+      ...data.replacement,
+      invoice_number: normalizeBillingNumberLabel(data.replacement.invoice_number),
+      title: normalizeBillingNumberLabel(data.replacement.title),
+      subtotal: quantizeDollars(data.replacement.subtotal),
+      retainage: quantizeDollars(data.replacement.retainage),
+      total_due: quantizeDollars(data.replacement.total_due),
+      paid_amount: 0,
+      status: "draft",
+      client_visible: false,
+      sent_recipients: [],
+    };
+    const { data: command, error } = await dynamicRpc(
+      context.supabase,
+      "correct_billing_invoice_atomic",
+      {
+        p_billing_invoice_id: data.id,
+        p_replacement_payload: replacement,
+        p_reason: data.reason,
+        p_expected_updated_at: data.expected_updated_at,
+        p_idempotency_key: data.idempotency_key,
+      },
+    );
+    if (error) throw new Error(error.message);
+    return { ok: true, ...(command as Record<string, unknown>) };
   });
 
 export const recordInvoicePayment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof paymentLedgerInput>) => paymentLedgerInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { data: invoice, error: invoiceError } = await dynamicTable(
+    // When the user omits a timestamp, let the database mint it once. The
+    // command wrapper reuses the committed receipt's timestamp on a retry;
+    // generating a new browser/server timestamp here would change otherwise
+    // identical idempotent details after a lost response.
+    const paidAt = data.paid_at ? new Date(data.paid_at).toISOString() : null;
+
+    // One database transaction now owns the payment insert, exact-cents ledger
+    // sum, invoice/pay-app state, and lifecycle event. A unique invoice/key pair
+    // makes a lost-response retry return the committed result without adding a
+    // second cash row.
+    const { data: result, error } = await dynamicRpc(
       context.supabase,
-      "billing_invoices",
-    )
-      .select("id,project_id,billing_application_id,total_due")
-      .eq("id", data.invoiceId)
-      .single();
-    if (invoiceError) throw new Error(invoiceError.message);
-    if (!invoice) throw new Error("Invoice not found.");
-
-    const projectId = invoice.project_id as string;
-    const billingApplicationId = (invoice.billing_application_id as string | null) ?? null;
-    const amount = quantizeDollars(data.amount);
-    const processorFee = quantizeDollars(data.processor_fee ?? 0);
-    const overwatchFee = quantizeDollars(data.overwatch_fee ?? 0);
-    const netPayout = centsToDollars(
-      Math.max(
-        0,
-        dollarsToCents(amount) - dollarsToCents(processorFee) - dollarsToCents(overwatchFee),
-      ),
+      "record_invoice_payment_atomic",
+      {
+        p_invoice_id: data.invoiceId,
+        p_amount_cents: dollarsToCents(data.amount),
+        p_processor_fee_cents: dollarsToCents(data.processor_fee),
+        p_overwatch_fee_cents: dollarsToCents(data.overwatch_fee),
+        p_paid_at: paidAt,
+        p_payment_method: data.payment_method,
+        p_processor: data.processor,
+        p_processor_payment_id: data.processor_payment_id,
+        p_reference: data.reference,
+        p_notes: data.notes,
+        p_idempotency_key: data.idempotency_key,
+      },
     );
+    if (error) {
+      if (
+        error.code === "PGRST202" ||
+        /record_invoice_payment_atomic|schema cache|function/i.test(error.message)
+      ) {
+        throw new Error(
+          "Atomic payment recording is not enabled on this workspace yet. Apply the project financial integrity migration before recording cash.",
+        );
+      }
+      throw new Error(error.message);
+    }
 
-    const { data: paymentProject } = await dynamicTable(context.supabase, "projects")
-      .select("organization_id")
-      .eq("id", projectId)
-      .maybeSingle();
-    const organizationId =
-      ((paymentProject as Record<string, unknown> | null)?.organization_id as string | null) ??
-      null;
-
-    // Manual records enter the payment state machine at 'succeeded': an
-    // authorized user is attesting money that already arrived.
-    const insertPayload: Record<string, unknown> = {
-      project_id: projectId,
-      invoice_id: data.invoiceId,
-      billing_application_id: billingApplicationId,
-      amount,
-      amount_cents: dollarsToCents(amount),
-      currency: "usd",
-      organization_id: organizationId,
-      processor_fee: processorFee,
-      overwatch_fee: overwatchFee,
-      net_payout: netPayout,
-      payment_method: data.payment_method,
-      processor: data.processor,
-      processor_payment_id: data.processor_payment_id,
-      reference: data.reference,
-      status: "succeeded",
-      paid_at: data.paid_at ? new Date(data.paid_at).toISOString() : new Date().toISOString(),
-      notes: data.notes,
+    const payment = (result ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      paymentId: str(payment.paymentId),
+      paidAmount: num(payment.paidAmount),
+      status: str(payment.status, "sent") as InvoiceStatus,
+      deduplicated: Boolean(payment.deduplicated),
     };
-    let { error: insertError } = await dynamicTable(context.supabase, "payment_ledger").insert(
-      insertPayload,
-    );
-    if (insertError && isMissingPaymentColumn(insertError)) {
-      delete insertPayload.amount_cents;
-      delete insertPayload.currency;
-      delete insertPayload.organization_id;
-      delete insertPayload.reference;
-      ({ error: insertError } = await dynamicTable(context.supabase, "payment_ledger").insert(
-        insertPayload,
-      ));
-    }
-    if (insertError) throw new Error(insertError.message);
-
-    const { data: payments, error: paymentsError } = await dynamicTable(
-      context.supabase,
-      "payment_ledger",
-    )
-      .select("amount,status")
-      .eq("invoice_id", data.invoiceId)
-      .eq("status", "succeeded");
-    if (paymentsError) throw new Error(paymentsError.message);
-
-    // Sum succeeded payments in integer cents; the stored paid_amount is the
-    // exact-cent conversion, never a float accumulation.
-    const paidAmount = centsToDollars(
-      sumDollarsToCents(
-        ((payments ?? []) as Record<string, unknown>[]).map((payment) => num(payment.amount)),
-      ),
-    );
-    const totalDue = num(invoice.total_due);
-    const nextStatus = paymentAdjustedInvoiceStatus(totalDue, paidAmount);
-    const paidAt = nextStatus === "paid" ? new Date().toISOString() : null;
-
-    const { error: updateInvoiceError } = await dynamicTable(context.supabase, "billing_invoices")
-      .update({
-        paid_amount: paidAmount,
-        status: nextStatus,
-        paid_at: paidAt,
-      })
-      .eq("id", data.invoiceId);
-    if (updateInvoiceError) throw new Error(updateInvoiceError.message);
-
-    if (billingApplicationId) {
-      const { error: updatePayAppError } = await context.supabase
-        .from("billing_applications")
-        .update({
-          paid_to_date: paidAmount,
-          status: nextStatus === "paid" ? "paid" : "partial",
-        })
-        .eq("id", billingApplicationId);
-      if (updatePayAppError) throw new Error(updatePayAppError.message);
-
-      await recordBillingApplicationEvent(context.supabase, {
-        billing_application_id: billingApplicationId,
-        project_id: projectId,
-        event_type: "payment_update",
-        from_status: "",
-        to_status: nextStatus === "paid" ? "paid" : "partial",
-        amount: paidAmount,
-        notes: `Invoice payment recorded: ${data.notes || "manual payment"}`,
-      });
-    }
-
-    return { ok: true, paidAmount, status: nextStatus };
   });
 
 /**
@@ -4637,28 +4585,28 @@ export const reconcileInvoicePayments = createServerFn({ method: "POST" })
     z.object({ invoiceId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { data: invoice, error: invoiceError } = await dynamicTable(
+    const { data: result, error } = await dynamicRpc(
       context.supabase,
-      "billing_invoices",
-    )
-      .select("id,project_id")
-      .eq("id", data.invoiceId)
-      .single();
-    if (invoiceError) throw new Error(invoiceError.message);
-    if (!invoice) throw new Error("Invoice not found.");
-
-    const { data: canManage, error: accessError } = await context.supabase.rpc(
-      "can_manage_project",
-      { p_project_id: invoice.project_id as string },
+      "reconcile_invoice_payment_rollup",
+      { p_invoice_id: data.invoiceId },
     );
-    if (accessError) throw new Error(accessError.message);
-    if (!canManage) throw new Error("You do not have permission to manage this project.");
-
-    // Dynamic import keeps the server-only Stripe module out of the client
-    // bundle; the reconcile itself runs with the caller's RLS-scoped client.
-    const { applyInvoiceLedgerReconcile } = await import("@/lib/stripe.server");
-    const result = await applyInvoiceLedgerReconcile(context.supabase, data.invoiceId);
-    return { ok: true, ...result };
+    if (error) {
+      if (
+        error.code === "PGRST202" ||
+        /reconcile_invoice_payment_rollup|schema cache|function/i.test(error.message)
+      ) {
+        throw new Error(
+          "Payment reconciliation is not enabled on this workspace yet. Apply the financial-integrity migration and retry.",
+        );
+      }
+      throw new Error(error.message);
+    }
+    const summary = (result ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      invoiceCount: Math.max(0, Math.round(num(summary.invoiceCount))),
+      applicationCount: Math.max(0, Math.round(num(summary.applicationCount))),
+    };
   });
 
 // ---------------- REVIEWS ----------------
@@ -4819,9 +4767,9 @@ export const deleteReview = createServerFn({ method: "POST" })
 const importBucketRow = z.object({
   cost_code: z.string().max(80).default(""),
   bucket: z.string().min(1).max(200),
-  original_budget: z.number().min(0),
-  actual_to_date: z.number().min(0),
-  ftc: z.number().min(0),
+  original_budget: exactCentMoney,
+  actual_to_date: exactCentMoney,
+  ftc: exactCentMoney,
   actual_to_date_provided: z.boolean().default(false),
   ftc_provided: z.boolean().default(false),
   sort_order: z.number().int().min(0),
@@ -4844,7 +4792,7 @@ const importMetadataInput = z
     staged_rows: z.number().int().min(0).default(0),
     skipped_rows: z.number().int().min(0).default(0),
     merged_rows: z.number().int().min(0).default(0),
-    total_budget: z.number().min(0).default(0),
+    total_budget: exactCentMoney.default(0),
     selected_budget_column: z.number().int().nullable().optional(),
     selected_budget_label: z.string().max(200).default(""),
     column_map: z.record(z.string(), z.string()).default({}),
@@ -4872,6 +4820,7 @@ const importInput = z.object({
   mode: z.enum(["replace", "append"]).default("replace"),
   rows: z.array(importBucketRow).min(1).max(500),
   metadata: importMetadataInput,
+  operation_key: z.string().trim().min(1).max(200),
 });
 
 const saveSovMappingProfileInput = z.object({
@@ -4907,9 +4856,13 @@ const consolidateImportRows = (rows: ImportBucketRow[]): ImportBucketRow[] => {
       continue;
     }
 
-    existing.original_budget += row.original_budget;
-    existing.actual_to_date += row.actual_to_date;
-    existing.ftc += row.ftc;
+    existing.original_budget = centsToDollars(
+      dollarsToCents(existing.original_budget) + dollarsToCents(row.original_budget),
+    );
+    existing.actual_to_date = centsToDollars(
+      dollarsToCents(existing.actual_to_date) + dollarsToCents(row.actual_to_date),
+    );
+    existing.ftc = centsToDollars(dollarsToCents(existing.ftc) + dollarsToCents(row.ftc));
     existing.actual_to_date_provided =
       existing.actual_to_date_provided || row.actual_to_date_provided;
     existing.ftc_provided = existing.ftc_provided || row.ftc_provided;
@@ -4991,169 +4944,26 @@ export const importCostBuckets = createServerFn({ method: "POST" })
       }
     }
 
-    const { data: project, error: projectErr } = await context.supabase
-      .from("projects")
-      .select("id")
-      .eq("id", data.projectId)
-      .single();
-    if (projectErr || !project) {
-      throw new Error(projectErr?.message ?? "Project not found or not accessible.");
-    }
-
-    if (data.mode === "replace") {
-      const { error: delErr } = await context.supabase
-        .from("cost_buckets")
-        .delete()
-        .eq("project_id", data.projectId);
-      if (delErr) throw new Error(delErr.message);
-    }
-
-    let inserted = 0;
-    let updated = 0;
-    const today = new Date().toISOString().slice(0, 10);
-    const rowsForInsert = importRows.map((r, i) => ({
-      project_id: data.projectId,
-      cost_code: r.cost_code.trim(),
-      bucket: r.bucket,
-      original_budget: r.original_budget,
-      actual_to_date: r.actual_to_date,
-      ftc: r.ftc,
-      source_type: r.source_type,
-      source_date: r.source_date ?? today,
-      source_note: r.source_note,
-      sort_order: i + 1,
-    }));
-
-    if (data.mode === "replace") {
-      const { error } = await context.supabase.from("cost_buckets").insert(rowsForInsert);
-      if (error) throw new Error(error.message);
-      inserted = rowsForInsert.length;
-    } else {
-      const { data: existingRows, error: existingErr } = await context.supabase
-        .from("cost_buckets")
-        .select("*")
-        .eq("project_id", data.projectId)
-        .order("sort_order");
-      if (existingErr) throw new Error(existingErr.message);
-
-      const byCode = new Map<string, Record<string, unknown>>();
-      const byName = new Map<string, Record<string, unknown>>();
-      for (const existing of existingRows ?? []) {
-        const codeKey = normalizeImportKey(str(existing.cost_code));
-        if (codeKey) byCode.set(codeKey, existing as Record<string, unknown>);
-        byName.set(normalizeImportKey(str(existing.bucket)), existing as Record<string, unknown>);
-      }
-
-      let nextOrder =
-        (existingRows ?? []).reduce((max, row) => Math.max(max, num(row.sort_order)), 0) + 1;
-
-      for (const incoming of importRows) {
-        const codeKey = normalizeImportKey(incoming.cost_code);
-        const nameKey = normalizeImportKey(incoming.bucket);
-        const match = (codeKey ? byCode.get(codeKey) : null) ?? byName.get(nameKey);
-        const source_date = incoming.source_date ?? today;
-        if (match?.id) {
-          const patch = {
-            cost_code: incoming.cost_code.trim(),
-            bucket: incoming.bucket,
-            original_budget: incoming.original_budget,
-            ...(incoming.actual_to_date_provided
-              ? { actual_to_date: incoming.actual_to_date }
-              : {}),
-            ...(incoming.ftc_provided ? { ftc: incoming.ftc } : {}),
-            source_type: incoming.source_type,
-            source_date,
-            source_note: incoming.source_note || "Updated from SOV import",
-          };
-          const { error: updateErr } = await context.supabase
-            .from("cost_buckets")
-            .update(patch)
-            .eq("id", match.id as string);
-          if (updateErr) throw new Error(updateErr.message);
-          updated += 1;
-        } else {
-          const { error: insertErr } = await context.supabase.from("cost_buckets").insert({
-            project_id: data.projectId,
-            cost_code: incoming.cost_code.trim(),
-            bucket: incoming.bucket,
-            original_budget: incoming.original_budget,
-            actual_to_date: incoming.actual_to_date,
-            ftc: incoming.ftc,
-            source_type: incoming.source_type,
-            source_date,
-            source_note: incoming.source_note,
-            sort_order: nextOrder,
-          });
-          if (insertErr) throw new Error(insertErr.message);
-          nextOrder += 1;
-          inserted += 1;
-        }
-      }
-    }
-
-    // Treat the imported SOV as the source of truth for the project's
-    // Original Cost Budget so Day-1 GP At Risk is $0. We use forecasted cost
-    // (actual + FTC), not scheduled value, because forecasted cost is what
-    // rolls into Indicated GP — anchoring Original to the same number means
-    // any future drift shows up as real margin erosion.
-    const { data: allBuckets, error: sumErr } = await context.supabase
-      .from("cost_buckets")
-      .select("actual_to_date, ftc")
-      .eq("project_id", data.projectId);
-    if (sumErr) throw new Error(sumErr.message);
-    const total = (allBuckets ?? []).reduce(
-      (s, b) => s + Number(b.actual_to_date ?? 0) + Number(b.ftc ?? 0),
-      0,
+    const { data: result, error } = await dynamicRpc(
+      context.supabase,
+      "import_cost_buckets_atomic",
+      {
+        p_project_id: data.projectId,
+        p_mode: data.mode,
+        p_rows: importRows,
+        p_metadata: data.metadata,
+        p_operation_key: data.operation_key,
+      },
     );
-    const { error: updErr } = await context.supabase
-      .from("projects")
-      .update({ original_cost_budget: total })
-      .eq("id", data.projectId);
-    if (updErr) throw new Error(updErr.message);
-
-    const metadata = data.metadata;
-    const importBudgetTotal =
-      metadata.total_budget || importRows.reduce((sum, row) => sum + row.original_budget, 0);
-    let importHistorySaved = false;
-    let importHistoryError = "";
-    const { error: importHistoryErr } = await dynamicTable(context.supabase, "sov_imports").insert({
-      project_id: data.projectId,
-      imported_by: context.userId,
-      mode: data.mode,
-      source_type: metadata.source_type,
-      source_name: metadata.source_name,
-      source_sheet: metadata.source_sheet,
-      profile: metadata.profile,
-      confidence: metadata.confidence,
-      has_header: metadata.has_header,
-      raw_rows: metadata.raw_rows,
-      staged_rows: metadata.staged_rows || importRows.length,
-      inserted_count: inserted,
-      updated_count: updated,
-      skipped_count: metadata.skipped_rows,
-      merged_rows: metadata.merged_rows,
-      total_budget: importBudgetTotal,
-      original_cost_budget: total,
-      selected_budget_column: metadata.selected_budget_column ?? null,
-      selected_budget_label: metadata.selected_budget_label,
-      column_map: metadata.column_map,
-      amount_choices: metadata.amount_choices,
-      warnings: metadata.warnings,
-    });
-    if (importHistoryErr) {
-      importHistoryError = importHistoryErr.message;
-    } else {
-      importHistorySaved = true;
+    if (error) {
+      throw new Error(
+        `SOV import did not commit and the prior budget was preserved: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
+      );
     }
-
-    return {
-      ok: true,
-      inserted,
-      updated,
-      originalCostBudget: total,
-      importHistorySaved,
-      importHistoryError,
-    };
+    if (!result || typeof result !== "object") {
+      throw new Error("SOV import did not return a committed operation result.");
+    }
+    return result as Json;
   });
 
 // ---------------- DEMO SEED ----------------
@@ -6384,19 +6194,30 @@ const ensureHarborDemoProjectManager = async (
 ) => {
   // Legacy placeholder identities are safe to repair. A real onboarding edit
   // is preserved; opening Harbor must never silently reset the chosen PM.
-  const { error: legacyProjectError } = await dynamicTable(supabase, "projects")
-    .update({ project_manager: HARBOR_DEMO_PROJECT_MANAGER })
+  const { data: project, error: projectError } = await dynamicTable(supabase, "projects")
+    .select("project_manager,updated_at")
     .eq("id", projectId)
-    .in("project_manager", ["", "Overwatch Demo PM"]);
-  if (legacyProjectError)
-    seedWarnings.push(`Harbor PM update skipped: ${legacyProjectError.message}`);
-
-  const { error: nullProjectError } = await dynamicTable(supabase, "projects")
-    .update({ project_manager: HARBOR_DEMO_PROJECT_MANAGER })
-    .eq("id", projectId)
-    .is("project_manager", null);
-  if (nullProjectError)
-    seedWarnings.push(`Harbor blank PM update skipped: ${nullProjectError.message}`);
+    .maybeSingle();
+  if (projectError) {
+    seedWarnings.push(`Harbor PM check skipped: ${projectError.message}`);
+  } else if (
+    project &&
+    ["", "Overwatch Demo PM"].includes(str((project as Record<string, unknown>).project_manager))
+  ) {
+    const expectedUpdatedAt = str((project as Record<string, unknown>).updated_at);
+    if (!expectedUpdatedAt) {
+      seedWarnings.push("Harbor PM update skipped: the project version was unavailable.");
+    } else {
+      const { error } = await dynamicRpc(supabase, "update_project_financial_header_atomic", {
+        p_project_id: projectId,
+        p_patch: { project_manager: HARBOR_DEMO_PROJECT_MANAGER },
+        p_override_reason: "Repairing the legacy Harbor onboarding project-manager placeholder.",
+        p_expected_updated_at: expectedUpdatedAt,
+        p_operation_key: `harbor-demo:${projectId}:project-manager:ensure:v2`,
+      });
+      if (error) seedWarnings.push(`Harbor PM update skipped: ${error.message}`);
+    }
+  }
 
   const { error: reportError } = await dynamicTable(supabase, "daily_reports")
     .update({ author: HARBOR_DEMO_PROJECT_MANAGER })
@@ -6429,76 +6250,223 @@ const harborDemoStableId = (projectId: string, discriminator: string) => {
 
 const harborDemoSourceNote = "Harbor onboarding fixture — safe to reset from Start Here.";
 
+const harborDemoOperationGeneration = (purpose: "ensure" | "reset") => {
+  const nonce =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${purpose}:${nonce}`;
+};
+
+const createHarborDemoChangeOrder = async (
+  supabase: unknown,
+  projectId: string,
+  changeOrder: (typeof harborDemoChangeOrders)[number],
+  index: number,
+  operationGeneration = "initial",
+) => {
+  const requestedId = harborDemoStableId(projectId, `change-order-${index}`);
+  const parsed = coInput.parse(changeOrder);
+  const baseOperationKey = `harbor-demo:${projectId}:change-order:${index}:create`;
+  const { data: command, error } = await dynamicRpc(supabase, "create_change_order_atomic", {
+    p_project_id: projectId,
+    ...changeOrderCommandArgs(parsed),
+    p_operation_key:
+      operationGeneration === "initial"
+        ? baseOperationKey
+        : `${baseOperationKey}:${operationGeneration}`,
+    p_requested_id: requestedId,
+  });
+  if (error) throw new Error(error.message);
+  const result = requireChangeOrderCommandResult(command);
+  const { data: metadataRow, error: metadataError } = await dynamicTable(supabase, "change_orders")
+    .update({
+      client_visible: changeOrder.client_visible,
+      client_status: changeOrder.client_status,
+      client_sent_at: changeOrder.client_sent_at,
+      client_decided_at: "client_decided_at" in changeOrder ? changeOrder.client_decided_at : null,
+    })
+    .eq("id", result.changeOrderId)
+    .select("id")
+    .maybeSingle();
+  if (metadataError) throw new Error(metadataError.message);
+  if (!metadataRow) {
+    throw new Error("Harbor demo change-order metadata did not update the restored fixture.");
+  }
+  return result.changeOrderId;
+};
+
 const ensureHarborDemoBudgetSov = async (
   supabase: unknown,
   projectId: string,
   upgradeExistingPlaceholders = false,
+  operationGeneration = `ensure:v${HARBOR_DEMO_MODULES.find((module) => module.key === "budget-sov")?.version ?? 1}`,
 ) => {
   const { data: rows, error } = await dynamicTable(supabase, "cost_buckets")
     .select(
-      "id,cost_code,contract_value,contract_quantity,unit,billing_method,retainage_pct,earned_percent_complete",
+      "id,cost_code,bucket,contract_value,original_budget,actual_to_date,ftc,contract_quantity,unit,billing_method,retainage_pct,earned_percent_complete",
     )
     .eq("project_id", projectId);
   if (error) throw new Error(error.message);
 
+  const currentRows = (rows ?? []) as Array<Record<string, unknown>>;
   const bucketByCode = new Map(
-    ((rows ?? []) as Array<Record<string, unknown>>).map((row) => [str(row.cost_code), row]),
+    currentRows.filter((row) => str(row.cost_code)).map((row) => [str(row.cost_code), row]),
+  );
+  const unassignedByName = new Map(
+    currentRows
+      .filter((row) => !str(row.cost_code).trim())
+      .map((row) => [str(row.bucket).trim().toLowerCase(), row]),
   );
 
   for (const [index, bucket] of harborDemoBuckets.entries()) {
-    const existing = bucketByCode.get(bucket.cost_code);
+    const placeholder = unassignedByName.get(bucket.bucket.toLowerCase());
+    const existing = bucketByCode.get(bucket.cost_code) ?? placeholder;
+    const usingPlaceholder = !bucketByCode.has(bucket.cost_code) && Boolean(placeholder);
+    const financialPayload = {
+      cost_code: bucket.cost_code,
+      bucket: bucket.bucket,
+      contract_value: bucket.contract_value,
+      original_budget: bucket.original_budget,
+      actual_to_date: bucket.actual_to_date,
+      ftc: bucket.ftc,
+      source_type: "original_sov",
+      source_date: "2026-06-01",
+      source_note: harborDemoSourceNote,
+    };
+    let bucketId = str(existing?.id);
+
     if (!existing) {
-      const { error: insertError } = await dynamicTable(supabase, "cost_buckets").insert({
-        id: harborDemoStableId(projectId, `budget-${bucket.cost_code}`),
-        project_id: projectId,
-        ...bucket,
-        source_type: "original_sov",
-        source_date: "2026-06-01",
-        source_note: harborDemoSourceNote,
-        sort_order: index + 1,
+      const { data: command, error: createError } = await dynamicRpc(
+        supabase,
+        "create_cost_bucket_atomic",
+        {
+          p_project_id: projectId,
+          p_payload: financialPayload,
+          p_operation_key: `harbor-demo:${projectId}:budget:${bucket.cost_code}:create:${operationGeneration}`,
+        },
+      );
+      if (createError) throw new Error(createError.message);
+      bucketId = str((command as Record<string, unknown> | null)?.bucketId);
+      if (!bucketId) {
+        throw new Error(`Harbor ${bucket.cost_code} budget command returned no bucket identifier.`);
+      }
+    } else if (usingPlaceholder) {
+      const { error: updateError } = await dynamicRpc(supabase, "update_cost_bucket_atomic", {
+        p_bucket_id: bucketId,
+        p_patch: financialPayload,
+        p_note:
+          "Converting the generated Harbor placeholder into its canonical onboarding SOV line.",
+        p_operation_key: `harbor-demo:${projectId}:budget:${bucket.cost_code}:placeholder:${operationGeneration}`,
       });
-      if (insertError?.code !== "23505" && insertError) throw new Error(insertError.message);
-      continue;
+      if (updateError) throw new Error(updateError.message);
     }
 
     // Older Harbor copies predate the SOV fields. Fill their empty placeholders
     // exactly once, while this module is being version-upgraded. Ordinary ensure
     // runs preserve later onboarding edits, including a deliberate zero value.
-    if (!upgradeExistingPlaceholders) continue;
-    const patch: Record<string, unknown> = {};
-    if (num(existing.contract_value) <= 0) patch.contract_value = bucket.contract_value;
-    if (num(existing.contract_quantity) <= 0) patch.contract_quantity = bucket.contract_quantity;
-    if (!str(existing.unit).trim()) patch.unit = bucket.unit;
-    if (!str(existing.billing_method).trim()) patch.billing_method = bucket.billing_method;
-    if (num(existing.earned_percent_complete) <= 0)
-      patch.earned_percent_complete = bucket.earned_percent_complete;
-    if (Object.keys(patch).length > 0) {
-      const { error: updateError } = await dynamicTable(supabase, "cost_buckets")
-        .update(patch)
-        .eq("id", str(existing.id));
+    if (
+      existing &&
+      !usingPlaceholder &&
+      upgradeExistingPlaceholders &&
+      num(existing.contract_value) <= 0
+    ) {
+      const { error: updateError } = await dynamicRpc(supabase, "update_cost_bucket_atomic", {
+        p_bucket_id: bucketId,
+        p_patch: { contract_value: bucket.contract_value },
+        p_note: "Upgrading the legacy Harbor onboarding SOV contract placeholder.",
+        p_operation_key: `harbor-demo:${projectId}:budget:${bucket.cost_code}:upgrade:${operationGeneration}`,
+      });
       if (updateError) throw new Error(updateError.message);
+    }
+
+    const presentationPatch: Record<string, unknown> =
+      usingPlaceholder || !existing
+        ? {
+            contract_quantity: bucket.contract_quantity,
+            unit: bucket.unit,
+            billing_method: bucket.billing_method,
+            retainage_pct: bucket.retainage_pct,
+            earned_percent_complete: bucket.earned_percent_complete,
+            sort_order: index + 1,
+          }
+        : {};
+    if (existing && !usingPlaceholder && upgradeExistingPlaceholders) {
+      if (num(existing.contract_quantity) <= 0)
+        presentationPatch.contract_quantity = bucket.contract_quantity;
+      if (!str(existing.unit).trim()) presentationPatch.unit = bucket.unit;
+      if (!str(existing.billing_method).trim())
+        presentationPatch.billing_method = bucket.billing_method;
+      if (num(existing.earned_percent_complete) <= 0)
+        presentationPatch.earned_percent_complete = bucket.earned_percent_complete;
+    }
+    if (Object.keys(presentationPatch).length > 0) {
+      const { error: presentationError } = await dynamicTable(supabase, "cost_buckets")
+        .update(presentationPatch)
+        .eq("id", bucketId);
+      if (presentationError) throw new Error(presentationError.message);
     }
   }
 };
 
-const resetHarborDemoBudgetSov = async (supabase: unknown, projectId: string) => {
-  await ensureHarborDemoBudgetSov(supabase, projectId);
+const resetHarborDemoBudgetSov = async (
+  supabase: unknown,
+  projectId: string,
+  operationGeneration: string,
+) => {
+  await ensureHarborDemoBudgetSov(
+    supabase,
+    projectId,
+    false,
+    `reset-create:${operationGeneration}`,
+  );
   for (const [index, bucket] of harborDemoBuckets.entries()) {
-    const { error } = await dynamicTable(supabase, "cost_buckets")
-      .update({
-        ...bucket,
+    const { data: current, error: loadError } = await dynamicTable(supabase, "cost_buckets")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("cost_code", bucket.cost_code)
+      .maybeSingle();
+    if (loadError) throw new Error(loadError.message);
+    const bucketId = str((current as Record<string, unknown> | null)?.id);
+    if (!bucketId) throw new Error(`Harbor ${bucket.cost_code} budget line was not found.`);
+
+    const { error: commandError } = await dynamicRpc(supabase, "update_cost_bucket_atomic", {
+      p_bucket_id: bucketId,
+      p_patch: {
+        cost_code: bucket.cost_code,
+        bucket: bucket.bucket,
+        contract_value: bucket.contract_value,
+        original_budget: bucket.original_budget,
+        actual_to_date: bucket.actual_to_date,
+        ftc: bucket.ftc,
         source_type: "original_sov",
         source_date: "2026-06-01",
         source_note: harborDemoSourceNote,
+      },
+      p_note: "Resetting the Harbor onboarding SOV to its published fixture values.",
+      p_operation_key: `harbor-demo:${projectId}:budget:${bucket.cost_code}:reset:${operationGeneration}`,
+    });
+    if (commandError) throw new Error(commandError.message);
+
+    const { error: presentationError } = await dynamicTable(supabase, "cost_buckets")
+      .update({
+        contract_quantity: bucket.contract_quantity,
+        unit: bucket.unit,
+        billing_method: bucket.billing_method,
+        retainage_pct: bucket.retainage_pct,
+        earned_percent_complete: bucket.earned_percent_complete,
         sort_order: index + 1,
       })
-      .eq("project_id", projectId)
-      .eq("cost_code", bucket.cost_code);
-    if (error) throw new Error(error.message);
+      .eq("id", bucketId);
+    if (presentationError) throw new Error(presentationError.message);
   }
 };
 
-const ensureHarborDemoIorCommercialPosition = async (supabase: unknown, projectId: string) => {
+const ensureHarborDemoIorCommercialPosition = async (
+  supabase: unknown,
+  projectId: string,
+  operationGeneration = harborDemoOperationGeneration("ensure"),
+) => {
   const [exposureResult, changeOrderResult] = await Promise.all([
     dynamicTable(supabase, "exposures").select("id,title").eq("project_id", projectId),
     dynamicTable(supabase, "change_orders").select("id,number").eq("project_id", projectId),
@@ -6526,12 +6494,7 @@ const ensureHarborDemoIorCommercialPosition = async (supabase: unknown, projectI
   );
   for (const [index, changeOrder] of harborDemoChangeOrders.entries()) {
     if (changeOrderNumbers.has(changeOrder.number)) continue;
-    const { error } = await dynamicTable(supabase, "change_orders").insert({
-      id: harborDemoStableId(projectId, `change-order-${index}`),
-      project_id: projectId,
-      ...changeOrder,
-    });
-    if (error?.code !== "23505" && error) throw new Error(error.message);
+    await createHarborDemoChangeOrder(supabase, projectId, changeOrder, index, operationGeneration);
   }
 
   const [approvedCoResult, finishesBucketResult] = await Promise.all([
@@ -6559,23 +6522,22 @@ const ensureHarborDemoIorCommercialPosition = async (supabase: unknown, projectI
       .maybeSingle();
     if (allocationResult.error) throw new Error(allocationResult.error.message);
     if (!allocationResult.data) {
-      const { error } = await dynamicTable(supabase, "change_order_allocations").insert({
-        id: harborDemoStableId(projectId, "change-order-allocation-co-002"),
-        project_id: projectId,
-        change_order_id: approvedCoId,
-        cost_bucket_id: finishesBucketId,
-        cost_code: "0900",
-        description: "Upgraded primary bath stone package",
-        contract_amount: 65000,
-        cost_amount: 58000,
+      const { error } = await dynamicRpc(supabase, "allocate_change_order_atomic", {
+        p_project_id: projectId,
+        p_change_order_id: approvedCoId,
+        p_cost_bucket_id: finishesBucketId,
+        p_contract_amount_cents: 6_500_000,
+        p_cost_amount_cents: 5_800_000,
+        p_idempotency_key: `harbor-demo:${projectId}:co-002:0900`,
       });
-      if (error?.code !== "23505" && error) throw new Error(error.message);
+      if (error) throw new Error(error.message);
     }
   }
 };
 
 const resetHarborDemoIorCommercialPosition = async (supabase: unknown, projectId: string) => {
-  await ensureHarborDemoIorCommercialPosition(supabase, projectId);
+  const operationGeneration = harborDemoOperationGeneration("reset");
+  await ensureHarborDemoIorCommercialPosition(supabase, projectId, operationGeneration);
   for (const exposure of harborDemoExposures) {
     const { error } = await dynamicTable(supabase, "exposures")
       .update(exposure)
@@ -6583,31 +6545,107 @@ const resetHarborDemoIorCommercialPosition = async (supabase: unknown, projectId
       .eq("title", exposure.title);
     if (error) throw new Error(error.message);
   }
-  for (const changeOrder of harborDemoChangeOrders) {
-    const { error } = await dynamicTable(supabase, "change_orders")
-      .update(changeOrder)
+  for (const [index, changeOrder] of harborDemoChangeOrders.entries()) {
+    const { data: current, error: currentError } = await dynamicTable(supabase, "change_orders")
+      .select("*")
       .eq("project_id", projectId)
-      .eq("number", changeOrder.number);
-    if (error) throw new Error(error.message);
-  }
-  const { data: approvedCo, error: approvedCoError } = await dynamicTable(supabase, "change_orders")
-    .select("id")
-    .eq("project_id", projectId)
-    .eq("number", "CO-002")
-    .maybeSingle();
-  if (approvedCoError) throw new Error(approvedCoError.message);
-  const approvedCoId = str((approvedCo as Record<string, unknown> | null)?.id);
-  if (approvedCoId) {
-    const { error } = await dynamicTable(supabase, "change_order_allocations")
+      .eq("number", changeOrder.number)
+      .maybeSingle();
+    if (currentError) throw new Error(currentError.message);
+    if (!current) {
+      await createHarborDemoChangeOrder(
+        supabase,
+        projectId,
+        changeOrder,
+        index,
+        operationGeneration,
+      );
+      continue;
+    }
+    const currentRow = current as Record<string, unknown>;
+    if (str(currentRow.status) === "Pending") {
+      const parsed = coInput.parse(changeOrder);
+      const expectedUpdatedAt = str(currentRow.updated_at);
+      const { error: updateError } = await dynamicRpc(supabase, "update_change_order_atomic", {
+        p_project_id: projectId,
+        p_change_order_id: str(currentRow.id),
+        p_expected_updated_at: expectedUpdatedAt,
+        ...changeOrderCommandArgs(parsed),
+        p_operation_key: `harbor-demo:${projectId}:change-order:${index}:reset:${expectedUpdatedAt}`,
+      });
+      if (updateError) throw new Error(updateError.message);
+    }
+    const { data: metadataRow, error: metadataError } = await dynamicTable(
+      supabase,
+      "change_orders",
+    )
       .update({
-        description: "Upgraded primary bath stone package",
-        contract_amount: 65000,
-        cost_amount: 58000,
+        client_visible: changeOrder.client_visible,
+        client_status: changeOrder.client_status,
+        client_sent_at: changeOrder.client_sent_at,
+        client_decided_at:
+          "client_decided_at" in changeOrder ? changeOrder.client_decided_at : null,
       })
+      .eq("id", str(currentRow.id))
+      .select("id")
+      .maybeSingle();
+    if (metadataError) throw new Error(metadataError.message);
+    if (!metadataRow) {
+      throw new Error("Harbor demo change-order metadata did not update the reset fixture.");
+    }
+  }
+  const [
+    { data: approvedCo, error: approvedCoError },
+    { data: finishesBucket, error: bucketError },
+  ] = await Promise.all([
+    dynamicTable(supabase, "change_orders")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("number", "CO-002")
+      .maybeSingle(),
+    dynamicTable(supabase, "cost_buckets")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("cost_code", "0900")
+      .maybeSingle(),
+  ]);
+  if (approvedCoError) throw new Error(approvedCoError.message);
+  if (bucketError) throw new Error(bucketError.message);
+  const approvedCoId = str((approvedCo as Record<string, unknown> | null)?.id);
+  const finishesBucketId = str((finishesBucket as Record<string, unknown> | null)?.id);
+  if (approvedCoId && finishesBucketId) {
+    const { data: allocation, error: allocationError } = await dynamicTable(
+      supabase,
+      "change_order_allocations",
+    )
+      .select("id,contract_amount,cost_amount")
       .eq("project_id", projectId)
       .eq("change_order_id", approvedCoId)
-      .eq("cost_code", "0900");
-    if (error) throw new Error(error.message);
+      .eq("cost_bucket_id", finishesBucketId)
+      .maybeSingle();
+    if (allocationError) throw new Error(allocationError.message);
+    const allocationRow = allocation as Record<string, unknown> | null;
+    if (
+      allocationRow &&
+      (dollarsToCents(num(allocationRow.contract_amount)) !== 6_500_000 ||
+        dollarsToCents(num(allocationRow.cost_amount)) !== 5_800_000)
+    ) {
+      const { error: deleteError } = await dynamicRpc(
+        supabase,
+        "delete_change_order_allocation_atomic",
+        { p_allocation_id: str(allocationRow.id) },
+      );
+      if (deleteError) throw new Error(deleteError.message);
+      const { error: allocateError } = await dynamicRpc(supabase, "allocate_change_order_atomic", {
+        p_project_id: projectId,
+        p_change_order_id: approvedCoId,
+        p_cost_bucket_id: finishesBucketId,
+        p_contract_amount_cents: 6_500_000,
+        p_cost_amount_cents: 5_800_000,
+        p_idempotency_key: `harbor-demo:${projectId}:co-002:0900:reset`,
+      });
+      if (allocateError) throw new Error(allocateError.message);
+    }
   }
 };
 
@@ -6644,6 +6682,9 @@ const ensureHarborDemoSubcontractBuyout = async (
   userId: string,
   upgradeExistingPlaceholders = false,
 ): Promise<HarborDemoCommercialIds> => {
+  // Payment override provenance is now stamped inside the authenticated atomic
+  // RPC. Keep this argument for the shared demo-module call signature.
+  void userId;
   const projectResult = await dynamicTable(supabase, "projects")
     .select("organization_id")
     .eq("id", projectId)
@@ -6772,55 +6813,100 @@ const ensureHarborDemoSubcontractBuyout = async (
   const concreteSubcontractId = subcontractByKey.get("concrete");
   const structureBucketId = bucketByCode.get("0300");
   if (concreteSubcontractId && structureBucketId) {
-    const paymentId = harborDemoStableId(projectId, "subcontract-payment-concrete-1");
     const paymentResult = await dynamicTable(supabase, "subcontract_payments")
-      .select("id")
+      .select("id,status")
       .eq("project_id", projectId)
       .eq("subcontract_id", concreteSubcontractId)
       .eq("reference", "Progress payment #1")
       .maybeSingle();
     if (paymentResult.error) throw new Error(paymentResult.error.message);
-    const existingPaymentId = str(
-      (paymentResult.data as Record<string, unknown> | null)?.id,
-      paymentId,
-    );
+    const existingPayment = paymentResult.data as Record<string, unknown> | null;
+    let existingPaymentId = str(existingPayment?.id);
+    let existingPaymentStatus = str(existingPayment?.status);
+    const overrideReason = "Demo payment predates the onboarding compliance lesson.";
     if (!paymentResult.data) {
-      const { error } = await dynamicTable(supabase, "subcontract_payments").insert({
-        id: paymentId,
-        project_id: projectId,
-        subcontract_id: concreteSubcontractId,
-        amount: 20000,
-        retainage_held: 2000,
-        payment_date: "2026-07-08",
-        reference: "Progress payment #1",
-        notes: "Harbor demo: approved concrete progress payment with explicit cost-code split.",
-        status: "paid",
-        approved_at: "2026-07-08T15:00:00.000Z",
-        payment_method: "ach",
-        compliance_override_reason: "Demo payment predates the onboarding compliance lesson.",
-        compliance_overridden_by: userId,
-        compliance_overridden_at: "2026-07-08T15:00:00.000Z",
-      });
-      if (error?.code !== "23505" && error) throw new Error(error.message);
+      const { data: recordedPayment, error: recordPaymentError } = await dynamicRpc(
+        supabase,
+        "record_subcontract_payment_atomic",
+        {
+          p_project_id: projectId,
+          p_subcontract_id: concreteSubcontractId,
+          p_amount_cents: 2_000_000,
+          p_retainage_held_cents: 200_000,
+          p_payment_date: "2026-07-08",
+          p_reference: "Progress payment #1",
+          p_notes: "Harbor demo: approved concrete progress payment with explicit cost-code split.",
+          p_status: "draft",
+          p_exposure_id: null,
+          p_override_reason: overrideReason,
+          p_idempotency_key: `harbor-demo:${projectId}:subcontract-payment-concrete-1`,
+        },
+      );
+      if (recordPaymentError) throw new Error(recordPaymentError.message);
+      existingPaymentId = str((recordedPayment as Record<string, unknown> | null)?.id);
+      existingPaymentStatus = str((recordedPayment as Record<string, unknown> | null)?.status);
+      if (!existingPaymentId) {
+        throw new Error("Harbor subcontract payment was recorded without a payment id.");
+      }
     }
-    const splitResult = await dynamicTable(supabase, "subcontract_payment_allocations")
-      .select("id")
-      .eq("payment_id", existingPaymentId)
-      .eq("cost_code", "0300")
-      .maybeSingle();
-    if (splitResult.error) throw new Error(splitResult.error.message);
-    if (!splitResult.data) {
-      const { error } = await dynamicTable(supabase, "subcontract_payment_allocations").insert({
-        id: harborDemoStableId(projectId, "subcontract-payment-allocation-concrete-1"),
-        project_id: projectId,
-        subcontract_id: concreteSubcontractId,
-        payment_id: existingPaymentId,
-        cost_bucket_id: structureBucketId,
-        cost_code: "0300",
-        description: "Concrete progress payment #1",
-        amount: 20000,
-      });
-      if (error?.code !== "23505" && error) throw new Error(error.message);
+
+    // Financial attribution is editable only while draft. Seed the split first,
+    // then advance through each audited lifecycle stage. A retry resumes from
+    // whichever committed stage it finds.
+    if (existingPaymentStatus === "draft") {
+      const { error: splitError } = await dynamicRpc(
+        supabase,
+        "replace_subcontract_payment_allocations_atomic",
+        {
+          p_payment_id: existingPaymentId,
+          p_rows: [
+            {
+              cost_bucket_id: structureBucketId,
+              cost_code: "0300",
+              description: "Concrete progress payment #1",
+              amount_cents: 2_000_000,
+            },
+          ],
+        },
+      );
+      if (splitError) throw new Error(splitError.message);
+
+      const { error: approveError } = await dynamicRpc(
+        supabase,
+        "transition_subcontract_payment_atomic",
+        {
+          p_payment_id: existingPaymentId,
+          p_status: "approved",
+          p_override_reason: overrideReason,
+          p_payment_method: null,
+          p_payment_reference: null,
+          p_paid_date: null,
+        },
+      );
+      if (approveError) throw new Error(approveError.message);
+      existingPaymentStatus = "approved";
+    }
+
+    if (existingPaymentStatus === "approved") {
+      const { error: markPaidError } = await dynamicRpc(
+        supabase,
+        "transition_subcontract_payment_atomic",
+        {
+          p_payment_id: existingPaymentId,
+          p_status: "paid",
+          p_override_reason: overrideReason,
+          p_payment_method: "ach",
+          p_payment_reference: "Progress payment #1",
+          p_paid_date: "2026-07-08",
+        },
+      );
+      if (markPaidError) throw new Error(markPaidError.message);
+      existingPaymentStatus = "paid";
+    }
+    if (existingPaymentStatus !== "paid") {
+      throw new Error(
+        `Harbor subcontract payment is in an unsupported ${existingPaymentStatus} state.`,
+      );
     }
   }
 
@@ -7387,7 +7473,7 @@ const buildHarborDemoBillingApplicationPayload = (projectId: string) => ({
   retainage: 0,
   total_retainage_held: 0,
   retainage_released_this_period: 0,
-  has_line_detail: true,
+  has_line_detail: false,
   output_format: "aia_g702",
   status: "draft",
   notes:
@@ -7395,33 +7481,49 @@ const buildHarborDemoBillingApplicationPayload = (projectId: string) => ({
   sort_order: 2,
 });
 
-const buildHarborDemoBillingLinePayload = (
-  projectId: string,
-  billingApplicationId: string,
-  bucket: (typeof harborDemoBuckets)[number],
-  sortOrder: number,
-) => {
-  const previousPercent = harborDemoPriorBillingPercentByCode[bucket.cost_code] ?? 0;
-  return {
-    id: harborDemoStableId(projectId, `billing-line-${bucket.cost_code}`),
-    billing_application_id: billingApplicationId,
-    project_id: projectId,
-    cost_bucket_id: "",
-    cost_code: bucket.cost_code,
-    description: bucket.bucket,
-    billing_method: bucket.billing_method,
-    scheduled_value_cents: Math.round(bucket.contract_value * 100),
-    change_order_value_cents: bucket.cost_code === "0900" ? 6500000 : 0,
-    work_completed_previous_cents: Math.round(
-      (bucket.contract_value * 100 * previousPercent) / 100,
-    ),
-    materials_stored_previous_cents: 0,
-    work_completed_this_period_cents: 0,
-    materials_stored_this_period_cents: 0,
-    retainage_pct: bucket.retainage_pct,
-    retainage_released_cents: 0,
-    sort_order: sortOrder,
-  };
+const seedHarborDemoBillingProgress = async (supabase: unknown, billingApplicationId: string) => {
+  // The atomic billing command requires a per-line concurrency token, so the
+  // seed reads each line's current updated_at alongside its money.
+  const { data, error } = await dynamicTable(supabase, "billing_line_items")
+    .select(
+      "id,cost_code,scheduled_value_cents,work_completed_previous_cents,materials_stored_previous_cents,updated_at",
+    )
+    .eq("billing_application_id", billingApplicationId);
+  if (error) throw new Error(error.message);
+
+  const items = ((data ?? []) as Array<Record<string, unknown>>).map((line) => {
+    const targetPercent = harborDemoPriorBillingPercentByCode[str(line.cost_code)] ?? 0;
+    const targetCompletedCents = Math.round(
+      (num(line.scheduled_value_cents) * targetPercent) / 100,
+    );
+    const priorCompletedCents =
+      num(line.work_completed_previous_cents) + num(line.materials_stored_previous_cents);
+    return {
+      id: str(line.id),
+      expected_updated_at: str(line.updated_at),
+      work_completed_this_period_cents: Math.max(0, targetCompletedCents - priorCompletedCents),
+      materials_stored_this_period_cents: 0,
+      retainage_pct:
+        harborDemoBuckets.find((bucket) => bucket.cost_code === str(line.cost_code))
+          ?.retainage_pct ?? 10,
+      retainage_released_cents: 0,
+    };
+  });
+  if (items.length === 0) {
+    throw new Error("Harbor demo billing generation returned no SOV lines.");
+  }
+  // Each seed invocation is its own keyed operation (mirrors
+  // harborDemoOperationGeneration): re-running the ensure recomputes deltas
+  // from server truth, so a fresh key with a matching fingerprint is correct.
+  const { error: mutationError } = await dynamicRpc(
+    supabase,
+    "apply_billing_line_item_mutations_atomic",
+    {
+      p_items: items,
+      p_operation_key: `harbor-billing-progress:${billingApplicationId}:${harborDemoOperationGeneration("ensure")}`,
+    },
+  );
+  if (mutationError) throw new Error(mutationError.message);
 };
 
 const ensureHarborDemoBillingWorkspace = async (supabase: unknown, projectId: string) => {
@@ -7435,91 +7537,77 @@ const ensureHarborDemoBillingWorkspace = async (supabase: unknown, projectId: st
 
   let billingApplicationId = str((appResult.data as Record<string, unknown> | null)?.id);
   if (!billingApplicationId) {
-    billingApplicationId = harborDemoStableId(projectId, "billing-application-draft-2");
-    const { error } = await dynamicTable(supabase, "billing_applications").insert(
-      buildHarborDemoBillingApplicationPayload(projectId),
+    const {
+      id: _id,
+      project_id: _projectId,
+      total_retainage_held: _totalRetainageHeld,
+      retainage_released_this_period: _retainageReleased,
+      has_line_detail: _hasLineDetail,
+      sort_order: _sortOrder,
+      ...payload
+    } = buildHarborDemoBillingApplicationPayload(projectId);
+    const { data: command, error } = await dynamicRpc(
+      supabase,
+      "create_billing_application_atomic",
+      {
+        p_project_id: projectId,
+        p_payload: payload,
+        p_idempotency_key: `harbor-demo:${projectId}:billing-application-draft-2:create`,
+      },
     );
-    if (error?.code !== "23505" && error) throw new Error(error.message);
+    if (error) throw new Error(error.message);
+    billingApplicationId = str((command as Record<string, unknown>)?.billingApplicationId);
+    if (!billingApplicationId)
+      throw new Error("Harbor demo billing application did not return an id.");
   }
 
-  const [bucketResult, lineResult] = await Promise.all([
-    dynamicTable(supabase, "cost_buckets").select("id,cost_code").eq("project_id", projectId),
-    dynamicTable(supabase, "billing_line_items")
-      .select("id,cost_code,cost_bucket_id")
-      .eq("billing_application_id", billingApplicationId),
-  ]);
-  if (bucketResult.error) throw new Error(bucketResult.error.message);
-  if (lineResult.error) throw new Error(lineResult.error.message);
-  const bucketIdByCode = new Map(
-    ((bucketResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
-      str(row.cost_code),
-      str(row.id),
-    ]),
+  const { error: generationError } = await dynamicRpc(
+    supabase,
+    "generate_billing_line_items_atomic",
+    {
+      p_project_id: projectId,
+      p_billing_application_id: billingApplicationId,
+    },
   );
-  const lineCodes = new Set(
-    ((lineResult.data ?? []) as Array<Record<string, unknown>>).map((row) => str(row.cost_code)),
-  );
-
-  for (const [index, bucket] of harborDemoBuckets.entries()) {
-    if (lineCodes.has(bucket.cost_code)) continue;
-    const costBucketId = bucketIdByCode.get(bucket.cost_code);
-    if (!costBucketId) throw new Error(`Harbor billing cost code ${bucket.cost_code} is missing.`);
-    const line = buildHarborDemoBillingLinePayload(
-      projectId,
-      billingApplicationId,
-      bucket,
-      index + 1,
-    );
-    const { error } = await dynamicTable(supabase, "billing_line_items").insert({
-      ...line,
-      cost_bucket_id: costBucketId,
-    });
-    if (error?.code !== "23505" && error) throw new Error(error.message);
-  }
+  if (generationError) throw new Error(generationError.message);
+  await seedHarborDemoBillingProgress(supabase, billingApplicationId);
 };
 
 const resetHarborDemoBillingWorkspace = async (supabase: unknown, projectId: string) => {
   await ensureHarborDemoBillingWorkspace(supabase, projectId);
   const appResult = await dynamicTable(supabase, "billing_applications")
-    .select("id")
+    .select("id,updated_at")
     .eq("project_id", projectId)
     .eq("application_number", HARBOR_DEMO_COMMERCIAL_WORKFLOW.billingApplicationNumber)
     .maybeSingle();
   if (appResult.error) throw new Error(appResult.error.message);
   const billingApplicationId = str((appResult.data as Record<string, unknown> | null)?.id);
+  const billingApplicationUpdatedAt = str(
+    (appResult.data as Record<string, unknown> | null)?.updated_at,
+    "unknown",
+  );
   if (!billingApplicationId) return;
-  const { id: _appId, ...appPatch } = buildHarborDemoBillingApplicationPayload(projectId);
-  const { error: appError } = await dynamicTable(supabase, "billing_applications")
-    .update(appPatch)
-    .eq("id", billingApplicationId);
+  const {
+    id: _appId,
+    project_id: _projectId,
+    amount_billed: _amountBilled,
+    paid_to_date: _paidToDate,
+    retainage: _retainage,
+    total_retainage_held: _totalRetainageHeld,
+    retainage_released_this_period: _retainageReleased,
+    has_line_detail: _hasLineDetail,
+    status: _status,
+    sort_order: _sortOrder,
+    ...appPatch
+  } = buildHarborDemoBillingApplicationPayload(projectId);
+  const { error: appError } = await dynamicRpc(supabase, "update_billing_application_atomic", {
+    p_billing_application_id: billingApplicationId,
+    p_patch: appPatch,
+    p_idempotency_key: `harbor-demo:${projectId}:billing-application-draft-2:reset:${billingApplicationUpdatedAt}`,
+  });
   if (appError) throw new Error(appError.message);
 
-  const bucketResult = await dynamicTable(supabase, "cost_buckets")
-    .select("id,cost_code")
-    .eq("project_id", projectId);
-  if (bucketResult.error) throw new Error(bucketResult.error.message);
-  const bucketIdByCode = new Map(
-    ((bucketResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [
-      str(row.cost_code),
-      str(row.id),
-    ]),
-  );
-  for (const [index, bucket] of harborDemoBuckets.entries()) {
-    const costBucketId = bucketIdByCode.get(bucket.cost_code);
-    if (!costBucketId) continue;
-    const line = buildHarborDemoBillingLinePayload(
-      projectId,
-      billingApplicationId,
-      bucket,
-      index + 1,
-    );
-    const { id: _lineId, ...linePatch } = line;
-    const { error } = await dynamicTable(supabase, "billing_line_items")
-      .update({ ...linePatch, cost_bucket_id: costBucketId })
-      .eq("billing_application_id", billingApplicationId)
-      .eq("cost_code", bucket.cost_code);
-    if (error) throw new Error(error.message);
-  }
+  await seedHarborDemoBillingProgress(supabase, billingApplicationId);
 };
 
 type HarborDemoModuleRun = {
@@ -7698,22 +7786,35 @@ const resetHarborDemoModuleFixtures = async (
   userId: string,
   moduleKey: HarborDemoModuleKey,
   seedWarnings: string[],
+  operationGeneration: string,
 ) => {
   if (moduleKey === "project-foundation") {
-    const { error } = await dynamicTable(supabase, "projects")
-      .update({
+    const { data: projectVersion, error: versionError } = await dynamicTable(supabase, "projects")
+      .select("updated_at")
+      .eq("id", projectId)
+      .maybeSingle();
+    if (versionError) throw new Error(versionError.message);
+    const expectedUpdatedAt = str((projectVersion as Record<string, unknown> | null)?.updated_at);
+    if (!expectedUpdatedAt) throw new Error("The Harbor project version was unavailable.");
+    const { error } = await dynamicRpc(supabase, "update_project_financial_header_atomic", {
+      p_project_id: projectId,
+      p_patch: {
         job_number: HARBOR_DEMO_JOB_NUMBER,
         name: HARBOR_DEMO_NAME,
         client: HARBOR_DEMO_CLIENT,
         project_manager: HARBOR_DEMO_PROJECT_MANAGER,
-      })
-      .eq("id", projectId);
+      },
+      p_override_reason:
+        "Resetting the Harbor onboarding project header to its published fixture values.",
+      p_expected_updated_at: expectedUpdatedAt,
+      p_operation_key: `harbor-demo:${projectId}:project-foundation:reset:${operationGeneration}`,
+    });
     if (error) throw new Error(error.message);
     return;
   }
 
   if (moduleKey === "budget-sov") {
-    await resetHarborDemoBudgetSov(supabase, projectId);
+    await resetHarborDemoBudgetSov(supabase, projectId, operationGeneration);
     return;
   }
 
@@ -7837,6 +7938,7 @@ const resetHarborDemoModuleFixtures = async (
 
 const resetHarborDemoModuleInput = z.object({
   projectId: z.string().uuid(),
+  operationKey: z.string().uuid(),
   moduleKey: z.enum([
     "project-foundation",
     "budget-sov",
@@ -7899,6 +8001,7 @@ export const resetHarborDemoModule = createServerFn({ method: "POST" })
         context.userId,
         data.moduleKey,
         seedWarnings,
+        data.operationKey,
       );
       if (seedWarnings.length > resetWarningStart) {
         resetError = new Error(seedWarnings.slice(resetWarningStart).join("\n"));
@@ -8078,9 +8181,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       };
     }
 
-    const projectInsert = {
-      owner_id: context.userId,
-      organization_id: organizationId,
+    const projectHeader = {
       job_number: HARBOR_DEMO_JOB_NUMBER,
       name: HARBOR_DEMO_NAME,
       client: HARBOR_DEMO_CLIENT,
@@ -8088,23 +8189,20 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       original_contract: 3200000,
       original_cost_budget: 2720000,
       phase: "Middle" as const,
-      percent_complete: 60,
       baseline_completion_date: "2026-05-16",
       forecast_completion_date: "2026-06-30",
       schedule_variance_weeks: 6,
-      hold_variance_note:
-        "Demo note: E-Hold and C-Hold levels are carried so the IOR shows how active risk protects gross profit.",
-      last_reviewed_at: "2026-06-11T17:48:00.000Z",
-      next_review_at: "2026-06-25T17:00:00.000Z",
-      last_review_summary:
-        "Project remains on budget before holds, but a six-week schedule slip and open exposure ledger are actively eroding indicated gross profit.",
     };
 
-    const { data: projectRow, error: projectError } = await context.supabase
-      .from("projects")
-      .insert(projectInsert)
-      .select("id")
-      .single();
+    const { data: projectCommand, error: projectError } = await dynamicRpc(
+      context.supabase,
+      "create_project_financial_atomic",
+      {
+        p_organization_id: organizationId,
+        p_header: projectHeader,
+        p_operation_key: `harbor-demo:${organizationId}:project:create:v1`,
+      },
+    );
     if (projectError?.code === "23505") {
       const { data: retryDemo, error: retryError } = await context.supabase
         .from("projects")
@@ -8134,22 +8232,35 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       }
     }
     throwIfProjectSchemaError(projectError);
-    if (projectError) throw new Error(projectError.message);
-    if (!projectRow?.id) throw new Error("Harbor demo project did not save.");
+    if (projectError) {
+      if (/schema cache|could not find the function|does not exist/i.test(projectError.message)) {
+        throw new Error(
+          "Harbor project financial commands are still being enabled. No demo project was created; try again after Lovable finishes the migration.",
+        );
+      }
+      throw new Error(projectError.message);
+    }
+    const projectId = str((projectCommand as Record<string, unknown> | null)?.projectId);
+    if (!projectId) throw new Error("Harbor demo project command returned no project identifier.");
 
-    const projectId = projectRow.id as string;
+    const { error: projectMetadataError } = await context.supabase
+      .from("projects")
+      .update({
+        percent_complete: 60,
+        hold_variance_note:
+          "Demo note: E-Hold and C-Hold levels are carried so the IOR shows how active risk protects gross profit.",
+        last_reviewed_at: "2026-06-11T17:48:00.000Z",
+        next_review_at: "2026-06-25T17:00:00.000Z",
+        last_review_summary:
+          "Project remains on budget before holds, but a six-week schedule slip and open exposure ledger are actively eroding indicated gross profit.",
+      })
+      .eq("id", projectId);
+    if (projectMetadataError) throw new Error(projectMetadataError.message);
 
-    const { error: bucketError } = await context.supabase.from("cost_buckets").insert(
-      harborDemoBuckets.map((bucket, index) => ({
-        project_id: projectId,
-        ...bucket,
-        source_type: "original_sov" as const,
-        source_date: "2026-06-01",
-        source_note: "Seeded Harbor Residence demo SOV.",
-        sort_order: index + 1,
-      })),
-    );
-    if (bucketError) throw new Error(bucketError.message);
+    // create_project_financial_atomic establishes six cent-balanced defaults.
+    // Convert those placeholders through audited budget commands rather than
+    // bypassing authority with raw project/bucket inserts.
+    await ensureHarborDemoBudgetSov(context.supabase, projectId, true, "seed:v1");
 
     const { data: exposureRows, error: exposureError } = await context.supabase
       .from("exposures")
@@ -8165,14 +8276,16 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       (exposureRows ?? []).map((row) => [row.title as string, row.id as string]),
     );
 
-    const { data: changeOrderRows, error: changeOrderError } = await context.supabase
-      .from("change_orders")
-      .insert(harborDemoChangeOrders.map((co) => ({ project_id: projectId, ...co })))
-      .select("id,number");
-    if (changeOrderError) throw new Error(changeOrderError.message);
-    const changeOrderIdByNumber = new Map(
-      (changeOrderRows ?? []).map((row) => [row.number as string, row.id as string]),
-    );
+    const changeOrderIdByNumber = new Map<string, string>();
+    for (const [index, changeOrder] of harborDemoChangeOrders.entries()) {
+      const changeOrderId = await createHarborDemoChangeOrder(
+        context.supabase,
+        projectId,
+        changeOrder,
+        index,
+      );
+      changeOrderIdByNumber.set(changeOrder.number, changeOrderId);
+    }
 
     const { error: decisionError } = await context.supabase.from("decisions").insert([
       {
@@ -8220,36 +8333,45 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
     ]);
     if (decisionError) throw new Error(decisionError.message);
 
-    const { data: billingApplication, error: billingError } = await context.supabase
-      .from("billing_applications")
-      .insert({
-        project_id: projectId,
-        application_number: "Pay App 1",
-        invoice_number: "DEMO-2601-1",
-        submitted_date: "2026-06-21",
-        due_date: "2026-07-21",
-        billing_period: "Current cycle",
-        contract_amount: 3461250,
-        change_order_amount: 65000,
-        amount_billed: 2120250,
-        paid_to_date: 1200000,
-        retainage: 212025,
-        status: "submitted",
-        notes: "Demo pay application shared to show client-facing billing posture.",
-        sort_order: 1,
-      })
-      .select("id")
-      .single();
+    const { data: billingApplicationCommand, error: billingError } = await dynamicRpc(
+      context.supabase,
+      "create_billing_application_atomic",
+      {
+        p_project_id: projectId,
+        p_idempotency_key: `harbor-demo:${projectId}:legacy-pay-app-1:create`,
+        p_payload: {
+          application_number: "Pay App 1",
+          invoice_number: "DEMO-2601-1",
+          submitted_date: "2026-06-21",
+          due_date: "2026-07-21",
+          billing_period: "Current cycle",
+          contract_amount: 3461250,
+          change_order_amount: 65000,
+          amount_billed: 2120250,
+          paid_to_date: 0,
+          retainage: 212025,
+          status: "draft",
+          output_format: "invoice",
+          notes: "Demo pay application shared to show client-facing billing posture.",
+        },
+      },
+    );
     if (billingError) throw new Error(billingError.message);
-    await recordBillingApplicationEvent(context.supabase, {
-      billing_application_id: billingApplication.id,
-      project_id: projectId,
-      event_type: "created",
-      from_status: "",
-      to_status: "submitted",
-      amount: 2120250,
-      notes: "Demo pay application opened for client-facing billing posture.",
-    });
+    const billingApplicationId = str(
+      (billingApplicationCommand as Record<string, unknown>)?.billingApplicationId,
+    );
+    if (!billingApplicationId) throw new Error("Demo pay application did not return an id.");
+    const { error: billingSubmitError } = await dynamicRpc(
+      context.supabase,
+      "transition_billing_application_atomic",
+      {
+        p_billing_application_id: billingApplicationId,
+        p_to_status: "submitted",
+        p_reason: "Demo pay application opened for client-facing billing posture.",
+        p_idempotency_key: `harbor-demo:${projectId}:legacy-pay-app-1:submit`,
+      },
+    );
+    if (billingSubmitError) throw new Error(billingSubmitError.message);
 
     const { data: milestoneRows, error: milestoneError } = await context.supabase
       .from("schedule_milestones")

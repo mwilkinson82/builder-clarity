@@ -6,7 +6,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -42,7 +42,7 @@ import { fmtUSDCents } from "@/lib/billing-format";
 import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
 import { applySovBucketPatch } from "@/lib/sov-rollup";
 import { BudgetLineDrawer } from "@/components/outcome/BudgetLineDrawer";
-import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
+import { ChangeOrdersTable, type ChangeOrderDraft } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/schedule";
 import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
 import { ImportSOVSheet, type SovMappingProfileDraft } from "@/components/outcome/ImportSOVSheet";
@@ -50,7 +50,9 @@ import { ReviewsTab } from "@/components/outcome/ReviewsTab";
 import { RiskAllocationWorkbench } from "@/components/outcome/RiskAllocationWorkbench";
 import {
   ExposureAllocationPanel,
+  type ExposureAllocationDeleteInput,
   type ExposureAllocationInput,
+  type ExposureAllocationUpdateInput,
 } from "@/components/project/ExposureAllocationPanel";
 import { BudgetLedgerTable } from "@/components/project/BudgetLedgerTable";
 import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
@@ -61,6 +63,8 @@ import { TomorrowPlanWorkspace } from "@/components/outcome/TomorrowPlanWorkspac
 import { ProjectFileRoom } from "@/components/project/ProjectFileRoom";
 import { SubmittalLog } from "@/components/project/SubmittalLog";
 import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
+import { SubcontractFinancialReadState } from "@/components/project/SubcontractFinancialReadState";
+import { BudgetFinancialReadState } from "@/components/project/BudgetFinancialReadState";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import { sendChangeOrderToClient } from "@/lib/client-portal.functions";
 import { paymentShareForBucket, summarizeSubCostByBucket } from "@/lib/subcontract-budget";
@@ -72,6 +76,12 @@ import {
   commitmentBySubBucket,
 } from "@/lib/daily-wip";
 import { listDailyWipEntries } from "@/lib/daily-wip.functions";
+import {
+  createExposureAllocation,
+  deleteExposureAllocation,
+  listExposureAllocations,
+  updateExposureAllocation,
+} from "@/lib/exposure-allocations.functions";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
   InspectionsWorkspace,
@@ -86,13 +96,7 @@ import {
 } from "@/components/outcome/ClaimsWorkspace";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import {
-  LOCAL_BILLING_ID_PREFIX,
-  isMissingBillingApplicationsTableError,
-  makeLocalBillingApplication,
-  makeLocalBillingEvent,
-  readLocalBillingApplications,
   sortBillingApplications,
-  writeLocalBillingApplications,
   type BillingDraft,
   type InvoiceDraft,
   type PaymentDraft,
@@ -144,9 +148,6 @@ import {
   linkClaimChangeOrder,
   allocateChangeOrder,
   deleteChangeOrderAllocation,
-  allocateExposure,
-  deleteExposureAllocation,
-  listExposureAllocations,
   listChangeOrderAllocations,
   lockProjectBudget,
   buildBudgetFromEstimate,
@@ -157,7 +158,6 @@ import {
   createBucket,
   deleteBucket,
   listBudgetOverrides,
-  recordBudgetOverride,
   submitReview,
   updateReview,
   deleteReview,
@@ -500,7 +500,8 @@ function ProjectPage() {
   const linkCoExposureFn = useServerFn(linkChangeOrderExposure);
   const allocateChangeOrderFn = useServerFn(allocateChangeOrder);
   const deleteChangeOrderAllocationFn = useServerFn(deleteChangeOrderAllocation);
-  const allocateExposureFn = useServerFn(allocateExposure);
+  const createExposureAllocationFn = useServerFn(createExposureAllocation);
+  const updateExposureAllocationFn = useServerFn(updateExposureAllocation);
   const deleteExposureAllocationFn = useServerFn(deleteExposureAllocation);
   const listExposureAllocationsFn = useServerFn(listExposureAllocations);
   const listChangeOrderAllocationsFn = useServerFn(listChangeOrderAllocations);
@@ -527,7 +528,6 @@ function ProjectPage() {
   const createBucketFn = useServerFn(createBucket);
   const deleteBucketFn = useServerFn(deleteBucket);
   const listBudgetOverridesFn = useServerFn(listBudgetOverrides);
-  const recordBudgetOverrideFn = useServerFn(recordBudgetOverride);
   const submitReviewFn = useServerFn(submitReview);
   const updateReviewFn = useServerFn(updateReview);
   const deleteReviewFn = useServerFn(deleteReview);
@@ -568,6 +568,10 @@ function ProjectPage() {
   };
   const useServerMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (input: I) => fn({ data: input }), onSuccess: invalidate });
+
+  // Retain command keys across transport failures. They rotate only after the
+  // database confirms success, so a lost response cannot create a second write.
+  const budgetLockOperationKeyRef = useRef(crypto.randomUUID());
 
   const finUpdate = useMutation({
     mutationFn: (input: Record<string, unknown>) =>
@@ -648,7 +652,7 @@ function ProjectPage() {
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["portfolio-billing"] });
       const demoArchived = Boolean(result && "demoArchived" in result && result.demoArchived);
-      toast.success(demoArchived ? "Training project hidden" : "Project deleted", {
+      toast.success(demoArchived ? "Training project hidden" : "Project archived", {
         description: demoArchived
           ? "Harbor Residence is hidden for your whole company and won't come back on its own."
           : undefined,
@@ -667,9 +671,79 @@ function ProjectPage() {
   const decisionCreate = useServerMutation<Record<string, unknown>>(createDecisionFn as never);
   const decisionUpdate = useServerMutation<Record<string, unknown>>(updateDecisionFn as never);
   const decisionDelete = useServerMutation<{ id: string }>(deleteDecisionFn);
-  const coCreate = useServerMutation<Record<string, unknown>>(createCoFn as never);
-  const coUpdate = useServerMutation<Record<string, unknown>>(updateCoFn as never);
-  const coDelete = useServerMutation<{ id: string }>(deleteCoFn);
+  const changeOrderRetryKeys = useRef(new Map<string, string>());
+  const changeOrderCommittedVersions = useRef(new Map<string, string>());
+  useEffect(() => {
+    const currentVersions = new Map(
+      (data?.changeOrders ?? []).map((changeOrder) => [changeOrder.id, changeOrder.updated_at]),
+    );
+    for (const [changeOrderId, committedVersion] of changeOrderCommittedVersions.current) {
+      const currentVersion = currentVersions.get(changeOrderId);
+      if (!currentVersion || currentVersion !== committedVersion) {
+        changeOrderCommittedVersions.current.delete(changeOrderId);
+      }
+    }
+  }, [data?.changeOrders]);
+  const changeOrderCommandKey = (intent: string) => {
+    const existing = changeOrderRetryKeys.current.get(intent);
+    if (existing) return existing;
+    const nonce =
+      typeof globalThis.crypto?.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const key = `change-order:${intent}:${nonce}`;
+    changeOrderRetryKeys.current.set(intent, key);
+    return key;
+  };
+  type ChangeOrderCommandResult = {
+    ok: boolean;
+    id: string;
+    changeOrderId: string;
+    updatedAt: string;
+    deduplicated: boolean;
+  };
+  const coCreate = useMutation({
+    mutationFn: (input: { projectId: string; operationKey: string } & ChangeOrderDraft) =>
+      (
+        createCoFn as (i: {
+          data: { projectId: string; operationKey: string } & ChangeOrderDraft;
+        }) => Promise<ChangeOrderCommandResult>
+      )({ data: input }),
+    onSuccess: invalidate,
+  });
+  const coUpdate = useMutation({
+    mutationFn: (
+      input: {
+        id: string;
+        projectId: string;
+        expectedUpdatedAt: string;
+        operationKey: string;
+      } & Partial<ChangeOrderDraft>,
+    ) =>
+      (
+        updateCoFn as (i: {
+          data: {
+            id: string;
+            projectId: string;
+            expectedUpdatedAt: string;
+            operationKey: string;
+          } & Partial<ChangeOrderDraft>;
+        }) => Promise<ChangeOrderCommandResult>
+      )({ data: input }),
+    onSuccess: invalidate,
+  });
+  const coDelete = useMutation({
+    mutationFn: (input: {
+      id: string;
+      projectId: string;
+      expectedUpdatedAt: string;
+      operationKey: string;
+    }) =>
+      (deleteCoFn as (i: { data: typeof input }) => Promise<ChangeOrderCommandResult>)({
+        data: input,
+      }),
+    onSuccess: invalidate,
+  });
   // Send / nudge a change order to the client (stamps client_sent_at). One send
   // is in flight at a time; the row shows "Sending…" via coSendToClient.variables.
   const coSendToClient = useMutation({
@@ -677,7 +751,8 @@ function ProjectPage() {
       (sendCoFn as (i: { data: { changeOrderId: string } }) => Promise<{ nudged: boolean }>)({
         data: input,
       }),
-    onSuccess: (result) => {
+    onSuccess: (result, input) => {
+      changeOrderCommittedVersions.current.delete(input.changeOrderId);
       invalidate();
       toast.success(result?.nudged ? "Client nudged" : "Shared with the client", {
         description: result?.nudged
@@ -918,8 +993,12 @@ function ProjectPage() {
     };
   }, [subCostByBucket, data?.buckets]);
   const budgetLock = useMutation({
-    mutationFn: () => lockProjectBudgetFn({ data: { projectId } }),
+    mutationFn: () =>
+      lockProjectBudgetFn({
+        data: { projectId, operationKey: budgetLockOperationKeyRef.current },
+      }),
     onSuccess: () => {
+      budgetLockOperationKeyRef.current = crypto.randomUUID();
       toast.success("Budget locked", {
         description: "From here on, budget changes come through change orders.",
       });
@@ -932,9 +1011,10 @@ function ProjectPage() {
   });
   const exposureAllocate = useMutation({
     mutationFn: (input: ExposureAllocationInput) =>
-      allocateExposureFn({ data: { projectId, ...input } }),
-    onSuccess: () => {
+      createExposureAllocationFn({ data: { projectId, ...input } }),
+    onSuccess: async () => {
       invalidate();
+      await qc.refetchQueries({ queryKey: ["exposure-allocations", projectId] });
       toast.success("Risk allocated", {
         description: "It rolls into the budget's At Risk / Contingency column for that cost code.",
       });
@@ -945,10 +1025,26 @@ function ProjectPage() {
       });
     },
   });
-  const exposureAllocationRemove = useMutation({
-    mutationFn: (input: { id: string }) => deleteExposureAllocationFn({ data: input }),
-    onSuccess: () => {
+  const exposureAllocationUpdate = useMutation({
+    mutationFn: (input: ExposureAllocationUpdateInput) =>
+      updateExposureAllocationFn({ data: input }),
+    onSuccess: async () => {
       invalidate();
+      await qc.refetchQueries({ queryKey: ["exposure-allocations", projectId] });
+      toast.success("Risk allocation updated");
+    },
+    onError: (err) => {
+      toast.error("Allocation did not update", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const exposureAllocationRemove = useMutation({
+    mutationFn: (input: ExposureAllocationDeleteInput) =>
+      deleteExposureAllocationFn({ data: input }),
+    onSuccess: async () => {
+      invalidate();
+      await qc.refetchQueries({ queryKey: ["exposure-allocations", projectId] });
       toast.success("Allocation removed");
     },
     onError: (err) => {
@@ -957,10 +1053,20 @@ function ProjectPage() {
       });
     },
   });
+  const budgetBuildOperationKeys = useRef(new Map<"unpriced" | "auto", string>());
   const budgetFromEstimate = useMutation({
-    mutationFn: (pricing: "unpriced" | "auto") =>
-      buildBudgetFromEstimateFn({ data: { projectId, pricing } }),
-    onSuccess: (result) => {
+    mutationFn: ({
+      pricing,
+      operationKey,
+    }: {
+      pricing: "unpriced" | "auto";
+      operationKey: string;
+    }) =>
+      buildBudgetFromEstimateFn({
+        data: { projectId, pricing, operation_key: operationKey },
+      }),
+    onSuccess: (result, variables) => {
+      budgetBuildOperationKeys.current.delete(variables.pricing);
       invalidate();
       const r = (result ?? {}) as {
         updated?: number;
@@ -986,6 +1092,13 @@ function ProjectPage() {
       });
     },
   });
+  const requestBudgetFromEstimate = (pricing: "unpriced" | "auto") => {
+    const operationKey =
+      budgetBuildOperationKeys.current.get(pricing) ??
+      `estimate-budget:${pricing}:${crypto.randomUUID()}`;
+    budgetBuildOperationKeys.current.set(pricing, operationKey);
+    budgetFromEstimate.mutate({ pricing, operationKey });
+  };
   const inspectionCreate = useMutation({
     mutationFn: (input: InspectionDraft) => createInspectionFn({ data: { projectId, ...input } }),
     onSuccess: (result) => {
@@ -1203,8 +1316,12 @@ function ProjectPage() {
   // cancelQueries guard keeps an in-flight refetch from clobbering the
   // optimistic value mid-edit.
   const bucketUpdate = useMutation({
-    mutationFn: (input: { id: string; patch: Record<string, unknown> }) =>
-      updateBucketFn({ data: input as never }),
+    mutationFn: (input: {
+      id: string;
+      patch: Record<string, unknown>;
+      operation_key: string;
+      note: string;
+    }) => updateBucketFn({ data: input as never }),
     onMutate: async ({ id, patch }) => {
       await qc.cancelQueries({ queryKey: ["project", projectId] });
       const previous = qc.getQueryData(["project", projectId]);
@@ -1230,19 +1347,11 @@ function ProjectPage() {
     onSettled: () => invalidate(),
   });
   const bucketCreate = useServerMutation<Record<string, unknown>>(createBucketFn as never);
-  const bucketDelete = useServerMutation<{ id: string }>(deleteBucketFn);
-  // Best-effort audit write — the bucket edit already landed; a log miss must
-  // never surface an error to the user.
-  const overrideRecord = useMutation({
-    mutationFn: (input: {
-      projectId: string;
-      costBucketId: string;
-      field: "actual_to_date" | "ftc" | "contract_value" | "original_budget";
-      oldValue: number;
-      newValue: number;
-    }) => recordBudgetOverrideFn({ data: input }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["budget-overrides", projectId] }),
-  });
+  const bucketDelete = useServerMutation<{
+    projectId: string;
+    id: string;
+    operation_key: string;
+  }>(deleteBucketFn);
   // BUDGETCONSOLIDATE1: the single Budget table opens a line editor drawer.
   const reviewSubmit = useServerMutation<Record<string, unknown>>(submitReviewFn as never);
   const reviewUpdate = useServerMutation<Record<string, unknown>>(updateReviewFn as never);
@@ -1265,9 +1374,41 @@ function ProjectPage() {
   });
   const billingCreate = useServerMutation<Record<string, unknown>>(createBillingFn as never);
   const billingUpdate = useServerMutation<Record<string, unknown>>(updateBillingFn as never);
-  const billingDelete = useServerMutation<{ id: string }>(deleteBillingFn);
+  const billingDelete = useServerMutation<{ id: string; idempotency_key: string }>(deleteBillingFn);
+  // Keep one key for an ambiguous failed response. Retrying the same user
+  // intent must return the original database command instead of applying it a
+  // second time.
+  const billingCommandRetryKeys = useRef(new Map<string, string>());
+  const billingCommandKey = (intent: string) => {
+    const existing = billingCommandRetryKeys.current.get(intent);
+    if (existing) return existing;
+    const nonce =
+      typeof globalThis.crypto?.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const key = `billing-application:${intent}:${nonce}`;
+    billingCommandRetryKeys.current.set(intent, key);
+    return key;
+  };
+  const invoiceCommandRetryKeys = useRef(new Map<string, string>());
+  // Query invalidation is asynchronous. Keep the version returned by the last
+  // committed invoice command so a second intentional edit does not reuse the
+  // pre-command timestamp while the project query is still refreshing.
+  const invoiceCommittedVersions = useRef(new Map<string, string>());
+  const invoiceCommandKey = (intent: string) => {
+    const existing = invoiceCommandRetryKeys.current.get(intent);
+    if (existing) return existing;
+    const nonce =
+      typeof globalThis.crypto?.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const key = `invoice:${intent}:${nonce}`;
+    invoiceCommandRetryKeys.current.set(intent, key);
+    return key;
+  };
   const invoiceCreate = useMutation({
-    mutationFn: (input: { projectId: string } & InvoiceDraft) => createInvoiceFn({ data: input }),
+    mutationFn: (input: { projectId: string; idempotency_key: string } & InvoiceDraft) =>
+      createInvoiceFn({ data: input }),
     onSuccess: (_result, input) => {
       invalidate();
       toast.success("Invoice created", {
@@ -1284,7 +1425,7 @@ function ProjectPage() {
     },
   });
   const invoiceUpdate = useServerMutation<Record<string, unknown>>(updateInvoiceFn as never);
-  const invoiceDelete = useServerMutation<{ id: string }>(deleteInvoiceFn);
+  const invoiceDelete = useServerMutation<{ id: string; idempotency_key: string }>(deleteInvoiceFn);
   const paymentRecord = useServerMutation<Record<string, unknown>>(recordPaymentFn as never);
   const [reconcilingInvoiceId, setReconcilingInvoiceId] = useState<string | null>(null);
   const invoiceReconcile = useMutation({
@@ -1293,7 +1434,7 @@ function ProjectPage() {
     onSuccess: (result) => {
       invalidate();
       toast.success("Invoice reconciled from payments", {
-        description: `Paid amount is now ${fmtUSDCents(result.paidAmount)} across ${result.countedPayments} counted payment${result.countedPayments === 1 ? "" : "s"} · status ${result.status.replace("_", " ")}.`,
+        description: `Recalculated ${result.invoiceCount} invoice${result.invoiceCount === 1 ? "" : "s"}${result.applicationCount > 0 ? ` and ${result.applicationCount} linked pay application${result.applicationCount === 1 ? "" : "s"}` : ""} from the payment ledger.`,
       });
     },
     onError: (err) => {
@@ -1341,6 +1482,8 @@ function ProjectPage() {
   const billingLineUpdate = useMutation({
     mutationFn: (input: {
       id: string;
+      expected_updated_at: string;
+      operation_key: string;
       patch: {
         work_completed_this_period?: number;
         materials_stored_this_period?: number;
@@ -1362,6 +1505,7 @@ function ProjectPage() {
     mutationFn: (input: {
       items: {
         id: string;
+        expected_updated_at: string;
         patch: {
           work_completed_this_period?: number;
           materials_stored_this_period?: number;
@@ -1369,6 +1513,7 @@ function ProjectPage() {
           retainage_released?: number;
         };
       }[];
+      operation_key: string;
     }) => updateBillingLinesFn({ data: input }),
     onSuccess: (result) => {
       invalidate();
@@ -1438,6 +1583,7 @@ function ProjectPage() {
       payment_method?: string;
       payment_reference?: string;
       paid_date?: string | null;
+      operation_key: string;
     }) => setCostActualStatusFn({ data: input }),
     onSuccess: (_result, variables) => {
       invalidate();
@@ -1465,7 +1611,8 @@ function ProjectPage() {
     },
   });
   const costActualVoid = useMutation({
-    mutationFn: (input: { id: string; notes: string }) => voidCostActualFn({ data: input }),
+    mutationFn: (input: { id: string; notes: string; operation_key: string }) =>
+      voidCostActualFn({ data: input }),
     onSuccess: () => {
       invalidate();
       toast.success("Cost actual voided");
@@ -1507,22 +1654,6 @@ function ProjectPage() {
   useEffect(() => {
     setHydrated(true);
   }, []);
-  const [localBillingApplications, setLocalBillingApplications] = useState<BillingApplicationRow[]>(
-    [],
-  );
-  useEffect(() => {
-    setLocalBillingApplications(readLocalBillingApplications(projectId));
-  }, [projectId]);
-  const storeLocalBillingApplications = (
-    updater: (current: BillingApplicationRow[]) => BillingApplicationRow[],
-  ) => {
-    setLocalBillingApplications((current) => {
-      const next = sortBillingApplications(updater(current));
-      writeLocalBillingApplications(projectId, next);
-      return next;
-    });
-  };
-
   const navigate = useNavigate();
   const router = useRouter();
   const signOut = async () => {
@@ -1539,6 +1670,57 @@ function ProjectPage() {
         <Link to="/" className="mt-4 inline-block text-sm underline">
           ← Back to portfolio
         </Link>
+      </div>
+    );
+  }
+  if (subcontractsQuery.isLoading) {
+    return (
+      <div className="p-10">
+        <SubcontractFinancialReadState loading />
+      </div>
+    );
+  }
+  if (subcontractsQuery.isError || !subcontractsQuery.data) {
+    return (
+      <div className="p-10">
+        <SubcontractFinancialReadState
+          error={subcontractsQuery.error}
+          retrying={subcontractsQuery.isFetching}
+          onRetry={() => {
+            void subcontractsQuery.refetch();
+          }}
+        />
+      </div>
+    );
+  }
+  const budgetFinancialQueries = [
+    changeOrderAllocationsQuery,
+    costActualsQuery,
+    budgetOverridesQuery,
+    // Risk-allocation dollars feed the ledger's At Risk / Contingency column;
+    // a failed read must stop the budget rather than render those as $0.
+    exposureAllocationsQuery,
+  ];
+  if (budgetFinancialQueries.some((query) => query.isLoading)) {
+    return (
+      <div className="p-10">
+        <BudgetFinancialReadState loading />
+      </div>
+    );
+  }
+  const failedBudgetFinancialQuery = budgetFinancialQueries.find(
+    (query) => query.isError || !query.data,
+  );
+  if (failedBudgetFinancialQuery) {
+    return (
+      <div className="p-10">
+        <BudgetFinancialReadState
+          error={failedBudgetFinancialQuery.error}
+          retrying={budgetFinancialQueries.some((query) => query.isFetching)}
+          onRetry={() => {
+            void Promise.all(budgetFinancialQueries.map((query) => query.refetch()));
+          }}
+        />
       </div>
     );
   }
@@ -1570,18 +1752,99 @@ function ProjectPage() {
   // stay unadjusted for the budget-line drawer, which edits actual_to_date itself.
   const selfPerformByBucket = new Map(Object.entries(selfPerformRaw as Record<string, number>));
   const ledgerBuckets = applySelfPerformToBuckets(buckets, selfPerformByBucket);
-  const billingApplicationIds = new Set(billingApplications.map((app) => app.id));
-  const visibleBillingApplications = sortBillingApplications([
-    ...billingApplications,
-    ...localBillingApplications.filter(
-      (app) => app.project_id === projectId && !billingApplicationIds.has(app.id),
-    ),
-  ]);
+  // Financial records are server-authoritative. Never merge browser-only pay
+  // applications into the ledger: a missing or failed database write must stay
+  // visibly failed instead of looking like a successful financial document.
+  const visibleBillingApplications = sortBillingApplications([...billingApplications]);
 
   const lastReviewDays =
     hydrated && project.last_reviewed_at
       ? Math.floor((Date.now() - new Date(project.last_reviewed_at).getTime()) / 86400000)
       : null;
+
+  const handleCreateChangeOrder = async (draft: ChangeOrderDraft): Promise<boolean> => {
+    const intent = `create:${JSON.stringify(draft)}`;
+    try {
+      await coCreate.mutateAsync({
+        projectId,
+        ...draft,
+        operationKey: changeOrderCommandKey(intent),
+      });
+      changeOrderRetryKeys.current.delete(intent);
+      toast.success("Change order created", {
+        description: "The contract and cost impact were committed together.",
+      });
+      return true;
+    } catch (err) {
+      toast.error("Change order did not save", {
+        description: err instanceof Error ? err.message : "Refresh and try again.",
+      });
+      return false;
+    }
+  };
+
+  const handleUpdateChangeOrder = async (
+    id: string,
+    patch: Partial<ChangeOrderDraft>,
+    sourceUpdatedAt: string,
+  ): Promise<boolean> => {
+    const expectedUpdatedAt = changeOrderCommittedVersions.current.get(id) ?? sourceUpdatedAt;
+    const intent = `update:${id}:${expectedUpdatedAt}:${JSON.stringify(
+      Object.entries(patch).sort(([left], [right]) => left.localeCompare(right)),
+    )}`;
+    try {
+      const result = await coUpdate.mutateAsync({
+        id,
+        projectId,
+        expectedUpdatedAt,
+        operationKey: changeOrderCommandKey(intent),
+        ...patch,
+      });
+      if (result.updatedAt) changeOrderCommittedVersions.current.set(id, result.updatedAt);
+      changeOrderRetryKeys.current.delete(intent);
+      toast.success("Change order updated");
+      return true;
+    } catch (err) {
+      if (err instanceof Error && /changed after you opened|refresh before/i.test(err.message)) {
+        changeOrderCommittedVersions.current.delete(id);
+        invalidate();
+      }
+      toast.error("Change order did not update", {
+        description: err instanceof Error ? err.message : "Refresh and try again.",
+      });
+      return false;
+    }
+  };
+
+  const handleDeleteChangeOrder = async (changeOrder: ChangeOrderRow): Promise<boolean> => {
+    const expectedUpdatedAt =
+      changeOrderCommittedVersions.current.get(changeOrder.id) ?? changeOrder.updated_at;
+    const intent = `delete:${changeOrder.id}:${expectedUpdatedAt}`;
+    try {
+      await coDelete.mutateAsync({
+        id: changeOrder.id,
+        projectId,
+        expectedUpdatedAt,
+        operationKey: changeOrderCommandKey(intent),
+      });
+      changeOrderRetryKeys.current.delete(intent);
+      changeOrderCommittedVersions.current.delete(changeOrder.id);
+      toast.success("Pending change order deleted");
+      return true;
+    } catch (err) {
+      if (err instanceof Error && /changed after you opened|refresh before/i.test(err.message)) {
+        changeOrderCommittedVersions.current.delete(changeOrder.id);
+        invalidate();
+      }
+      toast.error("Change order did not delete", {
+        description: err instanceof Error ? err.message : "Refresh and try again.",
+      });
+      return false;
+    }
+  };
+
+  const handleChangeOrderStatus = (changeOrder: ChangeOrderRow, status: "Approved" | "Denied") =>
+    handleUpdateChangeOrder(changeOrder.id, { status }, changeOrder.updated_at);
 
   const handleSubmitReview = async (input: {
     reviewer: string;
@@ -1690,6 +1953,7 @@ function ProjectPage() {
           if (exposureId) {
             try {
               await linkCoExposureFn({ data: { changeOrderId: co.id, exposureId } });
+              changeOrderCommittedVersions.current.delete(co.id);
               invalidate();
             } catch {
               // The link column may be a migration behind; the exposure still
@@ -1748,47 +2012,56 @@ function ProjectPage() {
       });
       return;
     }
-    coCreate.mutate(
-      {
+    const draft: ChangeOrderDraft = {
+      number: "",
+      description: exposure.title,
+      contract_amount: exposure.dollar_exposure,
+      cost_amount: 0,
+      financial_direction: "addition",
+      status: "Pending",
+      probability: exposure.probability,
+      owner: exposure.owner || "PM",
+      notes: [
+        `Created from the risk tally.`,
+        exposure.description ? `Risk detail: ${exposure.description}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      co_type: changeOrderTypeFromExposure(exposure.category),
+      pricing_method: "lump_sum",
+      schedule_impact_days: 0,
+      requested_by: exposure.owner || "PM",
+      date_initiated: null,
+    };
+    const intent = `risk:${exposure.id}`;
+    coCreate
+      .mutateAsync({
         projectId,
-        number: "",
-        description: exposure.title,
-        contract_amount: exposure.dollar_exposure,
-        cost_amount: 0,
-        status: "Pending",
-        probability: exposure.probability,
-        owner: exposure.owner || "PM",
-        notes: [
-          `Created from the risk tally.`,
-          exposure.description ? `Risk detail: ${exposure.description}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        co_type: changeOrderTypeFromExposure(exposure.category),
-      },
-      {
-        onSuccess: async (data) => {
-          const changeOrderId = (data as { id?: string } | undefined)?.id ?? "";
-          if (changeOrderId) {
-            try {
-              await linkCoExposureFn({ data: { changeOrderId, exposureId: exposure.id } });
-              invalidate();
-            } catch {
-              // Best-effort link; the pending CO still stands if the link
-              // column is a migration behind.
-            }
+        ...draft,
+        operationKey: changeOrderCommandKey(intent),
+      })
+      .then(async (data) => {
+        changeOrderRetryKeys.current.delete(intent);
+        const changeOrderId = data.id;
+        if (changeOrderId) {
+          try {
+            await linkCoExposureFn({ data: { changeOrderId, exposureId: exposure.id } });
+            changeOrderCommittedVersions.current.delete(changeOrderId);
+            invalidate();
+          } catch {
+            // Best-effort link; the pending CO still stands if the link
+            // column is a migration behind.
           }
-          toast.success("Risk tagged as a change order", {
-            description: "It's now a pending CO — open the Change Orders tab to price it.",
-          });
-        },
-        onError: (err) => {
-          toast.error("Change order was not created", {
-            description: err instanceof Error ? err.message : "Try again.",
-          });
-        },
-      },
-    );
+        }
+        toast.success("Risk tagged as a change order", {
+          description: "It's now a pending CO — open the Change Orders tab to price it.",
+        });
+      })
+      .catch((err: unknown) => {
+        toast.error("Change order was not created", {
+          description: err instanceof Error ? err.message : "Try again.",
+        });
+      });
   };
 
   // CLAIM ↔ RISK / CO (slice 5). Same tag/reference model as CO↔risk: creating
@@ -1911,47 +2184,56 @@ function ProjectPage() {
       return;
     }
     const amount = claim.money_awarded > 0 ? claim.money_awarded : claim.money_claimed;
-    coCreate.mutate(
-      {
+    const draft: ChangeOrderDraft = {
+      number: "",
+      description: `${claim.claim_number ? `${claim.claim_number} - ` : ""}${claim.title}`,
+      contract_amount: amount,
+      cost_amount: 0,
+      financial_direction: "addition",
+      status: "Pending",
+      probability: 100,
+      owner: claim.owner || "PM",
+      notes: [
+        `Promoted from a claim.`,
+        `Claim status: ${claim.status}.`,
+        claim.outcome ? `Outcome: ${claim.outcome}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      co_type: "owner_change",
+      pricing_method: "lump_sum",
+      schedule_impact_days: 0,
+      requested_by: claim.owner || "PM",
+      date_initiated: null,
+    };
+    const intent = `claim:${claim.id}`;
+    coCreate
+      .mutateAsync({
         projectId,
-        number: "",
-        description: `${claim.claim_number ? `${claim.claim_number} - ` : ""}${claim.title}`,
-        contract_amount: amount,
-        cost_amount: 0,
-        status: "Pending",
-        probability: 100,
-        owner: claim.owner || "PM",
-        notes: [
-          `Promoted from a claim.`,
-          `Claim status: ${claim.status}.`,
-          claim.outcome ? `Outcome: ${claim.outcome}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        co_type: "owner_change",
-      },
-      {
-        onSuccess: async (data) => {
-          const changeOrderId = (data as { id?: string } | undefined)?.id ?? "";
-          if (changeOrderId) {
-            try {
-              await linkClaimChangeOrderFn({ data: { claimId: claim.id, changeOrderId } });
-              invalidate();
-            } catch {
-              // best-effort link
-            }
+        ...draft,
+        operationKey: changeOrderCommandKey(intent),
+      })
+      .then(async (data) => {
+        changeOrderRetryKeys.current.delete(intent);
+        const changeOrderId = data.id;
+        if (changeOrderId) {
+          try {
+            await linkClaimChangeOrderFn({ data: { claimId: claim.id, changeOrderId } });
+            changeOrderCommittedVersions.current.delete(changeOrderId);
+            invalidate();
+          } catch {
+            // best-effort link
           }
-          toast.success("Claim promoted to a change order", {
-            description: "It's now a pending CO — open the Change Orders tab to price it.",
-          });
-        },
-        onError: (err) => {
-          toast.error("Change order was not created", {
-            description: err instanceof Error ? err.message : "Try again.",
-          });
-        },
-      },
-    );
+        }
+        toast.success("Claim promoted to a change order", {
+          description: "It's now a pending CO — open the Change Orders tab to price it.",
+        });
+      })
+      .catch((err: unknown) => {
+        toast.error("Change order was not created", {
+          description: err instanceof Error ? err.message : "Try again.",
+        });
+      });
   };
 
   const handleCreateRiskFromInspection = (inspection: InspectionRow) => {
@@ -2093,83 +2375,58 @@ function ProjectPage() {
     );
   };
 
-  const createLocalPayApp = (input: BillingDraft) => {
-    const localPayApp = makeLocalBillingApplication(projectId, input);
-    storeLocalBillingApplications((current) => [...current, localPayApp]);
-    toast.success("Application created locally", {
-      description: "Supabase billing is not live yet, so this browser is holding it for the demo.",
-    });
-  };
-
-  const handleCreatePayApp = (input: BillingDraft) => {
-    billingCreate.mutate(
-      { projectId, ...input },
-      {
-        onSuccess: () => {
-          toast.success("Application created", {
-            description: `${billingDocumentLabel(input.application_number, input.invoice_number, "Application")} is now in the billing workspace.`,
-          });
-        },
-        onError: (err) => {
-          if (isMissingBillingApplicationsTableError(err)) {
-            createLocalPayApp(input);
-            return;
-          }
-          toast.error("Application did not save", {
-            description: err instanceof Error ? err.message : "Try again.",
-          });
-        },
-      },
-    );
-  };
-
-  const handleUpdatePayApp = (id: string, patch: Partial<BillingApplicationRow>) => {
-    if (id.startsWith(LOCAL_BILLING_ID_PREFIX)) {
-      storeLocalBillingApplications((current) =>
-        current.map((app) => {
-          if (app.id !== id) return app;
-          const statusChanged = patch.status && patch.status !== app.status;
-          const paidChanged =
-            typeof patch.paid_to_date === "number" && patch.paid_to_date !== app.paid_to_date;
-          const lifecycleEvents = [...app.status_events];
-          if (statusChanged || paidChanged) {
-            lifecycleEvents.unshift(
-              makeLocalBillingEvent(projectId, app.id, {
-                event_type: statusChanged ? "status_change" : "payment_update",
-                from_status: app.status,
-                to_status: statusChanged ? patch.status : app.status,
-                amount: paidChanged ? patch.paid_to_date : app.amount_billed,
-                notes: statusChanged
-                  ? `${billingDocumentLabel(app.application_number, app.invoice_number)} moved from ${app.status} to ${patch.status}.`
-                  : `${billingDocumentLabel(app.application_number, app.invoice_number)} paid-to-date updated from ${app.paid_to_date} to ${patch.paid_to_date}.`,
-              }),
-            );
-          }
-          return { ...app, ...patch, status_events: lifecycleEvents };
-        }),
-      );
-      return;
+  const handleCreatePayApp = async (input: BillingDraft, idempotencyKey: string) => {
+    try {
+      await billingCreate.mutateAsync({
+        projectId,
+        ...input,
+        idempotency_key: idempotencyKey,
+      });
+      toast.success("Application created", {
+        description: `${billingDocumentLabel(input.application_number, input.invoice_number, "Application")} is now in the billing workspace.`,
+      });
+    } catch (err) {
+      toast.error("Application did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+      throw err;
     }
-    billingUpdate.mutate(
-      { id, patch },
-      {
-        onError: (err) => {
-          toast.error("Application did not update", {
-            description: err instanceof Error ? err.message : "Try again.",
-          });
-        },
-      },
-    );
+  };
+
+  const handleUpdatePayApp = async (
+    id: string,
+    patch: Partial<BillingApplicationRow>,
+  ): Promise<boolean> => {
+    const intent = `update:${id}:${JSON.stringify(
+      Object.entries(patch).sort(([left], [right]) => left.localeCompare(right)),
+    )}`;
+    try {
+      await billingUpdate.mutateAsync({
+        id,
+        patch,
+        idempotency_key: billingCommandKey(intent),
+      });
+      billingCommandRetryKeys.current.delete(intent);
+      return true;
+    } catch (err) {
+      // Preserve the retry key after an ambiguous failure. The editor also
+      // keeps its local draft uncommitted, so focusing and blurring the same
+      // value safely retries the exact same database command.
+      toast.error("Application did not update", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+      return false;
+    }
   };
 
   const handleDeletePayApp = (id: string) => {
-    if (id.startsWith(LOCAL_BILLING_ID_PREFIX)) {
-      storeLocalBillingApplications((current) => current.filter((app) => app.id !== id));
-      return;
-    }
+    const intent = `delete:${id}`;
     billingDelete.mutate(
-      { id },
+      { id, idempotency_key: billingCommandKey(intent) },
       {
+        onSuccess: () => {
+          billingCommandRetryKeys.current.delete(intent);
+        },
         onError: (err) => {
           toast.error("Application did not delete", {
             description: err instanceof Error ? err.message : "Try again.",
@@ -2180,27 +2437,67 @@ function ProjectPage() {
   };
 
   const handleCreateInvoice = async (input: InvoiceDraft) => {
-    await invoiceCreate.mutateAsync({ projectId, ...input });
+    const intent = `create:${JSON.stringify(input)}`;
+    await invoiceCreate.mutateAsync({
+      projectId,
+      ...input,
+      idempotency_key: invoiceCommandKey(intent),
+    });
+    invoiceCommandRetryKeys.current.delete(intent);
   };
 
-  const handleUpdateInvoice = (id: string, patch: Partial<BillingInvoiceRow>) => {
-    invoiceUpdate.mutate(
-      { id, patch },
-      {
-        onError: (err) => {
-          toast.error("Invoice did not update", {
-            description: err instanceof Error ? err.message : "Try again.",
-          });
-        },
-      },
-    );
+  const handleUpdateInvoice = async (
+    id: string,
+    patch: Partial<BillingInvoiceRow>,
+    options: { expectedUpdatedAt: string; idempotencyKey?: string; reason?: string },
+  ): Promise<boolean> => {
+    const expectedUpdatedAt = invoiceCommittedVersions.current.get(id) ?? options.expectedUpdatedAt;
+    const intent = `update:${id}:${expectedUpdatedAt}:${JSON.stringify(
+      Object.entries(patch).sort(([left], [right]) => left.localeCompare(right)),
+    )}`;
+    const idempotencyKey = options.idempotencyKey ?? invoiceCommandKey(intent);
+    try {
+      const result = await invoiceUpdate.mutateAsync({
+        id,
+        patch,
+        expected_updated_at: expectedUpdatedAt,
+        idempotency_key: idempotencyKey,
+        reason: options.reason,
+      });
+      const updatedAt =
+        result &&
+        typeof result === "object" &&
+        "updatedAt" in result &&
+        typeof result.updatedAt === "string"
+          ? result.updatedAt
+          : null;
+      if (updatedAt) invoiceCommittedVersions.current.set(id, updatedAt);
+      if (!options.idempotencyKey) invoiceCommandRetryKeys.current.delete(intent);
+      return true;
+    } catch (err) {
+      // A genuine stale-write error means another actor won. Drop our local
+      // version and refresh; an ambiguous transport failure keeps the version
+      // and retry key so the same database command can be replayed safely.
+      if (err instanceof Error && /changed after you opened|refresh before/i.test(err.message)) {
+        invoiceCommittedVersions.current.delete(id);
+        invalidate();
+      }
+      toast.error("Invoice did not update", {
+        description: err instanceof Error ? err.message : "Refresh and try again.",
+      });
+      return false;
+    }
   };
 
   const handleDeleteInvoice = (id: string) => {
+    const intent = `delete:${id}`;
     invoiceDelete.mutate(
-      { id },
+      { id, idempotency_key: invoiceCommandKey(intent) },
       {
-        onSuccess: () => toast.success("Invoice deleted"),
+        onSuccess: () => {
+          invoiceCommandRetryKeys.current.delete(intent);
+          toast.success("Invoice draft deleted");
+        },
         onError: (err) => {
           toast.error("Invoice did not delete", {
             description: err instanceof Error ? err.message : "Try again.",
@@ -2210,20 +2507,19 @@ function ProjectPage() {
     );
   };
 
-  const handleRecordPayment = (input: PaymentDraft) => {
-    paymentRecord.mutate(input, {
-      onSuccess: () => {
-        toast.success("Payment recorded", {
-          description: "Invoice, payment ledger, and linked application were refreshed.",
-        });
-      },
-      onError: (err) => {
-        toast.error("Payment did not save", {
-          description:
-            err instanceof Error ? err.message : "Publish the payment ledger migration and retry.",
-        });
-      },
-    });
+  const handleRecordPayment = async (input: PaymentDraft) => {
+    try {
+      await paymentRecord.mutateAsync(input);
+      toast.success("Payment recorded", {
+        description: "Invoice, payment ledger, and linked application were refreshed.",
+      });
+    } catch (err) {
+      toast.error("Payment did not save", {
+        description:
+          err instanceof Error ? err.message : "Publish the payment ledger migration and retry.",
+      });
+      throw err;
+    }
   };
 
   const handleDeleteExposure = (id: string) => {
@@ -2774,7 +3070,12 @@ function ProjectPage() {
                     project={project}
                     rollup={rollup}
                     guidance={guidance}
-                    onSave={(patch) => finUpdate.mutate({ projectId, patch })}
+                    onSave={(attempt) =>
+                      finUpdate.mutateAsync({
+                        projectId,
+                        ...attempt,
+                      })
+                    }
                     pending={finUpdate.isPending}
                   />
                   <DropdownMenu>
@@ -2800,12 +3101,14 @@ function ProjectPage() {
                       <DropdownMenuItem onSelect={() => setConfirmAction("archive")}>
                         <Archive className="h-3.5 w-3.5" /> Archive
                       </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="text-danger focus:text-danger"
-                        onSelect={() => setConfirmAction("delete")}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" /> Delete
-                      </DropdownMenuItem>
+                      {isDemoProject ? (
+                        <DropdownMenuItem
+                          className="text-danger focus:text-danger"
+                          onSelect={() => setConfirmAction("delete")}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Hide training project
+                        </DropdownMenuItem>
+                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -2876,26 +3179,13 @@ function ProjectPage() {
               }}
             >
               <AlertDialogContent>
-                {isDemoProject ? (
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Hide the training project?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This hides the Harbor Residence training project for your whole company. It
-                      won’t come back on its own; an admin can restore it later if you want it
-                      again.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                ) : (
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this project permanently?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This permanently deletes “{project.name}” and every related record — SOV/cost
-                      buckets, exposures, change orders, decisions, schedule, daily reports, billing
-                      applications, invoices, and payments. This cannot be undone. Prefer{" "}
-                      <strong>Archive</strong> if you might need it back.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                )}
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Hide the training project?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This archives Harbor Residence for your whole company while preserving its
+                    financial history. It won’t come back on its own; an admin can restore it later.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
@@ -2906,13 +3196,7 @@ function ProjectPage() {
                       deleteMutation.mutate();
                     }}
                   >
-                    {deleteMutation.isPending
-                      ? isDemoProject
-                        ? "Hiding…"
-                        : "Deleting…"
-                      : isDemoProject
-                        ? "Hide training project"
-                        : "Delete forever"}
+                    {deleteMutation.isPending ? "Hiding…" : "Hide training project"}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -3045,9 +3329,18 @@ function ProjectPage() {
                   exposures={exposures}
                   buckets={buckets}
                   allocations={exposureAllocationsQuery.data ?? []}
-                  onAllocate={(input) => exposureAllocate.mutate(input)}
-                  onRemoveAllocation={(id) => exposureAllocationRemove.mutate({ id })}
-                  saving={exposureAllocate.isPending || exposureAllocationRemove.isPending}
+                  onAllocate={(input) => exposureAllocate.mutateAsync(input).then(() => undefined)}
+                  onUpdateAllocation={(input) =>
+                    exposureAllocationUpdate.mutateAsync(input).then(() => undefined)
+                  }
+                  onRemoveAllocation={(input) =>
+                    exposureAllocationRemove.mutateAsync(input).then(() => undefined)
+                  }
+                  saving={
+                    exposureAllocate.isPending ||
+                    exposureAllocationUpdate.isPending ||
+                    exposureAllocationRemove.isPending
+                  }
                 />
               </div>
             </TabsContent>
@@ -3133,7 +3426,7 @@ function ProjectPage() {
                       <AlertDialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
                         <AlertDialogAction
                           className="w-full"
-                          onClick={() => budgetFromEstimate.mutate("auto")}
+                          onClick={() => requestBudgetFromEstimate("auto")}
                         >
                           Auto-price from the estimate
                           <span className="ml-1 text-xs opacity-80">
@@ -3142,7 +3435,7 @@ function ProjectPage() {
                         </AlertDialogAction>
                         <AlertDialogAction
                           className="w-full bg-surface text-foreground hover:bg-surface/80"
-                          onClick={() => budgetFromEstimate.mutate("unpriced")}
+                          onClick={() => requestBudgetFromEstimate("unpriced")}
                         >
                           I'll enter contract values myself
                           <span className="ml-1 text-xs opacity-70">
@@ -3160,51 +3453,37 @@ function ProjectPage() {
                       sovProfileSave.mutateAsync(profile).then(() => undefined)
                     }
                     savingProfile={sovProfileSave.isPending}
-                    onImport={(rows, mode, metadata) =>
-                      bucketImport.mutate(
-                        { projectId, rows, mode, metadata },
-                        {
-                          onSuccess: (result) => {
-                            const imported =
-                              typeof result === "object" && result && "inserted" in result
-                                ? Number((result as { inserted: number }).inserted)
-                                : rows.length;
-                            const updated =
-                              typeof result === "object" && result && "updated" in result
-                                ? Number((result as { updated: number }).updated)
-                                : 0;
-                            const budget =
-                              typeof result === "object" && result && "originalCostBudget" in result
-                                ? Number(
-                                    (result as { originalCostBudget: number }).originalCostBudget,
-                                  )
-                                : rows.reduce(
-                                    (total, row) => total + row.actual_to_date + row.ftc,
-                                    0,
-                                  );
-                            toast.success("Budget imported", {
-                              description: `${imported} created, ${updated} updated. Original cost budget is now ${fmtUSD(budget)}.`,
-                            });
-                            if (
-                              typeof result === "object" &&
-                              result &&
-                              "importHistorySaved" in result &&
-                              !(result as { importHistorySaved: boolean }).importHistorySaved
-                            ) {
-                              toast.warning("Budget imported, history pending", {
-                                description:
-                                  "The budget lines saved, but the import ledger table is not available yet.",
-                              });
-                            }
-                          },
-                          onError: (err) => {
-                            toast.error("Budget import did not save", {
-                              description: err instanceof Error ? err.message : "Try again.",
-                            });
-                          },
-                        },
-                      )
-                    }
+                    onImport={async (rows, mode, metadata, operationKey) => {
+                      try {
+                        const result = await bucketImport.mutateAsync({
+                          projectId,
+                          rows,
+                          mode,
+                          metadata,
+                          operation_key: operationKey,
+                        });
+                        const imported =
+                          typeof result === "object" && result && "inserted" in result
+                            ? Number((result as { inserted: number }).inserted)
+                            : rows.length;
+                        const updated =
+                          typeof result === "object" && result && "updated" in result
+                            ? Number((result as { updated: number }).updated)
+                            : 0;
+                        const budget =
+                          typeof result === "object" && result && "originalCostBudget" in result
+                            ? Number((result as { originalCostBudget: number }).originalCostBudget)
+                            : rows.reduce((total, row) => total + row.actual_to_date + row.ftc, 0);
+                        toast.success("Budget imported", {
+                          description: `${imported} created, ${updated} updated. Original cost budget is now ${fmtUSD(budget)}.`,
+                        });
+                      } catch (err) {
+                        toast.error("Budget import did not save", {
+                          description: err instanceof Error ? err.message : "Try again.",
+                        });
+                        throw err;
+                      }
+                    }}
                     pending={bucketImport.isPending}
                   />
                   <Button
@@ -3378,13 +3657,25 @@ function ProjectPage() {
                 }}
                 budgetLocked={Boolean(project.budget_locked_at)}
                 overrides={budgetOverrides}
-                onSave={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}
-                onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
-                onDelete={(id) => bucketDelete.mutate({ id })}
-                onRecordOverride={(costBucketId, field, oldValue, newValue) =>
-                  overrideRecord.mutate({ projectId, costBucketId, field, oldValue, newValue })
+                onSave={(id, patch, operationKey, note) =>
+                  bucketUpdate.mutateAsync({
+                    id,
+                    patch,
+                    operation_key: operationKey,
+                    note,
+                  })
                 }
-                saving={bucketUpdate.isPending}
+                onCreate={(input, operationKey) =>
+                  bucketCreate.mutateAsync({
+                    projectId,
+                    ...input,
+                    operation_key: operationKey,
+                  })
+                }
+                onDelete={(id, operationKey) =>
+                  bucketDelete.mutateAsync({ projectId, id, operation_key: operationKey })
+                }
+                saving={bucketUpdate.isPending || bucketCreate.isPending || bucketDelete.isPending}
               />
             </TabsContent>
 
@@ -3409,6 +3700,14 @@ function ProjectPage() {
                   billingInvoices={billingInvoices ?? []}
                   billingWorkspace={billingWorkspaceQuery.data}
                   billingWorkspaceLoading={billingWorkspaceQuery.isLoading}
+                  billingWorkspaceError={
+                    billingWorkspaceQuery.error instanceof Error
+                      ? billingWorkspaceQuery.error.message
+                      : billingWorkspaceQuery.error
+                        ? "Billing detail did not load."
+                        : null
+                  }
+                  onRetryBillingWorkspace={() => void billingWorkspaceQuery.refetch()}
                   savingPayApp={billingCreate.isPending}
                   savingInvoice={invoiceCreate.isPending}
                   savingPayment={paymentRecord.isPending}
@@ -3416,6 +3715,7 @@ function ProjectPage() {
                   savingRetainageRate={billingRetainageRateUpdate.isPending}
                   savingCostActual={
                     costActualCreate.isPending ||
+                    costActualUpdate.isPending ||
                     costActualImport.isPending ||
                     costActualVoid.isPending ||
                     costActualSetStatus.isPending
@@ -3428,8 +3728,12 @@ function ProjectPage() {
                   onGenerateBillingLines={(billingApplicationId) =>
                     billingLineGenerate.mutate({ projectId, billingApplicationId })
                   }
-                  onUpdateBillingLine={(id, patch) => billingLineUpdate.mutate({ id, patch })}
-                  onSaveAllBillingLines={(items) => billingLinesUpdateAll.mutate({ items })}
+                  onUpdateBillingLine={(id, patch, expected_updated_at, operation_key) =>
+                    billingLineUpdate.mutate({ id, patch, expected_updated_at, operation_key })
+                  }
+                  onSaveAllBillingLines={(items, operation_key) =>
+                    billingLinesUpdateAll.mutate({ items, operation_key })
+                  }
                   savingAllBillingLines={billingLinesUpdateAll.isPending}
                   onUpdatePayAppRetainageRate={(billingApplicationId, retainage_pct) =>
                     billingRetainageRateUpdate.mutate({ billingApplicationId, retainage_pct })
@@ -3444,17 +3748,23 @@ function ProjectPage() {
                       ...input,
                     })
                   }
-                  onImportCostActuals={(input) => costActualImport.mutate({ projectId, ...input })}
-                  onVoidCostActual={(id, notes) => costActualVoid.mutate({ id, notes })}
+                  onImportCostActuals={(input) =>
+                    costActualImport.mutateAsync({ projectId, ...input })
+                  }
+                  onVoidCostActual={(id, notes, operationKey) =>
+                    costActualVoid.mutateAsync({ id, notes, operation_key: operationKey })
+                  }
                   onUpdateCostActual={(id, input) => {
-                    // Status stays out of the edit payload — the dialog advances
-                    // state through onSetCostActualStatus. Returns the promise so
-                    // the dialog can await the save before transitioning.
                     const { status: _status, ...fields } = input;
                     return costActualUpdate.mutateAsync({ id, ...fields });
                   }}
                   onSetCostActualStatus={(id, status, payment) =>
-                    costActualSetStatus.mutate({ id, status, ...(payment ?? {}) })
+                    costActualSetStatus.mutateAsync({
+                      id,
+                      status,
+                      operation_key: payment?.operation_key ?? `cost:transition:${id}:${status}`,
+                      ...(payment ?? {}),
+                    })
                   }
                   onUpdateBucketBillingSettings={(id, patch) =>
                     bucketBillingUpdate.mutate({ id, patch })
@@ -3468,7 +3778,9 @@ function ProjectPage() {
                   onRecordPayment={handleRecordPayment}
                   onReconcileInvoice={(invoiceId) => invoiceReconcile.mutate(invoiceId)}
                   reconcilingInvoiceId={reconcilingInvoiceId}
-                  onAllocateChangeOrder={(input) => changeOrderAllocate.mutate(input)}
+                  onAllocateChangeOrder={(input) =>
+                    changeOrderAllocate.mutateAsync(input).then(() => undefined)
+                  }
                   onRemoveChangeOrderAllocation={(id) => changeOrderAllocationRemove.mutate({ id })}
                   savingAllocation={
                     changeOrderAllocate.isPending || changeOrderAllocationRemove.isPending
@@ -3559,10 +3871,10 @@ function ProjectPage() {
                     ? (coSendToClient.variables?.changeOrderId ?? null)
                     : null
                 }
-                onQuickStatus={(co, status) => coUpdate.mutate({ id: co.id, status })}
-                onCreate={(d) => coCreate.mutate({ projectId, ...d })}
-                onUpdate={(id, patch) => coUpdate.mutate({ id, ...patch })}
-                onDelete={(id) => coDelete.mutate({ id })}
+                onQuickStatus={handleChangeOrderStatus}
+                onCreate={handleCreateChangeOrder}
+                onUpdate={handleUpdateChangeOrder}
+                onDelete={handleDeleteChangeOrder}
                 onCreateRisk={handleCreateRiskFromChangeOrder}
                 creatingRiskId={creatingCoRiskId}
                 documents={changeOrderDocuments}

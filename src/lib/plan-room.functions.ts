@@ -46,13 +46,15 @@ type DynamicSupabaseClient = {
   from(relation: string): DynamicSupabaseQuery;
 };
 type DynamicSupabaseRpcClient = {
-  rpc(name: string, args: Record<string, unknown>): Promise<DynamicSupabaseResult<unknown[]>>;
+  rpc(name: string, args: Record<string, unknown>): PromiseLike<DynamicSupabaseResult<unknown>>;
 };
 
 const PLAN_ROOM_BUCKET = "plan-room";
 
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
+const dynamicRpc = (supabase: unknown, functionName: string, args: Record<string, unknown>) =>
+  (supabase as DynamicSupabaseRpcClient).rpc(functionName, args);
 
 const str = (value: unknown, fallback = "") => (value == null ? fallback : String(value));
 const num = (value: unknown, fallback = 0) => {
@@ -325,42 +327,6 @@ async function loadEstimateLines(context: { supabase: unknown }, estimateId: str
     .order("sort_order", { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as Record<string, unknown>[];
-}
-
-async function recalculateEstimateTotalsInternal(
-  context: { supabase: unknown },
-  estimateId: string,
-) {
-  const estimate = await loadEstimate(context, estimateId);
-  const lines = await loadEstimateLines(context, estimateId);
-  const totals = calculateEstimateTotals(
-    {
-      region_multiplier: num(estimate.region_multiplier, 1),
-      overhead_pct: Math.round(num(estimate.overhead_pct, 1000)),
-      profit_pct: Math.round(num(estimate.profit_pct, 1000)),
-      contingency_pct: Math.round(num(estimate.contingency_pct, 500)),
-      bond_pct: Math.round(num(estimate.bond_pct, 150)),
-      tax_pct: Math.round(num(estimate.tax_pct)),
-      general_conditions_pct: Math.round(num(estimate.general_conditions_pct)),
-      custom_markups: normalizeCustomMarkup(estimate.custom_markups),
-    },
-    lines.map((line) => ({
-      quantity: num(line.quantity),
-      material_unit_cost_cents: Math.round(num(line.material_unit_cost_cents)),
-      labor_unit_cost_cents: Math.round(num(line.labor_unit_cost_cents)),
-    })),
-  );
-
-  const { error } = await dynamicTable(context.supabase, "estimates")
-    .update({
-      subtotal_material_cents: totals.material_cents,
-      subtotal_labor_cents: totals.labor_cents,
-      subtotal_cents: totals.direct_cents,
-      total_with_markups_cents: totals.total_cents,
-    })
-    .eq("id", estimateId);
-  if (error) throw new Error(error.message);
-  return totals;
 }
 
 async function ensureHarborPlanRoomDemo(
@@ -722,6 +688,8 @@ const createLineForTakeoffsInput = z.object({
 const syncTakeoffInput = z.object({
   estimate_id: z.string().uuid(),
   estimate_line_item_id: z.string().uuid(),
+  expected_updated_at: z.string().datetime({ offset: true }),
+  operation_key: z.string().trim().min(1).max(200),
   // A confirmed sync overwrites a hand-typed quantity after conflict review.
   force: z.boolean().optional().default(false),
   // An explicit override syncs across a takeoff/line unit mismatch.
@@ -816,7 +784,10 @@ export const recordScaleAssessment = createServerFn({ method: "POST" })
       throw new Error("Scale Assurance is waiting for its Lovable database migration.");
     }
     if (result.error) throw new Error(result.error.message);
-    const raw = ((result.data ?? [])[0] ?? {}) as Record<string, unknown>;
+    const raw = (Array.isArray(result.data) ? result.data[0] : (result.data ?? {})) as Record<
+      string,
+      unknown
+    >;
     if (!raw.assessment_id) throw new Error("Scale Assurance did not return a saved review.");
     const normalized = normalizeScaleAssessment({
       id: raw.assessment_id,
@@ -1456,40 +1427,28 @@ function isMissingCreatedByAiColumn(error: DynamicSupabaseError | null | undefin
   );
 }
 
-function isMissingQuantityProvenanceColumn(error: DynamicSupabaseError | null | undefined) {
-  const message = error?.message ?? "";
-  return Boolean(
-    error &&
-    (error.code === "PGRST204" ||
-      error.code === "42703" ||
-      (/quantity_source|takeoff_quantity|takeoff_synced_at|takeoff_unit/i.test(message) &&
-        /schema cache|column|could not find|does not exist/i.test(message))),
-  );
-}
-
 async function syncTakeoffQuantityToLine(
   context: { supabase: unknown },
   estimateId: string,
   lineItemId: string,
-  options: { force?: boolean; forceUnit?: boolean } = {},
+  options: {
+    force?: boolean;
+    forceUnit?: boolean;
+    expectedUpdatedAt?: string;
+    operationKey?: string;
+  } = {},
 ) {
-  let lineResult = await dynamicTable(context.supabase, "estimate_line_items")
-    .select("id,estimate_id,unit,quantity,quantity_source,takeoff_quantity")
+  const lineResult = await dynamicTable(context.supabase, "estimate_line_items")
+    .select("id,estimate_id,unit,quantity,quantity_source,takeoff_quantity,updated_at")
     .eq("id", lineItemId)
     .eq("estimate_id", estimateId)
     .single();
-  // Pre-migration fallback: without the provenance columns the sync behaves
-  // like it always has (last write wins).
-  let provenanceReady = true;
-  if (lineResult.error && isMissingQuantityProvenanceColumn(lineResult.error)) {
-    provenanceReady = false;
-    lineResult = await dynamicTable(context.supabase, "estimate_line_items")
-      .select("id,estimate_id,unit,quantity")
-      .eq("id", lineItemId)
-      .eq("estimate_id", estimateId)
-      .single();
-  }
   if (lineResult.error || !lineResult.data) {
+    if (/schema cache|column|does not exist/i.test(lineResult.error?.message ?? "")) {
+      throw new Error(
+        "Takeoff quantity authority is still being enabled. No estimate quantity changed; try again after Lovable finishes the migration.",
+      );
+    }
     throw new Error(lineResult.error?.message ?? "Estimate line was not found.");
   }
 
@@ -1569,7 +1528,6 @@ async function syncTakeoffQuantityToLine(
   const manualQuantityDiffers =
     lastTakeoffQuantity == null ? currentQuantity > 0 : currentQuantity !== lastTakeoffQuantity;
   if (
-    provenanceReady &&
     !options.force &&
     quantitySource === "manual" &&
     currentQuantity !== quantity &&
@@ -1587,38 +1545,31 @@ async function syncTakeoffQuantityToLine(
     };
   }
 
-  // Provenance patches degrade in steps: full metadata, then Phase 1
-  // provenance without takeoff_unit, then the legacy quantity-only write.
-  const updatePatches: Record<string, unknown>[] = provenanceReady
-    ? [
-        {
-          takeoff_quantity: quantity,
-          takeoff_synced_at: new Date().toISOString(),
-          takeoff_unit: takeoffUnit || null,
-          quantity_source: "takeoff",
-          quantity,
-        },
-        {
-          takeoff_quantity: quantity,
-          takeoff_synced_at: new Date().toISOString(),
-          quantity_source: "takeoff",
-          quantity,
-        },
-        { quantity },
-      ]
-    : [{ quantity }];
-  let updateError: DynamicSupabaseError | null = null;
-  for (const patch of updatePatches) {
-    const result = await dynamicTable(context.supabase, "estimate_line_items")
-      .update(patch)
-      .eq("id", lineItemId)
-      .eq("estimate_id", estimateId);
-    updateError = result.error;
-    if (!updateError || !isMissingQuantityProvenanceColumn(updateError)) break;
+  const expectedUpdatedAt = options.expectedUpdatedAt ?? str(line.updated_at);
+  const operationKey =
+    options.operationKey ??
+    `takeoff-sync:${lineItemId}:${expectedUpdatedAt}:${quantity}:${takeoffUnit || "none"}`;
+  const { error: syncError } = await dynamicRpc(
+    context.supabase,
+    "sync_estimate_takeoff_quantity_atomic",
+    {
+      p_estimate_id: estimateId,
+      p_line_item_id: lineItemId,
+      p_expected_updated_at: expectedUpdatedAt,
+      p_quantity: quantity,
+      p_takeoff_unit: takeoffUnit || null,
+      p_operation_key: operationKey,
+    },
+  );
+  if (syncError) {
+    if (/schema cache|could not find the function|does not exist/i.test(syncError.message)) {
+      throw new Error(
+        "Takeoff quantity authority is still being enabled. No estimate quantity changed; try again after Lovable finishes the migration.",
+      );
+    }
+    throw new Error(syncError.message);
   }
-  if (updateError) throw new Error(updateError.message);
 
-  await recalculateEstimateTotalsInternal(context, estimateId);
   return {
     conflict: false as const,
     unit_conflict: false as const,
@@ -1732,5 +1683,7 @@ export const syncTakeoffToEstimateLine = createServerFn({ method: "POST" })
     sync: await syncTakeoffQuantityToLine(context, data.estimate_id, data.estimate_line_item_id, {
       force: data.force,
       forceUnit: data.force_unit,
+      expectedUpdatedAt: data.expected_updated_at,
+      operationKey: data.operation_key,
     }),
   }));

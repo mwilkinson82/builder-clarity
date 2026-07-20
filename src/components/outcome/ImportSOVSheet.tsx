@@ -99,6 +99,8 @@ export interface SovMappingProfileDraft {
   warnings: string[];
 }
 
+const newSovOperationKey = () => `sov-import:${crypto.randomUUID()}`;
+
 export function ImportSOVSheet({
   existingBuckets = [],
   onImport,
@@ -121,7 +123,8 @@ export function ImportSOVSheet({
     }[],
     mode: "replace" | "append",
     metadata: SovImportMetadata,
-  ) => void;
+    operationKey: string,
+  ) => Promise<void>;
   mappingProfiles?: SovMappingProfileRow[];
   onSaveProfile?: (profile: SovMappingProfileDraft) => Promise<void> | void;
   savingProfile?: boolean;
@@ -137,6 +140,7 @@ export function ImportSOVSheet({
   const [mode, setMode] = useState<"replace" | "append">("replace");
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const operationKeyRef = useRef(newSovOperationKey());
 
   const handleFile = async (file: File) => {
     setError(null);
@@ -185,6 +189,7 @@ export function ImportSOVSheet({
     setSourceName("");
     setProfileName("");
     setPasteText("");
+    operationKeyRef.current = newSovOperationKey();
     if (fileRef.current) fileRef.current.value = "";
   };
 
@@ -258,7 +263,7 @@ export function ImportSOVSheet({
     }
   };
 
-  const commit = () => {
+  const commit = async () => {
     if (missingMappings.length > 0) {
       setError(`Map these required columns before importing: ${missingMappings.join(", ")}.`);
       return;
@@ -292,19 +297,27 @@ export function ImportSOVSheet({
       amount_choices: intake?.amountChoices ?? [],
       warnings: intake?.warnings ?? [],
     };
-    onImport(
-      valid.map(({ valid: _v, reason: _r, action: _a, matchLabel: _m, ...row }) => row),
-      mode,
-      metadata,
-    );
-    setOpen(false);
-    reset();
+    try {
+      await onImport(
+        valid.map(({ valid: _v, reason: _r, action: _a, matchLabel: _m, ...row }) => row),
+        mode,
+        metadata,
+        operationKeyRef.current,
+      );
+      setOpen(false);
+      reset();
+    } catch (err) {
+      // Preserve every staged row and the same operation key. Retrying a
+      // response-lost commit is safe, and a true failure remains visible.
+      setError(err instanceof Error ? err.message : "Budget import did not commit.");
+    }
   };
 
   return (
     <Sheet
       open={open}
       onOpenChange={(o) => {
+        if (pending) return;
         setOpen(o);
         if (!o) reset();
       }}
@@ -587,7 +600,11 @@ export function ImportSOVSheet({
               </div>
             </div>
 
-            {error && <p className="text-sm text-danger">{error}</p>}
+            {error && (
+              <p role="alert" className="text-sm text-danger">
+                {error}
+              </p>
+            )}
           </div>
         )}
 

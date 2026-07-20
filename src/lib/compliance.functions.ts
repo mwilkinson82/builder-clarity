@@ -315,11 +315,17 @@ const waiverInput = z.object({
       "unconditional_final",
     ])
     .default("conditional_progress"),
-  through_date: z.string().nullable().optional(),
-  amount: z.number().min(0).default(0),
-  signed_date: z.string().nullable().optional(),
-  storage_path: z.string().max(500).default(""),
-  file_name: z.string().max(300).default(""),
+  through_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A through date is required."),
+  amount: z
+    .number()
+    .positive("A positive waiver amount is required.")
+    .refine(
+      (value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-7,
+      "Enter an amount with no more than two decimal places.",
+    ),
+  signed_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A signed date is required."),
+  storage_path: z.string().trim().min(1, "Upload the signed waiver document.").max(500),
+  file_name: z.string().trim().min(1, "Upload the signed waiver document.").max(300),
   notes: z.string().max(2000).default(""),
 });
 

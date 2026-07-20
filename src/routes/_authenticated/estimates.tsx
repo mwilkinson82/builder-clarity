@@ -1,8 +1,8 @@
 import { createFileRoute, Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useMemo, useState } from "react";
-import { Copy, Eye, MoreHorizontal, Plus, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Archive, Copy, Eye, MoreHorizontal, Plus, Search, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
@@ -176,6 +176,9 @@ function EstimatesPage() {
   const [newDescription, setNewDescription] = useState("");
   const [newRegion, setNewRegion] = useState("national");
   const [deleteTarget, setDeleteTarget] = useState<EstimateRow | null>(null);
+  const folderOperationKeysRef = useRef(new Map<string, string>());
+  const archiveOperationKeysRef = useRef(new Map<string, string>());
+  const workingCopyOperationKeyRef = useRef(crypto.randomUUID());
 
   const estimatesQuery = useQuery({
     queryKey: ["estimates"],
@@ -289,9 +292,17 @@ function EstimatesPage() {
   });
 
   const folderMutation = useMutation({
-    mutationFn: ({ id, folder }: { id: string; folder: EstimateFolder }) =>
-      update({ data: { id, patch: { folder } } }),
-    onSuccess: () => {
+    mutationFn: ({
+      id,
+      folder,
+      operation_key,
+    }: {
+      id: string;
+      folder: EstimateFolder;
+      operation_key: string;
+    }) => update({ data: { id, patch: { folder }, operation_key } }),
+    onSuccess: (_result, payload) => {
+      folderOperationKeysRef.current.delete(`${payload.id}:${payload.folder}`);
       qc.invalidateQueries({ queryKey: ["estimates"] });
       toast.success("Estimate moved");
     },
@@ -300,22 +311,37 @@ function EstimatesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteEstimateFn({ data: { id } }),
-    onSuccess: () => {
+    mutationFn: (id: string) => {
+      let operationKey = archiveOperationKeysRef.current.get(id);
+      if (!operationKey) {
+        operationKey = crypto.randomUUID();
+        archiveOperationKeysRef.current.set(id, operationKey);
+      }
+      return deleteEstimateFn({ data: { id, operation_key: operationKey } });
+    },
+    onSuccess: (_result, id) => {
+      archiveOperationKeysRef.current.delete(id);
       setDeleteTarget(null);
       qc.invalidateQueries({ queryKey: ["estimates"] });
-      toast.success("Estimate deleted");
+      toast.success("Estimate archived");
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Estimate did not delete"),
+      toast.error(error instanceof Error ? error.message : "Estimate did not archive"),
   });
 
   const createWorkingCopyMutation = useMutation({
     mutationFn: () => {
       if (!canonicalDemo) throw new Error("The canonical sample is not available yet.");
-      return duplicateEstimateFn({ data: { id: canonicalDemo.id, as_project_estimate: true } });
+      return duplicateEstimateFn({
+        data: {
+          id: canonicalDemo.id,
+          as_project_estimate: true,
+          operation_key: workingCopyOperationKeyRef.current,
+        },
+      });
     },
     onSuccess: (result) => {
+      workingCopyOperationKeyRef.current = crypto.randomUUID();
       toast.success("Your isolated working copy is ready.");
       navigate({ to: "/estimates/$estimateId", params: { estimateId: result.id } });
     },
@@ -519,12 +545,19 @@ function EstimatesPage() {
                         >
                           <Select
                             value={estimate.folder}
-                            onValueChange={(folder) =>
+                            onValueChange={(folder) => {
+                              const fingerprint = `${estimate.id}:${folder}`;
+                              let operationKey = folderOperationKeysRef.current.get(fingerprint);
+                              if (!operationKey) {
+                                operationKey = crypto.randomUUID();
+                                folderOperationKeysRef.current.set(fingerprint, operationKey);
+                              }
                               folderMutation.mutate({
                                 id: estimate.id,
                                 folder: folder as EstimateFolder,
-                              })
-                            }
+                                operation_key: operationKey,
+                              });
+                            }}
                             disabled={folderMutation.isPending}
                           >
                             <SelectTrigger className="h-9 w-[160px]">
@@ -585,7 +618,7 @@ function EstimatesPage() {
                               disabled={deleteMutation.isPending}
                               onSelect={() => setDeleteTarget(estimate)}
                             >
-                              <Trash2 className="mr-2 h-4 w-4" /> Delete estimate
+                              <Archive className="mr-2 h-4 w-4" /> Archive estimate
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -657,12 +690,12 @@ function EstimatesPage() {
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent>
           <DialogHeaderV2
-            title="Delete Estimate?"
+            title="Archive Estimate?"
             description={
               <>
-                This permanently removes{" "}
-                {deleteTarget?.name ? `"${deleteTarget.name}"` : "this estimate"} and its line items
-                from Overwatch. This does not move it to Archived.
+                This moves {deleteTarget?.name ? `"${deleteTarget.name}"` : "this estimate"} and its
+                worksheet history to Archived. Its financial record and audit history remain
+                available.
               </>
             }
           />
@@ -679,7 +712,7 @@ function EstimatesPage() {
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
               disabled={!deleteTarget || deleteMutation.isPending}
             >
-              Delete Estimate
+              Archive Estimate
             </Button>
           </DialogFooter>
         </DialogContent>

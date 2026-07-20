@@ -9,11 +9,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
-import {
-  appendCollectionsNote,
-  DEFAULT_COLLECTIONS_OVERDUE_DAYS,
-  invoiceOpenBalanceCents,
-} from "@/lib/receivables";
+import { DEFAULT_COLLECTIONS_OVERDUE_DAYS, invoiceOpenBalanceCents } from "@/lib/receivables";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -201,23 +197,31 @@ export const getReceivablesCockpit = createServerFn({ method: "GET" })
           .select("id,project_id,sort_order")
           .in("project_id", projectIds),
       ]);
-    if (invoiceRes.error) throw new Error(invoiceRes.error.message);
-    if (paymentRes.error && !isMissingSchema(paymentRes.error)) {
-      throw new Error(paymentRes.error.message);
+    if (invoiceRes.error) throw new Error(`Invoices did not load: ${invoiceRes.error.message}`);
+    if (paymentRes.error) {
+      throw new Error(`Payment activity did not load: ${paymentRes.error.message}`);
     }
-    if (coRes.error) throw new Error(coRes.error.message);
+    if (accessRes.error) {
+      throw new Error(`Billing recipients did not load: ${accessRes.error.message}`);
+    }
+    if (coRes.error) throw new Error(`Change orders did not load: ${coRes.error.message}`);
+    if (allocationRes.error) {
+      throw new Error(`Change-order allocations did not load: ${allocationRes.error.message}`);
+    }
+    if (lineRes.error) {
+      throw new Error(`Billing line detail did not load: ${lineRes.error.message}`);
+    }
+    if (appRes.error) {
+      throw new Error(`Billing applications did not load: ${appRes.error.message}`);
+    }
 
     const invoiceRows = (invoiceRes.data ?? []) as Record<string, unknown>[];
-    const paymentRows = paymentRes.error
-      ? []
-      : ((paymentRes.data ?? []) as Record<string, unknown>[]);
-    const accessRows = accessRes.error ? [] : ((accessRes.data ?? []) as Record<string, unknown>[]);
+    const paymentRows = (paymentRes.data ?? []) as Record<string, unknown>[];
+    const accessRows = (accessRes.data ?? []) as Record<string, unknown>[];
     const coRows = (coRes.data ?? []) as Record<string, unknown>[];
-    const allocationRows = allocationRes.error
-      ? []
-      : ((allocationRes.data ?? []) as Record<string, unknown>[]);
-    const lineRows = lineRes.error ? [] : ((lineRes.data ?? []) as Record<string, unknown>[]);
-    const appRows = appRes.error ? [] : ((appRes.data ?? []) as Record<string, unknown>[]);
+    const allocationRows = (allocationRes.data ?? []) as Record<string, unknown>[];
+    const lineRows = (lineRes.data ?? []) as Record<string, unknown>[];
+    const appRows = (appRes.data ?? []) as Record<string, unknown>[];
 
     // Send/view tracking columns arrive with the GETTINGPAID1 migration; the
     // cockpit stays functional (chain shows sent/paid only) until then.
@@ -432,6 +436,7 @@ export const getBillingFeedPulse = createServerFn({ method: "GET" })
 const collectionsNoteInput = z.object({
   invoiceId: z.string().uuid(),
   note: z.string().min(1).max(500),
+  idempotency_key: z.string().trim().min(1).max(200),
 });
 
 /**
@@ -445,33 +450,23 @@ export const appendInvoiceCollectionsNote = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const ctx = context as unknown as ServerContext;
-    const invoiceRes = await table(ctx, "billing_invoices")
-      .select("id,project_id,collections_log")
-      .eq("id", data.invoiceId)
-      .single();
-    if (invoiceRes.error) {
-      if (isMissingSchema(invoiceRes.error)) {
+    const result = await ctx.supabase.rpc("append_invoice_collections_note_atomic", {
+      p_billing_invoice_id: data.invoiceId,
+      p_note: data.note,
+      p_idempotency_key: data.idempotency_key,
+    });
+    if (result.error) {
+      if (isMissingSchema(result.error)) {
         throw new Error(
           "Collections notes need the Getting Paid database migration. Apply it, then retry.",
         );
       }
-      throw new Error(invoiceRes.error.message);
+      throw new Error(result.error.message);
     }
-    const invoice = invoiceRes.data as Record<string, unknown>;
-    const accessRes = await ctx.supabase.rpc("can_manage_project", {
-      p_project_id: String(invoice.project_id),
-    });
-    if (accessRes.error) throw new Error(accessRes.error.message);
-    if (!accessRes.data) throw new Error("You do not have permission to manage this project.");
-
-    const nextLog = appendCollectionsNote(
-      str(invoice.collections_log),
-      data.note,
-      new Date().toISOString(),
-    );
-    const updateRes = await table(ctx, "billing_invoices")
-      .update({ collections_log: nextLog })
-      .eq("id", data.invoiceId);
-    if (updateRes.error) throw new Error(updateRes.error.message);
-    return { ok: true, collections_log: nextLog };
+    const command = (result.data ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      collections_log: str(command.collectionsLog),
+      deduplicated: Boolean(command.deduplicated),
+    };
   });

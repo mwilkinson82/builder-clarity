@@ -107,6 +107,19 @@ async function settle() {
   });
 }
 
+async function waitForComposeForm() {
+  let activity: HTMLInputElement | null = null;
+  await act(async () => {
+    await vi.waitFor(() => {
+      activity = container!.querySelector<HTMLInputElement>(
+        'input[placeholder="e.g. Formed and poured north footings"]',
+      );
+      expect(activity).toBeTruthy();
+    });
+  });
+  return activity!;
+}
+
 function buttonNamed(name: string) {
   return Array.from(container!.querySelectorAll("button")).find((button) =>
     button.textContent?.includes(name),
@@ -187,11 +200,7 @@ test("the large Daily Report Save persists the pending work line and locks it mi
 
   await settle();
   act(() => buttonNamed("Open today")!.click());
-
-  const activity = container!.querySelector<HTMLInputElement>(
-    'input[placeholder="e.g. Formed and poured north footings"]',
-  );
-  expect(activity).toBeTruthy();
+  const activity = await waitForComposeForm();
   typeInto(activity!, "Framing at the north lobby");
 
   act(() => buttonNamed("Save daily report")!.click());
@@ -217,10 +226,7 @@ test("the large Daily Report Save persists the pending work line and locks it mi
 test("invalid attachments fail before a pending work line is committed", async () => {
   await settle();
   act(() => buttonNamed("Open today")!.click());
-
-  const activity = container!.querySelector<HTMLInputElement>(
-    'input[placeholder="e.g. Formed and poured north footings"]',
-  );
+  const activity = await waitForComposeForm();
   typeInto(activity!, "North lobby framing");
 
   const attachmentInput = container!.querySelector<HTMLInputElement>("#daily-report-file-input");

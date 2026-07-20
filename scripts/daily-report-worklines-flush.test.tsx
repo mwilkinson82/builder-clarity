@@ -77,6 +77,19 @@ function mount(ref: React.RefObject<DailyLogWorkLinesHandle | null>) {
   });
 }
 
+async function waitForComposeForm() {
+  let activity: HTMLInputElement | null = null;
+  await act(async () => {
+    await vi.waitFor(() => {
+      activity = container!.querySelector<HTMLInputElement>(
+        'input[placeholder="e.g. Formed and poured north footings"]',
+      );
+      expect(activity, "compose form Activity input is present").toBeTruthy();
+    });
+  });
+  return activity!;
+}
+
 // Set a React-controlled input the way a real keystroke does (native setter +
 // input event), so the component's onChange runs and the draft updates.
 function typeInto(el: HTMLInputElement, value: string) {
@@ -126,11 +139,7 @@ afterEach(() => {
 test("report Save flushes a typed work line that was never 'Add line'-d", async () => {
   const ref = createRef<DailyLogWorkLinesHandle>();
   mount(ref);
-
-  const activity = container!.querySelector<HTMLInputElement>(
-    'input[placeholder="e.g. Formed and poured north footings"]',
-  );
-  expect(activity, "compose form Activity input is present").toBeTruthy();
+  const activity = await waitForComposeForm();
 
   // The super types the day's work but does NOT press "Add line".
   typeInto(activity!, "Electrical rough-in — 24 junction boxes");
@@ -198,6 +207,7 @@ test("field can tag a subcontractor already bought out on the project", async ()
 test("field can preserve an unlisted vendor name for PM reconciliation", async () => {
   const ref = createRef<DailyLogWorkLinesHandle>();
   mount(ref);
+  await waitForComposeForm();
 
   typeInto(
     container!.querySelector<HTMLInputElement>(
@@ -220,6 +230,7 @@ test("field can preserve an unlisted vendor name for PM reconciliation", async (
 test("field quantities, materials, and equipment all reach the PM pricing payload", async () => {
   const ref = createRef<DailyLogWorkLinesHandle>();
   mount(ref);
+  await waitForComposeForm();
 
   typeInto(
     container!.querySelector<HTMLInputElement>(
@@ -346,10 +357,7 @@ test("Add line and report Save share one in-flight insert", async () => {
   );
   const ref = createRef<DailyLogWorkLinesHandle>();
   mount(ref);
-
-  const activity = container!.querySelector<HTMLInputElement>(
-    'input[placeholder="e.g. Formed and poured north footings"]',
-  );
+  const activity = await waitForComposeForm();
   typeInto(activity!, "North lobby electrical rough-in");
 
   const addLine = Array.from(container!.querySelectorAll("button")).find((button) =>
@@ -374,6 +382,7 @@ test("Add line and report Save share one in-flight insert", async () => {
 test("flush is a no-op when the compose form is empty (no phantom line)", async () => {
   const ref = createRef<DailyLogWorkLinesHandle>();
   mount(ref);
+  await waitForComposeForm();
 
   expect(ref.current!.hasPendingLine()).toBe(false);
   await act(async () => {

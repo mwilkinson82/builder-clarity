@@ -4,8 +4,8 @@
 // remains as general job risk. Allocating a slice to a cost code is what makes
 // the budget ledger's At Risk (E) / Contingency (C) columns live instead of a
 // number someone types. Mirrors the change-order allocation panel.
-import { useMemo, useState } from "react";
-import { AlertTriangle, Check, Plus, Trash2 } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { AlertTriangle, Check, Pencil, Plus, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -20,25 +20,47 @@ import {
 import { StatusChip } from "@/components/ui/status-chip";
 import { fmtUSD } from "@/lib/format";
 import { allocatedByExposure, summarizeExposure } from "@/lib/exposure-allocation";
-import type { BucketRow, ExposureAllocationRow, ExposureRow } from "@/lib/projects.functions";
+import type { ExposureAllocationRow } from "@/lib/exposure-allocations.functions";
+import type { BucketRow, ExposureRow } from "@/lib/projects.functions";
 
 export interface ExposureAllocationInput {
   exposureId: string;
   costBucketId: string;
   amount: number;
+  operationKey: string;
+}
+
+export interface ExposureAllocationUpdateInput {
+  id: string;
+  costBucketId: string;
+  amount: number;
+  expectedVersion: number;
+  operationKey: string;
+}
+
+export interface ExposureAllocationDeleteInput {
+  id: string;
+  expectedVersion: number;
+  operationKey: string;
 }
 
 interface ExposureAllocationPanelProps {
   exposures: ExposureRow[];
   buckets: BucketRow[];
   allocations: ExposureAllocationRow[];
-  onAllocate: (input: ExposureAllocationInput) => void;
-  onRemoveAllocation: (id: string) => void;
+  onAllocate: (input: ExposureAllocationInput) => Promise<void>;
+  onUpdateAllocation: (input: ExposureAllocationUpdateInput) => Promise<void>;
+  onRemoveAllocation: (input: ExposureAllocationDeleteInput) => Promise<void>;
   saving?: boolean;
 }
 
 function bucketLabel(bucket: BucketRow) {
   return [bucket.cost_code, bucket.bucket].filter(Boolean).join(" · ") || "Uncoded line";
+}
+
+function newOperationKey(exposureId: string, action: "create" | "update" | "delete") {
+  const nonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  return `exposure-allocation:${exposureId}:${action}:${nonce}`;
 }
 
 // E-Holds feed At Risk, C-Holds feed Contingency — name the column each risk
@@ -52,20 +74,37 @@ function ExposureRowCard({
   buckets,
   allocations,
   onAllocate,
+  onUpdateAllocation,
   onRemoveAllocation,
   saving,
 }: {
   exposure: ExposureRow;
   buckets: BucketRow[];
   allocations: ExposureAllocationRow[];
-  onAllocate: (input: ExposureAllocationInput) => void;
-  onRemoveAllocation: (id: string) => void;
+  onAllocate: (input: ExposureAllocationInput) => Promise<void>;
+  onUpdateAllocation: (input: ExposureAllocationUpdateInput) => Promise<void>;
+  onRemoveAllocation: (input: ExposureAllocationDeleteInput) => Promise<void>;
   saving?: boolean;
 }) {
   const summary = summarizeExposure(exposure.id, exposure.dollar_exposure, allocations);
   const rowAllocations = allocations.filter((allocation) => allocation.exposure_id === exposure.id);
   const [bucketId, setBucketId] = useState("");
   const [amount, setAmount] = useState(0);
+  const [operationKey, setOperationKey] = useState(() => newOperationKey(exposure.id, "create"));
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editBucketId, setEditBucketId] = useState("");
+  const [editAmount, setEditAmount] = useState(0);
+  const [editOperationKey, setEditOperationKey] = useState(() =>
+    newOperationKey(exposure.id, "update"),
+  );
+  const [editError, setEditError] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const deleteOperationKeys = useRef(new Map<string, string>());
+  const busy = Boolean(saving || submitting || editing || deletingId);
 
   // Only cost-coded buckets are valid targets — an uncoded line can't carry
   // risk into the At Risk / Contingency column.
@@ -73,13 +112,113 @@ function ExposureRowCard({
 
   const startAllocation = (nextBucketId: string) => {
     setBucketId(nextBucketId);
+    setOperationKey(newOperationKey(exposure.id, "create"));
+    setSubmitError("");
     if (summary.remaining > 0) setAmount(summary.remaining);
   };
-  const submit = () => {
-    if (!bucketId || amount <= 0) return;
-    onAllocate({ exposureId: exposure.id, costBucketId: bucketId, amount });
-    setBucketId("");
-    setAmount(0);
+
+  const changeAmount = (nextAmount: number) => {
+    setAmount(nextAmount);
+    setOperationKey(newOperationKey(exposure.id, "create"));
+    setSubmitError("");
+  };
+
+  const submit = async () => {
+    if (busy || !bucketId || amount <= 0) return;
+    setSubmitError("");
+    setSubmitting(true);
+    try {
+      await onAllocate({
+        exposureId: exposure.id,
+        costBucketId: bucketId,
+        amount,
+        operationKey,
+      });
+      setBucketId("");
+      setAmount(0);
+      setOperationKey(newOperationKey(exposure.id, "create"));
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Allocation did not save.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const beginEdit = (allocation: ExposureAllocationRow) => {
+    setEditingId(allocation.id);
+    setEditBucketId(allocation.cost_bucket_id);
+    setEditAmount(allocation.amount);
+    setEditOperationKey(newOperationKey(exposure.id, "update"));
+    setEditError("");
+  };
+
+  const cancelEdit = () => {
+    if (editing) return;
+    setEditingId(null);
+    setEditError("");
+  };
+
+  const changeEditBucket = (nextBucketId: string) => {
+    setEditBucketId(nextBucketId);
+    setEditOperationKey(newOperationKey(exposure.id, "update"));
+    setEditError("");
+  };
+
+  const changeEditAmount = (nextAmount: number) => {
+    setEditAmount(nextAmount);
+    setEditOperationKey(newOperationKey(exposure.id, "update"));
+    setEditError("");
+  };
+
+  const submitEdit = async (allocation: ExposureAllocationRow) => {
+    if (busy || editAmount <= 0 || !editBucketId) return;
+    setEditError("");
+    setEditing(true);
+    try {
+      await onUpdateAllocation({
+        id: allocation.id,
+        costBucketId: editBucketId,
+        amount: editAmount,
+        expectedVersion: allocation.version,
+        operationKey: editOperationKey,
+      });
+      setEditingId(null);
+      setEditError("");
+      setEditOperationKey(newOperationKey(exposure.id, "update"));
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : "Allocation did not update.");
+    } finally {
+      setEditing(false);
+    }
+  };
+
+  const remove = async (allocation: ExposureAllocationRow) => {
+    if (busy) return;
+    const existingKey = deleteOperationKeys.current.get(allocation.id);
+    const key = existingKey ?? newOperationKey(exposure.id, "delete");
+    deleteOperationKeys.current.set(allocation.id, key);
+    setDeleteErrors((current) => ({ ...current, [allocation.id]: "" }));
+    setDeletingId(allocation.id);
+    try {
+      await onRemoveAllocation({
+        id: allocation.id,
+        expectedVersion: allocation.version,
+        operationKey: key,
+      });
+      deleteOperationKeys.current.delete(allocation.id);
+      setDeleteErrors((current) => {
+        const next = { ...current };
+        delete next[allocation.id];
+        return next;
+      });
+    } catch (error) {
+      setDeleteErrors((current) => ({
+        ...current,
+        [allocation.id]: error instanceof Error ? error.message : "Allocation did not remove.",
+      }));
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   return (
@@ -122,31 +261,124 @@ function ExposureRowCard({
 
       {rowAllocations.length > 0 ? (
         <div className="mt-3 space-y-1.5">
-          {rowAllocations.map((allocation) => (
-            <div
-              key={allocation.id}
-              className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-card px-3 py-1.5 text-xs"
-            >
-              <span className="min-w-0 truncate">
-                <span className="font-medium text-foreground">
-                  {allocation.cost_code || "Uncoded"}
-                </span>
-                <span className="text-muted-foreground"> · {holdColumn(exposure.hold_class)}</span>
-              </span>
-              <span className="flex items-center gap-2">
-                <span className="tabular font-medium">{fmtUSD(allocation.amount)}</span>
-                <button
-                  type="button"
-                  aria-label="Remove allocation"
-                  className="text-muted-foreground hover:text-danger"
-                  disabled={saving}
-                  onClick={() => onRemoveAllocation(allocation.id)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </span>
-            </div>
-          ))}
+          {rowAllocations.map((allocation) => {
+            const isEditing = editingId === allocation.id;
+            return (
+              <div
+                key={allocation.id}
+                className="rounded-md border border-hairline bg-card px-3 py-2 text-xs"
+              >
+                {isEditing ? (
+                  <div className="space-y-2">
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_auto] sm:items-end">
+                      <div className="space-y-1">
+                        <Label className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                          Cost code
+                        </Label>
+                        <Select
+                          value={editBucketId}
+                          onValueChange={changeEditBucket}
+                          disabled={busy}
+                        >
+                          <SelectTrigger className="h-8">
+                            <SelectValue placeholder="Choose a cost code…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {codedBuckets.map((bucket) => (
+                              <SelectItem key={bucket.id} value={bucket.id}>
+                                {bucketLabel(bucket)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                          Amount
+                        </Label>
+                        <MoneyInput
+                          value={editAmount}
+                          onValueChange={changeEditAmount}
+                          align="right"
+                          className="h-8"
+                          disabled={busy}
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8"
+                          disabled={busy || !editBucketId || editAmount <= 0}
+                          onClick={() => void submitEdit(allocation)}
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          aria-label="Cancel allocation edit"
+                          disabled={editing}
+                          onClick={cancelEdit}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                    {editError ? (
+                      <p role="alert" className="text-xs text-danger">
+                        {editError}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate">
+                        <span className="font-medium text-foreground">
+                          {allocation.cost_code || "Uncoded"}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {holdColumn(exposure.hold_class)}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="mr-1 tabular font-medium">
+                          {fmtUSD(allocation.amount)}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label="Edit allocation"
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          disabled={busy}
+                          onClick={() => beginEdit(allocation)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Remove allocation"
+                          className="rounded p-1 text-muted-foreground hover:bg-danger/10 hover:text-danger"
+                          disabled={busy}
+                          onClick={() => void remove(allocation)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    </div>
+                    {deleteErrors[allocation.id] ? (
+                      <p role="alert" className="mt-1 text-xs text-danger">
+                        {deleteErrors[allocation.id]}
+                      </p>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
@@ -162,7 +394,7 @@ function ExposureRowCard({
               <Label className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                 Allocate to cost code
               </Label>
-              <Select value={bucketId} onValueChange={startAllocation}>
+              <Select value={bucketId} onValueChange={startAllocation} disabled={busy}>
                 <SelectTrigger className="h-9">
                   <SelectValue placeholder="Choose a cost code…" />
                 </SelectTrigger>
@@ -179,17 +411,28 @@ function ExposureRowCard({
               <Label className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                 Amount
               </Label>
-              <MoneyInput value={amount} onValueChange={setAmount} align="right" className="h-9" />
+              <MoneyInput
+                value={amount}
+                onValueChange={changeAmount}
+                align="right"
+                className="h-9"
+                disabled={busy}
+              />
             </div>
             <Button
               type="button"
               size="sm"
               className="h-9 gap-1.5"
-              disabled={saving || !bucketId || amount <= 0}
-              onClick={submit}
+              disabled={busy || !bucketId || amount <= 0}
+              onClick={() => void submit()}
             >
               <Plus className="h-3.5 w-3.5" /> Allocate
             </Button>
+            {submitError ? (
+              <p role="alert" className="text-xs text-danger sm:basis-full">
+                {submitError}
+              </p>
+            ) : null}
           </div>
         )
       ) : null}
@@ -202,6 +445,7 @@ export function ExposureAllocationPanel({
   buckets,
   allocations,
   onAllocate,
+  onUpdateAllocation,
   onRemoveAllocation,
   saving,
 }: ExposureAllocationPanelProps) {
@@ -256,6 +500,7 @@ export function ExposureAllocationPanel({
           buckets={buckets}
           allocations={allocations}
           onAllocate={onAllocate}
+          onUpdateAllocation={onUpdateAllocation}
           onRemoveAllocation={onRemoveAllocation}
           saving={saving}
         />

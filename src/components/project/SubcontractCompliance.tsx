@@ -516,7 +516,17 @@ export function SubcontractCompliance({
                 }}
               />
             </label>
-            <Button type="button" size="sm" disabled={savingWaiver} onClick={recordWaiver}>
+            <Button
+              type="button"
+              size="sm"
+              disabled={savingWaiver || !wThrough || wAmount <= 0 || !wFile}
+              title={
+                !wThrough || wAmount <= 0 || !wFile
+                  ? "Enter the through date and amount, then attach the signed waiver."
+                  : undefined
+              }
+              onClick={recordWaiver}
+            >
               Add
             </Button>
           </div>

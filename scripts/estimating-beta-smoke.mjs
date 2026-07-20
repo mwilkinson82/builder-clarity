@@ -1277,12 +1277,36 @@ assert.match(estimatesSource, /Harbor Residence - Sample Estimate/);
 assert.match(estimatesSource, /Harbor Residence - Sample Master Sheet/);
 assert.match(estimatesSource, /ensureHarborSampleMasterSheet/);
 assert.match(estimatesSource, /createBlankLineItems/);
-assert.match(estimatesSource, /canonical_working_copy/);
-assert.match(estimatesSource, /estimate_plan_sets/);
+// Financial hardening: the protected canonical sample is stamped on the row
+// (is_canonical_demo) and "Create my working copy" is a single atomic,
+// retry-keyed database command instead of client-side row stitching.
+assert.match(estimatesSource, /is_canonical_demo: true/);
+assert.match(estimatesSource, /HARBOR_WORKING_COPY_NAME/);
+assert.match(estimatesSource, /duplicate_estimate_atomic/);
 assert.match(estimatesSource, /estimate_plan_sheets/);
 assert.match(estimatesSource, /estimate_takeoff_measurements/);
-assert.match(estimatesSource, /lineIdMap\.get/);
-assert.match(estimatesSource, /scale_verified_at: null/);
+// Plan-room persistence lives in its own module, and estimate duplication —
+// including plan-set/sheet/takeoff line remapping and the scale-verification
+// reset — happens inside the atomic SQL command, not client-side stitching.
+const planRoomSource = await readFile(
+  new URL("../src/lib/plan-room.functions.ts", import.meta.url),
+  "utf8",
+);
+assert.match(planRoomSource, /estimate_plan_sets/);
+assert.match(planRoomSource, /estimate_plan_sheets/);
+assert.match(planRoomSource, /estimate_takeoff_measurements/);
+assert.match(planRoomSource, /scale_verified_at: null/);
+const authorityMigrationSource = await readFile(
+  new URL(
+    "../supabase/migrations/20260720191111_financial_authority_adversarial_hardening.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+assert.match(authorityMigrationSource, /duplicate_estimate_atomic/);
+assert.match(authorityMigrationSource, /v_line_map/);
+assert.match(authorityMigrationSource, /v_plan_set_map/);
+assert.match(authorityMigrationSource, /v_sheet_map/);
 const harborBlock = estimatesSource.match(
   /const HARBOR_DEMO_ESTIMATE_LINES = \[([\s\S]*?)\n\] as const;/,
 )?.[1];

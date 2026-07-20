@@ -1186,8 +1186,13 @@ export const recordClientChangeOrderDecision = createServerFn({ method: "POST" }
  */
 export const recordInvoicePortalView = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { invoiceId: string }) =>
-    z.object({ invoiceId: z.string().uuid() }).parse(input),
+  .inputValidator((input: { invoiceId: string; viewEventKey: string }) =>
+    z
+      .object({
+        invoiceId: z.string().uuid(),
+        viewEventKey: z.string().trim().min(8).max(200),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const invoiceRes = await db(context)
@@ -1212,23 +1217,14 @@ export const recordInvoicePortalView = createServerFn({ method: "POST" })
     try {
       const stripeServer = await import("@/lib/stripe.server");
       const admin = stripeServer.createSupabaseAdminClient() as unknown as SupabaseLike;
-      const currentRes = await admin
-        .from("billing_invoices")
-        .select("first_viewed_at,view_count")
-        .eq("id", data.invoiceId)
-        .maybeSingle();
-      if (currentRes.error) return { ok: true, recorded: false };
-      const current = (currentRes.data ?? {}) as Record<string, unknown>;
-      const nowIso = new Date().toISOString();
-      const updateRes = await admin
-        .from("billing_invoices")
-        .update({
-          first_viewed_at: (current.first_viewed_at as string | null) ?? nowIso,
-          last_viewed_at: nowIso,
-          view_count: num(current.view_count) + 1,
-        })
-        .eq("id", data.invoiceId);
-      return { ok: true, recorded: !updateRes.error };
+      const viewRes = await admin.rpc("record_billing_invoice_portal_view_atomic", {
+        p_billing_invoice_id: data.invoiceId,
+        p_viewer_user_id: (context as ServerContext).userId,
+        p_viewer_email: str((context as ServerContext).claims?.email),
+        p_event_key: data.viewEventKey,
+        p_user_agent: str((context as ServerContext).claims?.user_agent),
+      });
+      return { ok: true, recorded: !viewRes.error };
     } catch {
       // Admin credentials or tracking columns unavailable: the viewed signal
       // simply stays off — never break the portal for it.

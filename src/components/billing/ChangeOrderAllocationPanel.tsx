@@ -27,19 +27,25 @@ export interface ChangeOrderAllocationInput {
   costBucketId: string;
   contractAmount: number;
   costAmount: number;
+  idempotencyKey: string;
 }
 
 interface ChangeOrderAllocationPanelProps {
   changeOrders: ChangeOrderRow[];
   buckets: BucketRow[];
   allocations: ChangeOrderAllocationRow[];
-  onAllocate: (input: ChangeOrderAllocationInput) => void;
+  onAllocate: (input: ChangeOrderAllocationInput) => Promise<void>;
   onRemoveAllocation: (id: string) => void;
   saving?: boolean;
 }
 
 function bucketLabel(bucket: BucketRow) {
   return [bucket.cost_code, bucket.bucket].filter(Boolean).join(" · ") || "Uncoded line";
+}
+
+function newAllocationOperationKey(changeOrderId: string) {
+  const nonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  return `co-allocation:${changeOrderId}:${nonce}`;
 }
 
 function ApprovedCoRow({
@@ -53,7 +59,7 @@ function ApprovedCoRow({
   co: ChangeOrderRow;
   buckets: BucketRow[];
   allocations: ChangeOrderAllocationRow[];
-  onAllocate: (input: ChangeOrderAllocationInput) => void;
+  onAllocate: (input: ChangeOrderAllocationInput) => Promise<void>;
   onRemoveAllocation: (id: string) => void;
   saving?: boolean;
 }) {
@@ -63,6 +69,10 @@ function ApprovedCoRow({
   const [bucketId, setBucketId] = useState("");
   const [amount, setAmount] = useState(0);
   const [costAmount, setCostAmount] = useState(0);
+  const [operationKey, setOperationKey] = useState(() => newAllocationOperationKey(co.id));
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const busy = Boolean(saving || submitting);
 
   // Only cost-coded buckets are valid allocation targets — an uncoded line
   // can't carry a change order into line 2.
@@ -70,21 +80,46 @@ function ApprovedCoRow({
 
   const startAllocation = (nextBucketId: string) => {
     setBucketId(nextBucketId);
+    setOperationKey(newAllocationOperationKey(co.id));
+    setSubmitError("");
     // Default the amount to whatever is still unallocated, the common case.
     if (summary.remaining !== 0) setAmount(Math.abs(summary.remaining));
     if (summary.remainingCost !== 0) setCostAmount(Math.abs(summary.remainingCost));
   };
-  const submit = () => {
-    if (!bucketId || (amount <= 0 && costAmount <= 0)) return;
-    onAllocate({
-      changeOrderId: co.id,
-      costBucketId: bucketId,
-      contractAmount: Math.abs(amount) * (isCredit ? -1 : 1),
-      costAmount: Math.abs(costAmount) * (isCredit ? -1 : 1),
-    });
-    setBucketId("");
-    setAmount(0);
-    setCostAmount(0);
+
+  const changeAmount = (nextAmount: number) => {
+    setAmount(nextAmount);
+    setOperationKey(newAllocationOperationKey(co.id));
+    setSubmitError("");
+  };
+
+  const changeCostAmount = (nextAmount: number) => {
+    setCostAmount(nextAmount);
+    setOperationKey(newAllocationOperationKey(co.id));
+    setSubmitError("");
+  };
+
+  const submit = async () => {
+    if (busy || !bucketId || (amount <= 0 && costAmount <= 0)) return;
+    setSubmitError("");
+    setSubmitting(true);
+    try {
+      await onAllocate({
+        changeOrderId: co.id,
+        costBucketId: bucketId,
+        contractAmount: Math.abs(amount) * (isCredit ? -1 : 1),
+        costAmount: Math.abs(costAmount) * (isCredit ? -1 : 1),
+        idempotencyKey: operationKey,
+      });
+      setBucketId("");
+      setAmount(0);
+      setCostAmount(0);
+      setOperationKey(newAllocationOperationKey(co.id));
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Allocation did not save.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -175,7 +210,7 @@ function ApprovedCoRow({
               <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                 Allocate to cost code
               </Label>
-              <Select value={bucketId} onValueChange={startAllocation}>
+              <Select value={bucketId} onValueChange={startAllocation} disabled={busy}>
                 <SelectTrigger className="h-9">
                   <SelectValue placeholder="Choose a cost code…" />
                 </SelectTrigger>
@@ -192,7 +227,13 @@ function ApprovedCoRow({
               <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                 {isCredit ? "Credit amount" : "Amount"}
               </Label>
-              <MoneyInput value={amount} onValueChange={setAmount} align="right" className="h-9" />
+              <MoneyInput
+                value={amount}
+                onValueChange={changeAmount}
+                align="right"
+                className="h-9"
+                disabled={busy}
+              />
             </div>
             <div className="space-y-1 sm:w-40">
               <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -200,20 +241,26 @@ function ApprovedCoRow({
               </Label>
               <MoneyInput
                 value={costAmount}
-                onValueChange={setCostAmount}
+                onValueChange={changeCostAmount}
                 align="right"
                 className="h-9"
+                disabled={busy}
               />
             </div>
             <Button
               type="button"
               size="sm"
               className="h-9 gap-1.5"
-              disabled={saving || !bucketId || (amount <= 0 && costAmount <= 0)}
+              disabled={busy || !bucketId || (amount <= 0 && costAmount <= 0)}
               onClick={submit}
             >
-              <Plus className="h-3.5 w-3.5" /> Allocate
+              <Plus className="h-3.5 w-3.5" /> {busy ? "Allocating…" : "Allocate"}
             </Button>
+            {submitError ? (
+              <p role="alert" className="text-xs text-danger sm:basis-full">
+                {submitError} Your entries are still here; retry when ready.
+              </p>
+            ) : null}
           </div>
         )
       ) : null}

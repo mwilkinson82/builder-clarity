@@ -126,6 +126,25 @@ function ReportsPage() {
             ? changeOrderQuery
             : billingQuery;
 
+  // Retainage & change orders is a joined report. Treat both queries as one
+  // dependency boundary so a successful CO read can never mask a failed
+  // retainage read and silently substitute $0.
+  const activeReportLoading =
+    activeReport === "retainage-co"
+      ? changeOrderQuery.isLoading || billingQuery.isLoading
+      : activeQuery.isLoading;
+  const activeReportError =
+    activeReport === "retainage-co"
+      ? changeOrderQuery.error || billingQuery.error
+      : activeQuery.error;
+  const retryActiveReport = () => {
+    if (activeReport === "retainage-co") {
+      void Promise.all([changeOrderQuery.refetch(), billingQuery.refetch()]);
+      return;
+    }
+    void activeQuery.refetch();
+  };
+
   // net retainage per project, reused from the WIP/billing engine so the
   // retainage report never disagrees with the WIP report.
   const retainageByProject = useMemo(() => {
@@ -212,22 +231,17 @@ function ReportsPage() {
         </nav>
 
         <div>
-          {activeQuery.isLoading ? (
+          {activeReportLoading ? (
             <p className="text-sm text-muted-foreground">Loading report...</p>
-          ) : activeQuery.error ? (
+          ) : activeReportError ? (
             <div className="rounded-lg border border-danger/30 bg-danger/10 p-5">
               <div className="text-sm font-medium text-danger">Report did not load</div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {activeQuery.error instanceof Error
-                  ? activeQuery.error.message
+                {activeReportError instanceof Error
+                  ? activeReportError.message
                   : "Check the billing schema and try again."}
               </p>
-              <Button
-                size="sm"
-                variant="outline"
-                className="mt-4"
-                onClick={() => activeQuery.refetch()}
-              >
+              <Button size="sm" variant="outline" className="mt-4" onClick={retryActiveReport}>
                 Retry
               </Button>
             </div>
@@ -266,12 +280,12 @@ function ReportsPage() {
               />
             ) : null
           ) : activeReport === "retainage-co" ? (
-            changeOrderQuery.data ? (
+            changeOrderQuery.data && billingQuery.data ? (
               <RetainageChangeOrderReport
                 projects={changeOrderQuery.data.projects}
                 totals={changeOrderQuery.data.totals}
                 retainageByProject={retainageByProject}
-                portfolioRetainage={billingQuery.data?.totals.retainage_held ?? 0}
+                portfolioRetainage={billingQuery.data.totals.retainage_held}
                 companyName={companyName}
                 generatedOn={generatedOn}
               />

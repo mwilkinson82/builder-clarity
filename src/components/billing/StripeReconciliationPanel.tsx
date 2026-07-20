@@ -15,10 +15,10 @@ import {
 import { fmtUSDCents } from "@/lib/billing-format";
 import {
   listUnmatchedStripePayments,
+  recordUnmatchedStripePayment,
   type ReconcileInvoiceOption,
   type UnmatchedStripePayment,
 } from "@/lib/payments.functions";
-import { recordInvoicePayment } from "@/lib/projects.functions";
 
 function paymentMethodLabel(type: string) {
   if (type === "us_bank_account") return "Bank debit (ACH)";
@@ -35,9 +35,18 @@ function paymentDateLabel(iso: string) {
 
 type SweepResult = Awaited<ReturnType<typeof listUnmatchedStripePayments>>;
 
+export function eligibleReconcileInvoices(
+  payment: Pick<UnmatchedStripePayment, "netAppliedAmountCents">,
+  invoices: ReconcileInvoiceOption[],
+) {
+  return invoices.filter(
+    (invoice) => payment.netAppliedAmountCents <= Math.round(invoice.openBalance * 100),
+  );
+}
+
 export function StripeReconciliationPanel() {
   const runSweep = useServerFn(listUnmatchedStripePayments);
-  const recordPayment = useServerFn(recordInvoicePayment);
+  const recordPayment = useServerFn(recordUnmatchedStripePayment);
   const [sweep, setSweep] = useState<SweepResult | null>(null);
   const [invoiceByPayment, setInvoiceByPayment] = useState<Record<string, string>>({});
   const [bookedIds, setBookedIds] = useState<Set<string>>(new Set());
@@ -59,30 +68,23 @@ export function StripeReconciliationPanel() {
     mutationFn: async (payment: UnmatchedStripePayment) => {
       const invoiceId = invoiceByPayment[payment.stripeChargeId];
       if (!invoiceId) throw new Error("Pick the invoice this payment belongs to first.");
-      const stripeReference = payment.stripePaymentIntentId || payment.stripeChargeId;
       return recordPayment({
         data: {
           invoiceId,
-          amount: payment.amount,
-          payment_method:
-            payment.paymentMethodType === "us_bank_account"
-              ? "ach"
-              : payment.paymentMethodType === "card"
-                ? "card"
-                : "other",
-          processor: "stripe",
-          processor_payment_id: stripeReference,
-          reference: stripeReference,
-          paid_at: payment.paidAtIso || undefined,
-          notes: `Recorded from the Stripe unmatched-payments check (${payment.stripeChargeId}).`,
+          stripeChargeId: payment.stripeChargeId,
         },
       });
     },
-    onSuccess: (_result, payment) => {
+    onSuccess: (result, payment) => {
       setBookedIds((current) => new Set(current).add(payment.stripeChargeId));
-      toast.success("Payment recorded to invoice", {
-        description: "The invoice, ledger, and A/R now include this Stripe payment.",
-      });
+      toast.success(
+        result.refundedGrossCents ? "Payment and refund recovered" : "Payment recorded",
+        {
+          description: result.refundedGrossCents
+            ? "The original receipt, linked refund evidence, invoice, and A/R were committed together."
+            : "The invoice, ledger, and A/R now include this Stripe payment.",
+        },
+      );
     },
     onError: (error) =>
       toast.error("Payment did not record", {
@@ -129,8 +131,16 @@ export function StripeReconciliationPanel() {
               ? "all are recorded against an invoice."
               : `${unmatched.length} need attention.`}
           </p>
+          {sweep.partiallyRefundedCount > 0 || sweep.fullyRefundedCount > 0 ? (
+            <div className="rounded-md border border-hairline bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              Refund-aware recovery is active: {sweep.partiallyRefundedCount} partial and{" "}
+              {sweep.fullyRefundedCount} full refund
+              {sweep.fullyRefundedCount === 1 ? "" : "s"} were checked with their original receipts.
+            </div>
+          ) : null}
           {unmatched.map((payment) => {
             const booked = bookedIds.has(payment.stripeChargeId);
+            const eligibleInvoices = eligibleReconcileInvoices(payment, openInvoices);
             const recording =
               recordMutation.isPending &&
               recordMutation.variables?.stripeChargeId === payment.stripeChargeId;
@@ -144,8 +154,12 @@ export function StripeReconciliationPanel() {
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0">
                     <div className="text-sm font-medium tabular">
-                      {fmtUSDCents(payment.amount)} ·{" "}
-                      {paymentMethodLabel(payment.paymentMethodType)} ·{" "}
+                      {payment.refundedGrossCents > 0
+                        ? `${fmtUSDCents(payment.amount)} original · ${fmtUSDCents(
+                            payment.refundedGrossCents / 100,
+                          )} refunded · ${fmtUSDCents(payment.netAppliedAmountCents / 100)} net A/R`
+                        : fmtUSDCents(payment.amount)}{" "}
+                      · {paymentMethodLabel(payment.paymentMethodType)} ·{" "}
                       {paymentDateLabel(payment.paidAtIso)}
                     </div>
                     <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
@@ -171,12 +185,12 @@ export function StripeReconciliationPanel() {
                           <SelectValue placeholder="Record to invoice…" />
                         </SelectTrigger>
                         <SelectContent>
-                          {openInvoices.length === 0 ? (
+                          {eligibleInvoices.length === 0 ? (
                             <SelectItem value="none" disabled>
-                              No open invoices found
+                              No invoice has enough open balance
                             </SelectItem>
                           ) : (
-                            openInvoices.map((invoice) => (
+                            eligibleInvoices.map((invoice) => (
                               <SelectItem key={invoice.id} value={invoice.id}>
                                 {invoice.projectName} · {invoice.label} ·{" "}
                                 {fmtUSDCents(invoice.openBalance)} open
@@ -191,7 +205,11 @@ export function StripeReconciliationPanel() {
                         disabled={recording || !invoiceByPayment[payment.stripeChargeId]}
                         onClick={() => recordMutation.mutate(payment)}
                       >
-                        {recording ? "Recording…" : "Record payment"}
+                        {recording
+                          ? "Recording…"
+                          : payment.refundedGrossCents > 0
+                            ? "Recover receipt + refund"
+                            : "Record payment"}
                       </Button>
                     </div>
                   )}

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -107,6 +107,7 @@ function ClientProjectPage() {
   const [exportingDailyPacket, setExportingDailyPacket] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [checkoutPendingId, setCheckoutPendingId] = useState<string | null>(null);
+  const invoiceViewEventKeys = useRef(new Map<string, string>());
   // Local-only pagination through the pending change orders in the review-first
   // flow. Never persisted; a decision refetches and the list reshapes.
   const [reviewIndex, setReviewIndex] = useState(0);
@@ -154,7 +155,14 @@ function ClientProjectPage() {
   useInvoiceViewSignal(
     selectedInvoiceId,
     (projectQuery.data?.billingInvoices ?? []).map((invoice: BillingInvoiceRow) => invoice.id),
-    (invoiceId) => recordView({ data: { invoiceId } }),
+    (invoiceId) => {
+      let viewEventKey = invoiceViewEventKeys.current.get(invoiceId);
+      if (!viewEventKey) {
+        viewEventKey = `portal-view:${globalThis.crypto.randomUUID()}`;
+        invoiceViewEventKeys.current.set(invoiceId, viewEventKey);
+      }
+      return recordView({ data: { invoiceId, viewEventKey } });
+    },
   );
 
   const decisionMutation = useMutation({

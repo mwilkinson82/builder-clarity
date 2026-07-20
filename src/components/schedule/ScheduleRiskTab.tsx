@@ -102,6 +102,7 @@ export function ScheduleRisk({
   const annotateUpdate = useServerFn(annotateScheduleUpdate);
   const createExposureFn = useServerFn(createExposure);
   const updateFin = useServerFn(updateProjectFinancials);
+  const projectHeaderRetryKeys = useRef(new Map<string, string>());
   const [manualCompletionDraft, setManualCompletionDraft] = useState(
     project.forecast_completion_date ?? "",
   );
@@ -241,8 +242,23 @@ export function ScheduleRisk({
   });
 
   const finMut = useMutation({
-    mutationFn: (patch: Record<string, unknown>) => updateFin({ data: { projectId, patch } }),
-    onSuccess: invalidateProject,
+    mutationFn: (patch: Record<string, unknown>) => {
+      const intent = `${project.updated_at}:${JSON.stringify(patch)}`;
+      const operationKey = projectHeaderRetryKeys.current.get(intent) ?? crypto.randomUUID();
+      projectHeaderRetryKeys.current.set(intent, operationKey);
+      return updateFin({
+        data: {
+          projectId,
+          patch,
+          expectedUpdatedAt: project.updated_at,
+          operationKey,
+        },
+      });
+    },
+    onSuccess: async (_result, patch) => {
+      projectHeaderRetryKeys.current.delete(`${project.updated_at}:${JSON.stringify(patch)}`);
+      await invalidateProject();
+    },
     onError: (error) => {
       toast.error("Schedule dates did not update", {
         description: error instanceof Error ? error.message : "Refresh and try again.",

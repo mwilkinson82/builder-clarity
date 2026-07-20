@@ -1,8 +1,8 @@
 // One subcontract's card on the Subcontractors tab: the versioned contract paper
 // trail, the buyout (committed cost), its cost-code allocations, and progress
-// payments (actual cost). Everything is editable in place — the commitment moves
-// for a change order or credit, an allocation re-prices per code, and a payment's
-// date/amount/description can be corrected after the fact. Extracted from
+// payments (actual cost). The commitment moves for a change order or credit, an
+// allocation re-prices per code, and a draft payment can be corrected before it
+// is approved. Approved and paid records remain immutable. Extracted from
 // SubcontractorsWorkspace so both files stay well under the size limit.
 import { useState } from "react";
 import {
@@ -51,6 +51,7 @@ export interface CardAllocation {
   planned_quantity: number;
   unit: string;
   benchmark_labor_rate: number;
+  updated_at?: string;
 }
 export interface CardChangeOrder {
   id: string;
@@ -60,6 +61,7 @@ export interface CardChangeOrder {
   amount: number; // signed dollars: change order +, credit −
   co_date: string;
   exposure_id: string | null;
+  updated_at?: string;
 }
 export interface CardPayment {
   id: string;
@@ -109,6 +111,7 @@ export interface CardWaiver {
   waiver_type: string;
   through_date: string | null;
   amount: number;
+  signed_date: string | null;
   storage_path: string;
   file_name: string;
 }
@@ -159,6 +162,11 @@ export interface PaymentEdit {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+function newSubcontractPaymentOperationKey() {
+  const operationId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  return `subcontract-payment:${operationId}`;
+}
+
 const CARD_WAIVER_LABEL: Record<string, string> = {
   conditional_progress: "Conditional / progress",
   unconditional_progress: "Unconditional / progress",
@@ -189,6 +197,15 @@ function PaymentWaiverLine({
   onView: (path: string) => void;
 }) {
   const [pickId, setPickId] = useState("");
+  const eligiblePool = pool.filter(
+    (waiver) =>
+      Boolean(waiver.signed_date) &&
+      Boolean(waiver.storage_path.trim()) &&
+      Boolean(waiver.file_name.trim()) &&
+      Boolean(waiver.through_date) &&
+      (waiver.through_date ?? "") >= payment.payment_date &&
+      waiver.amount >= payment.amount,
+  );
   if (attached) {
     return (
       <span className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -228,7 +245,7 @@ function PaymentWaiverLine({
           ? "Needs a lien waiver + verified insurance before approval."
           : "No lien waiver attached."}
       </span>
-      {pool.length > 0 ? (
+      {eligiblePool.length > 0 ? (
         <>
           <select
             value={pickId}
@@ -237,7 +254,7 @@ function PaymentWaiverLine({
             aria-label="Pick an on-file lien waiver"
           >
             <option value="">On-file waiver…</option>
-            {pool.map((w) => (
+            {eligiblePool.map((w) => (
               <option key={w.id} value={w.id}>
                 {CARD_WAIVER_LABEL[w.waiver_type] ?? "Waiver"}
                 {w.through_date ? ` · through ${w.through_date}` : ""}
@@ -327,16 +344,16 @@ interface CardProps {
   trade?: string;
   subStatus?: string;
   coiStatus?: InsuranceStatus;
-  onEditBuyout: (contractValue: number, retainagePct: number) => void;
-  onAllocate: (costBucketId: string, amount: number) => void;
-  onUpdateAllocation: (id: string, amount: number) => void;
+  onEditBuyout: (contractValue: number, retainagePct: number) => Promise<void>;
+  onAllocate: (costBucketId: string, amount: number) => Promise<void>;
+  onUpdateAllocation: (id: string, amount: number) => Promise<void>;
   onUpdateProductionBenchmark: (
     id: string,
     plannedQuantity: number,
     unit: string,
     benchmarkLaborRate: number,
-  ) => void;
-  onRemoveAllocation: (id: string) => void;
+  ) => Promise<void>;
+  onRemoveAllocation: (id: string) => Promise<void>;
   changeOrders: CardChangeOrder[];
   exposures: RiskOption[];
   onRecordChangeOrder: (
@@ -345,9 +362,9 @@ interface CardProps {
     amount: number,
     coDate: string,
     exposureId: string | null,
-  ) => void;
-  onSetChangeOrderExposure: (id: string, exposureId: string | null) => void;
-  onRemoveChangeOrder: (id: string) => void;
+  ) => Promise<void>;
+  onSetChangeOrderExposure: (id: string, exposureId: string | null) => Promise<void>;
+  onRemoveChangeOrder: (id: string) => Promise<void>;
   onPay: (
     amount: number,
     retainageHeld: number,
@@ -355,9 +372,10 @@ interface CardProps {
     notes: string,
     stage: PayStage,
     exposureId: string | null,
-  ) => void;
+    idempotencyKey: string,
+  ) => Promise<void>;
   onSetPaymentExposure: (id: string, exposureId: string | null) => void;
-  onUpdatePayment: (id: string, edit: PaymentEdit) => void;
+  onUpdatePayment: (id: string, edit: PaymentEdit) => Promise<void>;
   onSetPaymentStage: (id: string, stage: "approved" | "paid") => void;
   // Marking paid opens a "how paid" dialog in the workspace (field request
   // 2026-07-10) — method/check#/date, and the override path if the gate blocks.
@@ -377,7 +395,7 @@ interface CardProps {
   onDetachWaiver: (paymentId: string, waiverId: string) => void;
   onUploadWaiverForPayment: (payment: CardPayment, file: File) => void;
   onViewWaiverDoc: (path: string) => void;
-  onRemoveSub: () => void;
+  onRemoveSub: () => Promise<void>;
   documents: SubcontractDocumentRow[];
   onUploadDoc: (file: File) => void;
   onViewDoc: (path: string) => void;
@@ -451,6 +469,9 @@ export function SubcontractCard({
   // affects the modal's preview copy — the live split editor stays on each row.
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [modalSplitManual, setModalSplitManual] = useState(false);
+  const [payOperationKey, setPayOperationKey] = useState("");
+  const [payError, setPayError] = useState("");
+  const [paySubmitting, setPaySubmitting] = useState(false);
 
   // Inline editors, keyed by the row being edited (null = closed).
   const [editingBuyout, setEditingBuyout] = useState(false);
@@ -462,6 +483,12 @@ export function SubcontractCard({
   const [benchmarkQuantity, setBenchmarkQuantity] = useState(0);
   const [benchmarkUnit, setBenchmarkUnit] = useState("");
   const [benchmarkRate, setBenchmarkRate] = useState(0);
+  const [buyoutSubmitting, setBuyoutSubmitting] = useState(false);
+  const [buyoutError, setBuyoutError] = useState("");
+  const [allocationSubmitting, setAllocationSubmitting] = useState(false);
+  const [allocationError, setAllocationError] = useState("");
+  const [changeOrderSubmitting, setChangeOrderSubmitting] = useState(false);
+  const [changeOrderError, setChangeOrderError] = useState("");
   const [editPayId, setEditPayId] = useState<string | null>(null);
   const [editPay, setEditPay] = useState<PaymentEdit>({
     amount: 0,
@@ -469,6 +496,8 @@ export function SubcontractCard({
     paymentDate: today(),
     notes: "",
   });
+  const [editPayError, setEditPayError] = useState("");
+  const [editPaySubmitting, setEditPaySubmitting] = useState(false);
 
   // CO/credit entry form
   const [coKind, setCoKind] = useState<"co" | "credit">("co");
@@ -485,7 +514,7 @@ export function SubcontractCard({
   const revised = reviseSubSummary(summary, sumChangeOrders(changeOrders));
   const hasChangeOrders = changeOrders.length > 0;
 
-  const unallocated = summary.committed - allocatedTotal;
+  const unallocated = revised.revised - allocatedTotal;
   const retainageHeld = Math.round(payAmount * defaultRetainagePct) / 100;
   // The buyout's biggest cost code drives the header "allocated to" line and the
   // modal eyebrow / automatic-split copy.
@@ -507,19 +536,105 @@ export function SubcontractCard({
   const openBuyoutEditor = () => {
     setBuyoutValue(summary.committed);
     setBuyoutRetainage(defaultRetainagePct);
+    setBuyoutError("");
     setEditingBuyout(true);
   };
   const openAllocEditor = (a: CardAllocation) => {
     setEditAllocId(a.id);
     setEditAllocAmount(a.amount);
+    setAllocationError("");
   };
   const openBenchmarkEditor = (a: CardAllocation) => {
     setBenchmarkAllocId(a.id);
     setBenchmarkQuantity(a.planned_quantity);
     setBenchmarkUnit(a.unit);
     setBenchmarkRate(a.benchmark_labor_rate);
+    setAllocationError("");
+  };
+  const errorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error ? error.message : fallback;
+  const submitBuyout = async () => {
+    if (buyoutSubmitting) return;
+    setBuyoutError("");
+    setBuyoutSubmitting(true);
+    try {
+      await onEditBuyout(buyoutValue, buyoutRetainage);
+      setEditingBuyout(false);
+    } catch (error) {
+      setBuyoutError(errorMessage(error, "The commitment did not save."));
+    } finally {
+      setBuyoutSubmitting(false);
+    }
+  };
+  const submitAllocationUpdate = async (allocationId: string) => {
+    if (allocationSubmitting) return;
+    setAllocationError("");
+    setAllocationSubmitting(true);
+    try {
+      await onUpdateAllocation(allocationId, editAllocAmount);
+      setEditAllocId(null);
+    } catch (error) {
+      setAllocationError(errorMessage(error, "The allocation did not save."));
+    } finally {
+      setAllocationSubmitting(false);
+    }
+  };
+  const submitBenchmark = async (allocationId: string) => {
+    if (allocationSubmitting) return;
+    setAllocationError("");
+    setAllocationSubmitting(true);
+    try {
+      await onUpdateProductionBenchmark(
+        allocationId,
+        benchmarkQuantity,
+        benchmarkUnit.trim(),
+        benchmarkRate,
+      );
+      setBenchmarkAllocId(null);
+    } catch (error) {
+      setAllocationError(errorMessage(error, "The production benchmark did not save."));
+    } finally {
+      setAllocationSubmitting(false);
+    }
+  };
+  const submitAllocation = async () => {
+    if (allocationSubmitting) return;
+    setAllocationError("");
+    setAllocationSubmitting(true);
+    try {
+      await onAllocate(allocBucket, allocAmount);
+      setAllocBucket("");
+      setAllocAmount(0);
+    } catch (error) {
+      setAllocationError(errorMessage(error, "The allocation did not save."));
+    } finally {
+      setAllocationSubmitting(false);
+    }
+  };
+  const submitChangeOrder = async () => {
+    if (changeOrderSubmitting) return;
+    setChangeOrderError("");
+    setChangeOrderSubmitting(true);
+    try {
+      await onRecordChangeOrder(
+        coBucket || null,
+        coDesc.trim(),
+        coKind === "credit" ? -coAmount : coAmount,
+        coDate,
+        coExposure || null,
+      );
+      setCoAmount(0);
+      setCoDesc("");
+      setCoBucket("");
+      setCoExposure("");
+    } catch (error) {
+      setChangeOrderError(errorMessage(error, "The change order did not save."));
+    } finally {
+      setChangeOrderSubmitting(false);
+    }
   };
   const openPayEditor = (p: CardPayment) => {
+    if (p.status !== "draft") return;
     setEditPayId(p.id);
     setEditPay({
       amount: p.amount,
@@ -527,6 +642,31 @@ export function SubcontractCard({
       paymentDate: p.payment_date || today(),
       notes: p.notes,
     });
+    setEditPayError("");
+  };
+  const closePayEditor = () => {
+    if (editPaySubmitting) return;
+    setEditPayId(null);
+    setEditPayError("");
+  };
+  const submitPayEdit = async () => {
+    if (!editPayId || editPaySubmitting) return;
+    setEditPayError("");
+    setEditPaySubmitting(true);
+    try {
+      await onUpdatePayment(editPayId, editPay);
+      setEditPayId(null);
+      setEditPay({
+        amount: 0,
+        retainageHeld: 0,
+        paymentDate: today(),
+        notes: "",
+      });
+    } catch (error) {
+      setEditPayError(error instanceof Error ? error.message : "Payment did not update.");
+    } finally {
+      setEditPaySubmitting(false);
+    }
   };
   const openPayModal = () => {
     setPayAmount(0);
@@ -535,17 +675,42 @@ export function SubcontractCard({
     setPayStage("draft");
     setPayExposure("");
     setModalSplitManual(false);
+    setPayOperationKey(newSubcontractPaymentOperationKey());
+    setPayError("");
     setPayModalOpen(true);
   };
-  const submitPayModal = () => {
-    onPay(payAmount, retainageHeld, payDate, payNotes.trim(), payStage, payExposure || null);
-    setPayAmount(0);
-    setPayNotes("");
-    setPayDate(today());
-    setPayStage("draft");
-    setPayExposure("");
-    setModalSplitManual(false);
-    setPayModalOpen(false);
+  const reviseFailedPayDraft = () => {
+    if (!payError) return;
+    setPayOperationKey(newSubcontractPaymentOperationKey());
+    setPayError("");
+  };
+  const submitPayModal = async () => {
+    if (paySubmitting) return;
+    setPayError("");
+    setPaySubmitting(true);
+    try {
+      await onPay(
+        payAmount,
+        retainageHeld,
+        payDate,
+        payNotes.trim(),
+        payStage,
+        payExposure || null,
+        payOperationKey,
+      );
+      setPayAmount(0);
+      setPayNotes("");
+      setPayDate(today());
+      setPayStage("draft");
+      setPayExposure("");
+      setModalSplitManual(false);
+      setPayOperationKey("");
+      setPayModalOpen(false);
+    } catch (error) {
+      setPayError(error instanceof Error ? error.message : "Pay application did not save.");
+    } finally {
+      setPaySubmitting(false);
+    }
   };
 
   const STAGE_SEG: { value: PayStage; label: string }[] = [
@@ -592,14 +757,16 @@ export function SubcontractCard({
           <Chip tone={hasWaiverOnFile ? "good" : "warn"}>
             {hasWaiverOnFile ? "Waiver on file" : "Waiver missing"}
           </Chip>
-          <button
-            type="button"
-            className="ml-0.5 text-muted-foreground hover:text-danger"
-            onClick={onRemoveSub}
-            aria-label="Remove subcontract"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+          {subStatus === "draft" ? (
+            <button
+              type="button"
+              className="ml-0.5 text-muted-foreground hover:text-danger"
+              onClick={() => void onRemoveSub()}
+              aria-label="Remove untouched subcontract draft"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -718,13 +885,19 @@ export function SubcontractCard({
           <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             New commitment
           </span>
-          <MoneyInput value={buyoutValue} onValueChange={setBuyoutValue} align="right" />
+          <MoneyInput
+            value={buyoutValue}
+            onValueChange={setBuyoutValue}
+            align="right"
+            disabled={buyoutSubmitting}
+          />
           <label className="flex items-center gap-1 text-xs text-muted-foreground">
             <Input
               type="number"
               value={buyoutRetainage}
               onChange={(e) => setBuyoutRetainage(Number(e.target.value) || 0)}
               className="w-16"
+              disabled={buyoutSubmitting}
             />
             % ret.
           </label>
@@ -736,24 +909,29 @@ export function SubcontractCard({
               type="button"
               size="sm"
               className="gap-1"
-              disabled={buyoutValue <= 0}
-              onClick={() => {
-                onEditBuyout(buyoutValue, buyoutRetainage);
-                setEditingBuyout(false);
-              }}
+              disabled={buyoutSubmitting || buyoutValue <= 0}
+              onClick={() => void submitBuyout()}
             >
-              <Check className="h-3.5 w-3.5" /> Save
+              <Check className="h-3.5 w-3.5" /> {buyoutSubmitting ? "Saving…" : "Save"}
             </Button>
             <Button
               type="button"
               size="sm"
               variant="ghost"
-              onClick={() => setEditingBuyout(false)}
+              onClick={() => {
+                if (!buyoutSubmitting) setEditingBuyout(false);
+              }}
               aria-label="Cancel"
+              disabled={buyoutSubmitting}
             >
               <X className="h-3.5 w-3.5" />
             </Button>
           </div>
+          {buyoutError ? (
+            <p role="alert" className="basis-full text-xs text-danger">
+              {buyoutError} Your entered values are still here.
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -781,9 +959,9 @@ export function SubcontractCard({
                     Risk Tally
                     <select
                       value={co.exposure_id ?? ""}
-                      onChange={(event) =>
-                        onSetChangeOrderExposure(co.id, event.target.value || null)
-                      }
+                      onChange={(event) => {
+                        void onSetChangeOrderExposure(co.id, event.target.value || null);
+                      }}
                       onClick={(event) => event.stopPropagation()}
                       className="min-w-0 flex-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
                       aria-label="Risk Tally attribution for subcontract change order"
@@ -809,7 +987,7 @@ export function SubcontractCard({
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-danger"
-                    onClick={() => onRemoveChangeOrder(co.id)}
+                    onClick={() => void onRemoveChangeOrder(co.id)}
                     aria-label="Remove change order"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -825,6 +1003,7 @@ export function SubcontractCard({
             onChange={(e) => setCoKind(e.target.value as "co" | "credit")}
             className="h-9 w-full rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 sm:col-span-4 lg:col-span-3"
             aria-label="Change order or credit"
+            disabled={changeOrderSubmitting}
           >
             <option value="co">Change order (adds)</option>
             <option value="credit">Credit (deducts)</option>
@@ -834,12 +1013,14 @@ export function SubcontractCard({
             onChange={(e) => setCoDesc(e.target.value)}
             placeholder="What changed (e.g. Added 2 dock pits)"
             className="sm:col-span-8 lg:col-span-5"
+            disabled={changeOrderSubmitting}
           />
           <select
             value={coBucket}
             onChange={(e) => setCoBucket(e.target.value)}
             className="h-9 w-full rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 sm:col-span-6 lg:col-span-4"
             aria-label="Cost code (optional)"
+            disabled={changeOrderSubmitting}
           >
             <option value="">Cost code (optional)…</option>
             {buckets.map((b) => (
@@ -854,18 +1035,21 @@ export function SubcontractCard({
             onChange={(e) => setCoDate(e.target.value)}
             className="w-full sm:col-span-6 lg:col-span-3"
             aria-label="Change order date"
+            disabled={changeOrderSubmitting}
           />
           <MoneyInput
             value={coAmount}
             onValueChange={setCoAmount}
             align="right"
             className="sm:col-span-4 lg:col-span-3"
+            disabled={changeOrderSubmitting}
           />
           <select
             value={coExposure}
             onChange={(event) => setCoExposure(event.target.value)}
             className="h-9 w-full rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 sm:col-span-6 lg:col-span-4"
             aria-label="Risk Tally attribution (optional)"
+            disabled={changeOrderSubmitting}
           >
             <option value="">Risk Tally (optional)…</option>
             {exposures.map((exposure) => (
@@ -879,24 +1063,18 @@ export function SubcontractCard({
             size="sm"
             variant="outline"
             className="h-9 w-full gap-1.5 sm:col-span-2 lg:col-span-2"
-            disabled={coAmount <= 0 || !coDate}
-            onClick={() => {
-              onRecordChangeOrder(
-                coBucket || null,
-                coDesc.trim(),
-                coKind === "credit" ? -coAmount : coAmount,
-                coDate,
-                coExposure || null,
-              );
-              setCoAmount(0);
-              setCoDesc("");
-              setCoBucket("");
-              setCoExposure("");
-            }}
+            disabled={changeOrderSubmitting || coAmount <= 0 || !coDate}
+            onClick={() => void submitChangeOrder()}
           >
-            <Plus className="h-3.5 w-3.5" /> Add
+            <Plus className="h-3.5 w-3.5" />
+            {changeOrderSubmitting ? "Saving…" : "Add"}
           </Button>
         </div>
+        {changeOrderError ? (
+          <p role="alert" className="mt-2 text-xs text-danger">
+            {changeOrderError} Your entered change order is still here.
+          </p>
+        ) : null}
         <p className="mt-1 text-[11px] text-muted-foreground">
           The base contract stays untouched — the revised total is shown above. A change order
           tagged to a cost code carries into that code&apos;s committed on the job budget. Link a
@@ -932,16 +1110,14 @@ export function SubcontractCard({
                           value={editAllocAmount}
                           onValueChange={setEditAllocAmount}
                           align="right"
+                          disabled={allocationSubmitting}
                         />
                         <Button
                           type="button"
                           size="sm"
                           className="gap-1"
-                          disabled={editAllocAmount < 0}
-                          onClick={() => {
-                            onUpdateAllocation(a.id, editAllocAmount);
-                            setEditAllocId(null);
-                          }}
+                          disabled={allocationSubmitting || editAllocAmount < 0}
+                          onClick={() => void submitAllocationUpdate(a.id)}
                         >
                           <Check className="h-3.5 w-3.5" />
                         </Button>
@@ -949,8 +1125,11 @@ export function SubcontractCard({
                           type="button"
                           size="sm"
                           variant="ghost"
-                          onClick={() => setEditAllocId(null)}
+                          onClick={() => {
+                            if (!allocationSubmitting) setEditAllocId(null);
+                          }}
                           aria-label="Cancel"
+                          disabled={allocationSubmitting}
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -975,7 +1154,7 @@ export function SubcontractCard({
                         <button
                           type="button"
                           className="text-muted-foreground hover:text-danger"
-                          onClick={() => onRemoveAllocation(a.id)}
+                          onClick={() => void onRemoveAllocation(a.id)}
                           aria-label="Remove allocation"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -998,6 +1177,7 @@ export function SubcontractCard({
                             onChange={(event) =>
                               setBenchmarkQuantity(Number(event.target.value) || 0)
                             }
+                            disabled={allocationSubmitting}
                           />
                         </label>
                         <label className="text-[11px] text-muted-foreground">
@@ -1006,36 +1186,39 @@ export function SubcontractCard({
                             value={benchmarkUnit}
                             placeholder="SF"
                             onChange={(event) => setBenchmarkUnit(event.target.value)}
+                            disabled={allocationSubmitting}
                           />
                         </label>
                         <label className="text-[11px] text-muted-foreground">
                           GC loaded benchmark $/labor hr
-                          <MoneyInput value={benchmarkRate} onValueChange={setBenchmarkRate} />
+                          <MoneyInput
+                            value={benchmarkRate}
+                            onValueChange={setBenchmarkRate}
+                            disabled={allocationSubmitting}
+                          />
                         </label>
                         <div className="flex gap-1">
                           <Button
                             type="button"
                             size="sm"
                             disabled={
-                              benchmarkQuantity <= 0 || !benchmarkUnit.trim() || benchmarkRate <= 0
+                              allocationSubmitting ||
+                              benchmarkQuantity <= 0 ||
+                              !benchmarkUnit.trim() ||
+                              benchmarkRate <= 0
                             }
-                            onClick={() => {
-                              onUpdateProductionBenchmark(
-                                a.id,
-                                benchmarkQuantity,
-                                benchmarkUnit.trim(),
-                                benchmarkRate,
-                              );
-                              setBenchmarkAllocId(null);
-                            }}
+                            onClick={() => void submitBenchmark(a.id)}
                           >
-                            Save
+                            {allocationSubmitting ? "Saving…" : "Save"}
                           </Button>
                           <Button
                             type="button"
                             size="sm"
                             variant="ghost"
-                            onClick={() => setBenchmarkAllocId(null)}
+                            onClick={() => {
+                              if (!allocationSubmitting) setBenchmarkAllocId(null);
+                            }}
+                            disabled={allocationSubmitting}
                           >
                             Cancel
                           </Button>
@@ -1086,6 +1269,7 @@ export function SubcontractCard({
               value={allocBucket}
               onChange={(e) => setAllocBucket(e.target.value)}
               className="min-w-[220px] rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+              disabled={allocationSubmitting}
             >
               <option value="">Allocate to cost code…</option>
               {buckets.map((b) => (
@@ -1094,25 +1278,32 @@ export function SubcontractCard({
                 </option>
               ))}
             </select>
-            <MoneyInput value={allocAmount} onValueChange={setAllocAmount} align="right" />
+            <MoneyInput
+              value={allocAmount}
+              onValueChange={setAllocAmount}
+              align="right"
+              disabled={allocationSubmitting}
+            />
             <Button
               type="button"
               size="sm"
               variant="outline"
               className="gap-1.5"
-              disabled={!allocBucket || allocAmount <= 0}
-              onClick={() => {
-                onAllocate(allocBucket, allocAmount);
-                setAllocBucket("");
-                setAllocAmount(0);
-              }}
+              disabled={allocationSubmitting || !allocBucket || allocAmount <= 0}
+              onClick={() => void submitAllocation()}
             >
-              <Plus className="h-3.5 w-3.5" /> Allocate
+              <Plus className="h-3.5 w-3.5" />
+              {allocationSubmitting ? "Saving…" : "Allocate"}
             </Button>
             <span className="text-[11px] text-muted-foreground">
               {fmtUSD(unallocated)} left to allocate
             </span>
           </div>
+        ) : null}
+        {allocationError ? (
+          <p role="alert" className="mt-2 text-xs text-danger">
+            {allocationError} Your allocation values are still here.
+          </p>
         ) : null}
       </div>
 
@@ -1137,7 +1328,7 @@ export function SubcontractCard({
               const compliant = p.status === "paid" || !!attachedWaiver;
               return (
                 <li key={p.id} className="py-1.5">
-                  {editPayId === p.id ? (
+                  {editPayId === p.id && p.status === "draft" ? (
                     <div className="flex flex-col gap-2">
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <Input
@@ -1147,11 +1338,13 @@ export function SubcontractCard({
                             setEditPay((s) => ({ ...s, paymentDate: e.target.value }))
                           }
                           className="w-40"
+                          disabled={editPaySubmitting}
                         />
                         <MoneyInput
                           value={editPay.amount}
                           onValueChange={(v) => setEditPay((s) => ({ ...s, amount: v }))}
                           align="right"
+                          disabled={editPaySubmitting}
                         />
                         <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
                           ret.
@@ -1159,6 +1352,7 @@ export function SubcontractCard({
                             value={editPay.retainageHeld}
                             onValueChange={(v) => setEditPay((s) => ({ ...s, retainageHeld: v }))}
                             align="right"
+                            disabled={editPaySubmitting}
                           />
                         </label>
                       </div>
@@ -1168,31 +1362,39 @@ export function SubcontractCard({
                           onChange={(e) => setEditPay((s) => ({ ...s, notes: e.target.value }))}
                           placeholder="Description (e.g. Pay app #3, foundations)"
                           className="flex-1"
+                          disabled={editPaySubmitting}
                         />
                         <div className="flex items-center gap-1">
                           <Button
                             type="button"
                             size="sm"
                             className="gap-1"
-                            disabled={editPay.amount <= 0}
-                            onClick={() => {
-                              onUpdatePayment(p.id, editPay);
-                              setEditPayId(null);
-                            }}
+                            disabled={editPaySubmitting || editPay.amount <= 0}
+                            onClick={submitPayEdit}
                           >
-                            <Check className="h-3.5 w-3.5" /> Save
+                            <Check className="h-3.5 w-3.5" />
+                            {editPaySubmitting ? "Saving…" : "Save"}
                           </Button>
                           <Button
                             type="button"
                             size="sm"
                             variant="ghost"
-                            onClick={() => setEditPayId(null)}
+                            onClick={closePayEditor}
                             aria-label="Cancel"
+                            disabled={editPaySubmitting}
                           >
                             <X className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       </div>
+                      {editPayError ? (
+                        <div
+                          role="alert"
+                          className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                        >
+                          {editPayError} Your changes are still here. Retry when ready.
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="flex items-center justify-between">
@@ -1229,10 +1431,16 @@ export function SubcontractCard({
                           Risk Tally
                           <select
                             value={p.exposure_id ?? ""}
+                            disabled={p.status !== "draft"}
+                            title={
+                              p.status === "draft"
+                                ? "Link this draft to Risk Tally"
+                                : "Risk attribution is locked after approval"
+                            }
                             onChange={(event) =>
                               onSetPaymentExposure(p.id, event.target.value || null)
                             }
-                            className="min-w-0 flex-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+                            className="min-w-0 flex-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
                             aria-label="Risk Tally attribution for subcontract pay app"
                           >
                             <option value="">Not linked</option>
@@ -1273,7 +1481,7 @@ export function SubcontractCard({
                           onUpload={(file) => onUploadWaiverForPayment(p, file)}
                           onView={onViewWaiverDoc}
                         />
-                        {allocations.length > 0 || buckets.length > 0 ? (
+                        {p.status === "draft" && (allocations.length > 0 || buckets.length > 0) ? (
                           <button
                             type="button"
                             className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
@@ -1284,6 +1492,10 @@ export function SubcontractCard({
                             {splitOpen[p.id] ? "Hide cost codes" : "Where this payment goes"}
                             {(splitsByPayment.get(p.id)?.length ?? 0) > 0 ? " · custom split" : ""}
                           </button>
+                        ) : p.status !== "draft" && (splitsByPayment.get(p.id)?.length ?? 0) > 0 ? (
+                          <span className="text-[11px] text-muted-foreground">
+                            Cost coding locked · custom split
+                          </span>
                         ) : null}
                       </span>
                       <span className="flex items-center gap-3">
@@ -1295,26 +1507,30 @@ export function SubcontractCard({
                             −{fmtUSD(p.retainage_held)} ret.
                           </span>
                         ) : null}
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() => openPayEditor(p)}
-                          aria-label="Edit payment"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-danger"
-                          onClick={() => onRemovePayment(p.id)}
-                          aria-label="Remove payment"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {p.status === "draft" ? (
+                          <>
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={() => openPayEditor(p)}
+                              aria-label="Edit payment"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-danger"
+                              onClick={() => onRemovePayment(p.id)}
+                              aria-label="Remove payment"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        ) : null}
                       </span>
                     </div>
                   )}
-                  {editPayId !== p.id && splitOpen[p.id] ? (
+                  {p.status === "draft" && editPayId !== p.id && splitOpen[p.id] ? (
                     // Editable split (field request 2026-07-09): starts from the
                     // saved explicit rows, else the pro-rata derivation the budget
                     // layer uses; saving replaces the payment's coding exactly.
@@ -1345,7 +1561,12 @@ export function SubcontractCard({
       {/* Record pay app (v2): the new-pay-app form, relocated into a modal with a
           3-segment stage control, an automatic-split preview, and the compliance
           gate copy. Recording calls the same onPay as before. */}
-      <Dialog open={payModalOpen} onOpenChange={setPayModalOpen}>
+      <Dialog
+        open={payModalOpen}
+        onOpenChange={(open) => {
+          if (!paySubmitting) setPayModalOpen(open);
+        }}
+      >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <div className="eyebrow">
@@ -1362,7 +1583,15 @@ export function SubcontractCard({
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Payment amount
-              <MoneyInput value={payAmount} onValueChange={setPayAmount} align="right" />
+              <MoneyInput
+                value={payAmount}
+                onValueChange={(value) => {
+                  reviseFailedPayDraft();
+                  setPayAmount(value);
+                }}
+                align="right"
+                disabled={paySubmitting}
+              />
             </label>
             <div className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Retainage held ({defaultRetainagePct}%)
@@ -1375,24 +1604,36 @@ export function SubcontractCard({
               <Input
                 type="date"
                 value={payDate}
-                onChange={(e) => setPayDate(e.target.value)}
+                onChange={(e) => {
+                  reviseFailedPayDraft();
+                  setPayDate(e.target.value);
+                }}
                 aria-label="Payment date"
+                disabled={paySubmitting}
               />
             </label>
             <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-1">
               Notes
               <Input
                 value={payNotes}
-                onChange={(e) => setPayNotes(e.target.value)}
+                onChange={(e) => {
+                  reviseFailedPayDraft();
+                  setPayNotes(e.target.value);
+                }}
                 placeholder="Description (e.g. Pay app #3, foundations)"
+                disabled={paySubmitting}
               />
             </label>
             <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-2">
               Risk Tally attribution (optional)
               <select
                 value={payExposure}
-                onChange={(event) => setPayExposure(event.target.value)}
-                className="h-9 w-full rounded-md border border-hairline bg-surface px-3 text-sm font-normal normal-case tracking-normal text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+                onChange={(event) => {
+                  reviseFailedPayDraft();
+                  setPayExposure(event.target.value);
+                }}
+                disabled={paySubmitting}
+                className="h-9 w-full rounded-md border border-hairline bg-surface px-3 text-sm font-normal normal-case tracking-normal text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <option value="">Not linked to a risk</option>
                 {exposures.map((exposure) => (
@@ -1417,8 +1658,12 @@ export function SubcontractCard({
                 <button
                   key={s.value}
                   type="button"
-                  onClick={() => setPayStage(s.value)}
-                  className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
+                  onClick={() => {
+                    reviseFailedPayDraft();
+                    setPayStage(s.value);
+                  }}
+                  disabled={paySubmitting}
+                  className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     payStage === s.value
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:text-foreground"
@@ -1445,8 +1690,9 @@ export function SubcontractCard({
               .{" "}
               <button
                 type="button"
-                className="font-medium text-foreground underline"
+                className="font-medium text-foreground underline disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => setModalSplitManual((v) => !v)}
+                disabled={paySubmitting}
               >
                 {modalSplitManual ? "Use automatic split" : "Split manually →"}
               </button>
@@ -1483,16 +1729,32 @@ export function SubcontractCard({
             </p>
           )}
 
+          {payError ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+            >
+              {payError} Your entries are still here. Retry when ready.
+            </div>
+          ) : null}
+
           <DialogFooter className="items-center sm:justify-between">
             <span className="text-[11px] text-muted-foreground">
               This app: {fmtUSD(payAmount)} · retainage {fmtUSD(retainageHeld)}
             </span>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" onClick={() => setPayModalOpen(false)}>
+              <Button
+                variant="ghost"
+                onClick={() => setPayModalOpen(false)}
+                disabled={paySubmitting}
+              >
                 Cancel
               </Button>
-              <Button disabled={payAmount <= 0 || !payDate} onClick={submitPayModal}>
-                {PRIMARY_LABEL[payStage]}
+              <Button
+                disabled={paySubmitting || payAmount <= 0 || !payDate}
+                onClick={submitPayModal}
+              >
+                {paySubmitting ? "Saving…" : PRIMARY_LABEL[payStage]}
               </Button>
             </div>
           </DialogFooter>

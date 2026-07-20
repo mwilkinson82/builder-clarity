@@ -1696,6 +1696,7 @@ function NewProjectButton({
   const navigate = useNavigate();
   const qc = useQueryClient();
   const create = useServerFn(createProject);
+  const createOperationKeyRef = useRef(crypto.randomUUID());
   const scheduleVariance = computeScheduleVarianceWeeks(
     baselineCompletion || null,
     forecastCompletion || null,
@@ -1706,6 +1707,7 @@ function NewProjectButton({
       create({
         data: {
           name,
+          operationKey: createOperationKeyRef.current,
           job_number: jobNumber,
           client,
           project_manager: projectManager,
@@ -1717,6 +1719,7 @@ function NewProjectButton({
         },
       }),
     onSuccess: ({ id }) => {
+      createOperationKeyRef.current = crypto.randomUUID();
       qc.invalidateQueries({ queryKey: ["projects"] });
       toast.success("Project created", {
         id: "create-project",
