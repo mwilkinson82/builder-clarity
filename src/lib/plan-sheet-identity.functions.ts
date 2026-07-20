@@ -109,7 +109,7 @@ function identityPrompt(
 ) {
   return `You are reading construction drawing title blocks for ${planSetName || "a plan set"}.
 
-Each supplied image is one full plan sheet. IMAGE 1 corresponds to the first entry in SHEET_ORDER_JSON, IMAGE 2 to the second, and so on.
+Each supplied image is a title-block contact sheet for one drawing. Its top band shows the bottom region of the plan sheet. Its lower band shows the right-edge region rotated 90 degrees for easier reading. IMAGE 1 corresponds to the first entry in SHEET_ORDER_JSON, IMAGE 2 to the second, and so on.
 
 Extract only the formal sheet number and formal sheet title printed in that sheet's title block. Do not use detail callout numbers, drawing captions, project numbers, dates, addresses, company names, page indices, or filename text. If the title block is unreadable, return empty strings and confidence 0 instead of guessing. Preserve punctuation and spacing reasonably. Evidence must be a short literal phrase visible beside the sheet identity.
 
