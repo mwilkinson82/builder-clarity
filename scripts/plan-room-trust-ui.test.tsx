@@ -1,9 +1,14 @@
 import { act } from "react";
 import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
+import { TakeoffFinishPopover } from "@/components/estimates/plan-room/TakeoffClassify";
 import { TakeoffGroupCard } from "@/components/estimates/plan-room/TakeoffGroupCard";
-import { TakeoffWorksheet } from "@/components/estimates/plan-room/TakeoffWorksheet";
+import {
+  SyncConflictDialog,
+  TakeoffWorksheet,
+} from "@/components/estimates/plan-room/TakeoffWorksheet";
 import { groupTakeoffWorksheet } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow } from "@/lib/estimates.functions";
 import type { PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
@@ -107,7 +112,12 @@ function mount(element: ReactNode) {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => root!.render(element));
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  act(() =>
+    root!.render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>),
+  );
 }
 
 afterEach(() => {
@@ -116,6 +126,142 @@ afterEach(() => {
   container = null;
   root = null;
   vi.restoreAllMocks();
+});
+
+test("finish popover formats a geometric linear quantity as feet, inches, and fractions", () => {
+  const finished = { ...measurement("m-finish", "current"), quantity: 21.03 };
+  mount(
+    <TakeoffFinishPopover
+      measurement={finished}
+      lineItems={[line]}
+      linkedLine={line}
+      onSaveDetails={() => {}}
+      onPickRow={() => {}}
+      onPickLibraryItem={() => {}}
+      onCreateFromLabel={() => {}}
+      onDismiss={() => {}}
+    />,
+  );
+
+  const finish = container!.querySelector<HTMLElement>('[data-testid="takeoff-finish-popover"]');
+  expect(finish?.textContent).toContain(`21'-0 3/8" measured`);
+  expect(finish?.textContent).not.toContain("21.03 LF");
+});
+
+test("expanded group cards format geometric linear totals and each member", () => {
+  const members = [
+    { ...measurement("m-group-1", "current"), quantity: 21.03 },
+    { ...measurement("m-group-2", "current"), quantity: 21.03 },
+  ];
+  const group = groupTakeoffWorksheet(members)[0];
+  mount(
+    <TakeoffGroupCard
+      group={group}
+      lineItems={[line]}
+      sheets={[sheet]}
+      selectedMeasurementId=""
+      expanded
+      onToggleExpanded={() => {}}
+      selectMeasurement={() => {}}
+      deleteMeasurement={() => {}}
+      detachMeasurement={() => {}}
+      linkMeasurements={() => {}}
+      classifyMeasurements={() => {}}
+      syncLine={() => {}}
+    />,
+  );
+
+  const card = container!.querySelector<HTMLElement>('[data-testid="takeoff-group-card"]');
+  expect(card?.textContent).toContain(`42'-0 3/4" total`);
+  const memberText = Array.from(
+    container!.querySelectorAll<HTMLElement>('[data-testid="takeoff-group-member"]'),
+  ).map((member) => member.textContent);
+  expect(memberText).toEqual([
+    expect.stringContaining(`21'-0 3/8"`),
+    expect.stringContaining(`21'-0 3/8"`),
+  ]);
+});
+
+test("worksheet and sync source show geometric LF while conflict totals stay decimal", () => {
+  const item = { ...measurement("m-worksheet", "current"), quantity: 21.03 };
+  mount(
+    <TakeoffWorksheet
+      measurements={[item]}
+      totalMeasured={21.03}
+      copyTakeoffSummary={() => {}}
+      downloadTakeoffCsv={() => {}}
+      takeoffSummaryFallback=""
+      takeoffSearch=""
+      setTakeoffSearch={() => {}}
+      takeoffFilter="all"
+      setTakeoffFilter={() => {}}
+      sheetMeasurements={[item]}
+      linkedCount={1}
+      visibleMeasurements={[item]}
+      lineItems={[line]}
+      sheets={[sheet]}
+      selectedMeasurementId=""
+      selectMeasurement={() => {}}
+      deleteMeasurementMutation={{ mutate: () => {} }}
+      updateMeasurementMutation={{ mutate: () => {} }}
+      syncLineMutation={{ mutate: () => {} }}
+      lineTotals={new Map([[LINE_ID, { quantity: 21.03, count: 1, untrustedCount: 0 }]])}
+      linkMeasurement={() => {}}
+      classifyMeasurement={() => {}}
+      linkMeasurements={() => {}}
+      classifyMeasurements={() => {}}
+      detachMeasurement={() => {}}
+    />,
+  );
+
+  const worksheetRow = container!.querySelector<HTMLElement>(
+    '[data-testid="takeoff-navigator-row"]',
+  );
+  expect(worksheetRow?.textContent).toContain(`Linear · 21'-0 3/8"`);
+  expect(worksheetRow?.textContent).not.toContain("21.03 LF");
+
+  act(() => root?.unmount());
+  root = createRoot(container!);
+  const queryClient = new QueryClient();
+  act(() =>
+    root!.render(
+      <QueryClientProvider client={queryClient}>
+        <SyncConflictDialog
+          conflict={{
+            kind: "quantity",
+            lineId: LINE_ID,
+            lineDescription: line.description,
+            lineUnit: "LF",
+            takeoffUnit: "LF",
+            currentQuantity: 12,
+            incomingQuantity: 21.03,
+            measurementCount: 1,
+            forceUnitGranted: false,
+            sources: [
+              {
+                label: item.label,
+                sheetNumber: sheet.sheet_number,
+                sheetName: sheet.sheet_name,
+                wastePct: 0,
+                quantity: item.quantity,
+                unit: item.unit,
+                toolType: item.tool_type,
+              },
+            ],
+          }}
+          pending={false}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      </QueryClientProvider>,
+    ),
+  );
+
+  const conflictDetails = document.querySelector<HTMLElement>(
+    '[data-testid="sync-conflict-details"]',
+  );
+  expect(conflictDetails?.textContent).toContain("21.03 LF");
+  expect(conflictDetails?.textContent).toContain(`21'-0 3/8"`);
 });
 
 test("group cards use explicit controls and block row sync when any linked takeoff is untrusted", () => {

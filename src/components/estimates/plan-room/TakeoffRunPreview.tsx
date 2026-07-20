@@ -1,4 +1,8 @@
-import { calculateTakeoffQuantity, formatFeetInches } from "@/lib/plan-room-math";
+import {
+  calculateTakeoffQuantity,
+  formatFeetInches,
+  formatGeometricLinearFeet,
+} from "@/lib/plan-room-math";
 import { formatQty, type Point, type ToolMode, type ViewSize } from "./planRoomShared";
 import { LinearAngleGuide } from "./TakeoffTools";
 
@@ -42,12 +46,12 @@ export function TakeoffRunPreview({
   let readout: { x: number; y: number; text: string } | null = null;
   if (anchor && scaleFeetPerPixel > 0) {
     if (tool === "linear" || tool === "ruler") {
-      // The ruler answers in feet-inches (the dimension-string dialect);
-      // linear keeps the takeoff quantity format.
+      // Linear and ruler geometry speak the construction drawing dialect.
+      // Stored/worksheet quantities remain decimal for pricing math.
       const formatLength =
         tool === "ruler"
           ? (feet: number) => formatFeetInches(feet)
-          : (feet: number) => formatQty(feet, unit);
+          : (feet: number) => formatGeometricLinearFeet(feet);
       const segmentFeet =
         Math.hypot(
           (cursor.point.x - anchor.x) * viewSize.width,

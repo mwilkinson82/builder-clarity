@@ -2228,6 +2228,10 @@ await expectContains(
     /selected-takeoff-unit-input/,
     /selected-takeoff-color-picker/,
     /selected-takeoff-save-details/,
+    /plan-canvas-delete-selected/,
+    /deleteMeasurementMutation\.mutate\(selectedMeasurement\.id\)/,
+    /scaleWorkflowRef/,
+    /focusWorkflowTarget\(scaleWorkflowRef\)/,
     /calibration-distance-presets/,
     /Save Details/,
     /copyTextToClipboard/,
@@ -2282,7 +2286,12 @@ await expectContains(
 
 await expectContains(
   "src/components/estimates/plan-room/EstimatorActivationChecklist.tsx",
-  [/First trusted takeoff/, /Confirm the scale/, /Create or review a markup/, /Link the quantity/],
+  [
+    /First trusted takeoff/,
+    /Confirm this sheet's scale/,
+    /Create a trusted takeoff/,
+    /Link the quantity/,
+  ],
   "first-session guidance keeps the estimator on one trusted takeoff path",
 );
 
@@ -2413,9 +2422,11 @@ await expectContains(
 await expectContains(
   "src/components/estimates/plan-room/MeasurementGuideReviewBar.tsx",
   [
-    /AI-drawn scope markup/,
-    /cannot feed the estimate/,
-    /Accept markup/,
+    /AI visual hypothesis/,
+    /location hint, not\s+a quantity/,
+    /Accept & next/,
+    /Reject & next/,
+    /Exit review/,
     /Start trusted trace/,
     /verify scale first/,
   ],

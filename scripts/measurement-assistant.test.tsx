@@ -21,8 +21,12 @@ import {
 } from "@/lib/plan-room-measurement-assistant";
 import {
   duplicateScopeCounts,
+  measurementCanvasGuides,
+  measurementScopeItemForSuggestion,
   measurementScopeKey,
+  measurementSuggestionIdentity,
   measurementSuggestionKey,
+  nextMeasurementGuideAfterDecision,
   scopeItemAsSuggestion,
   type MeasurementScopeQueueItem,
 } from "@/lib/plan-room-measurement-scope";
@@ -96,6 +100,64 @@ describe("guided measurement planning", () => {
         queuedScope.scope_key,
       ),
     ).toBe(1);
+  });
+
+  it("keeps the persisted decision identity after a restored label is edited", () => {
+    const restored = scopeItemAsSuggestion({
+      ...queuedScope,
+      status: "deferred",
+      label: "Estimator-renamed corridor wall",
+    });
+    const edited = { ...restored, label: "Final corridor wall label" };
+
+    expect(measurementSuggestionKey(queuedScope.plan_sheet_id, edited)).not.toBe(
+      queuedScope.suggestion_key,
+    );
+    expect(
+      measurementScopeItemForSuggestion([queuedScope], queuedScope.plan_sheet_id, edited)?.id,
+    ).toBe(queuedScope.id);
+    expect(
+      measurementSuggestionIdentity([queuedScope], queuedScope.plan_sheet_id, edited),
+    ).toMatchObject({
+      suggestionKey: queuedScope.suggestion_key,
+      scopeKey: queuedScope.scope_key,
+    });
+  });
+
+  it("advances after a restored decision and closes when the last guide is decided", () => {
+    const first = scopeItemAsSuggestion({
+      ...queuedScope,
+      status: "deferred",
+      label: "Estimator-renamed corridor wall",
+    });
+    const secondItem = {
+      ...queuedScope,
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      suggestion_key: "measurement-second",
+      scope_key: "linear:second wall",
+      label: "Second wall",
+      source_line: "L015",
+      status: "deferred" as const,
+    };
+    const second = scopeItemAsSuggestion(secondItem);
+    const items = [{ ...queuedScope, status: "deferred" as const }, secondItem];
+
+    expect(
+      nextMeasurementGuideAfterDecision({
+        suggestions: [first, second],
+        items,
+        sheetId: queuedScope.plan_sheet_id,
+        decidedSuggestionKey: queuedScope.suggestion_key,
+      })?.id,
+    ).toBe(second.id);
+    expect(
+      nextMeasurementGuideAfterDecision({
+        suggestions: [first],
+        items,
+        sheetId: queuedScope.plan_sheet_id,
+        decidedSuggestionKey: queuedScope.suggestion_key,
+      }),
+    ).toBeNull();
   });
 
   it("turns positioned PDF runs into stable top-to-bottom cited lines", () => {
@@ -317,20 +379,111 @@ describe("guided measurement planning", () => {
       sourceLines,
     );
 
-    expect(plan.suggestions.map((suggestion) => suggestion.label)).toEqual([
-      "Interior Wall Partition Types",
-      "Ceiling Grid",
-      "Masonry Overall",
-    ]);
+    expect(plan.suggestions).toEqual([]);
     expect(plan.summary).toBe(
-      "Cited measurement scope found for Interior Wall Partition Types, Ceiling Grid and Masonry Overall.",
+      "No reliable linear or area measurement scope was found in the extracted notes.",
     );
     expect(plan.summary).not.toContain("plain-language understanding");
     expect(plan.warnings).toEqual([
-      "2 AI suggestions were omitted because the cited note did not support the proposed scope or measurement tool.",
+      "5 AI suggestions were omitted because the cited note did not support the proposed scope or measurement tool.",
     ]);
-    expect(plan.suggestions[0].rationale).not.toContain("framing");
-    expect(plan.suggestions[0].rationale).toContain("only the supported scope");
+  });
+
+  it("fails closed on structural reference labels while retaining explicit cited work without geometry", () => {
+    const sourceLines = [
+      { line_number: "L001", text: "BEAM SCHEDULE ALONG GRID LINE A" },
+      { line_number: "L002", text: "TYPICAL FOOTING DETAIL" },
+      { line_number: "L003", text: "FOUNDATION WALL TYPES" },
+      { line_number: "L004", text: "MASONRY OVERALL" },
+      {
+        line_number: "L005",
+        text: "GENERAL NOTE: PROVIDE CONTINUOUS WATERPROOFING ALONG BASEMENT FOUNDATION WALLS",
+      },
+    ];
+    const plan = parseMeasurementAssistantPlan(
+      JSON.stringify({
+        suggestions: sourceLines.map((line, index) => ({
+          label: [
+            "beam schedule",
+            "typical footing detail",
+            "foundation wall types",
+            "masonry overall",
+            "continuous waterproofing foundation walls",
+          ][index],
+          tool: "linear",
+          source_line: line.line_number,
+          source_excerpt: line.text,
+          guide_points: [
+            { x: 0.1, y: 0.2 },
+            { x: 0.7, y: 0.2 },
+          ],
+        })),
+      }),
+      sourceLines,
+    );
+
+    expect(plan.suggestions).toHaveLength(1);
+    expect(plan.suggestions[0]).toMatchObject({
+      label: "continuous waterproofing foundation walls",
+      source_line: "L005",
+    });
+    expect(plan.suggestions[0].guide).toBeUndefined();
+    expect(plan.warnings).toEqual([
+      "4 AI suggestions were omitted because the cited note did not support the proposed scope or measurement tool.",
+      "1 drawing location hint was omitted because the cited evidence did not identify a reliable plan region.",
+    ]);
+  });
+
+  it("keeps uncertain structural scope as a cited checklist item without drawing a guessed route", () => {
+    const plan = parseMeasurementAssistantPlan(
+      JSON.stringify({
+        suggestions: [
+          {
+            label: "continuous concrete footing",
+            tool: "linear",
+            source_line: "L001",
+            source_excerpt: "CONTINUOUS CONCRETE FOOTING",
+            guide_points: [
+              { x: 0.08, y: 0.42 },
+              { x: 0.92, y: 0.42 },
+            ],
+          },
+        ],
+      }),
+      [{ line_number: "L001", text: "CONTINUOUS CONCRETE FOOTING" }],
+    );
+
+    expect(plan.suggestions).toHaveLength(1);
+    expect(plan.suggestions[0].guide).toBeUndefined();
+    expect(plan.warnings).toEqual([
+      "1 drawing location hint was omitted because the cited evidence did not identify a reliable plan region.",
+    ]);
+  });
+
+  it("retains a structural guide only when the citation names both the work and its plan extent", () => {
+    const source =
+      "PROVIDE CONTINUOUS CONCRETE FOOTING ALONG GRID LINE A FROM COLUMN 1 TO COLUMN 6";
+    const plan = parseMeasurementAssistantPlan(
+      JSON.stringify({
+        suggestions: [
+          {
+            label: "continuous concrete footing",
+            tool: "linear",
+            source_line: "L001",
+            source_excerpt: source,
+            guide_points: [
+              { x: 0.12, y: 0.3 },
+              { x: 0.82, y: 0.3 },
+            ],
+          },
+        ],
+      }),
+      [{ line_number: "L001", text: source }],
+    );
+
+    expect(plan.suggestions).toHaveLength(1);
+    expect(plan.suggestions[0].guide?.kind).toBe("linear_route");
+    expect(plan.warnings).toEqual([]);
   });
 
   it("requires the displayed excerpt itself to support the proposed label and tool", () => {
@@ -980,9 +1133,18 @@ it("keeps accepted visual-guide provenance available after the AI review session
   expect(restored.id).toBe(`scope-item-${queuedScope.id}`);
 });
 
+it("keeps an accepted visual guide on the canvas while its trusted trace is prepared", () => {
+  const restored = scopeItemAsSuggestion(queuedScope);
+
+  expect(measurementCanvasGuides([], restored)).toEqual([restored]);
+  expect(measurementCanvasGuides([restored], restored)).toEqual([restored]);
+  expect(measurementCanvasGuides([], null)).toEqual([]);
+});
+
 it("lets the estimator spotlight, hide, and replay a sparse AI attention layer", () => {
   const setMode = vi.fn();
   const replay = vi.fn();
+  const exit = vi.fn();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -998,6 +1160,8 @@ it("lets the estimator spotlight, hide, and replay a sparse AI attention layer",
         onModeChange={setMode}
         onOpacityChange={() => {}}
         onReplay={replay}
+        onExit={exit}
+        navigationEnabled={false}
       />,
     ),
   );
@@ -1005,6 +1169,14 @@ it("lets the estimator spotlight, hide, and replay a sparse AI attention layer",
   expect(container.textContent).toContain("AI attention layer");
   expect(container.textContent).toContain("Visual callouts only");
   expect(container.textContent).toContain("2/3");
+  expect(
+    container.querySelector<HTMLButtonElement>('[data-testid="measurement-attention-previous"]')
+      ?.disabled,
+  ).toBe(true);
+  expect(
+    container.querySelector<HTMLButtonElement>('[data-testid="measurement-attention-next"]')
+      ?.disabled,
+  ).toBe(true);
   act(() =>
     container
       .querySelector<HTMLButtonElement>('[data-testid="measurement-attention-spotlight"]')!
@@ -1017,6 +1189,12 @@ it("lets the estimator spotlight, hide, and replay a sparse AI attention layer",
       .click(),
   );
   expect(replay).toHaveBeenCalledOnce();
+  act(() =>
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="measurement-attention-exit"]')!
+      .click(),
+  );
+  expect(exit).toHaveBeenCalledOnce();
 });
 
 it("requires estimator acceptance before a visual hint can start a trusted trace", () => {
@@ -1042,7 +1220,8 @@ it("requires estimator acceptance before a visual hint can start a trusted trace
     ),
   );
 
-  expect(container.textContent).toContain("cannot feed the estimate");
+  expect(container.textContent).toContain("not a quantity");
+  expect(container.textContent).toContain("source of truth");
   expect(container.textContent).toContain("Estimator accepted");
   expect(
     container.querySelector<HTMLInputElement>('[data-testid="measurement-guide-label"]')?.disabled,

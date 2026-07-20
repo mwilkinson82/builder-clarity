@@ -13,6 +13,14 @@ export interface NormPoint {
   y: number;
 }
 
+export type InkSnapCursorState = {
+  point: NormPoint;
+  orthoSnapped: boolean;
+  geometrySnapped: boolean;
+};
+
+const INK_SNAP_TOOLS = new Set(["linear", "area", "calibrate", "verify"]);
+
 /**
  * Snap a normalized cursor onto the nearest wall line in the rendered sheet.
  *
@@ -76,4 +84,40 @@ export function inkSnapOnCanvas(
   if (!result) return null;
 
   return { x: (x0 + result.point.x) / W, y: (y0 + result.point.y) / H };
+}
+
+/**
+ * Apply the drawing-line magnet for both takeoff tracing and scale-point
+ * capture. Alt always bypasses it; an already-acquired takeoff vertex keeps
+ * priority. Ink acquisition is reported as `geometrySnapped` so the same
+ * green target indicator appears in Verify Scale as it does in Linear.
+ */
+export function resolveInkSnapOnCanvas<T extends InkSnapCursorState>({
+  canvas,
+  cursor,
+  tool,
+  altKey,
+  base,
+}: {
+  canvas: HTMLCanvasElement | null;
+  cursor: NormPoint;
+  tool: string;
+  altKey: boolean;
+  base: T;
+}): T {
+  if (altKey || !INK_SNAP_TOOLS.has(tool) || base.geometrySnapped || !canvas) return base;
+  const inked = inkSnapOnCanvas(canvas, cursor);
+  if (!inked) return base;
+  if ((tool === "calibrate" || tool === "verify") && base.orthoSnapped) {
+    // The scale workflow's second point must remain exactly square to its
+    // anchor. Nearby ink confirms acquisition and turns the target green, but
+    // it must not pull an already-constrained point a few pixels off axis.
+    return { ...base, geometrySnapped: true };
+  }
+  return {
+    ...base,
+    point: inked,
+    orthoSnapped: false,
+    geometrySnapped: true,
+  };
 }

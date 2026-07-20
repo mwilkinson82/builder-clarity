@@ -28,9 +28,19 @@ import {
   type TakeoffWorksheetGroup,
 } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow } from "@/lib/estimates.functions";
-import type { PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
+import type {
+  PlanSheetRow,
+  TakeoffMeasurementRow,
+  TakeoffToolType,
+} from "@/lib/plan-room.functions";
 import { takeoffSyncBlockReason, takeoffTrustLabel } from "@/lib/plan-room-trust";
-import { formatQty, toolLabel, unitLongName, type TakeoffFilterMode } from "./planRoomShared";
+import {
+  formatQty,
+  formatTakeoffDisplayQuantity,
+  toolLabel,
+  unitLongName,
+  type TakeoffFilterMode,
+} from "./planRoomShared";
 import { LinkOrCreatePicker } from "./TakeoffClassify";
 import { TakeoffGroupCard } from "./TakeoffGroupCard";
 
@@ -53,6 +63,7 @@ export type SyncConflictState = {
     wastePct: number;
     quantity: number;
     unit: string;
+    toolType: TakeoffToolType;
   }>;
 };
 
@@ -106,7 +117,7 @@ export function SyncConflictDialog({
             {conflict.sources.slice(0, 4).map((source, index) => (
               <p key={index} className="text-xs text-muted-foreground">
                 Sheet {source.sheetNumber || "?"} · {source.label} ·{" "}
-                {formatQty(source.quantity, source.unit)}
+                {formatTakeoffDisplayQuantity(source.quantity, source.unit, source.toolType)}
                 {source.wastePct > 0 ? ` · waste ${source.wastePct}%` : ""}
               </p>
             ))}
@@ -557,7 +568,11 @@ export function TakeoffWorksheet({
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {toolLabel(measurement.tool_type)} ·{" "}
-                        {formatQty(measurement.quantity, measurement.unit)}
+                        {formatTakeoffDisplayQuantity(
+                          measurement.quantity,
+                          measurement.unit,
+                          measurement.tool_type,
+                        )}
                       </p>
                       {measurementSheet && (
                         <p className="mt-1 truncate text-xs text-muted-foreground">

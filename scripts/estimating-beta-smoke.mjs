@@ -36,6 +36,7 @@ import {
   takeoffGroupKey,
   takeoffGroupRollup,
   takeoffUnitsCompatible,
+  ANGLE_GUIDE_SNAP_TOLERANCE_DEG,
   GEOMETRY_SNAP_TOLERANCE_PX,
 } from "../src/lib/plan-room-math.ts";
 import { calculateAuthoritativeTakeoff } from "../src/lib/plan-room-quantity.ts";
@@ -693,10 +694,12 @@ assert.equal(shiftConstrained.angleDeg, 45);
 // --- Draw-point resolver (beta batch 1: ortho + geometry snapping) ----------
 const snapAnchor = { x: 0.2, y: 0.5 };
 
-// Ortho window: just inside ~3 degrees of level snaps to exactly 0.
+// Ortho acquisition is intentionally forgiving for scale and takeoff work:
+// just inside six degrees of level snaps to exactly 0.
+assert.equal(ANGLE_GUIDE_SNAP_TOLERANCE_DEG, 6);
 const insideOrtho = resolveTakeoffDrawPoint({
   anchor: snapAnchor,
-  cursor: { x: 0.6, y: 0.5 + Math.tan((2.7 * Math.PI) / 180) * 0.4 },
+  cursor: { x: 0.6, y: 0.5 + Math.tan((5.7 * Math.PI) / 180) * 0.4 },
   viewSize: guideView,
 });
 assert.equal(insideOrtho.orthoSnapped, true);
@@ -706,7 +709,7 @@ assert.ok(Math.abs(insideOrtho.point.y - 0.5) < 1e-9);
 // Just outside the window stays raw.
 const outsideOrtho = resolveTakeoffDrawPoint({
   anchor: snapAnchor,
-  cursor: { x: 0.6, y: 0.5 + Math.tan((3.6 * Math.PI) / 180) * 0.4 },
+  cursor: { x: 0.6, y: 0.5 + Math.tan((6.6 * Math.PI) / 180) * 0.4 },
   viewSize: guideView,
 });
 assert.equal(outsideOrtho.orthoSnapped, false);
@@ -741,9 +744,9 @@ assert.equal(altBypass.orthoSnapped, false);
 assert.equal(altBypass.geometrySnapped, false);
 assert.deepEqual(altBypass.point, { x: 0.6, y: 0.501 });
 
-// Geometry snap: a committed vertex within the 8px screen tolerance grabs
+// Geometry snap: a committed vertex within the 14px screen tolerance grabs
 // the cursor; one outside does not.
-assert.equal(GEOMETRY_SNAP_TOLERANCE_PX, 8);
+assert.equal(GEOMETRY_SNAP_TOLERANCE_PX, 14);
 const nearVertex = snapToTakeoffVertex({
   cursor: { x: 0.6, y: 0.5 },
   candidates: [{ x: 0.605, y: 0.501 }],
@@ -752,7 +755,7 @@ const nearVertex = snapToTakeoffVertex({
 assert.deepEqual(nearVertex, { x: 0.605, y: 0.501 });
 const farVertex = snapToTakeoffVertex({
   cursor: { x: 0.6, y: 0.5 },
-  candidates: [{ x: 0.61, y: 0.5 }],
+  candidates: [{ x: 0.616, y: 0.5 }],
   viewSize: guideView,
 });
 assert.equal(farVertex, null);
@@ -760,7 +763,7 @@ assert.equal(farVertex, null);
 // The tolerance is screen pixels: zoom scales sheet distance on screen.
 const zoomedOut = snapToTakeoffVertex({
   cursor: { x: 0.6, y: 0.5 },
-  candidates: [{ x: 0.605, y: 0.5 }],
+  candidates: [{ x: 0.608, y: 0.5 }],
   viewSize: guideView,
   zoom: 2,
 });

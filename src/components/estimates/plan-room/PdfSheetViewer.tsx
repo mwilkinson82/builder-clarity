@@ -62,7 +62,7 @@ import {
   statedScaleFeetPerPixel,
   type SheetIdentityPage,
 } from "@/lib/plan-room-math";
-import { inkSnapOnCanvas } from "@/lib/plan-room-ink-snap-raster";
+import { resolveInkSnapOnCanvas } from "@/lib/plan-room-ink-snap-raster";
 import { DraftShape, MeasurementShape, TakeoffDraftHud } from "./TakeoffTools";
 import { TakeoffRunPreview, type RunCursorState } from "./TakeoffRunPreview";
 import { PlanMiniMap } from "./SheetSidebar";
@@ -1088,16 +1088,17 @@ export function PlanCanvas({
         altKey,
         shiftKey,
       });
-      // Magnetic ink-snap (SMARTTRACE Slice 1): while tracing linear/area, snap
-      // the point onto the nearest wall line in the drawing. Alt bypasses it, a
-      // committed-vertex snap always wins, otherwise the wall beats the ortho
-      // magnet. Falls back to `base` when nothing wall-like is near the cursor.
-      if (!altKey && (tool === "linear" || tool === "area") && !base.geometrySnapped) {
-        const canvas = canvasRef.current;
-        const inked = canvas ? inkSnapOnCanvas(canvas, cursor) : null;
-        if (inked) return { ...base, point: inked, orthoSnapped: false };
-      }
-      return base;
+      // Magnetic ink-snap (SMARTTRACE Slice 1): Linear, Area, Set Scale, and
+      // Verify Scale all acquire the same nearby drawing line. Alt bypasses it,
+      // a committed-vertex snap wins, and ink acquisition shows the green
+      // target indicator instead of looking like an ordinary unsnapped click.
+      return resolveInkSnapOnCanvas({
+        canvas: canvasRef.current,
+        cursor,
+        tool,
+        altKey,
+        base,
+      });
     },
     [calibrationPoints, pendingPoints, snapCandidates, viewSize, zoom, tool],
   );
@@ -1754,7 +1755,7 @@ export function PlanCanvas({
           className="pointer-events-none absolute inset-x-3 bottom-16 z-40 flex justify-center"
           data-plan-zoom-through="true"
         >
-          <div className="pointer-events-auto">{aiReviewBar}</div>
+          <div className="pointer-events-auto min-w-0 max-w-full">{aiReviewBar}</div>
         </div>
       )}
       {measurementGuideControls && (
@@ -1762,7 +1763,7 @@ export function PlanCanvas({
           className="pointer-events-none absolute inset-x-3 top-20 z-40 flex justify-center"
           data-plan-zoom-through="true"
         >
-          <div className="pointer-events-auto">{measurementGuideControls}</div>
+          <div className="pointer-events-auto min-w-0 max-w-full">{measurementGuideControls}</div>
         </div>
       )}
 

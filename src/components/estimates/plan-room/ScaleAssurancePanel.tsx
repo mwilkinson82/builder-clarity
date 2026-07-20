@@ -70,7 +70,7 @@ export function ScaleAssurancePanel({
   return (
     <div className="space-y-3" data-testid="scale-assurance-panel">
       <Separator />
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="eyebrow">Measurement evidence</div>
           <Label className="mt-1 block font-serif text-lg font-normal">Scale Assurance</Label>
@@ -153,7 +153,7 @@ export function ScaleAssurancePanel({
             </Button>
           )}
         </div>
-        <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+        <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
           <Input
             value={verifyFeet}
             onChange={(event) => onVerifyFeetChange(event.target.value)}
@@ -164,7 +164,7 @@ export function ScaleAssurancePanel({
           <Button
             type="button"
             variant="outline"
-            className="gap-1.5"
+            className="w-full gap-1.5 sm:w-auto"
             onClick={onRecordCheck}
             disabled={!readyToRecord}
             data-testid="verify-scale-check"

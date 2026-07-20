@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { takeoffUnitsCompatible, type TakeoffWorksheetGroup } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow } from "@/lib/estimates.functions";
 import type { PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
-import { formatQty, unitLongName } from "./planRoomShared";
+import { formatTakeoffDisplayQuantity, unitLongName } from "./planRoomShared";
 import { LinkOrCreatePicker } from "./TakeoffClassify";
 
 // One worksheet card per takeoff group (beta batch 2): rollup quantity,
@@ -70,6 +70,7 @@ export function TakeoffGroupCard({
     .map((sheetId) => sheets.find((sheet) => sheet.id === sheetId)?.sheet_number || "?")
     .join(", ");
   const showWasteRollup = Math.abs(group.rollupQuantity - group.measuredQuantity) > 0.0001;
+  const groupToolType = group.members[0]?.tool_type ?? "count";
   const memberIds = group.members.map((member) => member.id);
   const untrustedCount = group.members.filter(
     (member) => member.calculation_status !== "current",
@@ -116,8 +117,11 @@ export function TakeoffGroupCard({
             )}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            {group.members.length} takeoffs · {formatQty(group.measuredQuantity, group.unit)} total
-            {showWasteRollup ? ` · ${formatQty(group.rollupQuantity, group.unit)} with waste` : ""}
+            {group.members.length} takeoffs ·{" "}
+            {formatTakeoffDisplayQuantity(group.measuredQuantity, group.unit, groupToolType)} total
+            {showWasteRollup
+              ? ` · ${formatTakeoffDisplayQuantity(group.rollupQuantity, group.unit, groupToolType)} with waste`
+              : ""}
           </p>
           <p className="mt-1 truncate text-xs text-muted-foreground">
             {group.sheetIds.length === 1 ? "Sheet" : "Sheets"}: {sheetLabels}
@@ -174,7 +178,7 @@ export function TakeoffGroupCard({
                     style={{ backgroundColor: member.color }}
                   />
                   <span className="min-w-0 truncate">
-                    {formatQty(member.quantity, member.unit)}
+                    {formatTakeoffDisplayQuantity(member.quantity, member.unit, member.tool_type)}
                     {memberSheet ? ` · ${memberSheet.sheet_number}` : ""}
                   </span>
                 </span>

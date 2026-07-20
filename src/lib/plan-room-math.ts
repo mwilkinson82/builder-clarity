@@ -140,11 +140,13 @@ export function parseFeetInches(input: string): number | null {
 // tolerance of a 45-degree increment the point snaps to the exact angle
 // (Shift hard-constrains to the nearest increment). Works in screen pixel
 // space so the guide matches the eye regardless of sheet aspect ratio.
-// Tolerance widened from 2 to 3 degrees after the first external beta:
-// click precision is the dominant measurement error, so the magnet gets
-// a slightly larger catch window.
+// A six-degree catch window is deliberate for construction drawings: it is
+// forgiving enough for a trackpad/mouse to find level, plumb, and 45-degree
+// runs without pixel hunting, while still leaving a 33-degree free-motion
+// band between neighboring 45-degree magnets. Shift remains the explicit
+// hard-lock when the estimator wants a constraint outside this window.
 
-export const ANGLE_GUIDE_SNAP_TOLERANCE_DEG = 3;
+export const ANGLE_GUIDE_SNAP_TOLERANCE_DEG = 6;
 
 export function snapLinearPoint({
   anchor,
@@ -195,7 +197,10 @@ export function snapLinearPoint({
 //      hard-constrains to the nearest increment.
 // Tolerances are screen pixels/degrees: candidate distance scales with zoom.
 
-export const GEOMETRY_SNAP_TOLERANCE_PX = 8;
+// Fourteen screen pixels produces a practical 28px-diameter acquisition target
+// around a committed endpoint. The value stays in screen space, so zoom never
+// turns the magnet into an unexpectedly large region of the drawing.
+export const GEOMETRY_SNAP_TOLERANCE_PX = 14;
 
 export function snapToTakeoffVertex({
   cursor,
@@ -924,6 +929,16 @@ export function formatFeetInches(feet: number): string {
           : ` ${eighths}/8`;
   if (inches === 0 && !fraction) return `${wholeFeet}'`;
   return `${wholeFeet}'-${inches}${fraction}"`;
+}
+
+/**
+ * Canvas-facing display for a stored linear-foot quantity.
+ *
+ * Takeoff math and persistence keep the original decimal feet unchanged; only
+ * the visible construction dimension is rounded to the nearest 1/8 inch.
+ */
+export function formatGeometricLinearFeet(feet: number): string {
+  return formatFeetInches(feet);
 }
 
 export type DecimalFeetHint = {

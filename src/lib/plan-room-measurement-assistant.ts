@@ -270,14 +270,20 @@ const DETAIL_CAPTION_PATTERN =
 const LOCATION_ONLY_SCOPE_PATTERN =
   /\blocations?\b[\s\S]*\b(?:access panels?|blocking|doors?|fixtures?|grab bars?|openings?|windows?)\b/i;
 const SPAN_LANGUAGE_PATTERN =
-  /\b(?:along|continuous|entire|full[-\s]?height|length|perimeter|run|trace|wall[-\s]?to[-\s]?wall)\b/i;
+  /\b(?:along|continuous|entire|full[-\s]?height|full[-\s]?length|length|perimeter|run|trace|throughout|wall[-\s]?to[-\s]?wall|from\b[\s\S]{1,80}\bto|between)\b/i;
+const MEASURABLE_ACTION_PATTERN =
+  /\b(?:apply|coat|construct|continue|demolish|extend|frame|install|insulate|paint|place|pour|provide|remove|replace|seal|trace|waterproof)\b/i;
+const NAMED_REGION_PATTERN =
+  /\b(?:along|around|at|in|on|over|throughout|within)\s+(?:the\s+)?(?:[a-z0-9#-]+\s+){0,5}(?:areas?|buildings?|canopies|canopy|corridors?|decks?|drives?|floors?|footings?|foundations?|grid(?:\s+lines?)?|parking|perimeters?|roofs?|rooms?|sites?|slabs?|surfaces?|walls?|zones?)\b/i;
+const REFERENCE_CONTEXT_PATTERN =
+  /\b(?:details?|diagrams?|drawing\s+index|elevations?|general\s+notes?|indexes|legends?|matrices|schedules?|sections?|sheet\s+index|tables?|typical|types?|overall)\b/i;
 const DIMENSION_FRAGMENT_PATTERN = /(?:℄|\bC\/?L\b)[\s\S]*(?:\d+['"-]|\b\d+\s+\d+\b)/i;
 const CODE_LIMIT_FRAGMENT_PATTERN =
   /\b(?:floor|wall|ceiling|roof|attic)\s+area\s+(?:permitted|allowed|allowable)\b|\bpermitted\s+in\s+clear\b/i;
 const DIRECTION_ONLY_MATERIAL_FRAGMENT_PATTERN =
   /^(?:roofing\s+)?(?:membrane|flashing|waterproofing)\s+(?:up|down|over|around)(?:\s+and\s+(?:up|down|over|around))*$/i;
 
-function excerptSupportsMeasurableScope(excerpt: string) {
+function excerptSupportsMeasurableScope(label: string, excerpt: string) {
   if (DETAIL_CAPTION_PATTERN.test(excerpt)) return false;
   if (DIMENSION_FRAGMENT_PATTERN.test(excerpt)) return false;
   if (CODE_LIMIT_FRAGMENT_PATTERN.test(excerpt)) return false;
@@ -285,7 +291,32 @@ function excerptSupportsMeasurableScope(excerpt: string) {
   if (LOCATION_ONLY_SCOPE_PATTERN.test(excerpt) && !SPAN_LANGUAGE_PATTERN.test(excerpt)) {
     return false;
   }
-  return true;
+  const hasAction = MEASURABLE_ACTION_PATTERN.test(excerpt);
+  const hasSpan = SPAN_LANGUAGE_PATTERN.test(excerpt);
+  const hasRegion = NAMED_REGION_PATTERN.test(excerpt);
+  if (REFERENCE_CONTEXT_PATTERN.test(`${label} ${excerpt}`)) {
+    return hasAction && (hasSpan || hasRegion);
+  }
+  return hasAction || hasSpan || hasRegion;
+}
+
+/**
+ * A citation can support an estimator checklist item without proving where the
+ * corresponding geometry is on a dense sheet. Visual callouts require both a
+ * named region and an action/span, and reference-only contexts always remain
+ * non-geometric so schedules and details cannot masquerade as plan traces.
+ */
+function excerptSupportsVisualGuide(
+  label: string,
+  excerpt: string,
+  tool: MeasurementAssistantTool,
+) {
+  if (REFERENCE_CONTEXT_PATTERN.test(`${label} ${excerpt}`)) return false;
+  const hasRegion = NAMED_REGION_PATTERN.test(excerpt);
+  if (tool === "area") return hasRegion;
+  return (
+    hasRegion && (MEASURABLE_ACTION_PATTERN.test(excerpt) || SPAN_LANGUAGE_PATTERN.test(excerpt))
+  );
 }
 
 const scopeToken = (token: string) => {
@@ -491,6 +522,7 @@ export function parseMeasurementAssistantPlan(
   const seen = new Set<string>();
   const suggestions: MeasurementAssistantSuggestion[] = [];
   let invalidGuideCount = 0;
+  let unsupportedGuideCount = 0;
 
   for (const [index, value] of rawSuggestions.entries()) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
@@ -507,7 +539,7 @@ export function parseMeasurementAssistantPlan(
       !label ||
       !labelIsSupportedByLine(label, excerpt) ||
       !toolIsSupportedByLine(tool, excerpt) ||
-      !excerptSupportsMeasurableScope(excerpt)
+      !excerptSupportsMeasurableScope(label, excerpt)
     ) {
       continue;
     }
@@ -515,8 +547,12 @@ export function parseMeasurementAssistantPlan(
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
     const guideCandidate = item.guide_points ?? item.guide;
-    const guide = guideCandidate == null ? null : parseMeasurementVisualGuide(guideCandidate, tool);
-    if (guideCandidate != null && !guide) invalidGuideCount += 1;
+    const parsedGuide =
+      guideCandidate == null ? null : parseMeasurementVisualGuide(guideCandidate, tool);
+    if (guideCandidate != null && !parsedGuide) invalidGuideCount += 1;
+    const guide =
+      parsedGuide && excerptSupportsVisualGuide(label, excerpt, tool) ? parsedGuide : null;
+    if (parsedGuide && !guide) unsupportedGuideCount += 1;
     suggestions.push({
       id: `measurement-suggestion-${index + 1}`,
       label,
@@ -541,6 +577,11 @@ export function parseMeasurementAssistantPlan(
     ...(invalidGuideCount
       ? [
           `${invalidGuideCount} drawing location hint${invalidGuideCount === 1 ? " was" : "s were"} omitted because the proposed geometry was not usable.`,
+        ]
+      : []),
+    ...(unsupportedGuideCount
+      ? [
+          `${unsupportedGuideCount} drawing location hint${unsupportedGuideCount === 1 ? " was" : "s were"} omitted because the cited evidence did not identify a reliable plan region.`,
         ]
       : []),
   ];
