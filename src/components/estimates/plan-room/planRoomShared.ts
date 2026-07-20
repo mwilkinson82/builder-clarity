@@ -193,7 +193,9 @@ export const PDF_STANDARD_RENDER_MAX_PIXELS = 24_000_000;
 export const PDF_HIGH_DETAIL_RENDER_MAX_EDGE = 12_288;
 export const PDF_HIGH_DETAIL_RENDER_MAX_PIXELS = 72_000_000;
 export const PDF_INSPECTION_RENDER_MULTIPLIER = 2;
-export const DEFAULT_PDF_DETAIL_MODE: PdfDetailMode = "max";
+// Navigation should feel immediate on large plan sets. The backing raster
+// still scales up with zoom; estimators can opt into Sharp or Max when needed.
+export const DEFAULT_PDF_DETAIL_MODE: PdfDetailMode = "fast";
 export const PDF_DETAIL_OPTIONS: PdfDetailOption[] = [
   {
     mode: "fast",

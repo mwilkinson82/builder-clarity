@@ -1,4 +1,5 @@
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
@@ -495,6 +496,13 @@ export function PlanCanvas({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Reuse the loaded PDF document across sheet changes. Reopening a 60-page
+  // source file for every Next/Previous click was the dominant navigation lag.
+  const pdfDocumentRef = useRef<{
+    source: string;
+    task: PDFDocumentLoadingTask;
+    promise: Promise<PDFDocumentProxy>;
+  } | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const [signedUrl, setSignedUrl] = useState("");
   // Signed URLs expire mid-session. Any fetch failure first requests a fresh
@@ -636,6 +644,15 @@ export function PlanCanvas({
     };
   }, [planSet?.file_path, signedUrlNonce]);
 
+  useEffect(
+    () => () => {
+      const cached = pdfDocumentRef.current;
+      pdfDocumentRef.current = null;
+      void cached?.task.destroy().catch(() => undefined);
+    },
+    [],
+  );
+
   useEffect(() => {
     if (planSet?.sample_key === "harbor-residence" || !planSet?.file_path) {
       setRenderQuality({
@@ -656,7 +673,19 @@ export function PlanCanvas({
       try {
         const pdfjs = await import("pdfjs-dist");
         configurePdfWorker(pdfjs);
-        const pdf = await pdfjs.getDocument(await pdfDocumentSourceFor(signedUrl)).promise;
+        let cachedPdf = pdfDocumentRef.current;
+        if (!cachedPdf || cachedPdf.source !== signedUrl) {
+          const previousPdf = cachedPdf;
+          const task = pdfjs.getDocument(await pdfDocumentSourceFor(signedUrl));
+          cachedPdf = {
+            source: signedUrl,
+            task,
+            promise: task.promise,
+          };
+          pdfDocumentRef.current = cachedPdf;
+          void previousPdf?.task.destroy().catch(() => undefined);
+        }
+        const pdf = await cachedPdf.promise;
         const page = await pdf.getPage(sheet?.page_number ?? 1);
         const viewport = page.getViewport({ scale: 1 });
         if (!cancelled) {
@@ -667,10 +696,34 @@ export function PlanCanvas({
         const renderScale = renderPlan.renderScale;
         const cssViewport = page.getViewport({ scale: cssScale });
         const renderViewport = page.getViewport({ scale: renderScale });
+        if (!canvasRef.current || cancelled) return;
+        // Render offscreen and swap only after completion. Resizing the visible
+        // canvas before pdfjs finished caused rapid zoom gestures to cancel a
+        // render after the canvas had already been cleared, producing a white
+        // viewport.
+        const nextCanvas = document.createElement("canvas");
+        nextCanvas.width = Math.round(renderViewport.width);
+        nextCanvas.height = Math.round(renderViewport.height);
+        const nextContext = nextCanvas.getContext("2d");
+        if (!nextContext) throw new Error("The drawing canvas is unavailable.");
+        onViewSizeChange({
+          width: Math.round(cssViewport.width),
+          height: Math.round(cssViewport.height),
+        });
+        renderTask = page.render({
+          canvas: nextCanvas,
+          canvasContext: nextContext,
+          viewport: renderViewport,
+        });
+        await renderTask.promise;
+        if (cancelled) return;
         const canvas = canvasRef.current;
-        if (!canvas || cancelled) return;
-        canvas.width = Math.round(renderViewport.width);
-        canvas.height = Math.round(renderViewport.height);
+        if (!canvas) return;
+        canvas.width = nextCanvas.width;
+        canvas.height = nextCanvas.height;
+        const visibleContext = canvas.getContext("2d");
+        if (!visibleContext) throw new Error("The drawing canvas is unavailable.");
+        visibleContext.drawImage(nextCanvas, 0, 0);
         canvas.dataset.pdfRenderScale = renderScale.toFixed(3);
         canvas.dataset.pdfRenderWidth = String(canvas.width);
         canvas.dataset.pdfRenderHeight = String(canvas.height);
@@ -684,17 +737,7 @@ export function PlanCanvas({
           ).toFixed(0)}M pixels.`,
           capped: renderPlan.capped,
         });
-        onViewSizeChange({
-          width: Math.round(cssViewport.width),
-          height: Math.round(cssViewport.height),
-        });
-        renderTask = page.render({
-          canvas,
-          canvasContext: canvas.getContext("2d")!,
-          viewport: renderViewport,
-        });
-        await renderTask.promise;
-        if (!cancelled) fetchAttemptRef.current = 0;
+        fetchAttemptRef.current = 0;
       } catch (error) {
         if (cancelled || isPdfRenderCancelled(error)) return;
         // Most mid-session failures are an expired signed URL: request a
@@ -1034,8 +1077,10 @@ export function PlanCanvas({
   // vertex beats the ortho magnet, Shift hard-constrains to 45s.
   const resolveDrawCursor = useCallback(
     (cursor: Point, altKey: boolean, shiftKey: boolean): RunCursorState => {
+      const cursorPoints =
+        tool === "calibrate" || tool === "verify" ? calibrationPoints : pendingPoints;
       const base = resolveTakeoffDrawPoint({
-        anchor: pendingPoints.length > 0 ? pendingPoints[pendingPoints.length - 1] : null,
+        anchor: cursorPoints.length > 0 ? cursorPoints[cursorPoints.length - 1] : null,
         cursor,
         viewSize,
         zoom,
@@ -1054,13 +1099,20 @@ export function PlanCanvas({
       }
       return base;
     },
-    [pendingPoints, snapCandidates, viewSize, zoom, tool],
+    [calibrationPoints, pendingPoints, snapCandidates, viewSize, zoom, tool],
   );
 
   // Re-resolves the rubber band from the last known pointer position after
   // the sheet moves under a still cursor (pan, wheel zoom, placed vertex).
   const refreshRunCursorFromLastPointer = useCallback(() => {
-    if (tool !== "linear" && tool !== "area" && tool !== "ruler") return;
+    if (
+      tool !== "linear" &&
+      tool !== "area" &&
+      tool !== "ruler" &&
+      tool !== "calibrate" &&
+      tool !== "verify"
+    )
+      return;
     const last = lastPointerRef.current;
     if (!last) return;
     const cursor = pointFromClient(last.x, last.y);
@@ -1188,13 +1240,14 @@ export function PlanCanvas({
   };
 
   const isDrawTool = tool === "linear" || tool === "area" || tool === "count" || tool === "ruler";
+  const isRightPanTool = isDrawTool || tool === "calibrate" || tool === "verify";
 
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (geometryEditDraft) return;
     // Right button on a draw tool: drag pans the sheet mid-run, a click
     // without drag finishes the run on pointer up. The context menu is
     // suppressed from here because macOS raises it at press time.
-    if (event.button === 2 && isDrawTool && scrollRef.current) {
+    if (event.button === 2 && isRightPanTool && scrollRef.current) {
       event.preventDefault();
       suppressContextMenuRef.current = true;
       rightPanRef.current = {
@@ -1294,7 +1347,13 @@ export function PlanCanvas({
       refreshRunCursorFromLastPointer();
       return;
     }
-    if (tool === "linear" || tool === "area" || tool === "ruler") {
+    if (
+      tool === "linear" ||
+      tool === "area" ||
+      tool === "ruler" ||
+      tool === "calibrate" ||
+      tool === "verify"
+    ) {
       const cursor = pointFromClient(event.clientX, event.clientY);
       if (cursor) {
         lastPointerRef.current = {
@@ -1382,7 +1441,13 @@ export function PlanCanvas({
     if ((tool === "linear" || tool === "area" || tool === "ruler") && event.detail > 1) return;
     // The committed click obeys the same snaps as the rubber-band preview:
     // geometry snap first, then the ortho magnet; Alt places the raw point.
-    if (tool === "linear" || tool === "area" || tool === "ruler") {
+    if (
+      tool === "linear" ||
+      tool === "area" ||
+      tool === "ruler" ||
+      tool === "calibrate" ||
+      tool === "verify"
+    ) {
       onPoint(resolveDrawCursor(point, event.altKey, event.shiftKey).point);
       return;
     }
@@ -1941,17 +2006,24 @@ export function PlanCanvas({
                 tool={tool === "calibrate" || tool === "verify" ? tool : "select"}
                 command={tool === "calibrate" || tool === "verify" ? draftCommand : null}
               />
-              {(tool === "linear" || tool === "area" || tool === "ruler") && runCursor && (
-                <TakeoffRunPreview
-                  pendingPoints={pendingPoints}
-                  cursor={runCursor}
-                  tool={tool}
-                  viewSize={viewSize}
-                  zoom={zoom}
-                  scaleFeetPerPixel={sheet?.scale_feet_per_pixel ?? 0}
-                  unit={draftUnit}
-                />
-              )}
+              {(tool === "linear" ||
+                tool === "area" ||
+                tool === "ruler" ||
+                tool === "calibrate" ||
+                tool === "verify") &&
+                runCursor && (
+                  <TakeoffRunPreview
+                    pendingPoints={
+                      tool === "calibrate" || tool === "verify" ? calibrationPoints : pendingPoints
+                    }
+                    cursor={runCursor}
+                    tool={tool}
+                    viewSize={viewSize}
+                    zoom={zoom}
+                    scaleFeetPerPixel={sheet?.scale_feet_per_pixel ?? 0}
+                    unit={draftUnit}
+                  />
+                )}
               <AiGhostLayer
                 ghosts={aiGhosts}
                 activeGhostId={activeAiGhostId}
