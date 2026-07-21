@@ -26,10 +26,17 @@ type PaymentsServerContext = {
 
 type DynamicSupabaseClient = {
   from: (relation: string) => ReturnType<SupabaseClient["from"]>;
+  rpc: (
+    functionName: string,
+    args?: Record<string, unknown>,
+  ) => Promise<{ data: unknown; error: { code?: string; message: string } | null }>;
 };
 
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
+
+const dynamicRpc = (supabase: unknown, functionName: string, args?: Record<string, unknown>) =>
+  (supabase as DynamicSupabaseClient).rpc(functionName, args);
 
 async function ensureCurrentOrganization(context: PaymentsServerContext) {
   const { data: organizationId, error } = await context.supabase.rpc("ensure_current_user_account");
@@ -495,10 +502,20 @@ export const expireInvoiceCheckout = createServerFn({ method: "POST" })
       return { ok: true, cleared: false, reason: "session_not_open" };
     }
 
-    const { error: updateError } = await dynamicTable(admin, "billing_invoices")
-      .update({ online_payment_status: "expired" })
-      .eq("id", data.invoiceId)
-      .eq("stripe_checkout_session_id", sessionId);
+    const { error: updateError } = await dynamicRpc(
+      admin,
+      "update_billing_invoice_processor_state_atomic",
+      {
+        p_billing_invoice_id: data.invoiceId,
+        p_online_payment_status: "expired",
+        p_checkout_session_id: sessionId,
+        p_payment_intent_id: "",
+        p_payment_url: "",
+        p_payment_enabled: false,
+        p_payment_link_sent_at: null,
+        p_idempotency_key: `manual-expire:${data.invoiceId}:${sessionId}`,
+      },
+    );
     if (updateError) throw new Error(updateError.message);
     return { ok: true, cleared: true };
   });
@@ -515,7 +532,31 @@ type StripeChargeLite = {
   description: string | null;
   payment_intent: string | null;
   receipt_url: string | null;
+  balance_transaction?: string | StripeBalanceTransactionLite | null;
+  metadata?: Record<string, string> | null;
   payment_method_details?: { type?: string } | null;
+};
+
+type StripeFeeDetailLite = {
+  amount?: number;
+  type?: string;
+};
+
+type StripeBalanceTransactionLite = {
+  id?: string;
+  amount?: number;
+  available_on?: number;
+  created?: number;
+  currency?: string;
+  fee?: number;
+  fee_details?: StripeFeeDetailLite[];
+  net?: number;
+};
+
+type StripePaymentIntentLite = {
+  id?: string;
+  metadata?: Record<string, string> | null;
+  latest_charge?: string | StripeChargeLite | null;
 };
 
 export interface UnmatchedStripePayment {
@@ -528,6 +569,8 @@ export interface UnmatchedStripePayment {
   description: string;
   paymentMethodType: string;
   receiptUrl: string;
+  refundedGrossCents: number;
+  netAppliedAmountCents: number;
 }
 
 export interface ReconcileInvoiceOption {
@@ -537,12 +580,68 @@ export interface ReconcileInvoiceOption {
   openBalance: number;
 }
 
+function exactNonnegativeStripeCents(value: unknown, label: string) {
+  const cents = Number(value);
+  if (!Number.isSafeInteger(cents) || cents < 0) {
+    throw new Error(`Stripe ${label} must be a nonnegative integer-cent amount.`);
+  }
+  return cents;
+}
+
+function exactNonnegativeDollarCents(value: unknown, label: string) {
+  const dollars = Number(value);
+  const cents = Math.round(dollars * 100);
+  if (!Number.isFinite(dollars) || dollars < 0 || !Number.isSafeInteger(cents)) {
+    throw new Error(`${label} is outside the supported exact-cent range.`);
+  }
+  return cents;
+}
+
+function safeAddCents(left: number, right: number, label: string) {
+  return exactNonnegativeStripeCents(left + right, label);
+}
+
+type StripeChargePage = {
+  data: StripeChargeLite[];
+  has_more?: boolean;
+};
+
+async function listAllConnectedStripeCharges(input: {
+  accountId: string;
+  mode: StripeMode;
+  stripeGet: <T>(path: string, mode: StripeMode, accountId?: string) => Promise<T>;
+}) {
+  const charges: StripeChargeLite[] = [];
+  let startingAfter = "";
+  for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+    const query = new URLSearchParams({ limit: "100" });
+    if (startingAfter) query.set("starting_after", startingAfter);
+    const page = await input.stripeGet<StripeChargePage>(
+      `charges?${query.toString()}`,
+      input.mode,
+      input.accountId,
+    );
+    const rows = Array.isArray(page.data) ? page.data : [];
+    charges.push(...rows);
+    if (!page.has_more) return charges;
+    const cursor = rows.at(-1)?.id ?? "";
+    if (!cursor || cursor === startingAfter) {
+      throw new Error("Stripe charge pagination did not advance safely.");
+    }
+    startingAfter = cursor;
+  }
+  throw new Error(
+    "Stripe reconciliation exceeded 10,000 charges. Narrow the accounting period before retrying.",
+  );
+}
+
 /**
  * On-demand sweep (BILLINGBATCH2 Task 2): list recent succeeded payments on
  * the org's connected Stripe account and flag any with no ledger row —
  * orphans like a payment that settled before webhooks were wired up. Read
- * only; booking goes through the existing manual-record path with the Stripe
- * id as reference (which is also what makes a booked orphan match next time).
+ * only; booking goes through recordUnmatchedStripePayment, which re-reads the
+ * connected-account balance transaction before invoking the service-only
+ * Stripe receipt command.
  */
 export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -559,22 +658,26 @@ export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
         ready: false as const,
         reason: "Stripe is not connected yet. Connect Stripe before checking for payments.",
         checkedCount: 0,
+        partiallyRefundedCount: 0,
+        fullyRefundedCount: 0,
         payments: [] as UnmatchedStripePayment[],
         openInvoices: [] as ReconcileInvoiceOption[],
       };
     }
-    const chargePage = await stripeServer.stripeGet<{ data: StripeChargeLite[] }>(
-      "charges?limit=100",
-      org.mode,
-      org.accountId,
+    const chargeRows = await listAllConnectedStripeCharges({
+      accountId: org.accountId,
+      mode: org.mode,
+      stripeGet: stripeServer.stripeGet,
+    });
+    const settled = chargeRows.filter(
+      (charge) => charge.status === "succeeded" && charge.paid && charge.amount > 0,
     );
-    const settled = (chargePage.data ?? []).filter(
-      (charge) =>
-        charge.status === "succeeded" &&
-        charge.paid &&
-        !charge.refunded &&
-        charge.amount_refunded < charge.amount,
-    );
+    const partiallyRefundedCount = settled.filter(
+      (charge) => charge.amount_refunded > 0 && charge.amount_refunded < charge.amount,
+    ).length;
+    const fullyRefundedCount = settled.filter(
+      (charge) => charge.refunded || charge.amount_refunded === charge.amount,
+    ).length;
 
     // A charge is "matched" when any ledger row carries its payment intent or
     // charge id — webhook bookings store the intent id, manual bookings from
@@ -583,7 +686,12 @@ export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
     const chargeIds = settled.map((charge) => charge.id);
     const candidateIds = Array.from(new Set([...intentIds, ...chargeIds]));
     const matched = new Set<string>();
-    for (const column of ["stripe_payment_intent_id", "processor_payment_id", "reference"]) {
+    for (const column of [
+      "stripe_payment_intent_id",
+      "stripe_charge_id",
+      "processor_payment_id",
+      "reference",
+    ]) {
       if (candidateIds.length === 0) break;
       const { data: rows, error } = await dynamicTable(admin, "payment_ledger")
         .select(column)
@@ -613,10 +721,15 @@ export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
         description: charge.description ?? "",
         paymentMethodType: charge.payment_method_details?.type ?? "",
         receiptUrl: charge.receipt_url ?? "",
+        refundedGrossCents: charge.amount_refunded,
+        netAppliedAmountCents: Math.max(0, charge.amount - charge.amount_refunded),
       }));
 
-    // Open invoices across the company, so an orphan can be booked where it
-    // belongs without leaving Getting Paid.
+    // All non-void invoices across the company are returned. The browser then
+    // filters them by the receipt's *net* A/R effect. That keeps ordinary and
+    // partially-refunded receipts away from closed invoices, while still
+    // allowing a fully-refunded orphan (net $0) to recover its immutable
+    // original-receipt and refund history against the correct closed invoice.
     const { data: projectRows, error: projectsError } = await dynamicTable(admin, "projects")
       .select("id,name")
       .eq("organization_id", organizationId)
@@ -637,20 +750,17 @@ export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
         );
       if (invoicesError) throw new Error(invoicesError.message);
       openInvoices = ((invoiceRows ?? []) as Record<string, unknown>[])
-        .filter(
-          (row) =>
-            String(row.status ?? "") !== "void" &&
-            dollarsToCents(Number(row.total_due ?? 0)) >
-              dollarsToCents(Number(row.paid_amount ?? 0)),
-        )
+        .filter((row) => String(row.status ?? "") !== "void")
         .map((row) => ({
           id: String(row.id),
           label: String(row.invoice_number || row.title || "Invoice"),
           projectName: projectNames.get(String(row.project_id)) ?? "Project",
           openBalance:
-            (dollarsToCents(Number(row.total_due ?? 0)) -
-              dollarsToCents(Number(row.paid_amount ?? 0))) /
-            100,
+            Math.max(
+              0,
+              dollarsToCents(Number(row.total_due ?? 0)) -
+                dollarsToCents(Number(row.paid_amount ?? 0)),
+            ) / 100,
         }))
         .sort(
           (a, b) => a.projectName.localeCompare(b.projectName) || a.label.localeCompare(b.label),
@@ -662,8 +772,225 @@ export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
       reason: "",
       mode: org.mode,
       checkedCount: settled.length,
+      partiallyRefundedCount,
+      fullyRefundedCount,
       payments,
       openInvoices,
+    };
+  });
+
+const unmatchedStripePaymentInput = z.object({
+  invoiceId: z.string().uuid(),
+  stripeChargeId: z
+    .string()
+    .trim()
+    .min(4)
+    .max(255)
+    .regex(/^ch_[A-Za-z0-9]+$/, "A valid Stripe charge id is required."),
+});
+
+/**
+ * Books one unmatched connected-account receipt without trusting any amount,
+ * fee, date, method, or metadata supplied by the browser. The server reloads
+ * Stripe's charge, PaymentIntent, and balance transaction, verifies their
+ * integer-cent equation, then calls the service-only parent-first DB command.
+ */
+export const recordUnmatchedStripePayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof unmatchedStripePaymentInput>) =>
+    unmatchedStripePaymentInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as PaymentsServerContext;
+    const organizationId = await ensureCurrentOrganization(ctx);
+    await requireBillingOrSettingsCapability(ctx, organizationId);
+
+    const stripeServer = await import("@/lib/stripe.server");
+    const admin = stripeServer.createSupabaseAdminClient();
+    const org = await loadOrganizationStripe(admin, organizationId);
+    if (!org.accountId) {
+      throw new Error("Stripe is not connected for this company.");
+    }
+
+    const { data: invoice, error: invoiceError } = await dynamicTable(admin, "billing_invoices")
+      .select("id,project_id,total_due,paid_amount,status")
+      .eq("id", data.invoiceId)
+      .maybeSingle();
+    if (invoiceError) throw new Error(invoiceError.message);
+    if (!invoice) throw new Error("Invoice not found.");
+    const invoiceRow = invoice as Record<string, unknown>;
+
+    const { data: project, error: projectError } = await dynamicTable(admin, "projects")
+      .select("organization_id")
+      .eq("id", String(invoiceRow.project_id ?? ""))
+      .maybeSingle();
+    if (projectError) throw new Error(projectError.message);
+    if (
+      String((project as Record<string, unknown> | null)?.organization_id ?? "") !== organizationId
+    ) {
+      throw new Error("The selected invoice does not belong to this company.");
+    }
+    if (
+      !["sent", "viewed", "overdue", "partially_paid", "paid"].includes(
+        String(invoiceRow.status ?? ""),
+      )
+    ) {
+      throw new Error("A Stripe receipt can only be recorded against an issued invoice.");
+    }
+
+    const charge = await stripeServer.stripeGet<StripeChargeLite>(
+      `charges/${encodeURIComponent(data.stripeChargeId)}?expand[]=balance_transaction`,
+      org.mode,
+      org.accountId,
+    );
+    if (charge.status !== "succeeded" || !charge.paid) {
+      throw new Error("Only a settled Stripe charge can be recorded.");
+    }
+    if (charge.currency.toLowerCase() !== "usd") {
+      throw new Error("Stripe invoice receipts must settle in USD.");
+    }
+    const chargeAmountCents = exactNonnegativeStripeCents(charge.amount, "charge amount");
+    const cumulativeRefundedGrossCents = exactNonnegativeStripeCents(
+      charge.amount_refunded,
+      "cumulative refund",
+    );
+    if (cumulativeRefundedGrossCents > chargeAmountCents) {
+      throw new Error("Stripe cumulative refunds exceed the original charge.");
+    }
+
+    const paymentIntentId = charge.payment_intent ?? "";
+    if (!paymentIntentId) {
+      throw new Error("The Stripe charge is missing its PaymentIntent provenance.");
+    }
+    const paymentIntent = await stripeServer.stripeGet<StripePaymentIntentLite>(
+      `payment_intents/${encodeURIComponent(paymentIntentId)}`,
+      org.mode,
+      org.accountId,
+    );
+    const metadata = paymentIntent.metadata ?? charge.metadata ?? {};
+    if (metadata.invoice_id && metadata.invoice_id !== data.invoiceId) {
+      throw new Error("Stripe metadata ties this receipt to a different invoice.");
+    }
+    if (metadata.project_id && metadata.project_id !== String(invoiceRow.project_id ?? "")) {
+      throw new Error("Stripe metadata ties this receipt to a different project.");
+    }
+
+    let balanceTransaction = charge.balance_transaction;
+    if (typeof balanceTransaction === "string") {
+      balanceTransaction = await stripeServer.stripeGet<StripeBalanceTransactionLite>(
+        `balance_transactions/${encodeURIComponent(balanceTransaction)}`,
+        org.mode,
+        org.accountId,
+      );
+    }
+    if (!balanceTransaction || typeof balanceTransaction !== "object") {
+      throw new Error("The Stripe charge is missing balance-transaction evidence.");
+    }
+
+    const grossCents = exactNonnegativeStripeCents(balanceTransaction.amount, "gross amount");
+    const totalFeeCents = exactNonnegativeStripeCents(balanceTransaction.fee, "total fee");
+    const netCents = exactNonnegativeStripeCents(balanceTransaction.net, "net amount");
+    const feeDetails = Array.isArray(balanceTransaction.fee_details)
+      ? balanceTransaction.fee_details
+      : [];
+    const feeDetailTotalCents = feeDetails.reduce(
+      (sum, detail) =>
+        safeAddCents(
+          sum,
+          exactNonnegativeStripeCents(detail.amount, "fee detail"),
+          "fee-detail total",
+        ),
+      0,
+    );
+    const overwatchFeeCents = feeDetails
+      .filter((detail) => detail.type === "application_fee")
+      .reduce(
+        (sum, detail) =>
+          safeAddCents(
+            sum,
+            exactNonnegativeStripeCents(detail.amount, "application fee"),
+            "application-fee total",
+          ),
+        0,
+      );
+    const surchargeCents = exactNonnegativeStripeCents(metadata.surcharge_cents || 0, "surcharge");
+    const amountCents = grossCents - surchargeCents;
+    const balanceTransactionId = String(balanceTransaction.id ?? "");
+    if (
+      !balanceTransactionId ||
+      String(balanceTransaction.currency ?? "").toLowerCase() !== "usd" ||
+      grossCents !== chargeAmountCents ||
+      feeDetailTotalCents !== totalFeeCents ||
+      netCents !== grossCents - totalFeeCents ||
+      surchargeCents > grossCents ||
+      amountCents <= 0
+    ) {
+      throw new Error("Stripe balance-transaction economics failed reconciliation.");
+    }
+
+    const remainingGrossCents = grossCents - cumulativeRefundedGrossCents;
+    const refundedInvoiceAmountCents = amountCents - Math.min(amountCents, remainingGrossCents);
+    const netAppliedAmountCents = amountCents - refundedInvoiceAmountCents;
+    const openBalanceCents =
+      exactNonnegativeDollarCents(invoiceRow.total_due, "Invoice total") -
+      exactNonnegativeDollarCents(invoiceRow.paid_amount, "Invoice paid amount");
+    if (!Number.isSafeInteger(openBalanceCents) || openBalanceCents < 0) {
+      throw new Error("The selected invoice has an invalid open balance.");
+    }
+    if (netAppliedAmountCents > openBalanceCents) {
+      throw new Error(
+        "This Stripe receipt's net cash exceeds the selected invoice's open balance.",
+      );
+    }
+
+    const settlementEpoch = Number(balanceTransaction.created || balanceTransaction.available_on);
+    if (!Number.isSafeInteger(settlementEpoch) || settlementEpoch <= 0) {
+      throw new Error("Stripe balance-transaction settlement time is missing.");
+    }
+    const paidAt = new Date(settlementEpoch * 1000).toISOString();
+    const refundEventKey = cumulativeRefundedGrossCents
+      ? `recovery:${charge.id}:${cumulativeRefundedGrossCents}`
+      : "";
+    const { error: paymentError } = await dynamicRpc(
+      admin,
+      "record_stripe_invoice_payment_atomic",
+      {
+        p_invoice_id: data.invoiceId,
+        p_amount_cents: amountCents,
+        p_stripe_balance_transaction_id: balanceTransactionId,
+        p_balance_transaction_gross_cents: grossCents,
+        p_balance_transaction_fee_cents: totalFeeCents,
+        p_balance_transaction_net_cents: netCents,
+        p_balance_transaction_currency: "usd",
+        p_surcharge_cents: surchargeCents,
+        p_gross_received_cents: grossCents,
+        p_overwatch_fee_cents: overwatchFeeCents,
+        p_paid_at: paidAt,
+        p_payment_method: charge.payment_method_details?.type || "stripe",
+        p_processor_payment_id: paymentIntentId,
+        p_reference: paymentIntentId,
+        p_notes: cumulativeRefundedGrossCents
+          ? `Recovered Stripe receipt and ${cumulativeRefundedGrossCents} cents of linked refund history (${charge.id}).`
+          : `Recorded from Stripe reconciliation (${charge.id}).`,
+        p_checkout_session_id: "",
+        p_payment_intent_id: paymentIntentId,
+        p_charge_id: charge.id,
+        p_receipt_url: charge.receipt_url ?? "",
+        p_cumulative_refunded_gross_cents: cumulativeRefundedGrossCents,
+        p_refund_processor_event_id: refundEventKey,
+        p_refund_idempotency_key: refundEventKey,
+      },
+    );
+    if (paymentError) throw new Error(paymentError.message);
+
+    return {
+      ok: true,
+      invoiceId: data.invoiceId,
+      paymentIntentId,
+      chargeId: charge.id,
+      amountCents,
+      refundedGrossCents: cumulativeRefundedGrossCents,
+      netAppliedAmountCents,
     };
   });
 

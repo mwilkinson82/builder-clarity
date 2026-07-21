@@ -1,19 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
-  applyInvoiceLedgerReconcile,
   createSupabaseAdminClient,
   isMissingAnySupabaseColumn,
   jsonError,
   jsonOk,
   readServerEnv,
   RouteError,
+  stripeGet,
   verifyStripeWebhookPayload,
 } from "@/lib/stripe.server";
-import {
-  checkoutSessionOutcome,
-  planChargeRefund,
-  planCheckoutCompletion,
-} from "@/lib/payments-domain";
+import { checkoutSessionOutcome, planCheckoutCompletion } from "@/lib/payments-domain";
 import {
   claimWebhookEvent,
   createSupabaseWebhookEventStore,
@@ -33,6 +29,44 @@ type StripeObject = Record<string, unknown> & {
   metadata?: Record<string, string>;
 };
 
+type StripeFeeDetail = {
+  amount?: number;
+  type?: string;
+};
+
+type StripeBalanceTransaction = {
+  id?: string;
+  amount?: number;
+  available_on?: number;
+  created?: number;
+  currency?: string;
+  fee?: number;
+  fee_details?: StripeFeeDetail[];
+  net?: number;
+};
+
+type StripeCharge = {
+  id?: string;
+  balance_transaction?: string | StripeBalanceTransaction | null;
+  receipt_url?: string | null;
+};
+
+type StripePaymentIntent = {
+  id?: string;
+  latest_charge?: string | StripeCharge | null;
+};
+
+type StripePaymentEconomics = {
+  balanceTransactionId: string;
+  chargeId: string;
+  grossReceivedCents: number;
+  netToStripeBalanceCents: number;
+  overwatchFeeCents: number;
+  processorFeeCents: number;
+  receiptUrl: string;
+  settledAtIso: string;
+};
+
 function str(value: unknown) {
   return typeof value === "string" ? value : "";
 }
@@ -46,6 +80,114 @@ function epochToIso(value: unknown) {
   return seconds > 0 ? new Date(seconds * 1000).toISOString() : null;
 }
 
+function stripeObjectId(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") return str((value as Record<string, unknown>).id);
+  return "";
+}
+
+function integerCents(value: unknown, label: string) {
+  const cents = num(value);
+  if (!Number.isSafeInteger(cents) || cents < 0) {
+    throw new Error(`Stripe ${label} must be a nonnegative integer-cent amount.`);
+  }
+  return cents;
+}
+
+function safeAddCents(left: number, right: number, label: string) {
+  return integerCents(left + right, label);
+}
+
+async function loadStripePaymentEconomics(input: {
+  expectedGrossCents: number;
+  paymentIntentId: string;
+  stripeAccount: string;
+  stripeMode: StripeMode;
+}): Promise<StripePaymentEconomics> {
+  if (!input.paymentIntentId || !input.stripeAccount) {
+    throw new Error("Stripe payment and connected-account provenance are required.");
+  }
+
+  const paymentIntent = await stripeGet<StripePaymentIntent>(
+    `payment_intents/${encodeURIComponent(input.paymentIntentId)}?expand[]=latest_charge.balance_transaction`,
+    input.stripeMode,
+    input.stripeAccount,
+  );
+  let charge = paymentIntent.latest_charge;
+  if (typeof charge === "string") {
+    charge = await stripeGet<StripeCharge>(
+      `charges/${encodeURIComponent(charge)}?expand[]=balance_transaction`,
+      input.stripeMode,
+      input.stripeAccount,
+    );
+  }
+  if (!charge || typeof charge !== "object") {
+    throw new Error("Stripe payment is missing its latest charge evidence.");
+  }
+
+  let balanceTransaction = charge.balance_transaction;
+  if (typeof balanceTransaction === "string") {
+    balanceTransaction = await stripeGet<StripeBalanceTransaction>(
+      `balance_transactions/${encodeURIComponent(balanceTransaction)}`,
+      input.stripeMode,
+      input.stripeAccount,
+    );
+  }
+  if (!balanceTransaction || typeof balanceTransaction !== "object") {
+    throw new Error("Stripe charge is missing its balance-transaction evidence.");
+  }
+
+  const balanceTransactionId = str(balanceTransaction.id);
+  const chargeId = str(charge.id);
+  const grossReceivedCents = integerCents(balanceTransaction.amount, "gross amount");
+  const totalFeeCents = integerCents(balanceTransaction.fee, "total fee");
+  const netToStripeBalanceCents = integerCents(balanceTransaction.net, "net amount");
+  const details = Array.isArray(balanceTransaction.fee_details)
+    ? balanceTransaction.fee_details
+    : [];
+  const detailFeeCents = details.reduce(
+    (sum, detail) =>
+      safeAddCents(sum, integerCents(detail.amount, "fee detail"), "total fee detail"),
+    0,
+  );
+  const overwatchFeeCents = details
+    .filter((detail) => detail.type === "application_fee")
+    .reduce(
+      (sum, detail) =>
+        safeAddCents(sum, integerCents(detail.amount, "application fee"), "OverWatch fee"),
+      0,
+    );
+  const processorFeeCents = detailFeeCents - overwatchFeeCents;
+  const settledAtIso =
+    epochToIso(balanceTransaction.created) ?? epochToIso(balanceTransaction.available_on);
+
+  if (!balanceTransactionId || !chargeId || !settledAtIso) {
+    throw new Error("Stripe charge, balance-transaction, and settlement timestamps are required.");
+  }
+  if (str(balanceTransaction.currency).toLowerCase() !== "usd") {
+    throw new Error("Stripe invoice payments must settle in USD.");
+  }
+  if (
+    grossReceivedCents !== input.expectedGrossCents ||
+    detailFeeCents !== totalFeeCents ||
+    processorFeeCents < 0 ||
+    netToStripeBalanceCents !== grossReceivedCents - totalFeeCents
+  ) {
+    throw new Error("Stripe balance-transaction economics failed reconciliation.");
+  }
+
+  return {
+    balanceTransactionId,
+    chargeId,
+    grossReceivedCents,
+    netToStripeBalanceCents,
+    overwatchFeeCents,
+    processorFeeCents,
+    receiptUrl: str(charge.receipt_url),
+    settledAtIso,
+  };
+}
+
 type DynamicQueryError = {
   code?: string;
   details?: string;
@@ -56,6 +198,13 @@ type DynamicQueryError = {
 type DynamicQueryResult<T = Record<string, unknown>> = {
   data: T | null;
   error: DynamicQueryError | null;
+};
+
+type DynamicRpcClient = {
+  rpc(
+    functionName: string,
+    args?: Record<string, unknown>,
+  ): Promise<DynamicQueryResult<Record<string, unknown>>>;
 };
 
 type DynamicQuery = PromiseLike<DynamicQueryResult> & {
@@ -76,6 +225,33 @@ type DynamicQuery = PromiseLike<DynamicQueryResult> & {
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as { from(table: string): DynamicQuery }).from(relation);
 
+const dynamicRpc = (supabase: unknown, functionName: string, args?: Record<string, unknown>) =>
+  (supabase as DynamicRpcClient).rpc(functionName, args);
+
+async function updateInvoiceProcessorState(
+  admin: unknown,
+  input: {
+    invoiceId: string;
+    status: "pending" | "paid" | "expired" | "failed" | "refunded";
+    eventId: string;
+    checkoutSessionId?: string;
+    paymentIntentId?: string;
+  },
+) {
+  if (!input.eventId) throw new Error("Stripe event id is required for processor idempotency.");
+  const { error } = await dynamicRpc(admin, "update_billing_invoice_processor_state_atomic", {
+    p_billing_invoice_id: input.invoiceId,
+    p_online_payment_status: input.status,
+    p_checkout_session_id: input.checkoutSessionId ?? "",
+    p_payment_intent_id: input.paymentIntentId ?? "",
+    p_payment_url: "",
+    p_payment_enabled: input.status === "pending",
+    p_payment_link_sent_at: null,
+    p_idempotency_key: `stripe:${input.eventId}:processor:${input.status}`,
+  });
+  if (error) throw new Error(error.message);
+}
+
 const CONNECT_PERSISTENCE_COLUMNS = [
   "stripe_connect_account_id_test",
   "stripe_connect_status_test",
@@ -83,8 +259,6 @@ const CONNECT_PERSISTENCE_COLUMNS = [
   "stripe_connect_status_live",
   "payment_processor_ready",
 ] as const;
-
-const LEDGER_PHASE1_COLUMNS = ["amount_cents", "currency", "reference", "organization_id"] as const;
 
 function isMissingRelationError(error: DynamicQueryError | null) {
   const message = (error?.message ?? "").toLowerCase();
@@ -289,16 +463,21 @@ function stripeConnectSchemaNotReady(error: { message?: string } | null) {
   );
 }
 
-async function handleCheckoutCompleted(object: StripeObject) {
+async function handleCheckoutCompleted(
+  object: StripeObject,
+  stripeAccount: string,
+  stripeMode: StripeMode,
+  eventId: string,
+) {
   const metadata = sessionMetadata(object);
   if (metadata.kind === "client_invoice") {
     // Cards complete with payment_status "paid" and book immediately. ACH
     // (us_bank_account) completes "unpaid" — authorization only — and books
     // on checkout.session.async_payment_succeeded once funds settle.
     if (checkoutSessionOutcome(str(object.payment_status)) === "book") {
-      await markInvoicePaid(object);
+      await markInvoicePaid(object, stripeAccount, stripeMode, eventId);
     } else {
-      await markInvoiceProcessing(object);
+      await markInvoiceProcessing(object, eventId);
     }
     return;
   }
@@ -315,14 +494,19 @@ async function handleCheckoutCompleted(object: StripeObject) {
   }
 }
 
-async function handleCheckoutAsyncSucceeded(object: StripeObject) {
+async function handleCheckoutAsyncSucceeded(
+  object: StripeObject,
+  stripeAccount: string,
+  stripeMode: StripeMode,
+  eventId: string,
+) {
   const metadata = sessionMetadata(object);
   if (metadata.kind === "credit_pack") {
     await grantCreditPackPurchase(object);
     return;
   }
   if (metadata.kind !== "client_invoice") return;
-  await markInvoicePaid(object);
+  await markInvoicePaid(object, stripeAccount, stripeMode, eventId);
 }
 
 function isMissingCreditLedger(error: DynamicQueryError | null) {
@@ -385,47 +569,48 @@ async function grantCreditPackPurchase(object: StripeObject) {
 }
 
 // Async payment (ACH debit) settled later: bank confirmation still pending.
-async function markInvoiceProcessing(object: StripeObject) {
+async function markInvoiceProcessing(object: StripeObject, eventId: string) {
   const metadata = sessionMetadata(object);
   if (!metadata.invoice_id) return;
   const admin = createSupabaseAdminClient();
-  const { error } = await dynamicTable(admin, "billing_invoices")
-    .update({
-      online_payment_status: "pending",
-    })
-    .eq("id", metadata.invoice_id)
-    .eq("stripe_checkout_session_id", str(object.id));
-  if (error) throw new Error(error.message);
+  await updateInvoiceProcessorState(admin, {
+    invoiceId: metadata.invoice_id,
+    status: "pending",
+    eventId,
+    checkoutSessionId: str(object.id),
+    paymentIntentId: stripeObjectId(object.payment_intent),
+  });
 }
 
 // Async payment failed after checkout completed (e.g. ACH returned:
 // insufficient funds, closed account). No payment was ever booked for the
 // session, so only the invoice's online payment state flips.
-async function markInvoiceAsyncFailed(object: StripeObject) {
+async function markInvoiceAsyncFailed(object: StripeObject, eventId: string) {
   const metadata = sessionMetadata(object);
   if (metadata.kind !== "client_invoice" || !metadata.invoice_id) return;
   const admin = createSupabaseAdminClient();
-  const { error } = await dynamicTable(admin, "billing_invoices")
-    .update({
-      online_payment_status: "failed",
-    })
-    .eq("id", metadata.invoice_id)
-    .eq("stripe_checkout_session_id", str(object.id));
-  if (error) throw new Error(error.message);
+  await updateInvoiceProcessorState(admin, {
+    invoiceId: metadata.invoice_id,
+    status: "failed",
+    eventId,
+    checkoutSessionId: str(object.id),
+    paymentIntentId: stripeObjectId(object.payment_intent),
+  });
 }
 
-async function handleCheckoutExpired(object: StripeObject) {
+async function handleCheckoutExpired(object: StripeObject, eventId: string) {
   const admin = createSupabaseAdminClient();
   const sessionId = str(object.id);
   const metadata = sessionMetadata(object);
 
   if (metadata.kind === "client_invoice" && metadata.invoice_id) {
-    await dynamicTable(admin, "billing_invoices")
-      .update({
-        online_payment_status: "expired",
-      })
-      .eq("id", metadata.invoice_id)
-      .eq("stripe_checkout_session_id", sessionId);
+    await updateInvoiceProcessorState(admin, {
+      invoiceId: metadata.invoice_id,
+      status: "expired",
+      eventId,
+      checkoutSessionId: sessionId,
+      paymentIntentId: stripeObjectId(object.payment_intent),
+    });
     return;
   }
 
@@ -439,7 +624,12 @@ async function handleCheckoutExpired(object: StripeObject) {
   }
 }
 
-async function markInvoicePaid(object: StripeObject) {
+async function markInvoicePaid(
+  object: StripeObject,
+  stripeAccount: string,
+  stripeMode: StripeMode,
+  eventId: string,
+) {
   const admin = createSupabaseAdminClient();
   const metadata = sessionMetadata(object);
   const invoiceId = metadata.invoice_id;
@@ -452,167 +642,142 @@ async function markInvoicePaid(object: StripeObject) {
   if (invoiceError || !invoice) throw new Error(invoiceError?.message || "Invoice not found.");
 
   const sessionId = str(object.id);
-  const paymentIntentId = str(object.payment_intent);
-
-  // Second idempotency layer under the event-id guard: the same checkout
-  // session never produces two payment records even if Stripe emits distinct
-  // events that both resolve to a completion.
-  const { data: existingPayment, error: existingError } = await dynamicTable(
-    admin,
-    "payment_ledger",
-  )
-    .select("id")
-    .eq("stripe_checkout_session_id", sessionId)
-    .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
+  const paymentIntentId = stripeObjectId(object.payment_intent);
+  const surchargeCents = integerCents(metadata.surcharge_cents, "surcharge");
+  const grossReceivedCents = integerCents(object.amount_total, "checkout gross amount");
+  const economics = await loadStripePaymentEconomics({
+    expectedGrossCents: grossReceivedCents,
+    paymentIntentId,
+    stripeAccount,
+    stripeMode,
+  });
+  const paidAt = economics.settledAtIso;
 
   // All money math in integer cents (payments-domain owns the rules: the
   // surcharge covers fees and never counts as progress against the invoice).
   const plan = planCheckoutCompletion(
     {
-      amountTotalCents: Math.round(num(object.amount_total)),
-      surchargeCents: Math.round(num(metadata.surcharge_cents)),
-      overwatchFeeCents: Math.round(num(metadata.overwatch_fee_amount_cents)),
-      occurredAtIso: new Date().toISOString(),
-      alreadyRecorded: Boolean(existingPayment),
+      amountTotalCents: grossReceivedCents,
+      surchargeCents,
+      overwatchFeeCents: integerCents(
+        metadata.overwatch_fee_amount_cents,
+        "expected OverWatch fee",
+      ),
+      occurredAtIso: paidAt,
+      alreadyRecorded: false,
     },
     {
-      totalDueCents: Math.round(num(invoice.total_due) * 100),
-      paidCents: Math.round(num(invoice.paid_amount) * 100),
+      totalDueCents: integerCents(Math.round(num(invoice.total_due) * 100), "invoice total"),
+      paidCents: integerCents(Math.round(num(invoice.paid_amount) * 100), "invoice paid amount"),
     },
   );
-  if (!plan.payment || !plan.invoicePatch) {
-    // The payment ledger can already exist when a previous delivery booked the
-    // money but notification delivery failed. Re-attempt the idempotent notice
-    // so Stripe retries heal the secondary experience without double-booking.
-    if (existingPayment) await ensureInvoicePaidNotifications(admin, invoice, object);
-    return;
-  }
+  if (!plan.payment) throw new Error("Stripe Checkout did not produce a valid payment plan.");
 
-  const insertPayload: Record<string, unknown> = {
-    project_id: invoice.project_id,
-    invoice_id: invoice.id,
-    billing_application_id: invoice.billing_application_id,
-    amount: plan.payment.amountCents / 100,
-    amount_cents: plan.payment.amountCents,
-    currency: "usd",
-    reference: paymentIntentId || sessionId,
-    organization_id: metadata.organization_id || null,
-    processor_fee: 0,
-    overwatch_fee: plan.payment.overwatchFeeCents / 100,
-    net_payout: plan.payment.netPayoutCents / 100,
-    payment_method: "stripe_checkout",
-    processor: "stripe",
-    processor_payment_id: paymentIntentId || sessionId,
-    status: plan.payment.state,
-    paid_at: new Date().toISOString(),
-    notes: "Stripe Checkout payment completed.",
-    stripe_checkout_session_id: sessionId,
-    stripe_payment_intent_id: paymentIntentId,
-  };
-  let { error: insertError } = await dynamicTable(admin, "payment_ledger").insert(insertPayload);
-  if (insertError && isMissingAnySupabaseColumn(insertError, LEDGER_PHASE1_COLUMNS)) {
-    for (const column of LEDGER_PHASE1_COLUMNS) delete insertPayload[column];
-    ({ error: insertError } = await dynamicTable(admin, "payment_ledger").insert(insertPayload));
-  }
-  if (insertError) throw new Error(insertError.message);
+  // Financial truth is written only through the parent-first database command.
+  // It owns idempotency, invoice locking, overpayment prevention, receipt
+  // economics, and invoice/pay-application reconciliation.
+  const { error: paymentError } = await dynamicRpc(admin, "record_stripe_invoice_payment_atomic", {
+    p_invoice_id: invoice.id,
+    p_amount_cents: plan.payment.amountCents,
+    p_stripe_balance_transaction_id: economics.balanceTransactionId,
+    p_balance_transaction_gross_cents: economics.grossReceivedCents,
+    p_balance_transaction_fee_cents: safeAddCents(
+      economics.processorFeeCents,
+      economics.overwatchFeeCents,
+      "balance-transaction fee",
+    ),
+    p_balance_transaction_net_cents: economics.netToStripeBalanceCents,
+    p_balance_transaction_currency: "usd",
+    p_surcharge_cents: surchargeCents,
+    p_gross_received_cents: grossReceivedCents,
+    p_overwatch_fee_cents: economics.overwatchFeeCents,
+    p_paid_at: paidAt,
+    p_payment_method: "stripe_checkout",
+    p_processor_payment_id: paymentIntentId || sessionId,
+    p_reference: paymentIntentId || sessionId,
+    p_notes: "Stripe Checkout payment completed.",
+    p_checkout_session_id: sessionId,
+    p_payment_intent_id: paymentIntentId,
+    p_charge_id: economics.chargeId,
+    p_receipt_url: economics.receiptUrl,
+  });
+  if (paymentError) throw new Error(paymentError.message);
 
-  const paidAmount = plan.invoicePatch.paidCents / 100;
-  const status = plan.invoicePatch.status;
-  const { error: updateInvoiceError } = await dynamicTable(admin, "billing_invoices")
-    .update({
-      paid_amount: paidAmount,
-      status,
-      paid_at: plan.invoicePatch.paidAtIso,
-      online_payment_status: "paid",
-      stripe_payment_intent_id: paymentIntentId,
-    })
-    .eq("id", invoice.id);
-  if (updateInvoiceError) throw new Error(updateInvoiceError.message);
-
-  if (invoice.billing_application_id) {
-    const { error: updatePayAppError } = await dynamicTable(admin, "billing_applications")
-      .update({
-        paid_to_date: paidAmount,
-        status: status === "paid" ? "paid" : "partial",
-      })
-      .eq("id", invoice.billing_application_id);
-    if (updatePayAppError) throw new Error(updatePayAppError.message);
-  }
+  await updateInvoiceProcessorState(admin, {
+    invoiceId: str(invoice.id),
+    status: "paid",
+    eventId,
+    checkoutSessionId: sessionId,
+    paymentIntentId,
+  });
 
   await ensureInvoicePaidNotifications(admin, invoice, object);
 }
 
-async function markInvoiceFailed(object: StripeObject) {
+async function markInvoiceFailed(object: StripeObject, eventId: string) {
   const metadata = sessionMetadata(object);
   const invoiceId = metadata.invoice_id;
   if (!invoiceId) return;
 
   const admin = createSupabaseAdminClient();
-  const { error } = await dynamicTable(admin, "billing_invoices")
-    .update({
-      online_payment_status: "failed",
-      stripe_payment_intent_id: str(object.id),
-    })
-    .eq("id", invoiceId);
-  if (error) throw new Error(error.message);
+  await updateInvoiceProcessorState(admin, {
+    invoiceId,
+    status: "failed",
+    eventId,
+    paymentIntentId: str(object.id),
+  });
 }
 
-// Refunds reverse the invoice, not just the ledger row (live bug: invoice
-// 2601-3 stayed "paid" after a full refund). The ledger row is patched per
-// the refund plan, then the invoice + linked pay app are recomputed from the
-// ledger's succeeded-minus-refunded truth — the same reconcile path the
-// founder can trigger on demand.
-async function markChargeRefunded(object: StripeObject) {
+// Refunds append immutable receipt events and reverse the invoice through one
+// parent-first database command. Original cash, surcharge, and fee evidence is
+// never rewritten.
+async function markChargeRefunded(object: StripeObject, eventId: string) {
   const paymentIntentId = str(object.payment_intent);
   if (!paymentIntentId) return;
 
   const admin = createSupabaseAdminClient();
   const { data: payment, error: paymentError } = await dynamicTable(admin, "payment_ledger")
-    .select("id,invoice_id,amount,amount_cents,status,notes")
+    .select("id,invoice_id")
     .eq("stripe_payment_intent_id", paymentIntentId)
     .maybeSingle();
   if (paymentError) throw new Error(paymentError.message);
-  if (!payment) return;
+  if (!payment) {
+    throw new RouteError(
+      "stripe_payment_not_recorded",
+      "The Stripe refund arrived before its payment receipt. Stripe will retry.",
+      409,
+    );
+  }
 
-  const bookedCents =
-    num(payment.amount_cents) > 0
-      ? Math.round(num(payment.amount_cents))
-      : Math.round(num(payment.amount) * 100);
-  const plan = planChargeRefund({
-    bookedCents,
-    chargeAmountCents: Math.round(num(object.amount)),
-    amountRefundedCents: Math.round(num(object.amount_refunded)),
-    fullyRefunded: Boolean(object.refunded),
-  });
+  const cumulativeRefundedGrossCents = integerCents(
+    object.amount_refunded,
+    "cumulative refunded amount",
+  );
+  const refundNote = object.refunded
+    ? "Stripe charge fully refunded."
+    : `Stripe charge cumulative refund: $${(cumulativeRefundedGrossCents / 100).toFixed(2)}.`;
+  const { data: refundResult, error: refundError } = await dynamicRpc(
+    admin,
+    "refund_invoice_payment_atomic",
+    {
+      p_payment_id: payment.id,
+      p_cumulative_refunded_gross_cents: cumulativeRefundedGrossCents,
+      p_notes: refundNote,
+      p_processor_event_id: eventId,
+      p_idempotency_key: eventId,
+      p_stripe_charge_id: str(object.id),
+      p_receipt_url: str(object.receipt_url),
+    },
+  );
+  if (refundError) throw new Error(refundError.message);
 
-  const fullyReversed = plan.ledgerStatus === "refunded";
-  const refundNote = fullyReversed
-    ? "Stripe charge refunded."
-    : `Stripe charge partially refunded: $${(plan.reversalCents / 100).toFixed(2)} of $${(
-        bookedCents / 100
-      ).toFixed(2)} reversed.`;
-  const { error: updatePaymentError } = await dynamicTable(admin, "payment_ledger")
-    .update({
-      status: plan.ledgerStatus,
-      amount: plan.ledgerAmountCents / 100,
-      amount_cents: plan.ledgerAmountCents,
-      stripe_charge_id: str(object.id),
-      receipt_url: str(object.receipt_url),
-      notes: [str(payment.notes), refundNote].filter(Boolean).join("\n"),
-    })
-    .eq("id", payment.id);
-  if (updatePaymentError) throw new Error(updatePaymentError.message);
-
-  await applyInvoiceLedgerReconcile(admin, payment.invoice_id as string);
-
-  if (fullyReversed) {
-    const { error: updateInvoiceError } = await dynamicTable(admin, "billing_invoices")
-      .update({
-        online_payment_status: "refunded",
-      })
-      .eq("id", payment.invoice_id);
-    if (updateInvoiceError) throw new Error(updateInvoiceError.message);
+  if (str(refundResult?.status) === "refunded") {
+    await updateInvoiceProcessorState(admin, {
+      invoiceId: str(payment.invoice_id),
+      status: "refunded",
+      eventId,
+      paymentIntentId,
+    });
   }
 }
 
@@ -819,22 +984,32 @@ export async function handleStripeWebhook(request: Request): Promise<Response> {
 
     switch (event.type) {
       case "checkout.session.completed":
-        await handleCheckoutCompleted(object);
+        await handleCheckoutCompleted(
+          object,
+          str(event.account),
+          event.livemode ? "live" : "test",
+          str(event.id),
+        );
         break;
       case "checkout.session.async_payment_succeeded":
-        await handleCheckoutAsyncSucceeded(object);
+        await handleCheckoutAsyncSucceeded(
+          object,
+          str(event.account),
+          event.livemode ? "live" : "test",
+          str(event.id),
+        );
         break;
       case "checkout.session.async_payment_failed":
-        await markInvoiceAsyncFailed(object);
+        await markInvoiceAsyncFailed(object, str(event.id));
         break;
       case "checkout.session.expired":
-        await handleCheckoutExpired(object);
+        await handleCheckoutExpired(object, str(event.id));
         break;
       case "payment_intent.payment_failed":
-        await markInvoiceFailed(object);
+        await markInvoiceFailed(object, str(event.id));
         break;
       case "charge.refunded":
-        await markChargeRefunded(object);
+        await markChargeRefunded(object, str(event.id));
         break;
       case "customer.subscription.created":
       case "customer.subscription.updated":

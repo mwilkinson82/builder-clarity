@@ -18,6 +18,7 @@ import {
 import { findOrCreateVendor, listVendors, saveVendor } from "@/lib/vendors.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
+import { SubcontractFinancialReadState } from "@/components/project/SubcontractFinancialReadState";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
@@ -81,7 +82,15 @@ type LinePatch = {
   retainage_released?: number;
 };
 
+type BillingLineMutation = {
+  id: string;
+  expected_updated_at: string;
+  patch: LinePatch;
+};
+
 type CostActualDraft = {
+  /** Stable across retries; the database rejects reuse for different facts. */
+  operation_key: string;
   /** Shared by every allocation line on the same supplier invoice. */
   cost_document_id?: string;
   /** Optional risk-tally attribution; cost code remains required accounting context. */
@@ -116,6 +125,7 @@ type CostActualDraft = {
 // A per-cost-code line for the multi-line "Add cost actual" path — only the
 // fields that vary line to line. The shared invoice fields come from the draft.
 type ExtraCostLine = {
+  operation_key: string;
   cost_bucket_id: string | null;
   cost_code: string;
   description: string;
@@ -131,6 +141,7 @@ export type CostPaymentDetails = {
   payment_method: string; // wire | check | card | ach | other
   payment_reference: string; // check #, wire confirmation, ACH trace
   paid_date: string; // the real-world date money went out (YYYY-MM-DD)
+  operation_key: string;
 };
 
 type CostPaymentDraft = CostPaymentDetails & {
@@ -193,19 +204,28 @@ type BillingEnhancementProps = {
   savingCost?: boolean;
   savingBucket?: boolean;
   onGenerateLines: (billingApplicationId: string) => void;
-  onUpdateLine: (id: string, patch: LinePatch) => void;
+  onUpdateLine: (
+    id: string,
+    patch: LinePatch,
+    expectedUpdatedAt: string,
+    operationKey: string,
+  ) => void;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
   savingOutputFormat?: boolean;
   onCreateCostActual: (input: CostActualDraft) => Promise<unknown>;
-  onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
-  onVoidCostActual: (id: string, notes: string) => void;
+  onImportCostActuals: (input: {
+    source_name: string;
+    rows: CostActualImportRow[];
+    operation_key: string;
+  }) => Promise<unknown>;
+  onVoidCostActual: (id: string, notes: string, operationKey: string) => Promise<unknown>;
   onSetCostActualStatus: (
     id: string,
     status: "approved" | "paid",
     payment?: CostPaymentDetails,
-  ) => void;
-  onUpdateCostActual: (id: string, input: CostActualDraft) => void | Promise<unknown>;
+  ) => Promise<unknown>;
+  onUpdateCostActual: (id: string, input: CostActualDraft) => Promise<unknown>;
   onUpdateBucketSettings: (id: string, patch: BucketSettingsPatch) => void;
 };
 
@@ -217,6 +237,9 @@ const parsePercentInput = (value: string | number) => {
 const formatPercentInput = (value: number) =>
   Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
+const newCostOperationKey = (action: string) => `cost:${action}:${crypto.randomUUID()}`;
+const newBillingLineOperationKey = (action: string) =>
+  `billing-line:${action}:${crypto.randomUUID()}`;
 
 const normalizeHeader = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
 const getImportCell = (row: Record<string, unknown>, aliases: string[]) => {
@@ -258,6 +281,15 @@ const normalizeCostImportRow = (row: Record<string, unknown>): CostActualImportR
   const amount = parseImportAmount(getImportCell(row, ["amount", "debit", "cost", "total"]));
   if (!description || amount <= 0) return null;
   return {
+    source_row_id:
+      getImportCell(row, [
+        "transaction id",
+        "transaction_id",
+        "source row id",
+        "source_row_id",
+        "line id",
+        "line_id",
+      ]) || undefined,
     cost_code: getImportCell(row, ["cost code", "cost_code", "code", "costcode"]),
     description,
     category: normalizeImportCategory(getImportCell(row, ["category", "type", "cost type"])),
@@ -378,16 +410,21 @@ export function BillingLineItemsPanel({
   payApps: BillingApplicationRow[];
   lineItems: BillingLineItemRow[];
   onGenerateLines: (billingApplicationId: string) => void;
-  onUpdateLine: (id: string, patch: LinePatch) => void;
+  onUpdateLine: (
+    id: string,
+    patch: LinePatch,
+    expectedUpdatedAt: string,
+    operationKey: string,
+  ) => void;
   // Save-all: commit every changed line in one action. The field report was
   // that per-line saves were the only way work reached the rollup, so unsaved
   // lines silently never counted. Optional so consumers that don't wire it just
   // keep the per-line Save buttons.
-  onSaveAllLines?: (items: { id: string; patch: LinePatch }[]) => void;
+  onSaveAllLines?: (items: BillingLineMutation[], operationKey: string) => void;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
-  // Close the loop: turn the generated application into a client invoice so it
-  // posts to Receivables. The workspace builds the pre-filled draft from the app.
+  // Close the loop: build the pre-filled invoice draft from the application.
+  // Recipient-confirmed Send is a separate audited action in Invoices.
   onCreateInvoiceForApp?: (app: BillingApplicationRow) => void;
   // Application ids that already have an active invoice (persisted link) — drives
   // the "Invoiced" done state so the bill step is idempotent across reloads.
@@ -441,8 +478,12 @@ export function BillingLineItemsPanel({
   }, []);
   const saveAllLines = () => {
     if (!onSaveAllLines) return;
-    const items = Array.from(lineDraftsRef.current.entries()).map(([id, patch]) => ({ id, patch }));
-    if (items.length > 0) onSaveAllLines(items);
+    const versionsById = new Map(selectedLines.map((line) => [line.id, line.updated_at]));
+    const items = Array.from(lineDraftsRef.current.entries()).flatMap(([id, patch]) => {
+      const expected_updated_at = versionsById.get(id);
+      return expected_updated_at ? [{ id, patch, expected_updated_at }] : [];
+    });
+    if (items.length > 0) onSaveAllLines(items, newBillingLineOperationKey("save-all"));
   };
   // The application right before this one is where the carried-forward "previous"
   // numbers come from — naming it makes the memory trustworthy to the biller.
@@ -521,9 +562,14 @@ export function BillingLineItemsPanel({
         : "Release all remaining retainage for this application?";
     if (!window.confirm(message)) return;
     selectedLines.forEach((line) =>
-      onUpdateLine(line.id, {
-        retainage_released: centsToDollars(line.retainage_held_cents),
-      }),
+      onUpdateLine(
+        line.id,
+        {
+          retainage_released: centsToDollars(line.retainage_held_cents),
+        },
+        line.updated_at,
+        newBillingLineOperationKey("release-retainage"),
+      ),
     );
   };
 
@@ -847,7 +893,9 @@ export function BillingLineItemsPanel({
                 key={line.id}
                 line={line}
                 saving={savingLine}
-                onSave={(patch) => onUpdateLine(line.id, patch)}
+                onSave={(patch) =>
+                  onUpdateLine(line.id, patch, line.updated_at, newBillingLineOperationKey("save"))
+                }
                 onDraftChange={handleLineDraft}
               />
             ))}
@@ -1365,14 +1413,18 @@ export function ProjectCostTrackingPanel({
   exposures?: ExposureRow[];
   costActuals: CostActualRow[];
   onCreateCostActual: (input: CostActualDraft) => Promise<unknown>;
-  onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
-  onVoidCostActual: (id: string, notes: string) => void;
+  onImportCostActuals: (input: {
+    source_name: string;
+    rows: CostActualImportRow[];
+    operation_key: string;
+  }) => Promise<unknown>;
+  onVoidCostActual: (id: string, notes: string, operationKey: string) => Promise<unknown>;
   onSetCostActualStatus: (
     id: string,
     status: "approved" | "paid",
     payment?: CostPaymentDetails,
-  ) => void;
-  onUpdateCostActual: (id: string, input: CostActualDraft) => void | Promise<unknown>;
+  ) => Promise<unknown>;
+  onUpdateCostActual: (id: string, input: CostActualDraft) => Promise<unknown>;
   savingCost?: boolean;
   // Self-perform daily WIP folded into each bucket's actual (id → dollars, NET of
   // already-settled offsets). Drives the per-line "Settles daily WIP" suggestion
@@ -1386,6 +1438,7 @@ export function ProjectCostTrackingPanel({
   // plus the "how was this paid" draft. Both mark-paid entry points open this.
   const [payingCost, setPayingCost] = useState<CostActualRow | null>(null);
   const [payDraft, setPayDraft] = useState<CostPaymentDraft>({
+    operation_key: newCostOperationKey("payment"),
     amount: 0,
     payment_method: "check",
     payment_reference: "",
@@ -1407,6 +1460,7 @@ export function ProjectCostTrackingPanel({
   } | null>(null);
   const [savingVendor, setSavingVendor] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const importOperationKeysRef = useRef(new Map<string, string>());
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
   // The Vendor field is a pick-or-add over BOTH org directories (vendors +
@@ -1438,6 +1492,7 @@ export function ProjectCostTrackingPanel({
     queryKey: ["cost-ledger-details", projectId],
     queryFn: () => getCostLedgerDetailsFn({ data: { projectId } }),
   });
+  const settlementLedgerReady = costLedgerDetailsQuery.data?.settlementReady === true;
   const costPayments = costLedgerDetailsQuery.data?.payments ?? [];
   const cashPaidCentsByCost = costPayments.reduce((totals, payment) => {
     totals.set(
@@ -1457,12 +1512,12 @@ export function ProjectCostTrackingPanel({
     }
     totals.set(
       actual.credit_applies_to_id,
-      (totals.get(actual.credit_applies_to_id) ?? 0) + Math.abs(dollarsToCents(actual.amount)),
+      (totals.get(actual.credit_applies_to_id) ?? 0) + Math.abs(actual.amount_cents),
     );
     return totals;
   }, new Map<string, number>());
   const settlementFor = (actual: CostActualRow) => {
-    const invoiceCents = Math.max(0, dollarsToCents(actual.amount));
+    const invoiceCents = Math.max(0, actual.amount_cents);
     const recordedCashCents = cashPaidCentsByCost.get(actual.id) ?? 0;
     // Paid rows created before the settlement ledger have no child payments.
     // Preserve their historical meaning as fully cash-paid; every new partial
@@ -1483,6 +1538,7 @@ export function ProjectCostTrackingPanel({
       payment_method: string;
       payment_reference: string;
       notes: string;
+      operation_key: string;
     }) => recordCostPaymentFn({ data: input }),
     onSuccess: (result) => {
       const saved = result as { remaining_cents?: number };
@@ -1501,6 +1557,7 @@ export function ProjectCostTrackingPanel({
   const openPayDialog = (actual: CostActualRow) => {
     const settlement = settlementFor(actual);
     setPayDraft({
+      operation_key: newCostOperationKey(`payment:${actual.id}`),
       amount: centsToDollars(settlement.remainingCents),
       payment_method: "check",
       payment_reference: "",
@@ -1509,21 +1566,31 @@ export function ProjectCostTrackingPanel({
     });
     setPayingCost(actual);
   };
-  const confirmPaid = () => {
+  const confirmPaid = async () => {
     if (!payingCost) return;
     if (!costLedgerDetailsQuery.data?.settlementReady) {
-      onSetCostActualStatus(payingCost.id, "paid", payDraft);
-      setPayingCost(null);
+      toast.error("Payment cannot be recorded", {
+        description:
+          costLedgerDetailsQuery.error instanceof Error
+            ? costLedgerDetailsQuery.error.message
+            : "The settlement ledger is unavailable. Retry after it loads.",
+      });
       return;
     }
-    recordPaymentMutation.mutate({
-      cost_actual_id: payingCost.id,
-      amount: payDraft.amount,
-      payment_date: payDraft.paid_date,
-      payment_method: payDraft.payment_method,
-      payment_reference: payDraft.payment_reference,
-      notes: payDraft.notes,
-    });
+    try {
+      await recordPaymentMutation.mutateAsync({
+        cost_actual_id: payingCost.id,
+        amount: payDraft.amount,
+        payment_date: payDraft.paid_date,
+        payment_method: payDraft.payment_method,
+        payment_reference: payDraft.payment_reference,
+        notes: payDraft.notes,
+        operation_key: payDraft.operation_key,
+      });
+    } catch {
+      // The mutation shows the error. Keep the dialog and operation key so a
+      // lost-response retry cannot create a second settlement.
+    }
   };
   const vendorNames = (vendorsQuery.data ?? []).map((vendor) => vendor.name);
   const subNames = (subsQuery.data ?? []).map((sub) => sub.name);
@@ -1574,6 +1641,8 @@ export function ProjectCostTrackingPanel({
   // New invoices land as a draft (field request 2026-07-09) — nothing hits job
   // cost until someone approves the spend or marks it paid.
   const [draft, setDraft] = useState<CostActualDraft>(() => ({
+    operation_key: newCostOperationKey("create"),
+    cost_document_id: crypto.randomUUID(),
     exposure_id: null,
     subcontract_change_order_id: null,
     subcontract_payment_id: null,
@@ -1605,6 +1674,7 @@ export function ProjectCostTrackingPanel({
     setExtraLines((lines) => [
       ...lines,
       {
+        operation_key: newCostOperationKey("create-line"),
         cost_bucket_id: buckets[0]?.id ?? null,
         cost_code: buckets[0]?.cost_code ?? "",
         description: "",
@@ -1630,7 +1700,9 @@ export function ProjectCostTrackingPanel({
   const activeExtraLines = extraLines.filter(
     (line) => line.amount !== 0 || line.description.trim() !== "",
   );
-  const extraLinesValid = activeExtraLines.every((line) => line.description.trim() !== "");
+  const extraLinesValid = activeExtraLines.every(
+    (line) => Boolean(line.cost_bucket_id) && line.description.trim() !== "",
+  );
   // The details window's save: build the vendor out in the directory, then
   // select it into the cost being entered.
   const editingCost = editingCostId
@@ -1744,11 +1816,6 @@ export function ProjectCostTrackingPanel({
   const totalApproved = centsToDollars(
     sumDollarsToCents(approvedActuals.map((actual) => actual.amount)),
   );
-  const totalPaid = centsToDollars(
-    sumDollarsToCents(
-      activeActuals.filter((actual) => actual.status === "paid").map((actual) => actual.amount),
-    ),
-  );
   // Consume the exact same commitment-adjusted ledger as the Budget page.
   // Raw bucket.ftc omits the open subcontract layer and produced a false green
   // variance on the Costs page even while Budget correctly forecast an overrun.
@@ -1761,24 +1828,26 @@ export function ProjectCostTrackingPanel({
   });
   const totalActual = costForecast.actuals;
   const budgetVariance = costForecast.forecastVariance;
-  const cashPaid = costLedgerDetailsQuery.data?.settlementReady
+  const cashPaid = settlementLedgerReady
     ? centsToDollars(
         activeActuals
           .filter((actual) => actual.amount > 0)
           .reduce((total, actual) => total + settlementFor(actual).cashPaidCents, 0),
       )
-    : totalPaid;
-  const openToPay = centsToDollars(
-    activeActuals
-      .filter(
-        (actual) =>
-          actual.amount > 0 &&
-          (actual.status === "approved" ||
-            actual.status === "committed" ||
-            actual.status === "paid"),
+    : null;
+  const openToPay = settlementLedgerReady
+    ? centsToDollars(
+        activeActuals
+          .filter(
+            (actual) =>
+              actual.amount > 0 &&
+              (actual.status === "approved" ||
+                actual.status === "committed" ||
+                actual.status === "paid"),
+          )
+          .reduce((total, actual) => total + settlementFor(actual).remainingCents, 0),
       )
-      .reduce((total, actual) => total + settlementFor(actual).remainingCents, 0),
-  );
+    : null;
   const payingSettlement = payingCost ? settlementFor(payingCost) : null;
 
   const chooseBucket = (bucketId: string) => {
@@ -1796,6 +1865,7 @@ export function ProjectCostTrackingPanel({
     // auto-suggest over what the PM already chose on this row.
     setPrimaryOffsetTouched(true);
     setDraft({
+      operation_key: newCostOperationKey(`update:${actual.id}`),
       cost_document_id: actual.cost_document_id || actual.id,
       exposure_id: actual.exposure_id,
       subcontract_change_order_id: actual.subcontract_change_order_id,
@@ -1828,6 +1898,8 @@ export function ProjectCostTrackingPanel({
     setPrimaryOffsetTouched(false);
     setInvoiceFile(null);
     setDraft({
+      operation_key: newCostOperationKey("create"),
+      cost_document_id: crypto.randomUUID(),
       exposure_id: null,
       subcontract_change_order_id: null,
       subcontract_payment_id: null,
@@ -1864,8 +1936,6 @@ export function ProjectCostTrackingPanel({
   };
 
   const save = async () => {
-    let uploadedPath = "";
-    let savedRows = 0;
     const costDocumentId =
       draft.cost_document_id || editingCost?.cost_document_id || crypto.randomUUID();
     let nextDraft = {
@@ -1879,7 +1949,7 @@ export function ProjectCostTrackingPanel({
       try {
         const prepared = await prepareAttachmentForUpload(invoiceFile);
         const safeName = prepared.uploadName.replace(/[^a-zA-Z0-9._-]+/g, "-") || "invoice";
-        uploadedPath = `${projectId}/cost-actuals/${crypto.randomUUID()}-${safeName}`;
+        const uploadedPath = `${projectId}/cost-actuals/${crypto.randomUUID()}-${safeName}`;
         const { error } = await supabase.storage
           .from("project-docs")
           .upload(uploadedPath, prepared.blob, {
@@ -1894,6 +1964,12 @@ export function ProjectCostTrackingPanel({
           invoice_attachment_type: prepared.contentType,
           invoice_attachment_size: prepared.bytes,
         };
+        // Retain the exact uploaded object and command facts on any later RPC
+        // error. A timeout can occur after commit, so deleting/re-uploading here
+        // would change the retry fingerprint or remove a file now referenced by
+        // a committed row.
+        setDraft(nextDraft);
+        setInvoiceFile(null);
       } catch (error) {
         toast.error("Invoice did not upload", {
           description: error instanceof Error ? error.message : "Try again.",
@@ -1909,16 +1985,15 @@ export function ProjectCostTrackingPanel({
         // network dropped), the mutation's own toast explains why and the dialog
         // stays open with the typed changes intact.
         await onUpdateCostActual(editingCostId, nextDraft);
-        savedRows = 1;
       } else {
         await onCreateCostActual(nextDraft);
-        savedRows += 1;
         // Extra cost-code lines on the same invoice inherit every shared field
         // from the draft, including the same invoice attachment. Each line's
         // offset is the clamped effective value.
         for (const line of activeExtraLines) {
           await onCreateCostActual({
             ...nextDraft,
+            operation_key: line.operation_key,
             cost_bucket_id: line.cost_bucket_id,
             cost_code: line.cost_code,
             description: line.description,
@@ -1930,16 +2005,9 @@ export function ProjectCostTrackingPanel({
               !!line.offsetTouched,
             ),
           });
-          savedRows += 1;
         }
       }
     } catch {
-      // If no cost row accepted the uploaded object, remove it so a failed save
-      // does not leave invisible bytes behind. A multi-line partial save keeps
-      // the shared file because the first accepted row still references it.
-      if (uploadedPath && savedRows === 0) {
-        await supabase.storage.from("project-docs").remove([uploadedPath]);
-      }
       setUploadingInvoice(false);
       return;
     }
@@ -1965,19 +2033,40 @@ export function ProjectCostTrackingPanel({
     // Marking paid asks HOW it was paid — persist the edits, close the editor,
     // then open the payment-details dialog. Approving stays a direct transition.
     if (status === "paid" && row) {
+      // The query refresh triggered by the save is asynchronous. Carry the
+      // just-saved amount into settlement immediately so "Save + mark paid"
+      // can never offer the stale pre-edit balance.
+      const savedRow = {
+        ...row,
+        amount: draft.amount,
+        amount_cents: dollarsToCents(draft.amount),
+      };
       resetCostForm();
-      openPayDialog(row);
+      openPayDialog(savedRow);
       return;
     }
-    onSetCostActualStatus(editingCostId, status);
-    resetCostForm();
+    try {
+      await onSetCostActualStatus(editingCostId, status, {
+        operation_key: `cost:transition:${editingCostId}:${status}`,
+        payment_method: "",
+        payment_reference: "",
+        paid_date: today(),
+      });
+      resetCostForm();
+    } catch {
+      // Keep the editor and its command key intact; the mutation owns the toast.
+    }
   };
 
   const importCsv = (file: File) => {
+    const fileKey = `${file.name}:${file.size}:${file.lastModified}`;
+    const stableOperationKey =
+      importOperationKeysRef.current.get(fileKey) ?? newCostOperationKey("import");
+    importOperationKeysRef.current.set(fileKey, stableOperationKey);
     Papa.parse<Record<string, unknown>>(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (result) => {
+      complete: async (result) => {
         const rows = result.data
           .map(normalizeCostImportRow)
           .filter((row): row is CostActualImportRow => Boolean(row));
@@ -1987,13 +2076,37 @@ export function ProjectCostTrackingPanel({
           );
           return;
         }
-        onImportCostActuals({ source_name: file.name, rows });
+        try {
+          await onImportCostActuals({
+            source_name: file.name,
+            rows,
+            operation_key: stableOperationKey,
+          });
+          importOperationKeysRef.current.delete(fileKey);
+        } catch {
+          // Keep the file's operation key so selecting it again is a safe retry.
+        }
       },
       error: (error) => {
         window.alert(error.message || "Cost CSV could not be parsed.");
       },
     });
   };
+
+  if (projectSubcontractsQuery.isLoading) {
+    return <SubcontractFinancialReadState loading />;
+  }
+  if (projectSubcontractsQuery.isError || !projectSubcontractsQuery.data) {
+    return (
+      <SubcontractFinancialReadState
+        error={projectSubcontractsQuery.error}
+        retrying={projectSubcontractsQuery.isFetching}
+        onRetry={() => {
+          void projectSubcontractsQuery.refetch();
+        }}
+      />
+    );
+  }
 
   return (
     <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
@@ -2075,7 +2188,9 @@ export function ProjectCostTrackingPanel({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="unmatched">Unmatched</SelectItem>
+                        <SelectItem value="unmatched" disabled>
+                          Select a cost code
+                        </SelectItem>
                         {buckets.map((bucket) => (
                           <SelectItem key={bucket.id} value={bucket.id}>
                             {bucket.cost_code ? `${bucket.cost_code} - ` : ""}
@@ -2120,7 +2235,6 @@ export function ProjectCostTrackingPanel({
                       <SelectContent>
                         <SelectItem value="draft">Draft — needs approval</SelectItem>
                         <SelectItem value="approved">Approved for payment</SelectItem>
-                        <SelectItem value="paid">Paid</SelectItem>
                         <SelectItem value="committed">Committed (obligation)</SelectItem>
                       </SelectContent>
                     </Select>
@@ -2301,7 +2415,9 @@ export function ProjectCostTrackingPanel({
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="unmatched">Unmatched</SelectItem>
+                                  <SelectItem value="unmatched" disabled>
+                                    Select a cost code
+                                  </SelectItem>
                                   {buckets.map((bucket) => (
                                     <SelectItem key={bucket.id} value={bucket.id}>
                                       {bucket.cost_code ? `${bucket.cost_code} - ` : ""}
@@ -2473,7 +2589,7 @@ export function ProjectCostTrackingPanel({
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={costSaveBusy || Boolean(invoiceFile)}
+                      disabled={costSaveBusy || Boolean(invoiceFile) || !settlementLedgerReady}
                       onClick={() => advanceDraft("paid")}
                     >
                       Record payment
@@ -2494,6 +2610,7 @@ export function ProjectCostTrackingPanel({
                     onClick={save}
                     disabled={
                       costSaveBusy ||
+                      !draft.cost_bucket_id ||
                       !draft.description.trim() ||
                       !extraLinesValid ||
                       (draft.amount < 0 && !draft.credit_applies_to_id)
@@ -2603,6 +2720,27 @@ export function ProjectCostTrackingPanel({
         </div>
       </div>
 
+      {costLedgerDetailsQuery.isError ? (
+        <div className="mt-4 flex flex-col gap-2 rounded-md border border-danger/35 bg-danger/10 px-4 py-3 text-sm text-danger sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <span className="font-semibold">Settlement ledger unavailable.</span>{" "}
+            <span>
+              {costLedgerDetailsQuery.error instanceof Error
+                ? costLedgerDetailsQuery.error.message
+                : "Financial totals and payment actions are blocked until this data loads."}
+            </span>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => void costLedgerDetailsQuery.refetch()}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : null}
+
       {draftActuals.length > 0 || approvedActuals.length > 0 ? (
         <div className="mt-4 rounded-md border border-accent/30 bg-accent/5 px-4 py-3 text-sm">
           <span className="font-semibold text-foreground">Approval queue:</span>{" "}
@@ -2623,10 +2761,14 @@ export function ProjectCostTrackingPanel({
         <BillingMetric label="Cost to date" value={fmtUSD(totalActual)} sub="Recognized job cost" />
         <BillingMetric
           label="Open to pay"
-          value={fmtUSD(openToPay)}
+          value={openToPay === null ? "Unavailable" : fmtUSD(openToPay)}
           sub="Remaining approved balance"
         />
-        <BillingMetric label="Cash paid" value={fmtUSD(cashPaid)} sub="Payments recorded" />
+        <BillingMetric
+          label="Cash paid"
+          value={cashPaid === null ? "Unavailable" : fmtUSD(cashPaid)}
+          sub="Payments recorded"
+        />
         <BillingMetric
           label="Forecast variance"
           value={`${fmtUSD(Math.abs(budgetVariance))} ${budgetVariance < 0 ? "over" : "under"}`}
@@ -2817,6 +2959,40 @@ export function ProjectCostTrackingPanel({
                             (candidate) => candidate.id === actual.credit_applies_to_id,
                           )
                         : null;
+                      const linkedNonvoidCredit = costActuals.some(
+                        (candidate) =>
+                          candidate.credit_applies_to_id === actual.id &&
+                          candidate.status !== "void",
+                      );
+                      const creditTargetEligible =
+                        !actual.credit_applies_to_id ||
+                        (appliedTo != null &&
+                          appliedTo.amount_cents > 0 &&
+                          appliedTo.status !== "draft" &&
+                          appliedTo.status !== "paid" &&
+                          appliedTo.status !== "void");
+                      const editableStatus =
+                        actual.status === "draft" ||
+                        actual.status === "approved" ||
+                        actual.status === "committed";
+                      const settlementLocksFacts =
+                        settlement.cashPaidCents > 0 || linkedNonvoidCredit;
+                      const editLockReason = !settlementLedgerReady
+                        ? "Settlement history is unavailable; retry the ledger before editing."
+                        : settlement.cashPaidCents > 0
+                          ? "This cost has an append-only cash settlement. Enter a correcting cost instead."
+                          : linkedNonvoidCredit
+                            ? "Resolve the linked supplier credit before changing this cost."
+                            : !creditTargetEligible
+                              ? "The supplier-credit target is no longer eligible for edits."
+                              : null;
+                      const canCloseStaleDraftCredit =
+                        settlementLedgerReady &&
+                        actual.status === "draft" &&
+                        actual.credit_applies_to_id != null &&
+                        !settlementLocksFacts &&
+                        !creditTargetEligible;
+                      const voidLockReason = canCloseStaleDraftCredit ? null : editLockReason;
                       return (
                         <div
                           key={actual.id}
@@ -2855,7 +3031,19 @@ export function ProjectCostTrackingPanel({
                                       variant="outline"
                                       size="sm"
                                       className="h-7 px-2.5 text-xs"
-                                      onClick={() => onSetCostActualStatus(actual.id, "approved")}
+                                      disabled={savingCost}
+                                      onClick={async () => {
+                                        try {
+                                          await onSetCostActualStatus(actual.id, "approved", {
+                                            operation_key: `cost:transition:${actual.id}:approved`,
+                                            payment_method: "",
+                                            payment_reference: "",
+                                            paid_date: today(),
+                                          });
+                                        } catch {
+                                          // Mutation surfaces the error; row remains actionable.
+                                        }
+                                      }}
                                     >
                                       Approve line
                                     </Button>
@@ -2865,6 +3053,7 @@ export function ProjectCostTrackingPanel({
                                     variant="outline"
                                     size="sm"
                                     className="h-7 px-2.5 text-xs"
+                                    disabled={savingCost || !settlementLedgerReady}
                                     onClick={() => openPayDialog(actual)}
                                   >
                                     Record payment
@@ -2876,34 +3065,43 @@ export function ProjectCostTrackingPanel({
                               <div className="mr-1 text-right text-sm tabular font-medium">
                                 {fmtUSD(actual.amount)}
                               </div>
-                              {(actual.status === "draft" ||
-                                actual.status === "approved" ||
-                                actual.status === "committed") && (
+                              {editableStatus && (
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="sm"
                                   className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                                  title="Edit this allocation line"
+                                  title={editLockReason ?? "Edit this allocation line"}
+                                  disabled={savingCost || editLockReason !== null}
                                   onClick={() => startEditCost(actual)}
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
                                 </Button>
                               )}
-                              {actual.status !== "void" && (
+                              {editableStatus && (
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="sm"
                                   className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
                                   aria-label={`Void ${actual.description}`}
-                                  onClick={() => {
+                                  title={voidLockReason ?? "Void this allocation line"}
+                                  disabled={savingCost || voidLockReason !== null}
+                                  onClick={async () => {
                                     if (
                                       window.confirm(
                                         "Void this allocation line? The linked cost-code actual will update.",
                                       )
                                     ) {
-                                      onVoidCostActual(actual.id, "Voided from cost tracking.");
+                                      try {
+                                        await onVoidCostActual(
+                                          actual.id,
+                                          "Voided from cost tracking.",
+                                          `cost:void:${actual.id}`,
+                                        );
+                                      } catch {
+                                        // Mutation surfaces the error; the row remains visible.
+                                      }
                                     }
                                   }}
                                 >
@@ -2912,6 +3110,11 @@ export function ProjectCostTrackingPanel({
                               )}
                             </div>
                           </div>
+                          {editableStatus && (editLockReason || voidLockReason) ? (
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              {editLockReason ?? voidLockReason}
+                            </div>
+                          ) : null}
                           {actual.amount > 0 &&
                           actual.status !== "draft" &&
                           actual.status !== "void" ? (
@@ -3052,6 +3255,7 @@ export function ProjectCostTrackingPanel({
               onClick={confirmPaid}
               disabled={
                 recordPaymentMutation.isPending ||
+                !settlementLedgerReady ||
                 payDraft.amount <= 0 ||
                 Boolean(
                   payingSettlement &&

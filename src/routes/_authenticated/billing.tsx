@@ -138,6 +138,14 @@ function BillingPortfolioPage() {
                     projects={projects}
                     openInvoices={openInvoices}
                     cockpitLoading={cockpitQuery.isLoading}
+                    cockpitError={
+                      cockpitQuery.error instanceof Error
+                        ? cockpitQuery.error.message
+                        : cockpitQuery.error
+                          ? "Open invoices did not load."
+                          : null
+                    }
+                    onCockpitRetry={() => void cockpitQuery.refetch()}
                     today={today}
                   />
                 </TabsContent>

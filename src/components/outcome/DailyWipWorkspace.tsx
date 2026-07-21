@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { SubcontractFinancialReadState } from "@/components/project/SubcontractFinancialReadState";
 import { InstalledQuantities } from "@/components/outcome/InstalledQuantities";
 import { ItemizedCostEditor } from "@/components/outcome/ItemizedCostEditor";
 import { PerformedByField } from "@/components/outcome/PerformedByField";
@@ -875,6 +876,21 @@ export function DailyWipWorkspace({
     }
     return [...map.values()];
   }, [productionRows, productionBenchmarkSettings, bucketById]);
+
+  if (projectSubsQuery.isLoading) {
+    return <SubcontractFinancialReadState loading />;
+  }
+  if (projectSubsQuery.isError || !projectSubsQuery.data) {
+    return (
+      <SubcontractFinancialReadState
+        error={projectSubsQuery.error}
+        retrying={projectSubsQuery.isFetching}
+        onRetry={() => {
+          void projectSubsQuery.refetch();
+        }}
+      />
+    );
+  }
 
   if (workspaceMode === "production") {
     return (

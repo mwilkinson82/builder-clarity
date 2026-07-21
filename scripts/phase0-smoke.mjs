@@ -531,7 +531,10 @@ await expectContains(
   "src/lib/projects.functions.ts",
   [
     /select\("id,archived_at"\)/,
-    /demoArchived: true/,
+    // Financial hardening: delete = archive for every project (journals RESTRICT
+    // parent deletion); the demo flag is derived from the row, not hardcoded.
+    /demoArchived: isHarborDemoProject/,
+    /Archive is therefore the supported lifecycle/,
     /harborDemoSeedAction\(existingDemo\) === "skip"/,
   ],
   "deleting the Harbor demo archives it and seedDemoIfEmpty respects the archived opt-out",
@@ -992,26 +995,29 @@ await expectContains(
   [/aiaGenerateGate/, /blockingStep/, /Import your schedule of values first/],
   "AIA builder gate is a pure module shared by the stepper and the tests",
 );
-// FIELD FIX (close the loop): the generate step completes and a "Bill the owner"
-// step turns the application into a client invoice that posts to Receivables, so
-// the pay-app workflow no longer dead-ends on the download button.
+// The generate step completes into a controlled invoice-draft action. Sending
+// and client visibility remain an explicit recipient-confirmed command.
 await expectContains(
   "src/lib/aia-builder-steps.ts",
-  [/"bill"/, /Bill the owner/, /Invoiced — tracking in Receivables/, /hasInvoice/],
-  "pay-app stepper has a Bill-the-owner step that closes into Receivables",
+  [/"bill"/, /Create invoice/, /review and send it from Invoices/, /hasInvoice/],
+  "pay-app stepper closes into an invoice draft with an explicit send step",
 );
 await expectContains(
   "src/components/billing/AiaApplicationStepper.tsx",
-  [/onBillOwner/, /Create client invoice/, /Posts to Receivables/],
-  "stepper renders the one-click Create-client-invoice action after generate",
+  [/onBillOwner/, /Create invoice draft/, /Review and send it from Invoices/],
+  "stepper renders a one-click controlled invoice-draft action after generate",
 );
-// FIELD FIX (bill = open receivable): billing an owner issues a live, client-
-// visible invoice (status "sent") instead of a draft, so it ages on the A/R
-// dashboard immediately (the receivables aging hides drafts).
+// Creating from the pay-app step must stay draft-only; the separate Send
+// command owns client visibility, recipient evidence, and A/R aging.
 await expectContains(
   "src/components/project/billing/BillingWorkspace.tsx",
-  [/onCreateInvoiceForApp/, /status: "sent" as const/, /client_visible: true/],
-  "bill-owner issues an open, client-visible receivable so it ages, not a draft",
+  [
+    /onCreateInvoiceForApp/,
+    /onCreateInvoice\(draft\)/,
+    /audited Send command/,
+    /confirms recipients/,
+  ],
+  "pay-app invoice creation stays draft-only until the audited Send command",
 );
 
 // GETTINGPAID1: the AIA package is lender-grade — G702 face with lines 1-9
@@ -1617,7 +1623,12 @@ await expectContains(
     /mode",\s*"payment"/,
     /payment_enabled/,
     /payment_url/,
-    /stripe_checkout_session_id/,
+    /persistInvoiceCheckoutOrExpire/,
+    /update_billing_invoice_processor_state_atomic/,
+    /p_checkout_session_id:\s*session\.id/,
+    /p_online_payment_status:\s*"pending"/,
+    /stripe-checkout:\$\{session\.id\}:pending/,
+    /expireStripeCheckoutSession/,
     /online_payment_status/,
     /payment_link_sent_at/,
     /payment_intent_data\[metadata\]\[invoice_id\]/,
@@ -1631,7 +1642,7 @@ await expectContains(
     /Stripe-Account header/,
     /payment_intent_data\[application_fee_amount\]/,
   ],
-  "invoice checkout route creates guarded direct-charge sessions on the connected account and records payment link state",
+  "invoice checkout route creates guarded direct-charge sessions, atomically persists the pending session before returning, and expires an unpersisted session",
 );
 
 await expectContains(
@@ -1661,7 +1672,7 @@ await expectContains(
     /stripe_payment_intent_id/,
     /overwatch_fee_amount_cents/,
     /overwatch_fee/,
-    /net_payout/,
+    /netToStripeBalanceCents/,
     /account\.updated/,
     /stripeConnectDetails/,
   ],
@@ -2090,9 +2101,13 @@ await expectContains(
     /ESTIMATE_FOLDERS/,
     /folderCounts/,
     /deleteEstimate/,
-    /Delete Estimate/,
+    // Financial hardening: estimate removal is an ARCHIVE (worksheet history
+    // kept, audit record retained), and the control says so.
+    /Archive estimate/,
+    /Archive Estimate\?/,
+    /worksheet history to Archived/,
   ],
-  "estimate detail route renders its workspace and project estimates stay separate from master sheets with folders and delete controls",
+  "estimate detail route renders its workspace and project estimates stay separate from master sheets with folders and archive controls",
 );
 
 await expectContains(
@@ -2132,11 +2147,13 @@ await expectContains(
     /Create Estimate From Master/,
     /ESTIMATE_FOLDERS/,
     /deleteEstimate/,
-    /Delete Estimate/,
-    /Delete Master Sheet/,
+    // Financial hardening: workspace removal is an ARCHIVE for estimates and
+    // master sheets alike; the dialog states the record + audit history survive.
+    /Archive Estimate\?/,
+    /Archive Master Sheet\?/,
     /titleRows/,
-    /permanently removes/,
-    /does not move it to Archived/i,
+    /worksheet history to Archived/,
+    /financial record and its audit history remain available/i,
     /parseEstimateLineRows/,
     /parseCsv/,
     /parseXlsx/,
@@ -3142,7 +3159,6 @@ await expectContains(
     /previousLineId/,
     /nextLineId/,
     /syncTakeoffQuantityToLine/,
-    /recalculateEstimateTotalsInternal/,
     /calculateEstimateTotals/,
     /isMissingPlanRoomSchemaError/,
     /schema_ready/,
@@ -3793,6 +3809,18 @@ expectSql(
   ],
   "exposure_allocations table exists (splittable exposure→cost-code) with team RLS",
 );
+expectSql(
+  sql,
+  [
+    /CREATE TABLE IF NOT EXISTS public\.exposure_allocation_operations/i,
+    /create or replace function public\.create_exposure_allocation_atomic/i,
+    /create or replace function public\.update_exposure_allocation_atomic/i,
+    /create or replace function public\.delete_exposure_allocation_atomic/i,
+    /Total allocations cannot exceed the authoritative exposure value/,
+    /revoke insert, update, delete on table public\.exposure_allocations[\s\S]*from authenticated, service_role/i,
+  ],
+  "exposure allocation commands serialize financial truth, cap risk dollars, and revoke raw writes",
+);
 await expectContains(
   "src/lib/exposure-allocation.ts",
   [
@@ -3807,15 +3835,19 @@ await expectContains(
   "exposure allocation math splits E/C holds across cost codes, cents-safe and node-loadable",
 );
 await expectContains(
-  "src/lib/projects.functions.ts",
+  "src/lib/exposure-allocations.functions.ts",
   [
-    /export const allocateExposure/,
+    /export const createExposureAllocation/,
+    /export const updateExposureAllocation/,
     /export const deleteExposureAllocation/,
     /export const listExposureAllocations/,
-    /isMissingExposureAllocationsTable/,
-    /exposure_allocations/,
+    /create_exposure_allocation_atomic/,
+    /update_exposure_allocation_atomic/,
+    /delete_exposure_allocation_atomic/,
+    /p_expected_version/,
+    /p_operation_key/,
   ],
-  "exposure allocation server fns verify ownership and degrade gracefully before the migration lands",
+  "exposure allocation server fns use versioned, idempotent financial commands and fail closed",
 );
 await expectContains(
   "src/components/project/ExposureAllocationPanel.tsx",
@@ -3830,7 +3862,13 @@ await expectContains(
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
-  [/ExposureAllocationPanel/, /exposureAllocationsQuery/, /allocateExposureFn/],
+  [
+    /ExposureAllocationPanel/,
+    /exposureAllocationsQuery/,
+    /createExposureAllocationFn/,
+    /updateExposureAllocationFn/,
+    /\.mutateAsync\(input\)/,
+  ],
   "risk-tally tab wires the exposure allocation panel and mutations",
 );
 
@@ -3901,19 +3939,36 @@ await expectContains(
 
 // BUDGETLOCK1 (founder decision 2026-07-06): the budget is a locked baseline —
 // the ONLY thing that moves it is an approved change order's budgeted cost.
-// Server-side enforcement + the CO cost layer in the ledger math must never
-// quietly disappear.
+// Financial hardening moved enforcement from client-side checks into the
+// database commands: the lock is an atomic verified RPC, and every baseline
+// write path refuses when budget_locked_at is set. The enforcement (and the
+// first-pay-app auto-lock) must never quietly disappear.
 await expectContains(
   "src/lib/projects.functions.ts",
   [
-    /BUDGET_LOCKED_MESSAGE/,
-    /isProjectBudgetLocked/,
-    /budget_locked_at/,
-    // The first pay application freezes the baseline.
-    /\.is\("budget_locked_at", null\)/,
     /export const lockProjectBudget/,
+    /lock_project_budget_atomic/,
+    /readProjectBudgetLock/,
+    /No baseline mutation is permitted until the locked state is confirmed/,
   ],
-  "locked budgets refuse original_budget changes; first pay app auto-locks (BUDGETLOCK1)",
+  "budget lock is an atomic database command whose commit is verified (BUDGETLOCK1)",
+);
+await expectContains(
+  "supabase/migrations/20260720183243_budget_sov_authority_commands.sql",
+  [
+    /The budget is locked\. Baseline money changes must flow through approved change orders\./,
+    /The budget is locked\. A priced or budgeted SOV line cannot be deleted\./,
+    /The budget is locked\. Replace or append imports cannot rewrite the frozen baseline\./,
+  ],
+  "locked budgets refuse baseline money changes at the database (BUDGETLOCK1)",
+);
+await expectContains(
+  "supabase/migrations/20260720170500_billing_application_command_integrity.sql",
+  [
+    // The first pay application freezes the baseline.
+    /set budget_locked_at = coalesce\(budget_locked_at, now\(\)\)/,
+  ],
+  "the first pay application auto-locks the budget inside the pay-app command (BUDGETLOCK1)",
 );
 await expectContains(
   "src/lib/budget-ledger.ts",
@@ -3964,11 +4019,21 @@ await expectContains(
 await expectContains(
   "src/lib/projects.functions.ts",
   [
+    // Financial hardening: the carry is a single atomic, retry-keyed database
+    // command; the server no longer stitches buckets together client-side.
     /export const buildBudgetFromEstimate/,
-    /aggregateEstimateToBudget/,
-    /No Overwatch estimate is linked/,
+    /build_budget_from_estimate_atomic/,
+    /p_operation_key: data\.operation_key/,
   ],
-  "buildBudgetFromEstimate carries estimate line costs onto cost buckets (update match, insert new)",
+  "buildBudgetFromEstimate is an atomic retry-keyed carry command",
+);
+await expectContains(
+  "supabase/migrations/20260720183243_budget_sov_authority_commands.sql",
+  [
+    /No Overwatch estimate is linked to this project\. Enter the budget manually\./,
+    /The linked estimate has no line items to carry into the budget\./,
+  ],
+  "the carry command refuses honestly when no estimate or no lines exist",
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
@@ -3991,8 +4056,18 @@ await expectContains(
 );
 await expectContains(
   "src/lib/projects.functions.ts",
-  [/pricing: z\.enum\(\["unpriced", "auto"\]\)/, /estimateHasDistributableMarkup/],
-  "buildBudgetFromEstimate takes a pricing mode; auto-price only with real markup (BUDGETVSCONTRACT2)",
+  [/pricing: z\.enum\(\["unpriced", "auto"\]\)/],
+  "buildBudgetFromEstimate takes a pricing mode (BUDGETVSCONTRACT2)",
+);
+await expectContains(
+  "supabase/migrations/20260720183243_budget_sov_authority_commands.sql",
+  [
+    // Auto-price only when the estimate carries REAL markup above cost — the
+    // command never fabricates a contract equal to cost.
+    /v_priced := p_pricing = 'auto'[\s\S]{0,120}v_contract_total_cents > v_subtotal_cents/,
+    /v_remainder_cents := v_contract_total_cents - v_assigned_cents/,
+  ],
+  "auto-price distributes real markup pro-rata inside the carry command, cents-exact (BUDGETVSCONTRACT2)",
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
@@ -4213,10 +4288,22 @@ await expectContains(
   "src/lib/subcontracts.functions.ts",
   [
     /export const setSubcontractPaymentSplit/,
-    /must add up to the payment amount exactly/,
+    /replace_subcontract_payment_allocations_atomic/,
     /payment_allocations: paymentAllocations\.map\(normalizePaymentAllocation\)/,
   ],
   "server replaces a payment's split atomically and enforces the cents-exact sum",
+);
+await expectContains(
+  "supabase/migrations/20260720153030_financial_integrity_atomic_subcontract_and_estimate_import.sql",
+  [
+    /The split must add up to the payment amount exactly/,
+    /CREATE OR REPLACE FUNCTION public\.replace_subcontract_payment_allocations_atomic/,
+    /CREATE OR REPLACE FUNCTION public\.tg_recalculate_estimate_line_totals/,
+    /AFTER INSERT ON public\.estimate_line_items/,
+    /AFTER UPDATE ON public\.estimate_line_items/,
+    /AFTER DELETE ON public\.estimate_line_items/,
+  ],
+  "database atomically validates payment splits and recalculates estimate totals after line changes",
 );
 await expectContains(
   "src/lib/subcontract-budget.ts",

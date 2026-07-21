@@ -9,6 +9,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -206,7 +216,7 @@ function ScheduleChip({ days }: { days: number }) {
   );
 }
 
-type Draft = {
+export type ChangeOrderDraft = {
   number: string;
   description: string;
   contract_amount: number;
@@ -223,7 +233,7 @@ type Draft = {
   date_initiated: string | null;
 };
 
-const empty: Draft = {
+const empty: ChangeOrderDraft = {
   number: "",
   description: "",
   contract_amount: 0,
@@ -262,9 +272,13 @@ export function ChangeOrdersTable({
   uploadingDocId,
 }: {
   changeOrders: ChangeOrderRow[];
-  onCreate: (d: Draft) => void;
-  onUpdate: (id: string, p: Partial<Draft>) => void;
-  onDelete: (id: string) => void;
+  onCreate: (d: ChangeOrderDraft) => Promise<boolean>;
+  onUpdate: (
+    id: string,
+    p: Partial<ChangeOrderDraft>,
+    expectedUpdatedAt: string,
+  ) => Promise<boolean>;
+  onDelete: (changeOrder: ChangeOrderRow) => Promise<boolean>;
   onCreateRisk?: (changeOrder: ChangeOrderRow) => void;
   creatingRiskId?: string | null;
   project?: ProjectRow;
@@ -277,7 +291,7 @@ export function ChangeOrdersTable({
   // Send a CO to the client / nudge one already sent (stamps client_sent_at).
   onSendToClient?: (co: ChangeOrderRow) => void;
   sendingClientId?: string | null;
-  onQuickStatus?: (co: ChangeOrderRow, status: "Approved" | "Denied") => void;
+  onQuickStatus?: (co: ChangeOrderRow, status: "Approved" | "Denied") => Promise<boolean>;
   // Optional CO-document plumbing (backup/quote/correspondence). All optional so
   // existing call sites keep compiling; the Paperclip action only shows when the
   // upload handler is wired.
@@ -289,17 +303,24 @@ export function ChangeOrdersTable({
 }) {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft>(empty);
+  const [editingUpdatedAt, setEditingUpdatedAt] = useState("");
+  const [draft, setDraft] = useState<ChangeOrderDraft>(empty);
+  const [saving, setSaving] = useState(false);
+  const [changingStatusId, setChangingStatusId] = useState<string | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<ChangeOrderRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
   // Which CO's documents dialog is open (null = closed).
   const [docCo, setDocCo] = useState<ChangeOrderRow | null>(null);
 
   const openNew = () => {
     setEditingId(null);
+    setEditingUpdatedAt("");
     setDraft(empty);
     setOpen(true);
   };
   const openEdit = (c: ChangeOrderRow) => {
     setEditingId(c.id);
+    setEditingUpdatedAt(c.updated_at);
     setDraft({
       number: c.number,
       description: c.description,
@@ -319,11 +340,38 @@ export function ChangeOrdersTable({
 
     setOpen(true);
   };
-  const save = () => {
+  const save = async () => {
     if (!draft.description.trim()) return;
-    if (editingId) onUpdate(editingId, draft);
-    else onCreate(draft);
-    setOpen(false);
+    setSaving(true);
+    try {
+      const saved = editingId
+        ? await onUpdate(editingId, draft, editingUpdatedAt)
+        : await onCreate(draft);
+      if (saved) setOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const changeStatus = async (co: ChangeOrderRow, status: "Approved" | "Denied") => {
+    if (!onQuickStatus || changingStatusId) return;
+    setChangingStatusId(co.id);
+    try {
+      await onQuickStatus(co, status);
+    } finally {
+      setChangingStatusId(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteCandidate) return;
+    setDeleting(true);
+    try {
+      const deleted = await onDelete(deleteCandidate);
+      if (deleted) setDeleteCandidate(null);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   // ── Derived money (live rows; rollup fields preferred when supplied) ──────
@@ -341,10 +389,6 @@ export function ChangeOrdersTable({
   const originalContract = project?.original_contract ?? rollup?.originalContract ?? 0;
   const coMargin = approvedContract - approvedCost;
   const coMarginPct = marginPctLabel(approvedContract, approvedCost);
-
-  const totalContract = changeOrders.reduce((s, c) => s + c.contract_amount, 0);
-  const totalCost = changeOrders.reduce((s, c) => s + c.cost_amount, 0);
-  const totalMargin = totalContract - totalCost;
 
   // Rows arrive ordered by CO number ascending — reverse for newest first.
   const pendingCards = [...pending].reverse().slice(0, 4);
@@ -530,16 +574,18 @@ export function ChangeOrdersTable({
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => onQuickStatus?.(c, "Approved")}
+                      disabled={changingStatusId === c.id}
+                      onClick={() => void changeStatus(c, "Approved")}
                     >
-                      Approve
+                      {changingStatusId === c.id ? "Saving…" : "Approve"}
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => onQuickStatus?.(c, "Denied")}
+                      disabled={changingStatusId === c.id}
+                      onClick={() => void changeStatus(c, "Denied")}
                     >
-                      Deny
+                      {changingStatusId === c.id ? "Saving…" : "Deny"}
                     </Button>
                   </div>
                 </div>
@@ -645,14 +691,15 @@ export function ChangeOrdersTable({
       </div>
 
       {/* 4 · Full change order log */}
-      <div className="overflow-hidden rounded-xl border border-hairline bg-card">
+      <div className="overflow-x-auto rounded-xl border border-hairline bg-card">
         <div className="flex items-center gap-3 px-5 pb-3 pt-4">
           <div className="text-[13px] font-semibold">Full change order log</div>
           <span className="ml-auto text-xs text-muted-foreground">
-            {changeOrders.length} total · {fmtUSD(totalContract)} net contract adjustment
+            {changeOrders.length} total · {fmtUSD(approvedContract)} approved net contract
+            adjustment · {fmtUSD(pendingContract)} pending · {fmtUSD(deniedContract)} denied
           </span>
         </div>
-        <Table>
+        <Table className="min-w-[1120px]">
           <TableHeader>
             <TableRow className="bg-surface">
               <TableHead className="w-[90px]">CO #</TableHead>
@@ -775,7 +822,14 @@ export function ChangeOrdersTable({
                         size="icon"
                         variant="ghost"
                         className="h-7 w-7"
+                        disabled={c.status !== "Pending"}
                         onClick={() => openEdit(c)}
+                        title={
+                          c.status === "Pending"
+                            ? "Edit change order"
+                            : "Finalized change orders are immutable"
+                        }
+                        aria-label={`Edit ${c.number || c.description}`}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
@@ -783,7 +837,14 @@ export function ChangeOrdersTable({
                         size="icon"
                         variant="ghost"
                         className="h-7 w-7"
-                        onClick={() => onDelete(c.id)}
+                        disabled={c.status !== "Pending"}
+                        onClick={() => setDeleteCandidate(c)}
+                        title={
+                          c.status === "Pending"
+                            ? "Delete pending change order"
+                            : "Finalized change orders cannot be deleted"
+                        }
+                        aria-label={`Delete ${c.number || c.description}`}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -818,17 +879,17 @@ export function ChangeOrdersTable({
                 </TableCell>
                 <TableCell />
                 <TableCell className="text-right font-serif text-[15px] tabular">
-                  {fmtUSD(totalContract)}
+                  {fmtUSD(approvedContract)}
                 </TableCell>
                 <TableCell className="text-right font-serif text-[15px] tabular text-muted-foreground">
-                  {fmtUSD(totalCost)}
+                  {fmtUSD(approvedCost)}
                 </TableCell>
                 <TableCell
                   className={`text-right font-serif text-[15px] tabular ${
-                    totalMargin < 0 ? "text-danger" : "text-success"
+                    coMargin < 0 ? "text-danger" : "text-success"
                   }`}
                 >
-                  {fmtUSD(totalMargin)}
+                  {fmtUSD(coMargin)}
                 </TableCell>
                 <TableCell colSpan={4}>
                   <span className="text-[11px] font-normal text-muted-foreground">
@@ -842,11 +903,11 @@ export function ChangeOrdersTable({
         </Table>
       </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(next) => !saving && setOpen(next)}>
         <DialogTrigger asChild>
           <span />
         </DialogTrigger>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-2xl">
           <DialogHeaderV2
             eyebrow="Change order"
             title={editingId ? "Edit change order" : "Add change order"}
@@ -886,7 +947,7 @@ export function ChangeOrdersTable({
                 contract, SOV, billing, budget, and margin.
               </p>
             </div>
-            <div className="grid grid-cols-3 gap-3 sm:col-span-2">
+            <div className="grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label>CO number</Label>
                 <Input
@@ -1058,13 +1119,43 @@ export function ChangeOrdersTable({
             </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" disabled={saving} onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={save}>{editingId ? "Save changes" : "Add change order"}</Button>
+            <Button disabled={saving || !draft.description.trim()} onClick={() => void save()}>
+              {saving ? "Saving…" : editingId ? "Save changes" : "Add change order"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={deleteCandidate != null}
+        onOpenChange={(next) => !deleting && !next && setDeleteCandidate(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this pending change order?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteCandidate?.number || deleteCandidate?.description || "This change order"} will
+              be removed from the project. Approved and denied records remain permanent financial
+              history.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDelete();
+              }}
+            >
+              {deleting ? "Deleting…" : "Delete pending change order"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {onUploadDocument && (
         <ChangeOrderDocumentsDialog

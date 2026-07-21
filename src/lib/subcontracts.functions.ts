@@ -1,17 +1,12 @@
 // Per-project subcontracts, cost-code allocations, and progress payments
 // (SUBCONTRACTORS Slice 1). Project-scoped (can_read/can_manage_project). The
 // budget effect is additive and computed in the app (subcontract-budget.ts) —
-// nothing here touches cost_actuals. Reads degrade to empty and writes surface a
-// clear "not enabled yet" message before the migration lands (mirrors
-// daily_wip_entries).
+// nothing here touches cost_actuals. Financial reads fail closed: a query or
+// schema failure must never masquerade as an empty buyout/payment ledger.
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import {
-  canApproveSubPayment,
-  canPaySubcontract,
-  subcontractInsuranceStatus,
-} from "@/lib/compliance-domain";
+import { dollarsToCents } from "@/lib/payments-domain";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -26,26 +21,86 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   single(): Promise<DynamicSupabaseResult>;
   maybeSingle(): Promise<DynamicSupabaseResult>;
 };
-type DynamicSupabaseClient = { from(relation: string): DynamicSupabaseQuery };
+type DynamicSupabaseClient = {
+  from(relation: string): DynamicSupabaseQuery;
+  rpc(functionName: string, args?: Record<string, unknown>): Promise<DynamicSupabaseResult>;
+};
 
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
+const dynamicRpc = (supabase: unknown, functionName: string, args?: Record<string, unknown>) =>
+  (supabase as DynamicSupabaseClient).rpc(functionName, args);
 
-const num = (value: unknown) => {
+const INVALID_FINANCIAL_RESPONSE =
+  "Subcontract financials returned incomplete data. Refresh and try again; do not rely on buyout, payment, budget, or WIP totals until this loads.";
+
+const num = (value: unknown, field: string) => {
+  if (value === null || value === undefined || value === "") {
+    throw new Error(`${INVALID_FINANCIAL_RESPONSE} Missing field: ${field}.`);
+  }
   const n = typeof value === "number" ? value : Number(value ?? 0);
-  return Number.isFinite(n) ? n : 0;
+  if (!Number.isFinite(n)) {
+    throw new Error(`${INVALID_FINANCIAL_RESPONSE} Invalid field: ${field}.`);
+  }
+  return n;
 };
 const str = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback);
 
 function isMissingSubcontractTable(error: DynamicSupabaseError | null) {
   const message = error?.message ?? "";
   return (
-    error?.code === "PGRST205" || /subcontract|schema cache|does not exist|relation/i.test(message)
+    error?.code === "PGRST205" ||
+    error?.code === "42P01" ||
+    (/subcontract/i.test(message) &&
+      /does not exist|could not find.*schema cache|schema cache.*could not find/i.test(message))
   );
 }
 
 const NOT_ENABLED =
   "Subcontractors aren't enabled on this workspace yet — the subcontracts tables haven't been applied.";
+const SUBCONTRACT_FINANCIAL_READ_FAILED =
+  "Subcontract financials could not be loaded. Refresh and try again. If the problem continues, contact support before relying on buyout, payment, budget, or WIP totals.";
+const MAX_SAFE_DOLLARS = Number.MAX_SAFE_INTEGER / 100;
+const exactCentMoney = z
+  .number()
+  .positive()
+  .max(MAX_SAFE_DOLLARS)
+  .refine(
+    (value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-7,
+    "Enter an amount with no more than two decimal places.",
+  );
+const exactCentNonnegativeMoney = z
+  .number()
+  .min(0)
+  .max(MAX_SAFE_DOLLARS)
+  .refine(
+    (value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-7,
+    "Enter an amount with no more than two decimal places.",
+  );
+
+const ATOMIC_PAYMENT_UPDATE_PENDING =
+  "The financial-integrity database update is still being applied. No payment or lien waiver was changed; try again after the Lovable migration completes.";
+
+function isMissingAtomicPaymentFunction(error: DynamicSupabaseError | null) {
+  const message = error?.message ?? "";
+  return (
+    error?.code === "PGRST202" ||
+    error?.code === "42883" ||
+    /schema cache|could not find the function|function .* does not exist/i.test(message)
+  );
+}
+
+function throwAtomicPaymentError(error: DynamicSupabaseError) {
+  if (isMissingAtomicPaymentFunction(error)) throw new Error(ATOMIC_PAYMENT_UPDATE_PENDING);
+  throw new Error(error.message);
+}
+
+function paymentFromRpc(data: unknown): SubcontractPaymentRow {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("The payment transaction completed without returning its payment record.");
+  }
+  return normalizePayment(data as Record<string, unknown>);
+}
 
 export interface SubcontractRow {
   id: string;
@@ -74,11 +129,13 @@ export interface SubcontractAllocationRow {
   planned_quantity: number;
   unit: string;
   benchmark_labor_rate: number;
+  updated_at: string;
 }
 // A pay app's lifecycle (field request 2026-07-09): the sub submits it and it's
 // logged as a DRAFT, the PM marks it APPROVED for payment, then PAID when the
-// money goes out. Only 'paid' rows count as actual cost in the budget. Rows
-// recorded before the lifecycle existed have no status column → treated as paid.
+// money goes out. Only 'paid' rows count as actual cost in the budget. The
+// lifecycle migration backfilled older rows as paid; API responses must now
+// carry an explicit status so schema lag cannot silently imply payment.
 export type SubPaymentStatus = "draft" | "approved" | "paid";
 
 export interface SubcontractPaymentRow {
@@ -102,6 +159,7 @@ export interface SubcontractPaymentRow {
   // insurance gate. Audited — who/when live on overridden_by/at (server-only).
   compliance_override_reason: string;
   compliance_overridden_at: string | null;
+  updated_at: string;
 }
 // A change order or credit against a subcontract, kept SEPARATE from the base
 // contracted amount (field request 2026-07-09). amount is signed dollars:
@@ -116,6 +174,7 @@ export interface SubcontractChangeOrderRow {
   amount: number;
   co_date: string;
   exposure_id: string | null;
+  updated_at: string;
 }
 // One version of a subcontract's paper — original, an amendment, a re-negotiated
 // copy. Many per subcontract; exactly one is_active = the current contract.
@@ -157,8 +216,8 @@ const normalizeSubcontract = (row: Record<string, unknown>): SubcontractRow => (
   subcontractor_id: str(row.subcontractor_id),
   title: str(row.title),
   scope: str(row.scope),
-  contract_value: num(row.contract_value),
-  retainage_pct: num(row.retainage_pct),
+  contract_value: num(row.contract_value, "subcontracts.contract_value"),
+  retainage_pct: num(row.retainage_pct, "subcontracts.retainage_pct"),
   status: str(row.status, "draft"),
   executed_at: (row.executed_at as string | null) ?? null,
   executed_contract_path: str(row.executed_contract_path),
@@ -174,27 +233,38 @@ const normalizeAllocation = (row: Record<string, unknown>): SubcontractAllocatio
   cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
   cost_code: str(row.cost_code),
   description: str(row.description),
-  amount: num(row.amount),
-  planned_quantity: num(row.planned_quantity),
+  amount: num(row.amount, "subcontract_allocations.amount"),
+  planned_quantity: num(row.planned_quantity, "subcontract_allocations.planned_quantity"),
   unit: str(row.unit),
-  benchmark_labor_rate: num(row.benchmark_labor_rate),
+  benchmark_labor_rate: num(
+    row.benchmark_labor_rate,
+    "subcontract_allocations.benchmark_labor_rate",
+  ),
+  updated_at: str(row.updated_at),
 });
-const normalizePayment = (row: Record<string, unknown>): SubcontractPaymentRow => ({
-  id: str(row.id),
-  project_id: str(row.project_id),
-  subcontract_id: str(row.subcontract_id),
-  amount: num(row.amount),
-  retainage_held: num(row.retainage_held),
-  payment_date: str(row.payment_date),
-  reference: str(row.reference),
-  notes: str(row.notes),
-  status: str(row.status, "paid") as SubPaymentStatus,
-  approved_at: (row.approved_at as string | null) ?? null,
-  exposure_id: (row.exposure_id as string | null) ?? null,
-  payment_method: str(row.payment_method),
-  compliance_override_reason: str(row.compliance_override_reason),
-  compliance_overridden_at: (row.compliance_overridden_at as string | null) ?? null,
-});
+const normalizePayment = (row: Record<string, unknown>): SubcontractPaymentRow => {
+  const status = str(row.status);
+  if (status !== "draft" && status !== "approved" && status !== "paid") {
+    throw new Error(`${INVALID_FINANCIAL_RESPONSE} Invalid field: subcontract_payments.status.`);
+  }
+  return {
+    id: str(row.id),
+    project_id: str(row.project_id),
+    subcontract_id: str(row.subcontract_id),
+    amount: num(row.amount, "subcontract_payments.amount"),
+    retainage_held: num(row.retainage_held, "subcontract_payments.retainage_held"),
+    payment_date: str(row.payment_date),
+    reference: str(row.reference),
+    notes: str(row.notes),
+    status,
+    approved_at: (row.approved_at as string | null) ?? null,
+    exposure_id: (row.exposure_id as string | null) ?? null,
+    payment_method: str(row.payment_method),
+    compliance_override_reason: str(row.compliance_override_reason),
+    compliance_overridden_at: (row.compliance_overridden_at as string | null) ?? null,
+    updated_at: str(row.updated_at),
+  };
+};
 const normalizeChangeOrder = (row: Record<string, unknown>): SubcontractChangeOrderRow => ({
   id: str(row.id),
   project_id: str(row.project_id),
@@ -202,9 +272,10 @@ const normalizeChangeOrder = (row: Record<string, unknown>): SubcontractChangeOr
   cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
   cost_code: str(row.cost_code),
   description: str(row.description),
-  amount: num(row.amount),
+  amount: num(row.amount, "subcontract_change_orders.amount"),
   co_date: str(row.co_date),
   exposure_id: (row.exposure_id as string | null) ?? null,
+  updated_at: str(row.updated_at),
 });
 
 const RISK_LINKS_NOT_ENABLED =
@@ -253,51 +324,68 @@ const normalizePaymentAllocation = (
   cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
   cost_code: str(row.cost_code),
   description: str(row.description),
-  amount: num(row.amount),
+  amount: num(row.amount, "subcontract_payment_allocations.amount"),
 });
 
 const projectIdInput = z.object({ projectId: z.string().uuid() });
 
 // One call hydrates the whole tab: subcontracts + allocations + payments for a
-// project. Each read degrades to [] independently before the migration lands.
+// project. The response is atomic from the application's perspective: if any
+// financial relation fails, callers get an error rather than a partial ledger.
+export async function readProjectSubcontracts(
+  supabase: unknown,
+  projectId: string,
+): Promise<ProjectSubcontracts> {
+  const readList = async (relation: string, order: string) => {
+    const { data: rows, error } = await dynamicTable(supabase, relation)
+      .select("*")
+      .eq("project_id", projectId)
+      .order(order, { ascending: false });
+    if (error) {
+      if (isMissingSubcontractTable(error)) {
+        throw new Error(
+          `${NOT_ENABLED} Financial totals and actions are blocked until the Lovable migration is complete.`,
+        );
+      }
+      throw new Error(
+        `${SUBCONTRACT_FINANCIAL_READ_FAILED} Database detail (${relation}): ${error.message}`,
+      );
+    }
+    if (!Array.isArray(rows)) {
+      throw new Error(`${INVALID_FINANCIAL_RESPONSE} Invalid relation: ${relation}.`);
+    }
+    return rows as Record<string, unknown>[];
+  };
+  const [subs, allocs, pays, docs, changeOrders, paymentAllocations] = await Promise.all([
+    readList("subcontracts", "created_at"),
+    readList("subcontract_allocations", "created_at"),
+    readList("subcontract_payments", "payment_date"),
+    readList("subcontract_documents", "uploaded_at"),
+    readList("subcontract_change_orders", "co_date"),
+    readList("subcontract_payment_allocations", "created_at"),
+  ]);
+  return {
+    subcontracts: subs.map(normalizeSubcontract),
+    allocations: allocs.map(normalizeAllocation),
+    payments: pays.map(normalizePayment),
+    documents: docs.map(normalizeDocument),
+    change_orders: changeOrders.map(normalizeChangeOrder),
+    payment_allocations: paymentAllocations.map(normalizePaymentAllocation),
+  };
+}
+
 export const listProjectSubcontracts = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string }) => projectIdInput.parse(input))
-  .handler(async ({ data, context }): Promise<ProjectSubcontracts> => {
-    const readList = async (relation: string, order: string) => {
-      const { data: rows, error } = await dynamicTable(context.supabase, relation)
-        .select("*")
-        .eq("project_id", data.projectId)
-        .order(order, { ascending: false });
-      if (error) {
-        if (isMissingSubcontractTable(error)) return [];
-        throw new Error(error.message);
-      }
-      return (rows ?? []) as Record<string, unknown>[];
-    };
-    const [subs, allocs, pays, docs, changeOrders, paymentAllocations] = await Promise.all([
-      readList("subcontracts", "created_at"),
-      readList("subcontract_allocations", "created_at"),
-      readList("subcontract_payments", "payment_date"),
-      readList("subcontract_documents", "uploaded_at"),
-      readList("subcontract_change_orders", "co_date"),
-      readList("subcontract_payment_allocations", "created_at"),
-    ]);
-    return {
-      subcontracts: subs.map(normalizeSubcontract),
-      allocations: allocs.map(normalizeAllocation),
-      payments: pays.map(normalizePayment),
-      documents: docs.map(normalizeDocument),
-      change_orders: changeOrders.map(normalizeChangeOrder),
-      payment_allocations: paymentAllocations.map(normalizePaymentAllocation),
-    };
-  });
+  .handler(async ({ data, context }): Promise<ProjectSubcontracts> =>
+    readProjectSubcontracts(context.supabase, data.projectId),
+  );
 
 const subcontractFieldsInput = z.object({
   subcontractor_id: z.string().uuid(),
   title: z.string().max(300).default(""),
   scope: z.string().max(8000).default(""),
-  contract_value: z.number().min(0).default(0),
+  contract_value: exactCentNonnegativeMoney.default(0),
   retainage_pct: z.number().min(0).max(100).default(0),
   status: z.enum(["draft", "executed"]).default("draft"),
   executed_at: z
@@ -311,36 +399,46 @@ export const saveSubcontract = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
     z
-      .object({ projectId: z.string().uuid(), id: z.string().uuid().optional() })
+      .object({
+        projectId: z.string().uuid(),
+        id: z.string().uuid().optional(),
+        expected_updated_at: z.string().datetime({ offset: true }).nullable().default(null),
+        operation_key: z.string().trim().min(1).max(200),
+      })
       .merge(subcontractFieldsInput)
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractRow> => {
-    const { projectId, id, ...fields } = data;
-    const table = dynamicTable(context.supabase, "subcontracts");
-    const query = id
-      ? table.update(fields).eq("id", id).select("*").single()
-      : table
-          .insert({ project_id: projectId, ...fields })
-          .select("*")
-          .single();
-    const { data: row, error } = await query;
-    if (error) {
-      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
-      throw new Error(error.message);
-    }
-    return normalizeSubcontract(row as Record<string, unknown>);
+    const { projectId, id, expected_updated_at, operation_key, contract_value, ...fields } = data;
+    const result = await dynamicRpc(context.supabase, "save_subcontract_atomic", {
+      p_project_id: projectId,
+      p_subcontract_id: id ?? null,
+      p_expected_updated_at: expected_updated_at,
+      p_patch: { ...fields, contract_value_cents: dollarsToCents(contract_value) },
+      p_operation_key: operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
+    return normalizeSubcontract(result.data as Record<string, unknown>);
   });
 
 export const deleteSubcontract = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        expected_updated_at: z.string().datetime({ offset: true }),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
+  )
   .handler(async ({ data, context }) => {
-    // Allocations + payments cascade with the subcontract (ON DELETE CASCADE).
-    const { error } = await dynamicTable(context.supabase, "subcontracts")
-      .delete()
-      .eq("id", data.id);
-    if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);
+    const result = await dynamicRpc(context.supabase, "delete_untouched_subcontract_draft_atomic", {
+      p_subcontract_id: data.id,
+      p_expected_updated_at: data.expected_updated_at,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
     return { id: data.id };
   });
 
@@ -432,44 +530,25 @@ export const allocateSubcontract = createServerFn({ method: "POST" })
         projectId: z.string().uuid(),
         subcontractId: z.string().uuid(),
         costBucketId: z.string().uuid(),
-        amount: z.number().min(0).default(0),
+        amount: exactCentNonnegativeMoney.default(0),
+        operation_key: z.string().trim().min(1).max(200),
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractAllocationRow> => {
-    // Stamp cost_code/description off the bucket for readable context (mirrors
-    // allocateChangeOrder). The bucket read is RLS-gated to this project.
-    const { data: bucket, error: bucketError } = await dynamicTable(
-      context.supabase,
-      "cost_buckets",
-    )
-      .select("id,project_id,cost_code,bucket")
-      .eq("id", data.costBucketId)
-      .single();
-    if (bucketError) {
-      if (isMissingSubcontractTable(bucketError)) throw new Error(NOT_ENABLED);
-      throw new Error(bucketError.message);
-    }
-    const bucketRow = bucket as Record<string, unknown>;
-    if (str(bucketRow.project_id) !== data.projectId) {
-      throw new Error("That cost code belongs to a different project.");
-    }
-    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_allocations")
-      .insert({
-        project_id: data.projectId,
-        subcontract_id: data.subcontractId,
+    const result = await dynamicRpc(context.supabase, "mutate_subcontract_allocation_atomic", {
+      p_subcontract_id: data.subcontractId,
+      p_allocation_id: null,
+      p_expected_updated_at: null,
+      p_patch: {
         cost_bucket_id: data.costBucketId,
-        cost_code: str(bucketRow.cost_code),
-        description: str(bucketRow.bucket),
-        amount: data.amount,
-      })
-      .select("*")
-      .single();
-    if (error) {
-      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
-      throw new Error(error.message);
-    }
-    return normalizeAllocation(row as Record<string, unknown>);
+        amount_cents: dollarsToCents(data.amount),
+      },
+      p_delete: false,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
+    return normalizeAllocation(result.data as Record<string, unknown>);
   });
 
 // Re-price a buyout's allocation on a cost code — the lever for a change order or
@@ -478,19 +557,27 @@ export const allocateSubcontract = createServerFn({ method: "POST" })
 export const updateSubcontractAllocation = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
-    z.object({ id: z.string().uuid(), amount: z.number().min(0) }).parse(input),
+    z
+      .object({
+        id: z.string().uuid(),
+        subcontractId: z.string().uuid(),
+        amount: exactCentNonnegativeMoney,
+        expected_updated_at: z.string().datetime({ offset: true }),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractAllocationRow> => {
-    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_allocations")
-      .update({ amount: data.amount })
-      .eq("id", data.id)
-      .select("*")
-      .single();
-    if (error) {
-      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
-      throw new Error(error.message);
-    }
-    return normalizeAllocation(row as Record<string, unknown>);
+    const result = await dynamicRpc(context.supabase, "mutate_subcontract_allocation_atomic", {
+      p_subcontract_id: data.subcontractId,
+      p_allocation_id: data.id,
+      p_expected_updated_at: data.expected_updated_at,
+      p_patch: { amount_cents: dollarsToCents(data.amount) },
+      p_delete: false,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
+    return normalizeAllocation(result.data as Record<string, unknown>);
   });
 
 // Persist the GC's production assumptions on the exact bought-out allocation.
@@ -502,34 +589,54 @@ export const updateSubcontractProductionBenchmark = createServerFn({ method: "PO
     z
       .object({
         id: z.string().uuid(),
+        subcontractId: z.string().uuid(),
         planned_quantity: z.number().min(0),
         unit: z.string().trim().max(40),
-        benchmark_labor_rate: z.number().min(0),
+        benchmark_labor_rate: exactCentNonnegativeMoney,
+        expected_updated_at: z.string().datetime({ offset: true }),
+        operation_key: z.string().trim().min(1).max(200),
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractAllocationRow> => {
-    const { id, ...fields } = data;
-    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_allocations")
-      .update(fields)
-      .eq("id", id)
-      .select("*")
-      .single();
-    if (error) {
-      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
-      throw new Error(error.message);
-    }
-    return normalizeAllocation(row as Record<string, unknown>);
+    const result = await dynamicRpc(context.supabase, "mutate_subcontract_allocation_atomic", {
+      p_subcontract_id: data.subcontractId,
+      p_allocation_id: data.id,
+      p_expected_updated_at: data.expected_updated_at,
+      p_patch: {
+        planned_quantity: data.planned_quantity,
+        unit: data.unit,
+        benchmark_labor_rate_cents: dollarsToCents(data.benchmark_labor_rate),
+      },
+      p_delete: false,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
+    return normalizeAllocation(result.data as Record<string, unknown>);
   });
 
 export const deleteSubcontractAllocation = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        subcontractId: z.string().uuid(),
+        expected_updated_at: z.string().datetime({ offset: true }),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
+  )
   .handler(async ({ data, context }) => {
-    const { error } = await dynamicTable(context.supabase, "subcontract_allocations")
-      .delete()
-      .eq("id", data.id);
-    if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);
+    const result = await dynamicRpc(context.supabase, "mutate_subcontract_allocation_atomic", {
+      p_subcontract_id: data.subcontractId,
+      p_allocation_id: data.id,
+      p_expected_updated_at: data.expected_updated_at,
+      p_patch: {},
+      p_delete: true,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
     return { id: data.id };
   });
 
@@ -552,245 +659,79 @@ export const recordSubcontractChangeOrder = createServerFn({ method: "POST" })
           .refine((value) => value !== 0, "Enter the change order or credit amount."),
         co_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "co_date must be YYYY-MM-DD"),
         exposureId: z.string().uuid().nullable().default(null),
+        operation_key: z.string().trim().min(1).max(200),
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractChangeOrderRow> => {
-    await validateExposureForProject(context.supabase, data.exposureId, data.projectId);
-    let costCode = "";
-    let bucketLabel = "";
-    if (data.costBucketId) {
-      const { data: bucket, error: bucketError } = await dynamicTable(
-        context.supabase,
-        "cost_buckets",
-      )
-        .select("id,project_id,cost_code,bucket")
-        .eq("id", data.costBucketId)
-        .single();
-      if (bucketError) {
-        if (isMissingSubcontractTable(bucketError)) throw new Error(NOT_ENABLED);
-        throw new Error(bucketError.message);
-      }
-      const bucketRow = bucket as Record<string, unknown>;
-      if (str(bucketRow.project_id) !== data.projectId) {
-        throw new Error("That cost code belongs to a different project.");
-      }
-      costCode = str(bucketRow.cost_code);
-      bucketLabel = str(bucketRow.bucket);
-    }
-    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_change_orders")
-      .insert({
-        project_id: data.projectId,
-        subcontract_id: data.subcontractId,
+    const result = await dynamicRpc(context.supabase, "mutate_subcontract_change_order_atomic", {
+      p_subcontract_id: data.subcontractId,
+      p_change_order_id: null,
+      p_expected_updated_at: null,
+      p_patch: {
         cost_bucket_id: data.costBucketId,
-        cost_code: costCode,
-        description: data.description || bucketLabel,
-        amount: data.amount,
+        description: data.description,
+        amount_cents: dollarsToCents(data.amount),
         co_date: data.co_date,
         exposure_id: data.exposureId,
-      })
-      .select("*")
-      .single();
-    if (error) {
-      if (data.exposureId && isMissingExposureColumn(error))
-        throw new Error(RISK_LINKS_NOT_ENABLED);
-      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
-      throw new Error(error.message);
-    }
-    return normalizeChangeOrder(row as Record<string, unknown>);
+      },
+      p_delete: false,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
+    return normalizeChangeOrder(result.data as Record<string, unknown>);
   });
 
 export const setSubcontractChangeOrderExposure = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
-    z.object({ id: z.string().uuid(), exposureId: z.string().uuid().nullable() }).parse(input),
+    z
+      .object({
+        id: z.string().uuid(),
+        subcontractId: z.string().uuid(),
+        exposureId: z.string().uuid().nullable(),
+        expected_updated_at: z.string().datetime({ offset: true }),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractChangeOrderRow> => {
-    const current = await dynamicTable(context.supabase, "subcontract_change_orders")
-      .select("id,project_id")
-      .eq("id", data.id)
-      .single();
-    if (current.error) throw new Error(current.error.message);
-    const projectId = str((current.data as Record<string, unknown>).project_id);
-    await validateExposureForProject(context.supabase, data.exposureId, projectId);
-    const result = await dynamicTable(context.supabase, "subcontract_change_orders")
-      .update({ exposure_id: data.exposureId })
-      .eq("id", data.id)
-      .select("*")
-      .single();
-    if (result.error) {
-      if (isMissingExposureColumn(result.error)) throw new Error(RISK_LINKS_NOT_ENABLED);
-      throw new Error(result.error.message);
-    }
+    const result = await dynamicRpc(context.supabase, "mutate_subcontract_change_order_atomic", {
+      p_subcontract_id: data.subcontractId,
+      p_change_order_id: data.id,
+      p_expected_updated_at: data.expected_updated_at,
+      p_patch: { exposure_id: data.exposureId },
+      p_delete: false,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
     return normalizeChangeOrder(result.data as Record<string, unknown>);
   });
 
 export const deleteSubcontractChangeOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        subcontractId: z.string().uuid(),
+        expected_updated_at: z.string().datetime({ offset: true }),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
+  )
   .handler(async ({ data, context }) => {
-    const { error } = await dynamicTable(context.supabase, "subcontract_change_orders")
-      .delete()
-      .eq("id", data.id);
-    if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);
+    const result = await dynamicRpc(context.supabase, "mutate_subcontract_change_order_atomic", {
+      p_subcontract_id: data.subcontractId,
+      p_change_order_id: data.id,
+      p_expected_updated_at: data.expected_updated_at,
+      p_patch: {},
+      p_delete: true,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
     return { id: data.id };
   });
-
-// COMPLIANCE GATE (docs/compliance arc, module 2). Unless the project has opted
-// out (require_compliance_gating = false, or the column/tables aren't there yet),
-// a sub can't be paid without a valid COI as of the payment date AND an unused
-// lien waiver on file. Fails OPEN on any read error — a DB hiccup must never trap
-// a legitimate payment; a genuinely MISSING cert/waiver (clean empty read) still
-// blocks, which is the whole point. Returns the waiver id to consume on success.
-async function evaluateSubPaymentGate(
-  supabase: unknown,
-  projectId: string,
-  subcontractId: string,
-  paymentDate: string,
-): Promise<{ allowed: boolean; blockers: string[]; consumeWaiverId: string | null }> {
-  const OPEN = { allowed: true, blockers: [] as string[], consumeWaiverId: null };
-  // Couldn't verify a hard money gate → FAIL CLOSED: block with a retry so a
-  // transient DB error can't let an uncompliant payment slip through. (This only
-  // fires once gating is confirmed ON below — pre-migration stays open.)
-  const CLOSED = {
-    allowed: false,
-    blockers: ["Couldn't verify insurance/lien-waiver status right now — try again in a moment."],
-    consumeWaiverId: null,
-  };
-  const projRes = await dynamicTable(supabase, "projects")
-    .select("require_compliance_gating")
-    .eq("id", projectId)
-    .maybeSingle();
-  // Absent column / read error here is indistinguishable from "feature not
-  // provisioned yet" (pre-migration), so stay OPEN — never block a project that
-  // hasn't turned this on. Once we can read the toggle, the same migration has
-  // provisioned the cert/waiver tables, so errors past this point are transient.
-  if (projRes.error || !projRes.data) return OPEN;
-  const gatingEnabled =
-    (projRes.data as Record<string, unknown>).require_compliance_gating !== false;
-  if (!gatingEnabled) return OPEN;
-
-  const certsRes = await dynamicTable(supabase, "insurance_certificates")
-    .select("*")
-    .eq("subcontract_id", subcontractId);
-  if (certsRes.error) return CLOSED; // gating is ON but we couldn't check → block
-  const certs = ((certsRes.data ?? []) as Record<string, unknown>[]).map((c) => ({
-    verified: c.verified === true,
-    effective_date: (c.effective_date as string | null) ?? null,
-    expiry_date: (c.expiry_date as string | null) ?? null,
-  }));
-  const status = subcontractInsuranceStatus(certs, paymentDate);
-
-  const waiversRes = await dynamicTable(supabase, "lien_waivers")
-    .select("*")
-    .eq("subcontract_id", subcontractId);
-  if (waiversRes.error) return CLOSED;
-  const unconsumed = ((waiversRes.data ?? []) as Record<string, unknown>[]).filter(
-    (w) => !w.payment_id,
-  );
-  const result = canPaySubcontract({
-    gatingEnabled: true,
-    insuranceStatus: status,
-    hasCoveringWaiver: unconsumed.length > 0,
-  });
-  return {
-    ...result,
-    consumeWaiverId:
-      result.allowed && unconsumed.length > 0 ? str(unconsumed[unconsumed.length - 1].id) : null,
-  };
-}
-
-// PER-PAYMENT gate (field request 2026-07-10): a pay app can't move FORWARD
-// (draft → approved, or on to paid) until a lien waiver is tied to that
-// specific payment record AND the sub's insurance is verified as of the
-// payment date. A waiver sitting unattached in the sub's on-file pool counts —
-// it auto-attaches when the transition succeeds (attachWaiverId), which is the
-// same consumption the record-as-paid path has always done. Same OPEN/CLOSED
-// posture as evaluateSubPaymentGate: pre-migration reads stay open; a
-// transient read error once gating is confirmed ON blocks with a retry.
-async function evaluateSubApprovalGate(
-  supabase: unknown,
-  projectId: string,
-  subcontractId: string,
-  paymentId: string,
-  asOfDate: string,
-): Promise<{ allowed: boolean; blockers: string[]; attachWaiverId: string | null }> {
-  const OPEN = { allowed: true, blockers: [] as string[], attachWaiverId: null };
-  const CLOSED = {
-    allowed: false,
-    blockers: ["Couldn't verify insurance/lien-waiver status right now — try again in a moment."],
-    attachWaiverId: null,
-  };
-  const projRes = await dynamicTable(supabase, "projects")
-    .select("require_compliance_gating")
-    .eq("id", projectId)
-    .maybeSingle();
-  if (projRes.error || !projRes.data) return OPEN;
-  const gatingEnabled =
-    (projRes.data as Record<string, unknown>).require_compliance_gating !== false;
-  if (!gatingEnabled) return OPEN;
-
-  const certsRes = await dynamicTable(supabase, "insurance_certificates")
-    .select("*")
-    .eq("subcontract_id", subcontractId);
-  if (certsRes.error) return CLOSED;
-  const certs = ((certsRes.data ?? []) as Record<string, unknown>[]).map((c) => ({
-    verified: c.verified === true,
-    effective_date: (c.effective_date as string | null) ?? null,
-    expiry_date: (c.expiry_date as string | null) ?? null,
-  }));
-  const status = subcontractInsuranceStatus(certs, asOfDate);
-
-  const waiversRes = await dynamicTable(supabase, "lien_waivers")
-    .select("*")
-    .eq("subcontract_id", subcontractId);
-  if (waiversRes.error) return CLOSED;
-  const waivers = (waiversRes.data ?? []) as Record<string, unknown>[];
-  const attached = waivers.some((w) => str(w.payment_id) === paymentId);
-  const pool = waivers.filter((w) => !w.payment_id);
-
-  const result = canApproveSubPayment({
-    gatingEnabled: true,
-    insuranceStatus: status,
-    // An unattached on-file waiver satisfies the gate — it becomes THIS pay
-    // app's waiver the moment the transition succeeds.
-    hasAttachedWaiver: attached || pool.length > 0,
-  });
-  return {
-    ...result,
-    attachWaiverId:
-      result.allowed && !attached && pool.length > 0 ? str(pool[pool.length - 1].id) : null,
-  };
-}
-
-// The status column ships in the payables-approval migration. Pre-migration,
-// PostgREST rejects an insert/update naming it — detect that specific miss so
-// the legacy record-as-paid path can keep working while the desk catches up.
-const isMissingPaymentStatusColumn = (error: DynamicSupabaseError | null) => {
-  const message = error?.message ?? "";
-  return (
-    (error?.code === "PGRST204" || /column/i.test(message)) && /status|approved_at/i.test(message)
-  );
-};
-
-const STAGES_NOT_ENABLED =
-  "The pay-app approval stages aren't enabled yet (database update pending). Record the payment as paid for now.";
-
-// The override audit columns ship in the sub-payment-compliance-override
-// migration. Pre-migration we must NOT silently pay past the gate without
-// logging the override, so a missing column surfaces a clear "not enabled yet".
-const isMissingOverrideColumn = (error: DynamicSupabaseError | null) =>
-  /compliance_override/i.test(error?.message ?? "");
-// The payment_method column ships in the sub-payment-method migration.
-const isMissingPaymentMethodColumn = (error: DynamicSupabaseError | null) =>
-  /payment_method/i.test(error?.message ?? "");
-const OVERRIDE_NOT_ENABLED =
-  "The compliance override isn't enabled yet (database update pending) — attach the waiver/COI, or try the override again once the update lands.";
-
-// Whether a gate block should be overridden this call, given a typed reason.
-// Marshall's policy (2026-07-10): keep the hard block by default; an override
-// is only honored WITH a non-empty reason, which is then audited.
-const overrideOf = (reason: string | undefined) => (reason ?? "").trim();
 
 export const recordSubcontractPayment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -799,8 +740,8 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
       .object({
         projectId: z.string().uuid(),
         subcontractId: z.string().uuid(),
-        amount: z.number().min(0),
-        retainage_held: z.number().min(0).default(0),
+        amount: exactCentMoney,
+        retainage_held: exactCentNonnegativeMoney.default(0),
         payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "payment_date must be YYYY-MM-DD"),
         reference: z.string().max(200).default(""),
         notes: z.string().max(4000).default(""),
@@ -810,121 +751,58 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
         exposureId: z.string().uuid().nullable().default(null),
         // A typed reason overrides a failing gate (audited); absent → gate blocks.
         override_reason: z.string().max(500).optional(),
+        // Stable across retries of one user submission. The database rejects
+        // reuse with different details instead of recording a second payment.
+        idempotency_key: z.string().trim().min(1).max(200),
+      })
+      .refine((value) => value.retainage_held <= value.amount, {
+        message: "Retainage held cannot exceed the gross payment amount.",
+        path: ["retainage_held"],
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
-    const { projectId, subcontractId, status, override_reason, exposureId, ...fields } = data;
-    await validateExposureForProject(context.supabase, exposureId, projectId);
-
-    // Logging a DRAFT pay app needs nothing on file — that's the inbox. Landing
-    // directly at approved-for-payment or paid is gated (field request
-    // 2026-07-10: no approval without a lien waiver + verified insurance); the
-    // waiver that clears it is attached to the payment right after insert.
-    const gate =
-      status !== "draft"
-        ? await evaluateSubPaymentGate(
-            context.supabase,
-            projectId,
-            subcontractId,
-            fields.payment_date,
-          )
-        : { allowed: true, blockers: [] as string[], consumeWaiverId: null };
-    const reason = overrideOf(override_reason);
-    const overriding = !gate.allowed && reason.length > 0;
-    if (!gate.allowed && !overriding) {
-      throw new Error(
-        `${status === "paid" ? "Payment blocked" : "Can't approve for payment"} — compliance not met. ${gate.blockers.join(" ")} Add the missing item, override with a reason, or turn off "Require lien waivers + insurance" for this project.`,
-      );
-    }
-    const now = new Date().toISOString();
-    const overrideStamp = overriding
-      ? {
-          compliance_override_reason: reason,
-          compliance_overridden_by: context.userId,
-          compliance_overridden_at: now,
-        }
-      : {};
-
-    const base = {
-      project_id: projectId,
-      subcontract_id: subcontractId,
-      exposure_id: exposureId,
-      ...fields,
-    };
-    let insertRes = await dynamicTable(context.supabase, "subcontract_payments")
-      .insert({
-        ...base,
-        status,
-        ...(status === "approved" ? { approved_at: now } : {}),
-        ...overrideStamp,
-      })
-      .select("*")
-      .single();
-    if (insertRes.error && isMissingExposureColumn(insertRes.error)) {
-      if (exposureId) throw new Error(RISK_LINKS_NOT_ENABLED);
-      const { exposure_id: _exposureId, ...baseWithoutExposure } = base;
-      insertRes = await dynamicTable(context.supabase, "subcontract_payments")
-        .insert({
-          ...baseWithoutExposure,
-          status,
-          ...(status === "approved" ? { approved_at: now } : {}),
-          ...overrideStamp,
-        })
-        .select("*")
-        .single();
-    }
-    if (insertRes.error && overriding && isMissingOverrideColumn(insertRes.error)) {
-      throw new Error(OVERRIDE_NOT_ENABLED);
-    }
-    if (insertRes.error && isMissingPaymentStatusColumn(insertRes.error)) {
-      // Migration not applied yet: a paid row is exactly the legacy shape, so
-      // record it the old way; the new stages have nothing to fall back to.
-      if (status !== "paid") throw new Error(STAGES_NOT_ENABLED);
-      const { exposure_id: _exposureId, ...legacyBase } = base;
-      insertRes = await dynamicTable(context.supabase, "subcontract_payments")
-        .insert(legacyBase)
-        .select("*")
-        .single();
-    }
-    if (insertRes.error) {
-      if (isMissingSubcontractTable(insertRes.error)) throw new Error(NOT_ENABLED);
-      throw new Error(insertRes.error.message);
-    }
-    const payment = normalizePayment(insertRes.data as Record<string, unknown>);
-    // Consume the waiver that cleared the gate — link it so it can't clear a
-    // second payment (best-effort; the payment already succeeded).
-    if (gate.consumeWaiverId) {
-      await dynamicTable(context.supabase, "lien_waivers")
-        .update({ payment_id: payment.id })
-        .eq("id", gate.consumeWaiverId);
-    }
-    return payment;
+    // The compliance read, payment insert, waiver assignment, override audit,
+    // and final status are one PostgreSQL transaction. There is deliberately no
+    // legacy direct-insert fallback: if the RPC is unavailable, fail closed.
+    const result = await dynamicRpc(context.supabase, "record_subcontract_payment_atomic", {
+      p_project_id: data.projectId,
+      p_subcontract_id: data.subcontractId,
+      p_amount_cents: dollarsToCents(data.amount),
+      p_retainage_held_cents: dollarsToCents(data.retainage_held),
+      p_payment_date: data.payment_date,
+      p_reference: data.reference,
+      p_notes: data.notes,
+      p_status: data.status,
+      p_exposure_id: data.exposureId,
+      p_override_reason: data.override_reason?.trim() || null,
+      p_idempotency_key: data.idempotency_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
+    return paymentFromRpc(result.data);
   });
 
 export const setSubcontractPaymentExposure = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
-    z.object({ id: z.string().uuid(), exposureId: z.string().uuid().nullable() }).parse(input),
+    z
+      .object({
+        id: z.string().uuid(),
+        exposureId: z.string().uuid().nullable(),
+        expected_updated_at: z.string().datetime({ offset: true }),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
-    const current = await dynamicTable(context.supabase, "subcontract_payments")
-      .select("id,project_id")
-      .eq("id", data.id)
-      .single();
-    if (current.error) throw new Error(current.error.message);
-    const projectId = str((current.data as Record<string, unknown>).project_id);
-    await validateExposureForProject(context.supabase, data.exposureId, projectId);
-    const result = await dynamicTable(context.supabase, "subcontract_payments")
-      .update({ exposure_id: data.exposureId })
-      .eq("id", data.id)
-      .select("*")
-      .single();
-    if (result.error) {
-      if (isMissingExposureColumn(result.error)) throw new Error(RISK_LINKS_NOT_ENABLED);
-      throw new Error(result.error.message);
-    }
-    return normalizePayment(result.data as Record<string, unknown>);
+    const result = await dynamicRpc(context.supabase, "update_subcontract_payment_draft_atomic", {
+      p_payment_id: data.id,
+      p_expected_updated_at: data.expected_updated_at,
+      p_patch: { exposure_id: data.exposureId },
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
+    return paymentFromRpc(result.data);
   });
 
 // Walk a pay app forward: draft → approved (for payment) → paid. BOTH forward
@@ -946,90 +824,25 @@ export const setSubcontractPaymentStatus = createServerFn({ method: "POST" })
         // meaningful on the 'paid' transition. reference = check#/wire conf.
         payment_method: z.string().max(40).optional(),
         payment_reference: z.string().max(200).optional(),
-        paid_date: z.string().nullable().optional(),
+        paid_date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, "paid_date must be YYYY-MM-DD")
+          .nullable()
+          .optional(),
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
-    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_payments")
-      .select("*")
-      .eq("id", data.id)
-      .single();
-    if (error) {
-      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
-      throw new Error(error.message);
-    }
-    const current = normalizePayment(row as Record<string, unknown>);
-    if (current.status === "paid") throw new Error("This pay app is already marked paid.");
-
-    const gate = await evaluateSubApprovalGate(
-      context.supabase,
-      current.project_id,
-      current.subcontract_id,
-      current.id,
-      current.payment_date,
-    );
-    // Gate blocked: honor a typed override (audited), else surface the blockers.
-    const reason = overrideOf(data.override_reason);
-    const overriding = !gate.allowed && reason.length > 0;
-    if (!gate.allowed && !overriding) {
-      throw new Error(
-        `${data.status === "paid" ? "Payment blocked" : "Can't approve for payment"} — compliance not met. ${gate.blockers.join(" ")} Attach the missing item, override with a reason, or turn off "Require lien waivers + insurance" for this project.`,
-      );
-    }
-
-    const now = new Date().toISOString();
-    // "How paid" details ride along on the paid transition (field request
-    // 2026-07-10). Only overwrite fields the caller actually supplied.
-    const paymentDetails: Record<string, unknown> = {};
-    if (data.status === "paid") {
-      if (data.payment_method !== undefined) paymentDetails.payment_method = data.payment_method;
-      if (data.payment_reference !== undefined) paymentDetails.reference = data.payment_reference;
-      if (data.paid_date) paymentDetails.payment_date = data.paid_date;
-    }
-    const core = {
-      status: data.status,
-      // First pass through approval stamps it — a draft marked straight to
-      // paid still records when the spend was approved.
-      ...(current.approved_at ? {} : { approved_at: now }),
-      ...(overriding
-        ? {
-            compliance_override_reason: reason,
-            compliance_overridden_by: context.userId,
-            compliance_overridden_at: now,
-          }
-        : {}),
-    };
-    let updateRes = await dynamicTable(context.supabase, "subcontract_payments")
-      .update({ ...core, ...paymentDetails })
-      .eq("id", data.id)
-      .select("*")
-      .single();
-    // Pre-migration: payment_method column not there yet — retry without it so
-    // the transition (and the always-present reference/payment_date) still land.
-    if (updateRes.error && isMissingPaymentMethodColumn(updateRes.error)) {
-      const { payment_method: _pm, ...detailsNoMethod } = paymentDetails;
-      updateRes = await dynamicTable(context.supabase, "subcontract_payments")
-        .update({ ...core, ...detailsNoMethod })
-        .eq("id", data.id)
-        .select("*")
-        .single();
-    }
-    if (updateRes.error) {
-      if (overriding && isMissingOverrideColumn(updateRes.error))
-        throw new Error(OVERRIDE_NOT_ENABLED);
-      if (isMissingPaymentStatusColumn(updateRes.error)) throw new Error(STAGES_NOT_ENABLED);
-      throw new Error(updateRes.error.message);
-    }
-    const payment = normalizePayment(updateRes.data as Record<string, unknown>);
-    // A pool waiver cleared the gate — tie it to this pay app so it can't clear
-    // a second one (best-effort; the transition already succeeded).
-    if (gate.attachWaiverId) {
-      await dynamicTable(context.supabase, "lien_waivers")
-        .update({ payment_id: payment.id })
-        .eq("id", gate.attachWaiverId);
-    }
-    return payment;
+    const result = await dynamicRpc(context.supabase, "transition_subcontract_payment_atomic", {
+      p_payment_id: data.id,
+      p_status: data.status,
+      p_override_reason: data.override_reason?.trim() || null,
+      p_payment_method: data.payment_method ?? null,
+      p_payment_reference: data.payment_reference ?? null,
+      p_paid_date: data.paid_date ?? null,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
+    return paymentFromRpc(result.data);
   });
 
 // Tie an on-file lien waiver to one pay app (field request 2026-07-10: "attach
@@ -1042,58 +855,27 @@ export const attachLienWaiverToPayment = createServerFn({ method: "POST" })
     z.object({ waiverId: z.string().uuid(), paymentId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const payRes = await dynamicTable(context.supabase, "subcontract_payments")
-      .select("id,subcontract_id")
-      .eq("id", data.paymentId)
-      .single();
-    if (payRes.error) {
-      if (isMissingSubcontractTable(payRes.error)) throw new Error(NOT_ENABLED);
-      throw new Error(payRes.error.message);
-    }
-    const waiverRes = await dynamicTable(context.supabase, "lien_waivers")
-      .select("id,subcontract_id,payment_id")
-      .eq("id", data.waiverId)
-      .single();
-    if (waiverRes.error) throw new Error(waiverRes.error.message);
-    const waiver = waiverRes.data as Record<string, unknown>;
-    const payment = payRes.data as Record<string, unknown>;
-    if (str(waiver.subcontract_id) !== str(payment.subcontract_id)) {
-      throw new Error("That lien waiver belongs to a different subcontract.");
-    }
-    if (waiver.payment_id && str(waiver.payment_id) !== data.paymentId) {
-      throw new Error("That lien waiver already covers another payment — collect a new one.");
-    }
-    const updateRes = await dynamicTable(context.supabase, "lien_waivers")
-      .update({ payment_id: data.paymentId })
-      .eq("id", data.waiverId);
-    if (updateRes.error) throw new Error(updateRes.error.message);
+    const result = await dynamicRpc(context.supabase, "attach_lien_waiver_to_payment_atomic", {
+      p_waiver_id: data.waiverId,
+      p_payment_id: data.paymentId,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
     return { ok: true };
   });
 
-// Undo an attach made in error. Only while the pay app hasn't been paid — once
-// money left, its waiver is part of the payment's paper trail.
+// Undo an attach made in error only while the pay app is a draft. Once it is
+// approved or paid, its waiver is part of the permanent payment paper trail.
 export const detachLienWaiverFromPayment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
     z.object({ waiverId: z.string().uuid(), paymentId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const payRes = await dynamicTable(context.supabase, "subcontract_payments")
-      .select("id,status")
-      .eq("id", data.paymentId)
-      .single();
-    if (payRes.error) {
-      if (isMissingSubcontractTable(payRes.error)) throw new Error(NOT_ENABLED);
-      throw new Error(payRes.error.message);
-    }
-    if (str((payRes.data as Record<string, unknown>).status, "paid") === "paid") {
-      throw new Error("This pay app is already paid — its lien waiver stays on the record.");
-    }
-    const updateRes = await dynamicTable(context.supabase, "lien_waivers")
-      .update({ payment_id: null })
-      .eq("id", data.waiverId)
-      .eq("payment_id", data.paymentId);
-    if (updateRes.error) throw new Error(updateRes.error.message);
+    const result = await dynamicRpc(context.supabase, "detach_lien_waiver_from_payment_atomic", {
+      p_waiver_id: data.waiverId,
+      p_payment_id: data.paymentId,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
     return { ok: true };
   });
 
@@ -1105,36 +887,50 @@ export const updateSubcontractPayment = createServerFn({ method: "POST" })
     z
       .object({
         id: z.string().uuid(),
-        amount: z.number().min(0),
-        retainage_held: z.number().min(0).default(0),
+        amount: exactCentMoney,
+        retainage_held: exactCentNonnegativeMoney.default(0),
         payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "payment_date must be YYYY-MM-DD"),
         reference: z.string().max(200).default(""),
         notes: z.string().max(4000).default(""),
+        expected_updated_at: z.string().datetime({ offset: true }),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .refine((value) => value.retainage_held <= value.amount, {
+        message: "Retainage held cannot exceed the gross payment amount.",
+        path: ["retainage_held"],
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
-    const { id, ...fields } = data;
-    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_payments")
-      .update(fields)
-      .eq("id", id)
-      .select("*")
-      .single();
-    if (error) {
-      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
-      throw new Error(error.message);
-    }
-    return normalizePayment(row as Record<string, unknown>);
+    const { id, expected_updated_at, operation_key, ...fields } = data;
+    const result = await dynamicRpc(context.supabase, "update_subcontract_payment_draft_atomic", {
+      p_payment_id: id,
+      p_expected_updated_at: expected_updated_at,
+      p_patch: fields,
+      p_operation_key: operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
+    return paymentFromRpc(result.data);
   });
 
 export const deleteSubcontractPayment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        expected_updated_at: z.string().datetime({ offset: true }),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
+  )
   .handler(async ({ data, context }) => {
-    const { error } = await dynamicTable(context.supabase, "subcontract_payments")
-      .delete()
-      .eq("id", data.id);
-    if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);
+    const result = await dynamicRpc(context.supabase, "delete_subcontract_payment_draft_atomic", {
+      p_payment_id: data.id,
+      p_expected_updated_at: data.expected_updated_at,
+      p_operation_key: data.operation_key,
+    });
+    if (result.error) throwAtomicPaymentError(result.error);
     return { id: data.id };
   });
 
@@ -1144,18 +940,14 @@ export const deleteSubcontractPayment = createServerFn({ method: "POST" })
 // rows must sum cents-exact to the payment so the budget's paid-per-code never
 // drifts from cash.
 //
-// Replacement is all-or-nothing without a cross-call transaction: the NEW rows
-// are inserted BEFORE the old ones are removed, so a failed insert leaves the
-// existing split untouched; if the cleanup delete then fails, the just-inserted
-// rows are compensated away so the old split still stands alone. The sub the
-// cash belongs to comes from the payment row itself — never from the client —
-// so a split can't attribute cash to another sub's buyout.
+// Replacement is one database transaction. The RPC locks the parent pay app,
+// derives its project/subcontract, validates cost-bucket scope and cents, then
+// swaps every row. Approved and paid coding is frozen in the database.
 export const setSubcontractPaymentSplit = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
     z
       .object({
-        projectId: z.string().uuid(),
         paymentId: z.string().uuid(),
         rows: z
           .array(
@@ -1163,7 +955,7 @@ export const setSubcontractPaymentSplit = createServerFn({ method: "POST" })
               cost_bucket_id: z.string().uuid().nullable(),
               cost_code: z.string().max(80).default(""),
               description: z.string().max(300).default(""),
-              amount: z.number().min(0),
+              amount: exactCentMoney,
             }),
           )
           .max(40)
@@ -1172,106 +964,19 @@ export const setSubcontractPaymentSplit = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<{ paymentId: string; rowCount: number }> => {
-    const { data: paymentRow, error: paymentError } = await dynamicTable(
+    const result = await dynamicRpc(
       context.supabase,
-      "subcontract_payments",
-    )
-      .select("id,project_id,subcontract_id,amount")
-      .eq("id", data.paymentId)
-      .maybeSingle();
-    if (paymentError) {
-      if (isMissingSubcontractTable(paymentError)) throw new Error(NOT_ENABLED);
-      throw new Error(paymentError.message);
-    }
-    const payment = (paymentRow ?? null) as Record<string, unknown> | null;
-    if (!payment || str(payment.project_id) !== data.projectId) {
-      throw new Error("That payment was not found on this project.");
-    }
-    // Server truth: the payment row says which sub the cash belongs to.
-    const subcontractId = str(payment.subcontract_id);
-
-    const cents = (value: number) => Math.round(num(value) * 100);
-    if (data.rows.length > 0) {
-      const rowCents = data.rows.reduce((sum, row) => sum + cents(row.amount), 0);
-      if (rowCents !== cents(num(payment.amount))) {
-        throw new Error(
-          "The split must add up to the payment amount exactly — adjust a line and save again.",
-        );
-      }
-    }
-
-    // Capture the current rows by id so the swap can be compensated exactly.
-    const { data: existingRows, error: existingError } = await dynamicTable(
-      context.supabase,
-      "subcontract_payment_allocations",
-    )
-      .select("id")
-      .eq("payment_id", data.paymentId);
-    if (existingError) {
-      if (isMissingSubcontractTable(existingError)) throw new Error(NOT_ENABLED);
-      throw new Error(existingError.message);
-    }
-    const oldIds = ((existingRows ?? []) as Record<string, unknown>[])
-      .map((row) => str(row.id))
-      .filter(Boolean);
-
-    // 1. Insert the replacement rows first — if this fails, the old split is
-    //    still fully intact and the save just reports the error.
-    let newIds: string[] = [];
-    if (data.rows.length > 0) {
-      const { data: insertedRows, error: insertError } = await dynamicTable(
-        context.supabase,
-        "subcontract_payment_allocations",
-      )
-        .insert(
-          data.rows.map((row) => ({
-            project_id: data.projectId,
-            subcontract_id: subcontractId,
-            payment_id: data.paymentId,
-            cost_bucket_id: row.cost_bucket_id,
-            cost_code: row.cost_code,
-            description: row.description,
-            amount: row.amount,
-          })),
-        )
-        .select("id");
-      if (insertError) {
-        if (isMissingSubcontractTable(insertError)) throw new Error(NOT_ENABLED);
-        throw new Error(insertError.message);
-      }
-      newIds = ((insertedRows ?? []) as Record<string, unknown>[])
-        .map((row) => str(row.id))
-        .filter(Boolean);
-    }
-
-    // 2. Remove the superseded rows. If this fails, compensate by removing the
-    //    rows just inserted so the old split stands alone again.
-    if (oldIds.length > 0) {
-      const { error: clearError } = await dynamicTable(
-        context.supabase,
-        "subcontract_payment_allocations",
-      )
-        .delete()
-        .in("id", oldIds);
-      if (clearError) {
-        if (newIds.length > 0) {
-          const { error: undoError } = await dynamicTable(
-            context.supabase,
-            "subcontract_payment_allocations",
-          )
-            .delete()
-            .in("id", newIds);
-          if (undoError) {
-            // Both sets are present — a re-save captures them all as "old" and
-            // replaces them, so the fix is to simply save again.
-            throw new Error(
-              "The split did not save cleanly — reopen the payment and save the split again.",
-            );
-          }
-        }
-        if (isMissingSubcontractTable(clearError)) throw new Error(NOT_ENABLED);
-        throw new Error(clearError.message);
-      }
-    }
+      "replace_subcontract_payment_allocations_atomic",
+      {
+        p_payment_id: data.paymentId,
+        p_rows: data.rows.map((row) => ({
+          cost_bucket_id: row.cost_bucket_id,
+          cost_code: row.cost_code,
+          description: row.description,
+          amount_cents: dollarsToCents(row.amount),
+        })),
+      },
+    );
+    if (result.error) throwAtomicPaymentError(result.error);
     return { paymentId: data.paymentId, rowCount: data.rows.length };
   });

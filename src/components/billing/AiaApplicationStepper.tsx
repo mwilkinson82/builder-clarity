@@ -34,9 +34,8 @@ interface AiaApplicationStepperProps {
   onImportSov: () => void;
   onGenerate: () => void;
   onEmail?: () => void;
-  // Close the loop: turn this generated application into a client invoice that
-  // posts to Receivables. Omitted (with invoiceExists) when the app is already
-  // invoiced or the consumer doesn't wire billing.
+  // Close the loop: turn this generated application into a controlled invoice
+  // draft. The biller reviews and sends it from Invoices before A/R aging starts.
   onBillOwner?: () => void;
   onViewReceivables?: () => void;
   billableAmountLabel?: string; // e.g. "$23,858.27" — shown on the create-invoice button
@@ -234,12 +233,13 @@ export function AiaApplicationStepper({
           </div>
         );
       case "bill": {
-        // Already invoiced → show the done state + a jump to Receivables.
+        // An invoice exists → show the done state. It may still be a draft;
+        // sending remains an explicit, recipient-confirmed command.
         if (invoiceExists) {
           return (
             <div className="flex flex-col items-start gap-1 sm:items-end">
               <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
-                <Check className="h-3.5 w-3.5" /> Invoiced
+                <Check className="h-3.5 w-3.5" /> Invoice created
               </span>
               {onViewReceivables ? (
                 <button
@@ -269,11 +269,11 @@ export function AiaApplicationStepper({
               <ReceiptText className="h-3.5 w-3.5" />
               {savingInvoice
                 ? "Creating invoice..."
-                : `Create client invoice${billableAmountLabel ? ` — ${billableAmountLabel}` : ""}`}
+                : `Create invoice draft${billableAmountLabel ? ` — ${billableAmountLabel}` : ""}`}
             </Button>
             <span className="text-[11px] text-muted-foreground">
               {snapshot.hasGenerated
-                ? "Posts to Receivables and starts A/R aging."
+                ? "Review and send it from Invoices to start A/R aging."
                 : "Generate the package above first."}
             </span>
           </div>

@@ -18,9 +18,9 @@ export interface AiaBuilderSnapshot {
   // The package was generated (downloaded/emailed) this session — ephemeral, so
   // it drives "generate done → now bill" without a persisted flag/migration.
   hasGenerated?: boolean;
-  // An active client invoice already exists for this application (persisted via
-  // billing_invoices.billing_application_id). This is the durable "billed"
-  // milestone: once true, the app is invoiced and shows in Receivables.
+  // An active invoice already exists for this application (persisted via
+  // billing_invoices.billing_application_id). It may still require review and
+  // the explicit Send action before it becomes a client receivable.
   hasInvoice?: boolean;
 }
 
@@ -115,19 +115,19 @@ export function aiaBuilderSteps(snapshot: AiaBuilderSnapshot): AiaStepView[] {
         : gate.reason,
   };
 
-  // The step that closes the loop: turn the generated application into a client
-  // invoice so the billed amount posts to Receivables / A/R aging. "done" once
-  // an invoice exists (persisted), "active" once the package is generated.
+  // The step that closes the loop: turn the generated application into an
+  // invoice draft. "done" once an invoice exists (persisted), "active" once
+  // the package is generated. Send remains an explicit audited step.
   const invoiced = Boolean(snapshot.hasInvoice);
   const billStep: AiaStepView = {
     key: "bill",
-    title: "Bill the owner",
+    title: "Create invoice",
     status: invoiced ? "done" : generated ? "active" : "todo",
     detail: invoiced
-      ? "Invoiced — tracking in Receivables"
+      ? "Invoice created — review and send it from Invoices"
       : generated
-        ? "Create the client invoice so it posts to Receivables"
-        : "Generate the package first, then bill the owner",
+        ? "Create the invoice draft for review and delivery"
+        : "Generate the package first, then create the invoice",
   };
 
   return [formatStep, sovStep, entriesStep, generateStep, billStep];

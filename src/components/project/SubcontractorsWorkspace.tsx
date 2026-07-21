@@ -4,7 +4,7 @@
 // (subcontract-budget.ts), so paying a sub raises Actual-to-date and drops
 // Forecast-to-complete on the cost code. Self-contained (its own queries), like
 // DailyWipWorkspace.
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { SubcontractFinancialReadState } from "@/components/project/SubcontractFinancialReadState";
 import {
   SubcontractCard,
   type CardPayment,
@@ -111,6 +112,16 @@ function KpiTile({ label, value, tone }: { label: string; value: string; tone?: 
 
 export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props) {
   const qc = useQueryClient();
+  const paymentDraftOperationKeysRef = useRef<Map<string, string>>(new Map());
+  const authorityOperationKeysRef = useRef<Map<string, string>>(new Map());
+  const authorityOperationKey = (intent: string) => {
+    let key = authorityOperationKeysRef.current.get(intent);
+    if (!key) {
+      key = crypto.randomUUID();
+      authorityOperationKeysRef.current.set(intent, key);
+    }
+    return key;
+  };
   const listDirFn = useServerFn(listSubcontractors);
   const saveDirFn = useServerFn(saveSubcontractor);
   const deleteDirFn = useServerFn(deleteSubcontractor);
@@ -250,10 +261,18 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
   const [buyValue, setBuyValue] = useState(0);
   const [buyRetainage, setBuyRetainage] = useState(10);
   const createBuyout = useMutation({
-    mutationFn: () =>
-      saveSubFn({
+    mutationFn: () => {
+      const intent = `subcontract:create:${JSON.stringify([
+        buySubId,
+        buyTitle,
+        buyValue,
+        buyRetainage,
+      ])}`;
+      return saveSubFn({
         data: {
           projectId,
+          expected_updated_at: null,
+          operation_key: authorityOperationKey(intent),
           subcontractor_id: buySubId,
           title: buyTitle,
           scope: "",
@@ -262,8 +281,12 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
           status: "executed",
           executed_at: today(),
         },
-      }),
+      });
+    },
     onSuccess: () => {
+      authorityOperationKeysRef.current.delete(
+        `subcontract:create:${JSON.stringify([buySubId, buyTitle, buyValue, buyRetainage])}`,
+      );
       setBuySubId("");
       setBuyTitle("");
       setBuyValue(0);
@@ -277,8 +300,23 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
   });
 
   const removeSub = useMutation({
-    mutationFn: (id: string) => deleteSubFn({ data: { id } }),
-    onSuccess: () => {
+    mutationFn: (id: string) => {
+      const sub = project.subcontracts.find((row) => row.id === id);
+      if (!sub?.updated_at) throw new Error("The subcontract changed. Refresh and try again.");
+      const intent = `subcontract:delete:${id}:${sub.updated_at}`;
+      return deleteSubFn({
+        data: {
+          id,
+          expected_updated_at: sub.updated_at,
+          operation_key: authorityOperationKey(intent),
+        },
+      });
+    },
+    onSuccess: (_result, id) => {
+      const sub = project.subcontracts.find((row) => row.id === id);
+      if (sub?.updated_at) {
+        authorityOperationKeysRef.current.delete(`subcontract:delete:${id}:${sub.updated_at}`);
+      }
       invalidate();
       toast.success("Subcontract removed");
     },
@@ -291,11 +329,17 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
       sub: (typeof project.subcontracts)[number];
       contractValue: number;
       retainagePct: number;
-    }) =>
-      saveSubFn({
+    }) => {
+      const intent = `subcontract:update:${input.sub.id}:${input.sub.updated_at}:${JSON.stringify([
+        input.contractValue,
+        input.retainagePct,
+      ])}`;
+      return saveSubFn({
         data: {
           projectId,
           id: input.sub.id,
+          expected_updated_at: input.sub.updated_at,
+          operation_key: authorityOperationKey(intent),
           subcontractor_id: input.sub.subcontractor_id,
           title: input.sub.title,
           scope: input.sub.scope,
@@ -304,8 +348,15 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
           status: input.sub.status === "draft" ? "draft" : "executed",
           executed_at: input.sub.executed_at,
         },
-      }),
-    onSuccess: () => {
+      });
+    },
+    onSuccess: (_result, input) => {
+      authorityOperationKeysRef.current.delete(
+        `subcontract:update:${input.sub.id}:${input.sub.updated_at}:${JSON.stringify([
+          input.contractValue,
+          input.retainagePct,
+        ])}`,
+      );
       invalidate();
       toast.success("Commitment updated", {
         description: "Re-allocate to cost codes so the committed cost matches.",
@@ -314,17 +365,40 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
     onError: onError("update the commitment"),
   });
   const allocate = useMutation({
-    mutationFn: (input: { subcontractId: string; costBucketId: string; amount: number }) =>
-      allocateFn({ data: { projectId, ...input } }),
-    onSuccess: () => {
+    mutationFn: (input: { subcontractId: string; costBucketId: string; amount: number }) => {
+      const intent = `allocation:create:${JSON.stringify(input)}`;
+      return allocateFn({
+        data: { projectId, ...input, operation_key: authorityOperationKey(intent) },
+      });
+    },
+    onSuccess: (_result, input) => {
+      authorityOperationKeysRef.current.delete(`allocation:create:${JSON.stringify(input)}`);
       invalidate();
       toast.success("Buyout allocated to the cost code");
     },
     onError: onError("allocate the buyout"),
   });
   const updateAlloc = useMutation({
-    mutationFn: (input: { id: string; amount: number }) => updateAllocFn({ data: input }),
-    onSuccess: () => {
+    mutationFn: (input: { id: string; subcontractId: string; amount: number }) => {
+      const allocation = project.allocations.find((row) => row.id === input.id);
+      if (!allocation?.updated_at)
+        throw new Error("The allocation changed. Refresh and try again.");
+      const intent = `allocation:update:${input.id}:${allocation.updated_at}:${input.amount}`;
+      return updateAllocFn({
+        data: {
+          ...input,
+          expected_updated_at: allocation.updated_at,
+          operation_key: authorityOperationKey(intent),
+        },
+      });
+    },
+    onSuccess: (_result, input) => {
+      const allocation = project.allocations.find((row) => row.id === input.id);
+      if (allocation?.updated_at) {
+        authorityOperationKeysRef.current.delete(
+          `allocation:update:${input.id}:${allocation.updated_at}:${input.amount}`,
+        );
+      }
       invalidate();
       toast.success("Allocation updated");
     },
@@ -333,19 +407,42 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
   const updateBenchmark = useMutation({
     mutationFn: (input: {
       id: string;
+      subcontractId: string;
       plannedQuantity: number;
       unit: string;
       benchmarkLaborRate: number;
-    }) =>
-      updateBenchmarkFn({
+    }) => {
+      const allocation = project.allocations.find((row) => row.id === input.id);
+      if (!allocation?.updated_at)
+        throw new Error("The allocation changed. Refresh and try again.");
+      const intent = `allocation:benchmark:${input.id}:${allocation.updated_at}:${JSON.stringify([
+        input.plannedQuantity,
+        input.unit,
+        input.benchmarkLaborRate,
+      ])}`;
+      return updateBenchmarkFn({
         data: {
           id: input.id,
+          subcontractId: input.subcontractId,
           planned_quantity: input.plannedQuantity,
           unit: input.unit,
           benchmark_labor_rate: input.benchmarkLaborRate,
+          expected_updated_at: allocation.updated_at,
+          operation_key: authorityOperationKey(intent),
         },
-      }),
-    onSuccess: () => {
+      });
+    },
+    onSuccess: (_result, input) => {
+      const allocation = project.allocations.find((row) => row.id === input.id);
+      if (allocation?.updated_at) {
+        authorityOperationKeysRef.current.delete(
+          `allocation:benchmark:${input.id}:${allocation.updated_at}:${JSON.stringify([
+            input.plannedQuantity,
+            input.unit,
+            input.benchmarkLaborRate,
+          ])}`,
+        );
+      }
       invalidate();
       toast.success("Production benchmark saved", {
         description: "Daily WIP will derive the buyout unit cost and target production pace.",
@@ -354,8 +451,28 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
     onError: onError("save the production benchmark"),
   });
   const removeAlloc = useMutation({
-    mutationFn: (id: string) => deleteAllocFn({ data: { id } }),
-    onSuccess: () => invalidate(),
+    mutationFn: (input: { id: string; subcontractId: string }) => {
+      const allocation = project.allocations.find((row) => row.id === input.id);
+      if (!allocation?.updated_at)
+        throw new Error("The allocation changed. Refresh and try again.");
+      const intent = `allocation:delete:${input.id}:${allocation.updated_at}`;
+      return deleteAllocFn({
+        data: {
+          ...input,
+          expected_updated_at: allocation.updated_at,
+          operation_key: authorityOperationKey(intent),
+        },
+      });
+    },
+    onSuccess: (_result, input) => {
+      const allocation = project.allocations.find((row) => row.id === input.id);
+      if (allocation?.updated_at) {
+        authorityOperationKeysRef.current.delete(
+          `allocation:delete:${input.id}:${allocation.updated_at}`,
+        );
+      }
+      invalidate();
+    },
     onError: onError("remove allocation"),
   });
   const recordCo = useMutation({
@@ -366,8 +483,9 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
       amount: number;
       coDate: string;
       exposureId: string | null;
-    }) =>
-      recordCoFn({
+    }) => {
+      const intent = `change-order:create:${JSON.stringify(input)}`;
+      return recordCoFn({
         data: {
           projectId,
           subcontractId: input.subcontractId,
@@ -376,9 +494,12 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
           amount: input.amount,
           co_date: input.coDate,
           exposureId: input.exposureId,
+          operation_key: authorityOperationKey(intent),
         },
-      }),
-    onSuccess: (row) => {
+      });
+    },
+    onSuccess: (row, input) => {
+      authorityOperationKeysRef.current.delete(`change-order:create:${JSON.stringify(input)}`);
       invalidate();
       toast.success(row.amount < 0 ? "Credit recorded" : "Change order recorded", {
         description: "Kept separate from the contracted amount — the revised total updates above.",
@@ -387,14 +508,51 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
     onError: onError("record the change order"),
   });
   const removeCo = useMutation({
-    mutationFn: (id: string) => deleteCoFn({ data: { id } }),
-    onSuccess: () => invalidate(),
+    mutationFn: (input: { id: string; subcontractId: string }) => {
+      const changeOrder = project.change_orders.find((row) => row.id === input.id);
+      if (!changeOrder?.updated_at)
+        throw new Error("The change order changed. Refresh and try again.");
+      const intent = `change-order:delete:${input.id}:${changeOrder.updated_at}`;
+      return deleteCoFn({
+        data: {
+          ...input,
+          expected_updated_at: changeOrder.updated_at,
+          operation_key: authorityOperationKey(intent),
+        },
+      });
+    },
+    onSuccess: (_result, input) => {
+      const changeOrder = project.change_orders.find((row) => row.id === input.id);
+      if (changeOrder?.updated_at) {
+        authorityOperationKeysRef.current.delete(
+          `change-order:delete:${input.id}:${changeOrder.updated_at}`,
+        );
+      }
+      invalidate();
+    },
     onError: onError("remove the change order"),
   });
   const setCoExposure = useMutation({
-    mutationFn: (input: { id: string; exposureId: string | null }) =>
-      setCoExposureFn({ data: input }),
-    onSuccess: () => {
+    mutationFn: (input: { id: string; subcontractId: string; exposureId: string | null }) => {
+      const changeOrder = project.change_orders.find((row) => row.id === input.id);
+      if (!changeOrder?.updated_at)
+        throw new Error("The change order changed. Refresh and try again.");
+      const intent = `change-order:exposure:${input.id}:${changeOrder.updated_at}:${input.exposureId ?? "none"}`;
+      return setCoExposureFn({
+        data: {
+          ...input,
+          expected_updated_at: changeOrder.updated_at,
+          operation_key: authorityOperationKey(intent),
+        },
+      });
+    },
+    onSuccess: (_result, input) => {
+      const changeOrder = project.change_orders.find((row) => row.id === input.id);
+      if (changeOrder?.updated_at) {
+        authorityOperationKeysRef.current.delete(
+          `change-order:exposure:${input.id}:${changeOrder.updated_at}:${input.exposureId ?? "none"}`,
+        );
+      }
       invalidate();
       toast.success("Change order Risk Tally link updated");
     },
@@ -409,6 +567,7 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
       notes: string;
       status: "draft" | "approved" | "paid";
       exposureId: string | null;
+      idempotency_key: string;
     }) =>
       payFn({
         data: {
@@ -421,6 +580,7 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
           notes: input.notes,
           status: input.status,
           exposureId: input.exposureId,
+          idempotency_key: input.idempotency_key,
         },
       }),
     onSuccess: (row) => {
@@ -442,9 +602,30 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
     onError: onError("record the payment"),
   });
   const setPaymentExposure = useMutation({
-    mutationFn: (input: { id: string; exposureId: string | null }) =>
-      setPaymentExposureFn({ data: input }),
-    onSuccess: () => {
+    mutationFn: (input: { id: string; exposureId: string | null }) => {
+      const payment = project.payments.find((row) => row.id === input.id);
+      if (!payment?.updated_at) throw new Error("The pay app changed. Refresh and try again.");
+      const intent = `exposure:${input.id}:${payment.updated_at}:${input.exposureId ?? "none"}`;
+      let operationKey = paymentDraftOperationKeysRef.current.get(intent);
+      if (!operationKey) {
+        operationKey = `payment-draft:${crypto.randomUUID()}`;
+        paymentDraftOperationKeysRef.current.set(intent, operationKey);
+      }
+      return setPaymentExposureFn({
+        data: {
+          ...input,
+          expected_updated_at: payment.updated_at,
+          operation_key: operationKey,
+        },
+      });
+    },
+    onSuccess: (_row, input) => {
+      const payment = project.payments.find((row) => row.id === input.id);
+      if (payment?.updated_at) {
+        paymentDraftOperationKeysRef.current.delete(
+          `exposure:${input.id}:${payment.updated_at}:${input.exposureId ?? "none"}`,
+        );
+      }
       invalidate();
       toast.success("Pay app Risk Tally link updated");
     },
@@ -464,7 +645,6 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
     }) =>
       setSplitFn({
         data: {
-          projectId,
           paymentId: input.paymentId,
           rows: input.rows,
         },
@@ -608,8 +788,16 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
     toast.success("Signed waiver attached to the pay app");
   };
   const updatePayment = useMutation({
-    mutationFn: (input: { id: string; edit: PaymentEdit }) =>
-      updatePayFn({
+    mutationFn: (input: { id: string; edit: PaymentEdit }) => {
+      const payment = project.payments.find((row) => row.id === input.id);
+      if (!payment?.updated_at) throw new Error("The pay app changed. Refresh and try again.");
+      const intent = `update:${input.id}:${payment.updated_at}:${JSON.stringify(input.edit)}`;
+      let operationKey = paymentDraftOperationKeysRef.current.get(intent);
+      if (!operationKey) {
+        operationKey = `payment-draft:${crypto.randomUUID()}`;
+        paymentDraftOperationKeysRef.current.set(intent, operationKey);
+      }
+      return updatePayFn({
         data: {
           id: input.id,
           amount: input.edit.amount,
@@ -617,17 +805,48 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
           payment_date: input.edit.paymentDate,
           reference: "",
           notes: input.edit.notes,
+          expected_updated_at: payment.updated_at,
+          operation_key: operationKey,
         },
-      }),
-    onSuccess: () => {
+      });
+    },
+    onSuccess: (_row, input) => {
+      const payment = project.payments.find((row) => row.id === input.id);
+      if (payment?.updated_at) {
+        paymentDraftOperationKeysRef.current.delete(
+          `update:${input.id}:${payment.updated_at}:${JSON.stringify(input.edit)}`,
+        );
+      }
       invalidate();
       toast.success("Payment updated");
     },
     onError: onError("update the payment"),
   });
   const removePayment = useMutation({
-    mutationFn: (id: string) => deletePayFn({ data: { id } }),
-    onSuccess: () => invalidate(),
+    mutationFn: (id: string) => {
+      const payment = project.payments.find((row) => row.id === id);
+      if (!payment?.updated_at) throw new Error("The pay app changed. Refresh and try again.");
+      const intent = `delete:${id}:${payment.updated_at}`;
+      let operationKey = paymentDraftOperationKeysRef.current.get(intent);
+      if (!operationKey) {
+        operationKey = `payment-draft:${crypto.randomUUID()}`;
+        paymentDraftOperationKeysRef.current.set(intent, operationKey);
+      }
+      return deletePayFn({
+        data: {
+          id,
+          expected_updated_at: payment.updated_at,
+          operation_key: operationKey,
+        },
+      });
+    },
+    onSuccess: (_row, id) => {
+      const payment = project.payments.find((row) => row.id === id);
+      if (payment?.updated_at) {
+        paymentDraftOperationKeysRef.current.delete(`delete:${id}:${payment.updated_at}`);
+      }
+      invalidate();
+    },
     onError: onError("remove payment"),
   });
 
@@ -758,6 +977,21 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
       });
     }
   };
+
+  if (projectQuery.isLoading) {
+    return <SubcontractFinancialReadState loading />;
+  }
+  if (projectQuery.isError || !projectQuery.data) {
+    return (
+      <SubcontractFinancialReadState
+        error={projectQuery.error}
+        retrying={projectQuery.isFetching}
+        onRetry={() => {
+          void projectQuery.refetch();
+        }}
+      />
+    );
+  }
 
   return (
     <section className="space-y-5">
@@ -913,35 +1147,66 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
               trade={subTrade(sub.subcontractor_id)}
               subStatus={sub.status}
               coiStatus={coiStatusBySub.get(sub.id)}
-              onEditBuyout={(contractValue, retainagePct) =>
-                editBuyout.mutate({ sub, contractValue, retainagePct })
-              }
-              onAllocate={(costBucketId, amount) =>
-                allocate.mutate({ subcontractId: sub.id, costBucketId, amount })
-              }
-              onUpdateAllocation={(id, amount) => updateAlloc.mutate({ id, amount })}
-              onUpdateProductionBenchmark={(id, plannedQuantity, unit, benchmarkLaborRate) =>
-                updateBenchmark.mutate({ id, plannedQuantity, unit, benchmarkLaborRate })
-              }
-              onRemoveAllocation={(id) => removeAlloc.mutate(id)}
+              onEditBuyout={async (contractValue, retainagePct) => {
+                await editBuyout.mutateAsync({ sub, contractValue, retainagePct });
+              }}
+              onAllocate={async (costBucketId, amount) => {
+                await allocate.mutateAsync({ subcontractId: sub.id, costBucketId, amount });
+              }}
+              onUpdateAllocation={async (id, amount) => {
+                await updateAlloc.mutateAsync({ id, subcontractId: sub.id, amount });
+              }}
+              onUpdateProductionBenchmark={async (
+                id,
+                plannedQuantity,
+                unit,
+                benchmarkLaborRate,
+              ) => {
+                await updateBenchmark.mutateAsync({
+                  id,
+                  subcontractId: sub.id,
+                  plannedQuantity,
+                  unit,
+                  benchmarkLaborRate,
+                });
+              }}
+              onRemoveAllocation={async (id) => {
+                await removeAlloc.mutateAsync({ id, subcontractId: sub.id });
+              }}
               changeOrders={subChangeOrders}
               exposures={exposures}
-              onRecordChangeOrder={(costBucketId, description, amount, coDate, exposureId) =>
-                recordCo.mutate({
+              onRecordChangeOrder={async (
+                costBucketId,
+                description,
+                amount,
+                coDate,
+                exposureId,
+              ) => {
+                await recordCo.mutateAsync({
                   subcontractId: sub.id,
                   costBucketId,
                   description,
                   amount,
                   coDate,
                   exposureId,
-                })
-              }
-              onSetChangeOrderExposure={(id, exposureId) =>
-                setCoExposure.mutate({ id, exposureId })
-              }
-              onRemoveChangeOrder={(id) => removeCo.mutate(id)}
-              onPay={(amount, retainage_held, payment_date, notes, stage, exposureId) =>
-                recordPayment.mutate({
+                });
+              }}
+              onSetChangeOrderExposure={async (id, exposureId) => {
+                await setCoExposure.mutateAsync({ id, subcontractId: sub.id, exposureId });
+              }}
+              onRemoveChangeOrder={async (id) => {
+                await removeCo.mutateAsync({ id, subcontractId: sub.id });
+              }}
+              onPay={async (
+                amount,
+                retainage_held,
+                payment_date,
+                notes,
+                stage,
+                exposureId,
+                idempotencyKey,
+              ) => {
+                await recordPayment.mutateAsync({
                   subcontractId: sub.id,
                   amount,
                   retainage_held,
@@ -949,12 +1214,15 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
                   notes,
                   status: stage,
                   exposureId,
-                })
-              }
+                  idempotency_key: idempotencyKey,
+                });
+              }}
               onSetPaymentExposure={(id, exposureId) =>
                 setPaymentExposure.mutate({ id, exposureId })
               }
-              onUpdatePayment={(id, edit) => updatePayment.mutate({ id, edit })}
+              onUpdatePayment={async (id, edit) => {
+                await updatePayment.mutateAsync({ id, edit });
+              }}
               onSetPaymentStage={(id, stage) => setPayStage.mutate({ id, status: stage })}
               onMarkPaid={(payment) => openPayDialog(payment)}
               onRemovePayment={(id) => removePayment.mutate(id)}
@@ -986,6 +1254,7 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
                   waiver_type: w.waiver_type,
                   through_date: w.through_date,
                   amount: w.amount,
+                  signed_date: w.signed_date,
                   storage_path: w.storage_path,
                   file_name: w.file_name,
                 }))}
@@ -996,7 +1265,9 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
                 uploadWaiverForPayment(sub.id, payment, file)
               }
               onViewWaiverDoc={(path) => viewComplianceFile(path)}
-              onRemoveSub={() => removeSub.mutate(sub.id)}
+              onRemoveSub={async () => {
+                await removeSub.mutateAsync(sub.id);
+              }}
               documents={project.documents.filter((d) => d.subcontract_id === sub.id)}
               onUploadDoc={(file) => uploadDoc(sub.id, file)}
               onViewDoc={(path) => viewDoc(path)}

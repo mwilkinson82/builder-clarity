@@ -3,6 +3,7 @@
 // status, and notes — with derived ledger readouts. Extracted verbatim from
 // the project route during the PROJECTDECOMP1 split.
 import { ReceiptText, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,10 +25,34 @@ import {
 import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import { formatShortDateTime } from "@/lib/format";
 import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
-import type { BillingDraft } from "@/lib/billing-local-store";
 import type { BillingApplicationRow, BillingInvoiceRow } from "@/lib/projects.functions";
 
 import { EditableText, LedgerDetail } from "./billing-editor-atoms";
+
+const billingStatusLabel: Record<BillingApplicationRow["status"], string> = {
+  draft: "Draft",
+  submitted: "Submitted",
+  rejected: "Rejected",
+  partial: "Partial · from payments",
+  paid: "Paid · from payments",
+};
+
+const billingStatusTransitions: Record<
+  BillingApplicationRow["status"],
+  BillingApplicationRow["status"][]
+> = {
+  draft: ["draft", "submitted"],
+  submitted: ["submitted", "rejected"],
+  rejected: ["rejected", "draft"],
+  partial: ["partial"],
+  paid: ["paid"],
+};
+
+type EditableFinancialField =
+  "contract_amount" | "change_order_amount" | "amount_billed" | "retainage";
+
+type EditableFinancialValues = Pick<BillingApplicationRow, EditableFinancialField>;
+type BillingApplicationPatchResult = void | boolean | Promise<void | boolean>;
 
 export function BillingApplicationRowEditor({
   app,
@@ -38,10 +63,74 @@ export function BillingApplicationRowEditor({
 }: {
   app: BillingApplicationRow;
   linkedInvoice?: BillingInvoiceRow;
-  onPatch: (patch: Partial<BillingApplicationRow>) => void;
+  onPatch: (patch: Partial<BillingApplicationRow>) => BillingApplicationPatchResult;
   onCreateInvoice: () => void;
   onDelete: () => void;
 }) {
+  const contractAmount = app.contract_amount;
+  const changeOrderAmount = app.change_order_amount;
+  const amountBilled = app.amount_billed;
+  const retainage = app.retainage;
+  const [financialDraft, setFinancialDraft] = useState<EditableFinancialValues>(() => ({
+    contract_amount: contractAmount,
+    change_order_amount: changeOrderAmount,
+    amount_billed: amountBilled,
+    retainage,
+  }));
+  const financialDraftRef = useRef(financialDraft);
+  const committedFinancialsRef = useRef(financialDraft);
+  // State drives the disabled presentation; the ref closes the same-tick race
+  // between blur events before React has rendered that state.
+  const financialCommitPendingRef = useRef(false);
+  const [financialCommitPending, setFinancialCommitPending] = useState(false);
+
+  useEffect(() => {
+    const nextValues = {
+      contract_amount: contractAmount,
+      change_order_amount: changeOrderAmount,
+      amount_billed: amountBilled,
+      retainage,
+    };
+    financialDraftRef.current = nextValues;
+    committedFinancialsRef.current = nextValues;
+    setFinancialDraft(nextValues);
+  }, [amountBilled, changeOrderAmount, contractAmount, retainage]);
+
+  const stageFinancialValue = (field: EditableFinancialField, value: number) => {
+    const nextValues = { ...financialDraftRef.current, [field]: value };
+    financialDraftRef.current = nextValues;
+    setFinancialDraft(nextValues);
+  };
+
+  const commitFinancialValue = async (field: EditableFinancialField) => {
+    const nextValue = financialDraftRef.current[field];
+    if (financialCommitPendingRef.current || nextValue === committedFinancialsRef.current[field]) {
+      return;
+    }
+
+    financialCommitPendingRef.current = true;
+    setFinancialCommitPending(true);
+    try {
+      const result = await onPatch({ [field]: nextValue });
+      // A parent returning false is an expected, already-reported command
+      // failure. Undefined preserves compatibility with synchronous callbacks.
+      if (result !== false) {
+        committedFinancialsRef.current = {
+          ...committedFinancialsRef.current,
+          [field]: nextValue,
+        };
+      }
+    } catch {
+      // The parent command normally converts failures to false after showing
+      // the server error. Keep this defensive catch so an alternate caller
+      // cannot create an unhandled rejection. The staged value remains intact
+      // and the same focus/blur gesture can retry it.
+    } finally {
+      financialCommitPendingRef.current = false;
+      setFinancialCommitPending(false);
+    }
+  };
+
   const openReceivable = centsToDollars(
     Math.max(
       0,
@@ -54,6 +143,18 @@ export function BillingApplicationRowEditor({
   const appLabel = billingDocumentLabel(app.application_number, app.invoice_number);
   const invoiceLabel = normalizeBillingNumberLabel(app.invoice_number);
   const aging = payAppAgingStatus(app, openReceivable);
+  const canEditFinancials = app.status === "draft" || app.status === "rejected";
+  const canDelete = app.status === "draft";
+  const canTransitionStatus =
+    app.status === "draft" || app.status === "submitted" || app.status === "rejected";
+  const financialFieldsReadOnly = !canEditFinancials || financialCommitPending;
+  const lockedHistoryNote =
+    app.status === "submitted"
+      ? "Submitted billing history is locked. Reject it before correcting header or financial details."
+      : app.status === "partial" || app.status === "paid"
+        ? "Certified billing and payment history is locked."
+        : "";
+  const lockedInputClass = financialFieldsReadOnly ? "bg-muted/40 text-muted-foreground" : "";
 
   return (
     <div className="rounded-md border border-hairline bg-surface p-4">
@@ -61,28 +162,60 @@ export function BillingApplicationRowEditor({
         <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-3">
           <div className="space-y-1.5">
             <Label>Application</Label>
-            <EditableText
-              value={appLabel}
-              onCommit={(application_number) =>
-                onPatch({ application_number: normalizeBillingNumberLabel(application_number) })
-              }
-            />
-            <EditableText
-              value={app.billing_period}
-              placeholder="Billing period"
-              small
-              onCommit={(billing_period) => onPatch({ billing_period })}
-            />
+            {canEditFinancials ? (
+              <>
+                <EditableText
+                  value={appLabel}
+                  onCommit={(application_number) =>
+                    onPatch({
+                      application_number: normalizeBillingNumberLabel(application_number),
+                    })
+                  }
+                />
+                <EditableText
+                  value={app.billing_period}
+                  placeholder="Billing period"
+                  small
+                  onCommit={(billing_period) => onPatch({ billing_period })}
+                />
+              </>
+            ) : (
+              <>
+                <Input
+                  aria-label="Application number"
+                  value={appLabel}
+                  readOnly
+                  className="h-8 w-full min-w-0 bg-muted/40 text-muted-foreground"
+                />
+                <Input
+                  aria-label="Billing period"
+                  value={app.billing_period}
+                  placeholder="Billing period"
+                  readOnly
+                  className="mt-1 h-8 w-full min-w-0 bg-muted/40 text-xs text-muted-foreground"
+                />
+              </>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Invoice #</Label>
-            <EditableText
-              value={invoiceLabel}
-              placeholder="Invoice #"
-              onCommit={(invoice_number) =>
-                onPatch({ invoice_number: normalizeBillingNumberLabel(invoice_number) })
-              }
-            />
+            {canEditFinancials ? (
+              <EditableText
+                value={invoiceLabel}
+                placeholder="Invoice #"
+                onCommit={(invoice_number) =>
+                  onPatch({ invoice_number: normalizeBillingNumberLabel(invoice_number) })
+                }
+              />
+            ) : (
+              <Input
+                aria-label="Invoice number"
+                value={invoiceLabel}
+                placeholder="Invoice #"
+                readOnly
+                className="h-8 w-full min-w-0 bg-muted/40 text-muted-foreground"
+              />
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Status</Label>
@@ -91,16 +224,17 @@ export function BillingApplicationRowEditor({
               onValueChange={(status) =>
                 onPatch({ status: status as BillingApplicationRow["status"] })
               }
+              disabled={!canTransitionStatus || financialCommitPending}
             >
-              <SelectTrigger className="h-8 w-full">
+              <SelectTrigger aria-label="Billing application status" className="h-8 w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="draft">Draft</SelectItem>
-                <SelectItem value="submitted">Submitted</SelectItem>
-                <SelectItem value="partial">Partial</SelectItem>
-                <SelectItem value="paid">Paid</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
+                {billingStatusTransitions[app.status].map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {billingStatusLabel[status]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -121,73 +255,114 @@ export function BillingApplicationRowEditor({
               Create invoice
             </Button>
           )}
-          <Button size="icon" variant="ghost" className="h-9 w-9" onClick={onDelete}>
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          {canDelete && (
+            <Button
+              aria-label="Delete billing application"
+              size="icon"
+              variant="ghost"
+              className="h-9 w-9"
+              onClick={onDelete}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
       </div>
+      {lockedHistoryNote && (
+        <p role="note" className="mt-3 text-xs font-medium text-muted-foreground">
+          {lockedHistoryNote}
+        </p>
+      )}
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         <div className="space-y-1.5">
           <Label>Submitted</Label>
           <Input
+            aria-label="Submitted date"
             type="date"
             value={app.submitted_date ?? ""}
-            onChange={(e) => onPatch({ submitted_date: e.target.value || null })}
-            className="h-8 w-full"
+            readOnly={financialFieldsReadOnly}
+            onChange={(e) => {
+              if (canEditFinancials) onPatch({ submitted_date: e.target.value || null });
+            }}
+            className={`h-8 w-full ${lockedInputClass}`}
           />
         </div>
         <div className="space-y-1.5">
           <Label>Due</Label>
           <Input
+            aria-label="Due date"
             type="date"
             value={app.due_date ?? ""}
-            onChange={(e) => onPatch({ due_date: e.target.value || null })}
-            className="h-8 w-full"
+            readOnly={financialFieldsReadOnly}
+            onChange={(e) => {
+              if (canEditFinancials) onPatch({ due_date: e.target.value || null });
+            }}
+            className={`h-8 w-full ${lockedInputClass}`}
           />
         </div>
         <div className="space-y-1.5">
           <Label>Contract</Label>
           <MoneyInput
-            value={app.contract_amount}
-            onValueChange={(contract_amount) => onPatch({ contract_amount })}
+            aria-label="Contract amount"
+            value={financialDraft.contract_amount}
+            readOnly={financialFieldsReadOnly}
+            onValueChange={(contract_amount) => {
+              if (canEditFinancials) stageFinancialValue("contract_amount", contract_amount);
+            }}
+            onBlur={() => void commitFinancialValue("contract_amount")}
             align="right"
-            className="h-8 w-full"
+            className={`h-8 w-full ${lockedInputClass}`}
           />
         </div>
         <div className="space-y-1.5">
           <Label>Approved COs</Label>
           <MoneyInput
-            value={app.change_order_amount}
-            onValueChange={(change_order_amount) => onPatch({ change_order_amount })}
+            aria-label="Approved change order amount"
+            value={financialDraft.change_order_amount}
+            readOnly={financialFieldsReadOnly}
+            onValueChange={(change_order_amount) => {
+              if (canEditFinancials)
+                stageFinancialValue("change_order_amount", change_order_amount);
+            }}
+            onBlur={() => void commitFinancialValue("change_order_amount")}
+            allowNegative
             align="right"
-            className="h-8 w-full"
+            className={`h-8 w-full ${lockedInputClass}`}
           />
         </div>
         <div className="space-y-1.5">
           <Label>Application amount</Label>
           <MoneyInput
-            value={app.amount_billed}
-            onValueChange={(amount_billed) => onPatch({ amount_billed })}
+            aria-label="Application amount"
+            value={financialDraft.amount_billed}
+            readOnly={financialFieldsReadOnly}
+            onValueChange={(amount_billed) => {
+              if (canEditFinancials) stageFinancialValue("amount_billed", amount_billed);
+            }}
+            onBlur={() => void commitFinancialValue("amount_billed")}
             align="right"
-            className="h-8 w-full"
+            className={`h-8 w-full ${lockedInputClass}`}
           />
         </div>
         <div className="space-y-1.5">
           <Label>Payments received</Label>
-          <MoneyInput
-            value={app.paid_to_date}
-            onValueChange={(paid_to_date) => onPatch({ paid_to_date })}
-            align="right"
-            className="h-8 w-full"
-          />
+          <div className="flex h-8 items-center justify-end rounded-md border border-hairline bg-card px-3 text-sm font-medium tabular">
+            {fmtUSDCents(app.paid_to_date)}
+          </div>
+          <p className="text-right text-[11px] text-muted-foreground">From invoice payments</p>
         </div>
         <div className="space-y-1.5">
           <Label>Retainage held</Label>
           <MoneyInput
-            value={app.retainage}
-            onValueChange={(retainage) => onPatch({ retainage })}
+            aria-label="Retainage held"
+            value={financialDraft.retainage}
+            readOnly={financialFieldsReadOnly}
+            onValueChange={(retainage) => {
+              if (canEditFinancials) stageFinancialValue("retainage", retainage);
+            }}
+            onBlur={() => void commitFinancialValue("retainage")}
             align="right"
-            className="h-8 w-full"
+            className={`h-8 w-full ${lockedInputClass}`}
           />
         </div>
       </div>

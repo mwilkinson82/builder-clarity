@@ -252,6 +252,21 @@ import type { PlanScopeCoverageRecord } from "@/lib/plan-scope-coverage";
 import { CommandCenterToolsNav, type CommandCenterToolsView } from "./CommandCenterToolsNav";
 import { ScaleDraftEditor } from "./ScaleDraftEditor";
 import { PlanRevisionOverlayPanel } from "./PlanRevisionOverlayPanel";
+
+type TakeoffSyncVariables = {
+  lineId: string;
+  force?: boolean;
+  forceUnit?: boolean;
+};
+
+const takeoffSyncIntentKey = (
+  lineId: string,
+  expectedUpdatedAt: string,
+  force: boolean,
+  forceUnit: boolean,
+) =>
+  `${lineId}:${expectedUpdatedAt}:${force ? "force" : "guard"}:${forceUnit ? "unit" : "matched"}`;
+
 interface PlanRoomWorkspaceProps {
   estimate: EstimateRow;
   lineItems: EstimateLineItemRow[];
@@ -296,6 +311,7 @@ export function PlanRoomWorkspace({
   const focusTargetAppliedRef = useRef(false);
   const autoUploadTriggeredRef = useRef(false);
   const thumbBackfillRef = useRef<Set<string>>(new Set());
+  const takeoffSyncOperationKeysRef = useRef<Map<string, string>>(new Map());
   const pendingPointsRef = useRef<Point[]>([]);
   const mainRef = useRef<HTMLElement | null>(null);
   const cockpitPanelInteractionRef = useRef<CockpitPanelInteraction | null>(null);
@@ -1995,24 +2011,38 @@ export function PlanRoomWorkspace({
   });
 
   const syncLineMutation = useMutation({
-    mutationFn: ({
-      lineId,
-      force = false,
-      forceUnit = false,
-    }: {
-      lineId: string;
-      force?: boolean;
-      forceUnit?: boolean;
-    }) =>
-      syncLineFn({
+    mutationFn: ({ lineId, force = false, forceUnit = false }: TakeoffSyncVariables) => {
+      const line = lineItems.find((item) => item.id === lineId);
+      if (!line) throw new Error("The estimate row changed. Refresh Plan Room and try again.");
+      const intentKey = takeoffSyncIntentKey(lineId, line.updated_at, force, forceUnit);
+      let operationKey = takeoffSyncOperationKeysRef.current.get(intentKey);
+      if (!operationKey) {
+        operationKey = crypto.randomUUID();
+        takeoffSyncOperationKeysRef.current.set(intentKey, operationKey);
+      }
+      return syncLineFn({
         data: {
           estimate_id: estimate.id,
           estimate_line_item_id: lineId,
+          expected_updated_at: line.updated_at,
+          operation_key: operationKey,
           force,
           force_unit: forceUnit,
         },
-      }),
+      });
+    },
     onSuccess: (result, variables) => {
+      const line = lineItems.find((item) => item.id === variables.lineId);
+      if (line) {
+        takeoffSyncOperationKeysRef.current.delete(
+          takeoffSyncIntentKey(
+            variables.lineId,
+            line.updated_at,
+            Boolean(variables.force),
+            Boolean(variables.forceUnit),
+          ),
+        );
+      }
       if (result.sync.calculation_conflict) {
         const firstBlockedId = result.sync.blocked_measurements[0]?.id;
         const firstBlocked = measurements.find((measurement) => measurement.id === firstBlockedId);

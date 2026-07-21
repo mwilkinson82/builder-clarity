@@ -4,7 +4,7 @@
 // paid status chain, collections cues with a plain-text activity log, the
 // payment activity feed, and approved change orders carried with their own
 // billed percent.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Link } from "@tanstack/react-router";
@@ -154,16 +154,16 @@ function CollectionsLog({
   appending,
 }: {
   invoice: ReceivableInvoiceRow;
-  onAppend: (note: string) => void;
+  onAppend: (note: string) => Promise<boolean>;
   appending: boolean;
 }) {
   const [note, setNote] = useState("");
   const entries = invoice.collections_log.split("\n").filter(Boolean);
-  const submit = () => {
+  const submit = async () => {
     const trimmed = note.trim();
     if (!trimmed) return;
-    onAppend(trimmed);
-    setNote("");
+    const saved = await onAppend(trimmed);
+    if (saved) setNote("");
   };
   return (
     <div className="mt-2 rounded-md border border-hairline bg-card p-2.5">
@@ -172,9 +172,10 @@ function CollectionsLog({
           value={note}
           placeholder="Log collection activity (called, promised payment, ...)"
           className="h-8 text-xs"
+          disabled={appending}
           onChange={(event) => setNote(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") submit();
+            if (event.key === "Enter") void submit();
           }}
         />
         <Button
@@ -183,7 +184,7 @@ function CollectionsLog({
           variant="outline"
           className="h-8"
           disabled={appending || !note.trim()}
-          onClick={submit}
+          onClick={() => void submit()}
         >
           {appending ? "Logging..." : "Log"}
         </Button>
@@ -272,11 +273,29 @@ export function ReceivablesCockpit({
   const [bucketFilter, setBucketFilter] = useState<ReceivableAgingBucket | "all">("all");
   const [openLogInvoiceId, setOpenLogInvoiceId] = useState<string | null>(null);
   const [appendingInvoiceId, setAppendingInvoiceId] = useState<string | null>(null);
+  const collectionsRetryKeys = useRef(new Map<string, string>());
+
+  const collectionsOperationKey = (invoiceId: string, note: string) => {
+    const intent = `${invoiceId}:${note.trim().replace(/\s+/g, " ")}`;
+    const existing = collectionsRetryKeys.current.get(intent);
+    if (existing) return existing;
+    const operationId =
+      typeof globalThis.crypto?.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const key = `invoice-collections:${invoiceId}:${operationId}`;
+    collectionsRetryKeys.current.set(intent, key);
+    return key;
+  };
 
   const noteMutation = useMutation({
-    mutationFn: (input: { invoiceId: string; note: string }) => appendNote({ data: input }),
+    mutationFn: (input: { invoiceId: string; note: string; idempotency_key: string }) =>
+      appendNote({ data: input }),
     onMutate: (input) => setAppendingInvoiceId(input.invoiceId),
-    onSuccess: () => {
+    onSuccess: (_result, input) => {
+      collectionsRetryKeys.current.delete(
+        `${input.invoiceId}:${input.note.trim().replace(/\s+/g, " ")}`,
+      );
       queryClient.invalidateQueries({ queryKey: ["receivables-cockpit"] });
       toast.success("Collection note logged");
     },
@@ -483,7 +502,18 @@ export function ReceivablesCockpit({
                     <CollectionsLog
                       invoice={invoice}
                       appending={appendingInvoiceId === invoice.id}
-                      onAppend={(note) => noteMutation.mutate({ invoiceId: invoice.id, note })}
+                      onAppend={async (note) => {
+                        try {
+                          await noteMutation.mutateAsync({
+                            invoiceId: invoice.id,
+                            note,
+                            idempotency_key: collectionsOperationKey(invoice.id, note),
+                          });
+                          return true;
+                        } catch {
+                          return false;
+                        }
+                      }}
                     />
                   ) : null}
                 </div>

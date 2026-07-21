@@ -29,10 +29,15 @@ export type InvoiceDraft = Omit<
   | "stripe_payment_intent_id"
   | "online_payment_status"
   | "payment_link_sent_at"
+  | "first_viewed_at"
+  | "last_viewed_at"
+  | "view_count"
+  | "collections_log"
 >;
 
 export type PaymentDraft = {
   invoiceId: string;
+  idempotency_key: string;
   amount: number;
   processor_fee: number;
   overwatch_fee: number;

@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import {
   appendStripeForm,
+  expireStripeCheckoutSession,
   getAppOrigin,
   isMissingSupabaseColumn,
   jsonError,
@@ -14,13 +15,18 @@ import {
 } from "@/lib/stripe.server";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import {
+  invoiceCheckoutAttemptKey,
+  persistInvoiceCheckoutOrExpire,
+  persistedPendingCheckout,
+  type InvoiceCheckoutState,
+} from "@/lib/invoice-checkout-persistence";
+import {
   ORGANIZATION_STRIPE_SELECT,
   stripeConnectionForMode,
   type OrganizationStripeColumns,
 } from "@/lib/stripe-mode";
 import {
   DEFAULT_STRIPE_PAYMENT_LIMIT_CENTS,
-  dollarsToCents,
   estimatedCardFeeCents,
   methodAvailability,
   resolveEnabledMethods,
@@ -40,7 +46,7 @@ const invoiceCheckoutInput = z.object({
   cancelPath: z.string().max(500).optional(),
 });
 
-type InvoiceRecord = {
+type InvoiceRecord = InvoiceCheckoutState & {
   id: string;
   project_id: string;
   billing_application_id: string | null;
@@ -51,9 +57,14 @@ type InvoiceRecord = {
   total_due: number;
   paid_amount: number;
   status: string;
+  updated_at: string;
   sent_at: string | null;
   client_visible?: boolean;
   enabled_payment_methods?: Record<string, boolean> | null;
+  online_payment_status?: string | null;
+  stripe_checkout_session_id?: string | null;
+  payment_url?: string | null;
+  payment_link_sent_at?: string | null;
 };
 
 type ProjectRecord = {
@@ -82,8 +93,21 @@ type DynamicQuery = PromiseLike<DynamicQueryResult> & {
   maybeSingle(): DynamicQuery;
 };
 
+type DynamicRpcClient = {
+  rpc(
+    functionName: string,
+    args?: Record<string, unknown>,
+  ): PromiseLike<DynamicQueryResult<Record<string, unknown>>>;
+};
+
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as { from(table: string): DynamicQuery }).from(relation);
+
+const dynamicRpc = async (
+  supabase: unknown,
+  functionName: string,
+  args?: Record<string, unknown>,
+) => await (supabase as DynamicRpcClient).rpc(functionName, args);
 
 function normalizedInternalPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
@@ -93,7 +117,15 @@ function normalizedInternalPath(value: string | undefined, fallback: string) {
 }
 
 function cents(value: number) {
-  return Math.max(0, Math.round(value * 100));
+  const valueCents = Math.round(value * 100);
+  if (!Number.isSafeInteger(valueCents) || valueCents < 0) {
+    throw new RouteError(
+      "unsafe_invoice_amount",
+      "This invoice amount is outside the supported exact-cent range.",
+      409,
+    );
+  }
+  return valueCents;
 }
 
 function applicationFeeCents(openBalance: number) {
@@ -115,7 +147,7 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           const context = await requireAuthedStripeContext(request);
 
           const INVOICE_SELECT_BASE =
-            "id,project_id,billing_application_id,invoice_number,title,subtotal,retainage,total_due,paid_amount,status,sent_at,client_visible";
+            "id,project_id,billing_application_id,invoice_number,title,subtotal,retainage,total_due,paid_amount,status,updated_at,sent_at,client_visible,online_payment_status,stripe_checkout_session_id,payment_url,payment_link_sent_at";
           let { data: invoice, error: invoiceError } = await dynamicTable(
             context.admin,
             "billing_invoices",
@@ -139,6 +171,22 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
 
           const invoiceRecord = invoice as unknown as InvoiceRecord;
 
+          // Checkout is payment fulfillment, never an issuance shortcut. The
+          // invoice command must already have made the document authoritative,
+          // visible, and auditable before either a manager or client can ask
+          // Stripe to collect against it.
+          if (
+            !invoiceRecord.client_visible ||
+            !invoiceRecord.sent_at ||
+            !["sent", "viewed", "overdue", "partially_paid"].includes(invoiceRecord.status)
+          ) {
+            throw new RouteError(
+              "invoice_not_issued",
+              "Issue this invoice through the audited send workflow before creating a checkout link.",
+              409,
+            );
+          }
+
           // Contractors with project-manage access can always create a link.
           // Portal clients can start checkout only for invoices they can
           // already see, with billing visibility granted.
@@ -160,6 +208,18 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
                 403,
               );
             }
+          }
+
+          // A client retry after the first response was lost must receive the
+          // already-authoritative pending Checkout. Creating another session
+          // here would either strand a duplicate or expire the valid link.
+          const existingCheckout = persistedPendingCheckout(invoiceRecord);
+          if (existingCheckout) {
+            return jsonOk({
+              sessionId: existingCheckout.sessionId,
+              checkoutUrl: existingCheckout.checkoutUrl,
+              invoiceId: invoiceRecord.id,
+            });
           }
 
           const { data: project, error: projectError } = await context.admin
@@ -255,7 +315,7 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             ),
             stripeReady: true, // connectReady was enforced above
             enabled: enabledMethods,
-            invoiceTotalCents: dollarsToCents(openBalance),
+            invoiceTotalCents: cents(openBalance),
             thresholdCents: Number(profile?.stripe_amount_threshold_cents ?? 0),
             platformLimitCents:
               Number(orgPayment.stripe_payment_limit_cents) > 0
@@ -411,26 +471,67 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           const session = await stripePost<StripeCheckoutSession>(
             "checkout/sessions",
             form,
-            `invoice-checkout:${invoiceRecord.id}:${stripeConnection.mode}:${openBalance}:${stripeMethods.join("+")}:${surchargeCents}`,
+            invoiceCheckoutAttemptKey({
+              invoice: invoiceRecord,
+              stripeMode: stripeConnection.mode,
+              openBalanceCents: cents(openBalance),
+              paymentMethods: stripeMethods,
+              surchargeCents,
+            }),
             stripeConnection.accountId,
             stripeConnection.mode,
           );
 
-          const now = new Date().toISOString();
-          const { error: updateError } = await dynamicTable(context.admin, "billing_invoices")
-            .update({
-              payment_enabled: true,
-              payment_url: session.url ?? "",
-              stripe_checkout_session_id: session.id,
-              stripe_payment_intent_id:
-                typeof session.payment_intent === "string" ? session.payment_intent : "",
-              online_payment_status: "pending",
-              payment_link_sent_at: now,
-              status: invoiceRecord.status === "draft" ? "sent" : invoiceRecord.status,
-              sent_at: invoiceRecord.sent_at ?? now,
-            })
-            .eq("id", invoiceRecord.id);
-          if (updateError) throw new Error(updateError.message);
+          await persistInvoiceCheckoutOrExpire({
+            persist: () =>
+              dynamicRpc(context.admin, "update_billing_invoice_processor_state_atomic", {
+                p_billing_invoice_id: invoiceRecord.id,
+                p_online_payment_status: "pending",
+                p_checkout_session_id: session.id,
+                p_payment_intent_id:
+                  typeof session.payment_intent === "string" ? session.payment_intent : "",
+                p_payment_url: session.url ?? "",
+                p_payment_enabled: true,
+                // The command fills this once inside Postgres. Keeping the
+                // request null makes its fingerprint retry-stable.
+                p_payment_link_sent_at: null,
+                p_idempotency_key: `stripe-checkout:${session.id}:pending`,
+              }),
+            confirmPersisted: async () => {
+              const { data: persisted, error } = await dynamicTable(
+                context.admin,
+                "billing_invoices",
+              )
+                .select("online_payment_status,stripe_checkout_session_id,payment_url")
+                .eq("id", invoiceRecord.id)
+                .single();
+              if (error) throw new Error(error.message);
+              const row = persisted as {
+                online_payment_status?: string | null;
+                stripe_checkout_session_id?: string | null;
+                payment_url?: string | null;
+              } | null;
+              return Boolean(
+                row &&
+                row.online_payment_status === "pending" &&
+                row.stripe_checkout_session_id === session.id &&
+                (!session.url || row.payment_url === session.url),
+              );
+            },
+            expire: () =>
+              expireStripeCheckoutSession(
+                session.id,
+                stripeConnection.accountId,
+                stripeConnection.mode,
+              ),
+            onExpirationFailure: (expirationError) => {
+              console.error("Failed to expire an unpersisted invoice Checkout session", {
+                invoice_id: invoiceRecord.id,
+                checkout_session_id: session.id,
+                expirationError,
+              });
+            },
+          });
 
           return jsonOk({
             sessionId: session.id,

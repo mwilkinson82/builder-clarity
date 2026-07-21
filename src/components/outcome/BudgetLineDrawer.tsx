@@ -78,6 +78,8 @@ const OVERRIDE_LABEL: Record<OverrideField, string> = {
   original_budget: "Budget",
 };
 
+const newBudgetOperationKey = (intent: string) => `${intent}:${crypto.randomUUID()}`;
+
 // A labeled field row inside the drawer — label + helper on the left, control on
 // the right — so the editor reads as a form, not a grid.
 function Field({
@@ -134,7 +136,6 @@ export function BudgetLineDrawer({
   onSave,
   onCreate,
   onDelete,
-  onRecordOverride,
   saving = false,
 }: {
   open: boolean;
@@ -165,16 +166,9 @@ export function BudgetLineDrawer({
   budgetLocked: boolean;
   /** Override history for this line, newest first. */
   overrides: BudgetOverrideRow[];
-  onSave: (id: string, patch: BucketPatch) => Promise<unknown>;
-  onCreate: (input: NewBucketInput) => Promise<unknown> | void;
-  onDelete?: (id: string) => void;
-  /** Records one money-field override (old -> new) alongside the save. */
-  onRecordOverride: (
-    bucketId: string,
-    field: OverrideField,
-    oldValue: number,
-    newValue: number,
-  ) => void;
+  onSave: (id: string, patch: BucketPatch, operationKey: string, note: string) => Promise<unknown>;
+  onCreate: (input: NewBucketInput, operationKey: string) => Promise<unknown>;
+  onDelete?: (id: string, operationKey: string) => Promise<unknown>;
   saving?: boolean;
 }) {
   const isCreate = mode === "create";
@@ -187,6 +181,9 @@ export function BudgetLineDrawer({
   const [budget, setBudget] = useState(0);
   const [actual, setActual] = useState(0);
   const [ftc, setFtc] = useState(0);
+  const [operationKey, setOperationKey] = useState(() => newBudgetOperationKey("budget-line"));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -197,7 +194,9 @@ export function BudgetLineDrawer({
     setBudget(bucket?.original_budget ?? 0);
     setActual(bucket?.actual_to_date ?? 0);
     setFtc(bucket?.ftc ?? 0);
-  }, [open, bucket]);
+    setOperationKey(newBudgetOperationKey(isCreate ? "budget-line-create" : "budget-line-update"));
+    setError(null);
+  }, [open, bucket, isCreate]);
 
   // A bought-out line's actual and minimum remaining commitment are driven by
   // the subcontract ledger. The PM may still carry ADDITIONAL forecast beyond
@@ -237,58 +236,70 @@ export function BudgetLineDrawer({
   const today = new Date().toISOString().slice(0, 10);
 
   const handleSave = async () => {
-    if (isCreate) {
-      const n = name.trim();
-      if (!n) return;
-      await onCreate({
-        cost_code: code.trim(),
-        bucket: n,
-        source_type: source,
-        source_date: today,
-        source_note: SOURCE_LABEL[source],
-      });
+    setError(null);
+    setSubmitting(true);
+    try {
+      if (isCreate) {
+        const n = name.trim();
+        if (!n) return;
+        await onCreate(
+          {
+            cost_code: code.trim(),
+            bucket: n,
+            source_type: source,
+            source_date: today,
+            source_note: SOURCE_LABEL[source],
+          },
+          operationKey,
+        );
+        onOpenChange(false);
+        return;
+      }
+      if (!bucket) return;
+
+      const patch: BucketPatch = {};
+      if (code.trim() !== bucket.cost_code) patch.cost_code = code.trim();
+      if (name.trim() && name.trim() !== bucket.bucket) patch.bucket = name.trim();
+      if (source !== bucket.source_type) patch.source_type = source;
+
+      // The atomic database command records every changed money field in the
+      // same transaction as this patch; there is no second audit request.
+      if (!budgetLocked && contractValue !== bucket.contract_value) {
+        patch.contract_value = contractValue;
+      }
+      if (!budgetLocked && budget !== bucket.original_budget) {
+        patch.original_budget = budget;
+      }
+      if (!hasSub && actual !== bucket.actual_to_date) {
+        patch.actual_to_date = actual;
+      }
+      if (ftc !== bucket.ftc) patch.ftc = ftc;
+
+      if (Object.keys(patch).length === 0) {
+        onOpenChange(false);
+        return;
+      }
+      await onSave(bucket.id, patch, operationKey, "Manual budget line edit");
       onOpenChange(false);
-      return;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Budget line did not commit.");
+    } finally {
+      setSubmitting(false);
     }
-    if (!bucket) return;
+  };
 
-    const patch: BucketPatch = {};
-    if (code.trim() !== bucket.cost_code) patch.cost_code = code.trim();
-    if (name.trim() && name.trim() !== bucket.bucket) patch.bucket = name.trim();
-    if (source !== bucket.source_type) patch.source_type = source;
-
-    // Money overrides — only when the field is editable for this line.
-    const overrideEdits: Array<{ field: OverrideField; from: number; to: number }> = [];
-    if (!budgetLocked && contractValue !== bucket.contract_value) {
-      patch.contract_value = contractValue;
-      overrideEdits.push({
-        field: "contract_value",
-        from: bucket.contract_value,
-        to: contractValue,
-      });
-    }
-    if (!budgetLocked && budget !== bucket.original_budget) {
-      patch.original_budget = budget;
-      overrideEdits.push({ field: "original_budget", from: bucket.original_budget, to: budget });
-    }
-    if (!hasSub && actual !== bucket.actual_to_date) {
-      patch.actual_to_date = actual;
-      overrideEdits.push({ field: "actual_to_date", from: bucket.actual_to_date, to: actual });
-    }
-    if (ftc !== bucket.ftc) {
-      patch.ftc = ftc;
-      overrideEdits.push({ field: "ftc", from: bucket.ftc, to: ftc });
-    }
-
-    if (Object.keys(patch).length === 0) {
+  const handleDelete = async () => {
+    if (!bucket || !onDelete || !confirm(`Delete budget line "${bucket.bucket}"?`)) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await onDelete(bucket.id, operationKey.replace("update", "delete"));
       onOpenChange(false);
-      return;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Budget line was not deleted.");
+    } finally {
+      setSubmitting(false);
     }
-    await onSave(bucket.id, patch);
-    for (const edit of overrideEdits) {
-      onRecordOverride(bucket.id, edit.field, edit.from, edit.to);
-    }
-    onOpenChange(false);
   };
 
   const lineOverrides = bucket
@@ -296,7 +307,7 @@ export function BudgetLineDrawer({
     : [];
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={(next) => !submitting && !saving && onOpenChange(next)}>
       <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="text-left">
           <div className="eyebrow">Budget</div>
@@ -651,18 +662,23 @@ export function BudgetLineDrawer({
           ) : null}
         </div>
 
+        {error ? (
+          <div
+            role="alert"
+            className="mt-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger"
+          >
+            {error}
+          </div>
+        ) : null}
+
         <SheetFooter className="mt-2 flex-row items-center justify-between gap-2 border-t border-hairline pt-4">
           {!isCreate && onDelete && bucket ? (
             <Button
               variant="ghost"
               size="sm"
               className="text-muted-foreground hover:text-danger"
-              onClick={() => {
-                if (confirm(`Delete budget line "${bucket.bucket}"?`)) {
-                  onDelete(bucket.id);
-                  onOpenChange(false);
-                }
-              }}
+              onClick={handleDelete}
+              disabled={saving || submitting}
             >
               <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete line
             </Button>
@@ -670,11 +686,22 @@ export function BudgetLineDrawer({
             <span />
           )}
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              disabled={saving || submitting}
+            >
               Cancel
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={saving || !dirty}>
-              {isCreate ? "Add line" : saving ? "Saving…" : "Save changes"}
+            <Button size="sm" onClick={handleSave} disabled={saving || submitting || !dirty}>
+              {isCreate
+                ? submitting
+                  ? "Adding…"
+                  : "Add line"
+                : saving || submitting
+                  ? "Saving…"
+                  : "Save changes"}
             </Button>
           </div>
         </SheetFooter>

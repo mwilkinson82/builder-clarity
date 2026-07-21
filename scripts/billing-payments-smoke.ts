@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   canTransitionPayment,
   centsToDollars,
@@ -1445,5 +1446,293 @@ const allocatedLines = buildBillingLinesFromBuckets({
 });
 assert.equal(allocatedLines[0].change_order_value_cents, 65_000_00);
 assert.equal(allocatedLines[0].scheduled_value_cents, 780_000_00);
+
+// --- Billing transaction and fail-closed contracts --------------------------
+
+const billingFunctionsSource = readFileSync(
+  new URL("../src/lib/billing.functions.ts", import.meta.url),
+  "utf8",
+);
+const billingAtomicityMigration = readFileSync(
+  new URL("../supabase/migrations/20260720152500_billing_line_item_atomicity.sql", import.meta.url),
+  "utf8",
+);
+
+const sourceSection = (source: string, start: string, end: string) => {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+  assert.notEqual(startIndex, -1, `missing source contract start: ${start}`);
+  assert.notEqual(endIndex, -1, `missing source contract end: ${end}`);
+  return source.slice(startIndex, endIndex);
+};
+
+const directWriteTriggerSql = sourceSection(
+  billingAtomicityMigration,
+  "create or replace function public.tg_sync_billing_applications_from_line_statement",
+  "create or replace function public.generate_billing_line_items_atomic",
+);
+assert.match(directWriteTriggerSql, /security invoker/i);
+assert.match(
+  directWriteTriggerSql,
+  /billing_line_rollup_mode[\s\S]*= 'deferred'[\s\S]*return null/i,
+  "atomic RPCs must be able to defer redundant statement-trigger rollups",
+);
+assert.match(directWriteTriggerSql, /tg_op = 'INSERT'[\s\S]*from new_rows/i);
+assert.match(directWriteTriggerSql, /tg_op = 'DELETE'[\s\S]*from old_rows/i);
+assert.match(
+  directWriteTriggerSql,
+  /from old_rows[\s\S]*union[\s\S]*from new_rows/i,
+  "direct UPDATE must reconcile both the old and new application ids",
+);
+assert.match(
+  directWriteTriggerSql,
+  /billing_applications app[\s\S]*order by app\.id[\s\S]*for update[\s\S]*sync_billing_application_from_lines/i,
+  "direct writes must serialize affected applications before recomputing totals",
+);
+assert.match(
+  directWriteTriggerSql,
+  /function public\.tg_validate_billing_line_scope[\s\S]*billing_applications app[\s\S]*v_application_project_id is distinct from new\.project_id/i,
+  "direct writes must not cross-wire a billing application and project",
+);
+assert.match(
+  directWriteTriggerSql,
+  /cost_buckets bucket[\s\S]*v_bucket_project_id is distinct from new\.project_id/i,
+  "direct writes must not attach a cost bucket from another project",
+);
+assert.match(
+  directWriteTriggerSql,
+  /before insert or update on public\.billing_line_items[\s\S]*for each row[\s\S]*tg_validate_billing_line_scope/i,
+);
+for (const [operation, transitionTables] of [
+  ["insert", "new table as new_rows"],
+  ["update", "old table as old_rows new table as new_rows"],
+  ["delete", "old table as old_rows"],
+] as const) {
+  assert.match(
+    directWriteTriggerSql,
+    new RegExp(
+      `after ${operation} on public\\.billing_line_items[\\s\\S]*referencing ${transitionTables}[\\s\\S]*for each statement`,
+      "i",
+    ),
+    `direct ${operation.toUpperCase()} must have a statement-level rollup trigger`,
+  );
+}
+
+const generationSql = sourceSection(
+  billingAtomicityMigration,
+  "create or replace function public.generate_billing_line_items_atomic",
+  "create or replace function public.apply_billing_line_item_mutations_atomic",
+);
+assert.match(generationSql, /security definer/i);
+assert.match(
+  generationSql,
+  /auth\.uid\(\) is null[\s\S]*can_manage_project\(p_project_id\)/i,
+  "the privileged snapshot writer must repeat authentication and exact project authorization",
+);
+assert.match(
+  directWriteTriggerSql,
+  /coalesce\([\s\S]*current_setting\('overwatch\.billing_line_authoritative_write', true\)[\s\S]*''[\s\S]*\) = 'generating'/i,
+  "an unset internal-write marker must fail closed instead of becoming SQL NULL",
+);
+assert.match(generationSql, /billing_applications[\s\S]*for update/i);
+assert.doesNotMatch(
+  generationSql,
+  /p_lines|jsonb_to_recordset/i,
+  "generation must not accept caller-authored financial line values",
+);
+assert.match(
+  generationSql,
+  /projects project[\s\S]*for update[\s\S]*cost_buckets bucket[\s\S]*for update[\s\S]*change_orders change_order[\s\S]*for update[\s\S]*change_order_allocations allocation[\s\S]*for update/i,
+  "generation must lock every DB-owned source before deriving lines",
+);
+assert.match(
+  generationSql,
+  /change_order\.status = 'Approved'[\s\S]*round\(allocation\.contract_amount \* 100\)::bigint/i,
+  "only approved CO allocations may reach the generated CO column in integer cents",
+);
+assert.match(
+  generationSql,
+  /v_previous_application_id[\s\S]*work_completed_to_date_cents[\s\S]*materials_stored_to_date_cents/i,
+  "prior-certified values must come from the locked preceding application",
+);
+assert.match(
+  generationSql,
+  /if v_existing_count > 0 then[\s\S]*sync_billing_application_from_lines[\s\S]*'created', false/i,
+  "a retry must reconcile application totals before reporting existing lines",
+);
+assert.match(
+  generationSql,
+  /insert into public\.billing_line_items[\s\S]*sync_billing_application_from_lines/i,
+);
+assert.match(
+  generationSql,
+  /set_config\([^;]*billing_line_rollup_mode[^;]*'deferred'[\s\S]*insert into public\.billing_line_items[\s\S]*set_config\([\s\S]*v_previous_rollup_mode[\s\S]*sync_billing_application_from_lines/i,
+  "generation must defer its trigger and perform one final application sync",
+);
+assert.doesNotMatch(
+  generationSql,
+  /exception\s+when/i,
+  "the transaction must not swallow failures",
+);
+
+const mutationSql = sourceSection(
+  billingAtomicityMigration,
+  "create or replace function public.apply_billing_line_item_mutations_atomic",
+  "create or replace function public.update_billing_application_retainage_atomic",
+);
+assert.match(mutationSql, /billing_applications app[\s\S]*order by app\.id[\s\S]*for update/i);
+assert.match(mutationSql, /billing_line_items[\s\S]*for update/i);
+assert.ok(
+  mutationSql.indexOf("from public.billing_line_items line") <
+    mutationSql.indexOf("from public.billing_applications app"),
+  "Save All must lock lines before applications to match the direct-write lock order",
+);
+assert.match(
+  mutationSql,
+  /update public\.billing_line_items[\s\S]*sync_billing_application_from_lines/i,
+);
+assert.match(
+  mutationSql,
+  /set_config\([^;]*billing_line_rollup_mode[^;]*'deferred'[\s\S]*update public\.billing_line_items[\s\S]*set_config\([\s\S]*v_previous_rollup_mode[\s\S]*sync_billing_application_from_lines/i,
+  "Save All must defer per-line triggers and perform one final sync per application",
+);
+const mutationExceptionHandlers = [
+  ...mutationSql.matchAll(/exception\s+when[\s\S]*?(?=\n\s*end;)/gi),
+].map((match) => match[0]);
+assert.equal(
+  mutationExceptionHandlers.length,
+  1,
+  "Save All may only translate the expected-version timestamp cast error",
+);
+assert.match(
+  mutationExceptionHandlers[0],
+  /exception\s+when\s+others\s+then[\s\S]*raise\s+exception[\s\S]*errcode\s*=\s*'22007'/i,
+  "the expected-version cast handler must re-raise an explicit invalid-datetime error",
+);
+
+const retainageSql = sourceSection(
+  billingAtomicityMigration,
+  "create or replace function public.update_billing_application_retainage_atomic",
+  "revoke all on function public.generate_billing_line_items_atomic",
+);
+assert.match(retainageSql, /billing_applications[\s\S]*for update/i);
+assert.match(retainageSql, /billing_line_items line[\s\S]*order by line\.id[\s\S]*for update/i);
+assert.match(
+  retainageSql,
+  /from public\.projects project[\s\S]*for update;[\s\S]*from public\.billing_applications[\s\S]*for update;[\s\S]*from public\.billing_line_items line[\s\S]*for update;/i,
+  "bulk retainage must follow the shared project -> application -> line lock order",
+);
+assert.match(
+  retainageSql,
+  /update public\.billing_line_items[\s\S]*sync_billing_application_from_lines/i,
+);
+assert.match(
+  retainageSql,
+  /set_config\([^;]*billing_line_rollup_mode[^;]*'deferred'[\s\S]*update public\.billing_line_items[\s\S]*set_config\([\s\S]*v_previous_rollup_mode[\s\S]*sync_billing_application_from_lines/i,
+  "bulk retainage must defer its statement trigger and perform one final sync",
+);
+assert.doesNotMatch(
+  retainageSql,
+  /exception\s+when/i,
+  "retainage updates must roll back every line on failure",
+);
+for (const [rpc, roles] of [
+  ["generate_billing_line_items_atomic", "authenticated, service_role"],
+  ["apply_billing_line_item_mutations_atomic", "authenticated"],
+  ["update_billing_application_retainage_atomic", "authenticated"],
+] as const) {
+  assert.match(
+    billingAtomicityMigration,
+    new RegExp(
+      `revoke all on function public\\.${rpc}[^;]* from public, anon, authenticated, service_role`,
+      "i",
+    ),
+    `${rpc} must clear every inherited execute grant before its allowlist grant`,
+  );
+  assert.match(
+    billingAtomicityMigration,
+    new RegExp(`grant execute on function public\\.${rpc}[^;]*to ${roles}`, "i"),
+    `${rpc} must only be re-exposed to its explicit role allowlist`,
+  );
+}
+assert.match(
+  billingAtomicityMigration,
+  /revoke all on function public\.tg_sync_billing_applications_from_line_statement\(\)[\s\S]*from public, anon, authenticated, service_role/i,
+);
+assert.match(
+  billingAtomicityMigration,
+  /revoke all on function public\.tg_validate_billing_line_scope\(\)[\s\S]*from public, anon, authenticated, service_role/i,
+);
+assert.match(
+  billingAtomicityMigration,
+  /function public\.tg_protect_billing_line_authority[\s\S]*Billing-line identity, contract, change-order, and prior-certified values are database-derived/i,
+);
+assert.match(
+  billingAtomicityMigration,
+  /before insert or update or delete on public\.billing_line_items[\s\S]*tg_protect_billing_line_authority/i,
+);
+assert.match(
+  billingAtomicityMigration,
+  /function public\.tg_guard_billing_application_line_integrity[\s\S]*old\.has_line_detail or v_has_lines[\s\S]*Pay-application billed and retainage totals are derived from billing lines/i,
+);
+assert.match(
+  billingAtomicityMigration,
+  /new\.project_id is distinct from old\.project_id[\s\S]*billing_line_items[\s\S]*billing_application_events[\s\S]*production_sov_billing_handoffs/i,
+);
+assert.match(
+  billingAtomicityMigration,
+  /drop function if exists public\.generate_billing_line_items_atomic\(uuid, uuid, jsonb\)[\s\S]*function public\.generate_billing_line_items_atomic\([\s\S]*p_billing_application_id uuid\s*\)/i,
+  "the caller-payload overload must be removed before exposing the DB-derived RPC",
+);
+assert.doesNotMatch(
+  billingAtomicityMigration,
+  /grant execute on function public\.tg_(?:sync_billing_applications_from_line_statement|validate_billing_line_scope|protect_billing_line_authority|guard_billing_application_line_integrity)/i,
+  "internal billing trigger functions must not be directly callable",
+);
+
+const generationHandler = sourceSection(
+  billingFunctionsSource,
+  "export const generateBillingLineItems",
+  "const lineItemPatchInput",
+);
+assert.match(generationHandler, /generate_billing_line_items_atomic/);
+assert.doesNotMatch(generationHandler, /p_lines/);
+assert.doesNotMatch(
+  generationHandler,
+  /"cost_buckets"|"change_orders"|"change_order_allocations"|buildBillingLinesFromBuckets/,
+  "the server handler must not derive authoritative financial lines from unlocked reads",
+);
+assert.doesNotMatch(
+  generationHandler,
+  /dynamicTable\(ctx\.supabase, "billing_line_items"\)\.insert/,
+  "line generation must not write outside the atomic RPC",
+);
+
+const saveAllHandler = sourceSection(
+  billingFunctionsSource,
+  "export const updateBillingLineItems",
+  "const updatePayAppRetainageRateInput",
+);
+assert.match(saveAllHandler, /apply_billing_line_item_mutations_atomic/);
+assert.doesNotMatch(
+  saveAllHandler,
+  /\.update\(/,
+  "Save All must not partially update lines outside the atomic RPC",
+);
+
+for (const [start, end] of [
+  ["async function loadProjectBillingData", "export const getBillingWorkspace"],
+  ["export const listPortfolioBilling", "JOB COST REPORT"],
+  ["export const listPortfolioJobCost", "BILLING HISTORY REPORT"],
+  ["export const listPortfolioBillingHistory", "CHANGE ORDER LOG REPORT"],
+] as const) {
+  const financialRollup = sourceSection(billingFunctionsSource, start, end);
+  assert.match(financialRollup, /requireFinancialQuery/);
+  assert.doesNotMatch(
+    financialRollup,
+    /\.error\s*\?\s*\[\]|\.error\s*\|\|[^?]*\?\s*\[\]/,
+    `${start} must not translate query failures into empty financial rows`,
+  );
+}
 
 console.log("billing payments smoke: all assertions passed");

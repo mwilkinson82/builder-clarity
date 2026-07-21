@@ -95,6 +95,8 @@ export function BillingWorkspace({
   billingInvoices,
   billingWorkspace,
   billingWorkspaceLoading,
+  billingWorkspaceError,
+  onRetryBillingWorkspace,
   savingPayApp,
   savingInvoice,
   savingPayment,
@@ -142,6 +144,8 @@ export function BillingWorkspace({
   billingInvoices: BillingInvoiceRow[];
   billingWorkspace?: BillingWorkspaceData;
   billingWorkspaceLoading?: boolean;
+  billingWorkspaceError?: string | null;
+  onRetryBillingWorkspace?: () => void;
   savingPayApp?: boolean;
   savingInvoice?: boolean;
   savingPayment?: boolean;
@@ -150,7 +154,7 @@ export function BillingWorkspace({
   savingCostActual?: boolean;
   savingBucketBilling?: boolean;
   applyingCertifiedSovPosition?: boolean;
-  onCreate: (input: BillingDraft) => void;
+  onCreate: (input: BillingDraft, idempotencyKey: string) => Promise<void>;
   onUpdate: (id: string, patch: Partial<BillingApplicationRow>) => void;
   onDelete: (id: string) => void;
   onGenerateBillingLines: (billingApplicationId: string) => void;
@@ -162,10 +166,13 @@ export function BillingWorkspace({
       retainage_pct?: number;
       retainage_released?: number;
     },
+    expectedUpdatedAt: string,
+    operationKey: string,
   ) => void;
   onSaveAllBillingLines?: (
     items: {
       id: string;
+      expected_updated_at: string;
       patch: {
         work_completed_this_period?: number;
         materials_stored_this_period?: number;
@@ -173,23 +180,33 @@ export function BillingWorkspace({
         retainage_released?: number;
       };
     }[],
+    operationKey: string,
   ) => void;
   savingAllBillingLines?: boolean;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
   savingOutputFormat?: boolean;
   onCreateCostActual: Parameters<typeof ProjectCostTrackingPanel>[0]["onCreateCostActual"];
-  onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
-  onVoidCostActual: (id: string, notes: string) => void;
+  onImportCostActuals: (input: {
+    source_name: string;
+    rows: CostActualImportRow[];
+    operation_key: string;
+  }) => Promise<unknown>;
+  onVoidCostActual: (id: string, notes: string, operationKey: string) => Promise<unknown>;
   onSetCostActualStatus: (
     id: string,
     status: "approved" | "paid",
-    payment?: { payment_method: string; payment_reference: string; paid_date: string },
-  ) => void;
+    payment?: {
+      payment_method: string;
+      payment_reference: string;
+      paid_date: string;
+      operation_key: string;
+    },
+  ) => Promise<unknown>;
   onUpdateCostActual: (
     id: string,
     input: Parameters<Parameters<typeof ProjectCostTrackingPanel>[0]["onUpdateCostActual"]>[1],
-  ) => void | Promise<unknown>;
+  ) => Promise<unknown>;
   onUpdateBucketBillingSettings: (
     id: string,
     patch: {
@@ -202,12 +219,16 @@ export function BillingWorkspace({
   ) => void;
   onApplyCertifiedSovPosition?: (certificationId: string, billingApplicationId: string) => void;
   onCreateInvoice: (input: InvoiceDraft) => Promise<void>;
-  onUpdateInvoice: (id: string, patch: Partial<BillingInvoiceRow>) => void;
+  onUpdateInvoice: (
+    id: string,
+    patch: Partial<BillingInvoiceRow>,
+    options: { expectedUpdatedAt: string; idempotencyKey?: string; reason?: string },
+  ) => Promise<boolean>;
   onDeleteInvoice: (id: string) => void;
-  onRecordPayment: (input: PaymentDraft) => void;
+  onRecordPayment: (input: PaymentDraft) => Promise<void>;
   onReconcileInvoice: (invoiceId: string) => void;
   reconcilingInvoiceId: string | null;
-  onAllocateChangeOrder: (input: ChangeOrderAllocationInput) => void;
+  onAllocateChangeOrder: (input: ChangeOrderAllocationInput) => Promise<void>;
   onRemoveChangeOrderAllocation: (id: string) => void;
   savingAllocation?: boolean;
   // Deep-link the workspace to a specific billing stage (e.g. "project-costs" so
@@ -408,24 +429,21 @@ export function BillingWorkspace({
     // Invoice money inherits pay-app values quantized to exact cents; the
     // total derives in cents so a stored total can never carry float drift.
     const subtotal = quantizeDollars(app?.amount_billed ?? unbilledEarnedToDate);
-    const invoiceRetainage = quantizeDollars(
-      app?.retainage ?? percentOfDollars(subtotal, defaultRetainagePct),
-    );
     const retainageReleased = quantizeDollars(app?.retainage_released_this_period ?? 0);
-    const paidAmount = quantizeDollars(app?.paid_to_date ?? 0);
+    // An invoice stores the net amount still withheld, not two competing
+    // retainage values. That lets the database derive total_due from
+    // subtotal - retainage and still represent a release correctly.
+    const invoiceRetainage = quantizeDollars(
+      Math.max(
+        0,
+        (app?.retainage ?? percentOfDollars(subtotal, defaultRetainagePct)) - retainageReleased,
+      ),
+    );
     const totalDue = invoiceTotalDueDollars({
       subtotal,
       retainage: invoiceRetainage,
-      retainageReleased,
+      retainageReleased: 0,
     });
-    const status: BillingInvoiceRow["status"] =
-      paidAmount >= totalDue && totalDue > 0
-        ? "paid"
-        : paidAmount > 0
-          ? "partially_paid"
-          : app?.status === "draft"
-            ? "draft"
-            : "sent";
     return {
       billing_application_id: app?.id ?? null,
       invoice_number: invoiceNumber,
@@ -435,9 +453,12 @@ export function BillingWorkspace({
       subtotal,
       retainage: invoiceRetainage,
       total_due: totalDue,
-      paid_amount: paidAmount,
-      status,
-      client_visible: status !== "draft",
+      paid_amount: 0,
+      // Creating from a submitted pay application does not prove the invoice
+      // itself was delivered. All new invoices begin hidden and draft; Send
+      // records visibility and recipients before any email is queued.
+      status: "draft",
+      client_visible: false,
       notes: app?.notes ?? "",
       // Seed the toggles from the company defaults so what the contractor
       // sees in the dialog is exactly what gets saved; {} would also inherit
@@ -450,10 +471,6 @@ export function BillingWorkspace({
           }
         : {},
       sent_recipients: [],
-      first_viewed_at: null,
-      last_viewed_at: null,
-      view_count: 0,
-      collections_log: "",
     };
   };
   // Default landing is the mock's Pay applications. But pay-app-detail is a
@@ -471,6 +488,10 @@ export function BillingWorkspace({
   }, [focusStage]);
   const [payAppOpen, setPayAppOpen] = useState(false);
   const [draft, setDraft] = useState<BillingDraft>(() => buildDraft());
+  const [payAppCommandKey, setPayAppCommandKey] = useState(() =>
+    newBillingApplicationCommandKey("create"),
+  );
+  const [payAppError, setPayAppError] = useState("");
   const [draftRetainagePct, setDraftRetainagePct] = useState(() =>
     formatBillingPercentInput(defaultRetainagePct),
   );
@@ -507,7 +528,9 @@ export function BillingWorkspace({
 
   const openPayAppDialog = () => {
     setDraft(buildDraft());
+    setPayAppCommandKey(newBillingApplicationCommandKey("create"));
     setDraftRetainagePct(formatBillingPercentInput(defaultRetainagePct));
+    setPayAppError("");
     setPayAppOpen(true);
   };
 
@@ -520,16 +543,24 @@ export function BillingWorkspace({
     }));
   };
 
-  const savePayApplication = () => {
+  const savePayApplication = async () => {
     const normalizedRetainagePct = parseBillingPercent(draftRetainagePct);
     setDraftRetainagePct(formatBillingPercentInput(normalizedRetainagePct));
-    onCreate({
-      ...draft,
-      amount_billed: quantizeDollars(draft.amount_billed),
-      paid_to_date: quantizeDollars(draft.paid_to_date),
-      retainage: percentOfDollars(draft.amount_billed, normalizedRetainagePct),
-    });
-    setPayAppOpen(false);
+    setPayAppError("");
+    try {
+      await onCreate(
+        {
+          ...draft,
+          amount_billed: quantizeDollars(draft.amount_billed),
+          paid_to_date: 0,
+          retainage: percentOfDollars(draft.amount_billed, normalizedRetainagePct),
+        },
+        payAppCommandKey,
+      );
+      setPayAppOpen(false);
+    } catch (error) {
+      setPayAppError(error instanceof Error ? error.message : "Pay application did not save.");
+    }
   };
 
   const openInvoiceDialog = (app?: BillingApplicationRow) => {
@@ -586,6 +617,21 @@ export function BillingWorkspace({
         </div>
       );
     }
+    if (billingWorkspaceError) {
+      return (
+        <div className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 p-5 text-sm">
+          <div>
+            <p className="font-medium text-destructive">Billing detail did not load</p>
+            <p className="mt-1 text-muted-foreground">{billingWorkspaceError}</p>
+          </div>
+          {onRetryBillingWorkspace ? (
+            <Button type="button" variant="outline" size="sm" onClick={onRetryBillingWorkspace}>
+              Retry billing detail
+            </Button>
+          ) : null}
+        </div>
+      );
+    }
     if (!billingWorkspace?.schemaReady) {
       return (
         <div className="rounded-md border border-warning/30 bg-warning/10 p-5 text-sm text-warning">
@@ -608,7 +654,9 @@ export function BillingWorkspace({
   // WIP rail sub-line: the live over/under (mock "Underbilled $42,000").
   let railWipChip = "Not started";
   let railWipTone: BillingRailStage["tone"] = "empty";
-  if (railWip && railWip.bucket_count > 0 && railWip.assessed_bucket_count > 0) {
+  if (billingWorkspaceError) {
+    railWipChip = "Unavailable";
+  } else if (railWip && railWip.bucket_count > 0 && railWip.assessed_bucket_count > 0) {
     const overUnder = railWip.total_over_under;
     if (overUnder > 0) {
       railWipChip = `Overbilled ${fmtUSDCents(overUnder)}`;
@@ -767,6 +815,28 @@ export function BillingWorkspace({
 
   return (
     <section className="space-y-4">
+      {billingWorkspaceError ? (
+        <div className="flex flex-col gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="font-medium text-destructive">Some billing records are unavailable</p>
+            <p className="mt-1 text-muted-foreground">
+              {billingWorkspaceError} Financial totals that depend on this detail are withheld until
+              the records load successfully.
+            </p>
+          </div>
+          {onRetryBillingWorkspace ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={onRetryBillingWorkspace}
+            >
+              Retry billing detail
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       <Tabs value={billingStage} onValueChange={setBillingStage} className="space-y-4">
         {/* v2 dark stat strip (SovMetric dark variant): the seven headline
             figures as a slim dark band above the notebook rail. Placement:
@@ -794,7 +864,12 @@ export function BillingWorkspace({
 
         {/* New pay application dialog — controlled; its trigger lives in the Pay
             applications panel header (v2). Rendered here so it stays mounted. */}
-        <Dialog open={payAppOpen} onOpenChange={setPayAppOpen}>
+        <Dialog
+          open={payAppOpen}
+          onOpenChange={(open) => {
+            if (!savingPayApp) setPayAppOpen(open);
+          }}
+        >
           <DialogContent className="sm:max-w-3xl">
             <DialogHeaderV2
               eyebrow="Billing"
@@ -837,8 +912,12 @@ export function BillingWorkspace({
                     <SelectContent>
                       <SelectItem value="draft">Draft</SelectItem>
                       <SelectItem value="submitted">Submitted</SelectItem>
-                      <SelectItem value="partial">Partial</SelectItem>
-                      <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="partial" disabled>
+                        Partial · from payments
+                      </SelectItem>
+                      <SelectItem value="paid" disabled>
+                        Paid · from payments
+                      </SelectItem>
                       <SelectItem value="rejected">Rejected</SelectItem>
                     </SelectContent>
                   </Select>
@@ -895,7 +974,7 @@ export function BillingWorkspace({
                   />
                 </div>
               </div>
-              <div className="grid gap-3 md:grid-cols-5">
+              <div className="grid gap-3 md:grid-cols-4">
                 <div className="space-y-1.5">
                   <Label>Contract</Label>
                   <MoneyInput
@@ -932,14 +1011,6 @@ export function BillingWorkspace({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Payments received</Label>
-                  <MoneyInput
-                    value={draft.paid_to_date}
-                    onValueChange={(paid_to_date) => setDraft({ ...draft, paid_to_date })}
-                    align="right"
-                  />
-                </div>
-                <div className="space-y-1.5">
                   <Label>Retainage %</Label>
                   <div className="relative">
                     <Input
@@ -954,6 +1025,14 @@ export function BillingWorkspace({
                   </div>
                 </div>
               </div>
+              {payAppError ? (
+                <div role="alert" className="rounded-md border border-danger/35 bg-danger/10 p-3">
+                  <div className="text-sm font-semibold text-danger">Pay application not saved</div>
+                  <p className="mt-1 text-xs text-danger/90">
+                    {payAppError} Your entries are still here; correct the issue or retry.
+                  </p>
+                </div>
+              ) : null}
               <div className="grid gap-3 md:grid-cols-[1fr_180px]">
                 <div className="space-y-1.5">
                   <Label>Notes</Label>
@@ -984,7 +1063,7 @@ export function BillingWorkspace({
               </div>
             </div>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => setPayAppOpen(false)}>
+              <Button variant="ghost" disabled={savingPayApp} onClick={() => setPayAppOpen(false)}>
                 Cancel
               </Button>
               <Button onClick={savePayApplication} disabled={savingPayApp}>
@@ -1211,19 +1290,10 @@ export function BillingWorkspace({
                     onUpdateOutputFormat={onUpdateOutputFormat}
                     onCreateInvoiceForApp={(app) => {
                       const draft = buildInvoiceDraft(app);
-                      // "Bill the owner" issues a real, open, client-visible receivable
-                      // so it ages on the A/R dashboard immediately. A draft invoice is
-                      // hidden from the receivables aging (ReceivablesCockpit filters
-                      // status !== "draft") — that was the "billed but hasn't carried on
-                      // the dashboard" report. A fresh pay app is status "draft", so its
-                      // invoice would inherit "draft"; promote that to a sent, visible
-                      // invoice. (An already paid/partially-paid draft keeps its status.)
-                      const issued =
-                        draft.status === "draft"
-                          ? { ...draft, status: "sent" as const, client_visible: true }
-                          : draft;
-                      // Fire-and-forget: invoiceCreate's onError surfaces failures.
-                      void onCreateInvoice(issued).catch(() => undefined);
+                      // Creation is intentionally draft-only. Issuing and client
+                      // visibility belong to the audited Send command, where the
+                      // biller confirms recipients and delivery can be retried safely.
+                      void onCreateInvoice(draft).catch(() => undefined);
                     }}
                     invoicedApplicationIds={invoicedApplicationIds}
                     recipientEmails={invoiceRecipients.map((access) => access.email)}
@@ -1275,11 +1345,13 @@ export function BillingWorkspace({
             </TabsContent>
 
             <TabsContent value="budget" className="mt-0">
-              <BillingSovTable
-                buckets={buckets}
-                changeOrders={changeOrders}
-                changeOrderAllocations={billingWorkspace?.changeOrderAllocations ?? []}
-              />
+              {renderEnhancedBillingPanel((workspace) => (
+                <BillingSovTable
+                  buckets={buckets}
+                  changeOrders={changeOrders}
+                  changeOrderAllocations={workspace.changeOrderAllocations}
+                />
+              ))}
             </TabsContent>
 
             <TabsContent value="invoice-ledger" className="mt-0">
@@ -1299,6 +1371,7 @@ export function BillingWorkspace({
                   <Dialog
                     open={invoiceOpen}
                     onOpenChange={(open) => {
+                      if (savingInvoice) return;
                       setInvoiceOpen(open);
                       if (!open) setInvoiceError("");
                     }}
@@ -1374,8 +1447,12 @@ export function BillingWorkspace({
                                 <SelectItem value="draft">Draft</SelectItem>
                                 <SelectItem value="sent">Sent</SelectItem>
                                 <SelectItem value="viewed">Viewed</SelectItem>
-                                <SelectItem value="partially_paid">Partially paid</SelectItem>
-                                <SelectItem value="paid">Paid</SelectItem>
+                                <SelectItem value="partially_paid" disabled>
+                                  Partially paid · from payments
+                                </SelectItem>
+                                <SelectItem value="paid" disabled>
+                                  Paid · from payments
+                                </SelectItem>
                                 <SelectItem value="overdue">Overdue</SelectItem>
                                 <SelectItem value="void">Void</SelectItem>
                               </SelectContent>
@@ -1419,7 +1496,7 @@ export function BillingWorkspace({
                             />
                           </div>
                         </div>
-                        <div className="grid gap-3 md:grid-cols-4">
+                        <div className="grid gap-3 md:grid-cols-3">
                           <div className="space-y-1.5">
                             <Label>Subtotal</Label>
                             <MoneyInput
@@ -1466,16 +1543,6 @@ export function BillingWorkspace({
                               align="right"
                             />
                           </div>
-                          <div className="space-y-1.5">
-                            <Label>Paid</Label>
-                            <MoneyInput
-                              value={invoiceDraft.paid_amount}
-                              onValueChange={(paid_amount) =>
-                                setInvoiceDraft({ ...invoiceDraft, paid_amount })
-                              }
-                              align="right"
-                            />
-                          </div>
                         </div>
                         <label className="flex items-center gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-sm">
                           <input
@@ -1513,7 +1580,11 @@ export function BillingWorkspace({
                         </div>
                       ) : null}
                       <DialogFooter>
-                        <Button variant="ghost" onClick={() => setInvoiceOpen(false)}>
+                        <Button
+                          variant="ghost"
+                          disabled={savingInvoice}
+                          onClick={() => setInvoiceOpen(false)}
+                        >
                           Cancel
                         </Button>
                         <Button
@@ -1592,7 +1663,12 @@ export function BillingWorkspace({
                           }
                           savingPayment={savingPayment}
                           paymentMethodContext={paymentMethodContext}
-                          onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
+                          onPatch={(patch, options) =>
+                            onUpdateInvoice(invoice.id, patch, {
+                              expectedUpdatedAt: invoice.updated_at,
+                              ...options,
+                            })
+                          }
                           onDelete={() => onDeleteInvoice(invoice.id)}
                           onRecordPayment={onRecordPayment}
                           onReconcile={() => onReconcileInvoice(invoice.id)}
@@ -1608,16 +1684,18 @@ export function BillingWorkspace({
             <TabsContent value="pending-cos" className="mt-0 space-y-4">
               {/* Approved change orders become billable here: allocate each to an
               SOV cost code so it rolls into the next application's line 2. */}
-              <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
-                <ChangeOrderAllocationPanel
-                  changeOrders={changeOrders}
-                  buckets={buckets}
-                  allocations={billingWorkspace?.changeOrderAllocations ?? []}
-                  onAllocate={onAllocateChangeOrder}
-                  onRemoveAllocation={onRemoveChangeOrderAllocation}
-                  saving={savingAllocation}
-                />
-              </div>
+              {renderEnhancedBillingPanel((workspace) => (
+                <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
+                  <ChangeOrderAllocationPanel
+                    changeOrders={changeOrders}
+                    buckets={buckets}
+                    allocations={workspace.changeOrderAllocations}
+                    onAllocate={onAllocateChangeOrder}
+                    onRemoveAllocation={onRemoveChangeOrderAllocation}
+                    saving={savingAllocation}
+                  />
+                </div>
+              ))}
               <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
                 <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                   <div>
@@ -1719,6 +1797,14 @@ export function BillingWorkspace({
       </Tabs>
     </section>
   );
+}
+
+function newBillingApplicationCommandKey(command: string) {
+  const nonce =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `billing-application:${command}:${nonce}`;
 }
 
 function addDays(date: string, days: number) {

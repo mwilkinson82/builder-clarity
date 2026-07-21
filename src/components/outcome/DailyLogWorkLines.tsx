@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { SubcontractFinancialReadState } from "@/components/project/SubcontractFinancialReadState";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -521,6 +522,21 @@ function DailyLogWorkLinesImpl(
 
   const selectClass =
     "rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60";
+
+  if (projectSubsQuery.isLoading) {
+    return <SubcontractFinancialReadState loading />;
+  }
+  if (projectSubsQuery.isError || !projectSubsQuery.data) {
+    return (
+      <SubcontractFinancialReadState
+        error={projectSubsQuery.error}
+        retrying={projectSubsQuery.isFetching}
+        onRetry={() => {
+          void projectSubsQuery.refetch();
+        }}
+      />
+    );
+  }
 
   return (
     <div

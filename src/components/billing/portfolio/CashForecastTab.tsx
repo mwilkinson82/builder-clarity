@@ -45,12 +45,16 @@ export function CashForecastTab({
   projects,
   openInvoices,
   cockpitLoading,
+  cockpitError,
+  onCockpitRetry,
   today,
 }: {
   totals: PortfolioBillingTotals;
   projects: PortfolioBillingProject[];
   openInvoices: ReceivableInvoiceRow[];
   cockpitLoading: boolean;
+  cockpitError: string | null;
+  onCockpitRetry: () => void;
   today: string;
 }) {
   // Weekly inflow buckets: (a) open invoices by due date (cents-summed, then
@@ -93,6 +97,29 @@ export function CashForecastTab({
     [projects],
   );
 
+  // Open invoices are one of the two financial inputs to this forecast. Do
+  // not render a plausible-looking partial total while that dependency is
+  // loading or failed; a forecast must either be complete or say that it is
+  // unavailable.
+  if (cockpitLoading) {
+    return (
+      <div className="rounded-xl border border-hairline bg-card p-6 text-sm text-muted-foreground">
+        Loading the complete cash forecast...
+      </div>
+    );
+  }
+  if (cockpitError) {
+    return (
+      <div className="rounded-xl border border-danger/30 bg-danger/10 p-6">
+        <div className="text-sm font-medium text-danger">Cash forecast did not load</div>
+        <p className="mt-1 text-sm text-muted-foreground">{cockpitError}</p>
+        <Button size="sm" variant="outline" className="mt-4" onClick={onCockpitRetry}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="grid items-start gap-4 lg:grid-cols-[1.3fr_1fr]">
@@ -126,9 +153,7 @@ export function CashForecastTab({
             })}
           </div>
           <div className="mt-2.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-dark-panel-foreground/50">
-            {cockpitLoading
-              ? "Loading open invoices..."
-              : "Open invoices by due date + scheduled billings · outflows not yet tracked"}
+            Open invoices by due date + scheduled billings · outflows not yet tracked
           </div>
         </section>
 
