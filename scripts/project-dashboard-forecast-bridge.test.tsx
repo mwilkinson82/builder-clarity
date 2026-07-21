@@ -67,7 +67,10 @@ describe("Money dashboard forecast bridge", () => {
     expect(html).toContain("$480,000");
     expect(html).toContain("$3,200,000 original contract");
     expect(html).toContain("$2,720,000 original build cost");
-    expect(html).toContain("Approved CO margin");
+    // "CO" now carries a plain-English hover-help glossary tooltip, so the
+    // approved-CO label is split by a <span>; assert the parts around the term.
+    expect(html).toContain("+ Approved ");
+    expect(html).toContain(">CO</span> margin");
     expect(html).toContain("+$7,000");
     expect(html).toContain("Current signed GP target");
     expect(html).toContain("$487,000");
@@ -77,11 +80,14 @@ describe("Money dashboard forecast bridge", () => {
     expect(html).toContain("+$32,250");
     expect(html).toContain("GP before holds");
     expect(html).toContain("$204,250");
-    expect(html).toContain("Indicated GP · 0.9%");
+    // "Indicated GP" is wrapped in a glossary tooltip span.
+    expect(html).toContain(">Indicated GP</span> · 0.9%");
     expect(html).toContain("Gap to signed GP target");
     expect(html).toContain("$455,750 below current signed");
     expect(html).toContain("$173,000 total holds");
-    expect(html.indexOf("GP recovery bridge")).toBeLessThan(html.indexOf("01 · Revenue forecast"));
-    expect(html.indexOf("GP recovery bridge")).toBeLessThan(html.indexOf("02 · Cost forecast"));
+    // The "GP" in the bridge heading now carries a glossary span, so match the
+    // contiguous "recovery bridge" remainder for the ordering assertions.
+    expect(html.indexOf("recovery bridge")).toBeLessThan(html.indexOf("01 · Revenue forecast"));
+    expect(html.indexOf("recovery bridge")).toBeLessThan(html.indexOf("02 · Cost forecast"));
   });
 });

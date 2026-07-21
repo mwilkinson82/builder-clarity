@@ -542,7 +542,7 @@ export function EstimateWorkspace({
       );
       toast.success(
         isCanonicalDemo
-          ? "Your isolated Harbor working copy is ready"
+          ? "Your practice copy is ready"
           : asProjectEstimate
             ? "Estimate created from master"
             : isMasterSheet

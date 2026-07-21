@@ -840,7 +840,7 @@ function OwnerView({
                 </Link>
                 <Link to="/team" className="ow-company__row">
                   <span>Plan &amp; storage</span>
-                  <span className="ow-company__row-meta">62%</span>
+                  <span className="ow-company__row-meta">→</span>
                 </Link>
               </div>
             </aside>

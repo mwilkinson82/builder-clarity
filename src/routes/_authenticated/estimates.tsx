@@ -331,7 +331,7 @@ function EstimatesPage() {
 
   const createWorkingCopyMutation = useMutation({
     mutationFn: () => {
-      if (!canonicalDemo) throw new Error("The canonical sample is not available yet.");
+      if (!canonicalDemo) throw new Error("The sample estimate is not available yet.");
       return duplicateEstimateFn({
         data: {
           id: canonicalDemo.id,
@@ -342,7 +342,7 @@ function EstimatesPage() {
     },
     onSuccess: (result) => {
       workingCopyOperationKeyRef.current = crypto.randomUUID();
-      toast.success("Your isolated working copy is ready.");
+      toast.success("Your practice copy is ready.");
       navigate({ to: "/estimates/$estimateId", params: { estimateId: result.id } });
     },
     onError: (error) =>
@@ -406,10 +406,10 @@ function EstimatesPage() {
               </p>
               <h2 className="mt-1 font-serif text-xl">{canonicalDemo.name}</h2>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                This product-owned sample is locked at{" "}
+                This is a locked example, priced at{" "}
                 {fmtUSD(canonicalDemo.total_with_markups_cents / 100)} so every estimator starts
-                from the same trusted baseline. Open it read-only or create an isolated copy for
-                practice.
+                from the same trusted baseline. Open it read-only, or duplicate it to your own
+                practice copy to edit.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

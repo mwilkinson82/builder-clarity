@@ -248,7 +248,7 @@ function PortfolioPage({
   );
   const currentViewLabel =
     portfolioTab === "projects"
-      ? "Live project IOR control"
+      ? "Live project controls"
       : "Sales CRM, relationships, and bid pursuits";
   const managerNames = useMemo(
     () =>
@@ -416,7 +416,9 @@ function PortfolioPage({
       done: onboardingHasCompany,
       action: (
         <Button asChild size="sm" variant="outline">
-          <Link to="/team">Open company</Link>
+          <Link to="/team" search={{ section: "company" }}>
+            Open company
+          </Link>
         </Button>
       ),
     },
@@ -622,10 +624,10 @@ function PortfolioPage({
                       onValueChange={(v) => setReviewFilter(v as PortfolioReviewFilter)}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="IOR review" />
+                        <SelectValue placeholder="Needs review" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All IOR reviews</SelectItem>
+                        <SelectItem value="all">All reviews</SelectItem>
                         <SelectItem value="stale">Stale 30+ days</SelectItem>
                         <SelectItem value="current">Current</SelectItem>
                         <SelectItem value="never">Never reviewed</SelectItem>
@@ -742,8 +744,8 @@ function PortfolioProjectLedger({
         <div>Project</div>
         <div className="text-center">Financials</div>
         <div>Risk exposure</div>
-        <div>IOR controls</div>
-        <div className="text-right">Posture</div>
+        <div>Project controls</div>
+        <div className="text-right">Status</div>
       </div>
 
       {projects.length === 0 ? (
@@ -813,10 +815,10 @@ function PortfolioProjectLedger({
                       </div>
                       {isDemo && (
                         <span
-                          title="Seeded Overwatch teaching project"
+                          title="Sample project Overwatch sets up so you can explore the app"
                           className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
                         >
-                          Demo IOR
+                          Sample
                         </span>
                       )}
                       {project.warning_count > 0 && (
@@ -1065,7 +1067,7 @@ function EmptyState() {
               Step 3
             </div>
             <div className="mt-1 text-xs leading-relaxed text-foreground">
-              Work the job from its IOR page — schedule, risks, and billing.
+              Work the job from its project page — schedule, risks, and billing.
             </div>
           </div>
         </div>
@@ -1761,7 +1763,7 @@ function NewProjectButton({
               <Input
                 value={projectManager}
                 onChange={(e) => setProjectManager(e.target.value)}
-                placeholder="e.g. Marshall Wilkinson"
+                placeholder="Assign a project manager"
               />
             </div>
             <div className="space-y-1.5">

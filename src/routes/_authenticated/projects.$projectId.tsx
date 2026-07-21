@@ -319,7 +319,8 @@ const projectNavGroupKeyForTab = (tab: ProjectTabValue) =>
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   ssr: false,
-  head: () => ({ meta: [{ title: "Project IOR — Overwatch" }] }),
+  // Pre-load fallback only; ProjectPage swaps in the real project name once loaded.
+  head: () => ({ meta: [{ title: "Project — Overwatch" }] }),
   validateSearch: (
     search: Record<string, unknown>,
   ): { tab?: ProjectTabValue; wipView?: "daily" | "production" } => {
@@ -534,6 +535,15 @@ function ProjectPage() {
     queryKey: ["projects"],
     queryFn: () => list(),
   });
+
+  // Browser-tab title reflects the actual project name once loaded (the route's
+  // static head is only a pre-load fallback). Replaces the old "Project IOR" jargon.
+  const projectName = data?.project?.name;
+  useEffect(() => {
+    if (typeof document !== "undefined" && projectName) {
+      document.title = `${projectName} — Overwatch`;
+    }
+  }, [projectName]);
 
   const createExposureFn = useServerFn(createExposure);
   const updateExposureFn = useServerFn(updateExposure);
