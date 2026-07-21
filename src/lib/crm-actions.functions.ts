@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 import {
   CRM_ONBOARDING_TASK_TEMPLATES,
   datePlusDays,
@@ -296,6 +297,7 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
   .inputValidator((input) => sendInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const actionResult = await table(context.supabase, "pipeline_next_actions")
       .select("*")
@@ -601,6 +603,7 @@ export const createCrmOnboardingPlan = createServerFn({ method: "POST" })
   .inputValidator((input) => createPlanInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const opportunity = await table(context.supabase, "pipeline_opportunities")
       .select("id,name,client,stage,converted_project_id,assigned_to")
       .eq("id", data.opportunity_id)
@@ -614,7 +617,19 @@ export const createCrmOnboardingPlan = createServerFn({ method: "POST" })
       throw new Error("Start onboarding after the opportunity is marked Won.");
     }
     const ownerUserId = data.owner_user_id ?? context.userId;
-    const membership = await table(context.supabase, "organization_memberships")
+    // Phase 3: CRM managers don't necessarily hold company.manage_team, so
+    // OTHER members' membership rows are no longer readable on the user's
+    // client. This is only an "active member of the caller's own org" check,
+    // so it runs on the admin client (self-ownership still validates on the
+    // user's client when a service key is not configured).
+    let membershipCheckClient: unknown = context.supabase;
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      membershipCheckClient = supabaseAdmin;
+    } catch {
+      // Local/dev without a service role key: keep the user's client.
+    }
+    const membership = await table(membershipCheckClient, "organization_memberships")
       .select("user_id")
       .eq("organization_id", organizationId)
       .eq("user_id", ownerUserId)
@@ -682,6 +697,7 @@ export const updateCrmOnboardingTask = createServerFn({ method: "POST" })
   .inputValidator((input) => taskInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const task = await table(context.supabase, "crm_onboarding_tasks")
       .select("id,plan_id,status")
       .eq("id", data.task_id)

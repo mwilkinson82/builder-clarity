@@ -655,6 +655,35 @@ function organizationLogoUrl(
   return versionAssetUrl(data.publicUrl, str(organization.updated_at));
 }
 
+/**
+ * Phase 3 capability split: the organizations base row is readable only by
+ * holders of company.manage_settings / billing.manage / company.manage_team.
+ * Every other member reads the SECURITY DEFINER organizations_directory
+ * projection (identity + plan + quota fields; membership checked inside).
+ * Returns undefined when the RPC is not deployed yet (pre-migration window)
+ * so callers can keep the legacy direct read; null when the caller is not a
+ * member of that organization.
+ */
+async function organizationDirectoryRow(
+  context: { supabase: unknown },
+  organizationId: string,
+): Promise<Record<string, unknown> | null | undefined> {
+  const res = await dynamicRpc(context.supabase, "organizations_directory", {
+    p_org_id: organizationId,
+  });
+  if (res.error) {
+    const message = (res.error.message ?? "").toLowerCase();
+    const rpcMissing =
+      res.error.code === "PGRST202" ||
+      res.error.code === "42883" ||
+      message.includes("function organizations_directory");
+    if (rpcMissing) return undefined;
+    throw new Error(res.error.message);
+  }
+  const rows = Array.isArray(res.data) ? res.data : [res.data].filter(Boolean);
+  return (rows[0] as Record<string, unknown> | undefined) ?? null;
+}
+
 const normalizeSovMappingProfile = (row: Record<string, unknown>): SovMappingProfileRow => ({
   id: row.id as string,
   organization_id: row.organization_id as string,
@@ -1141,11 +1170,25 @@ async function loadDecisionOwnerOptions(
   context: { supabase: unknown },
   project: ProjectRow,
 ): Promise<DecisionOwnerOption[]> {
-  const projectMembersQuery = dynamicTable(context.supabase, "project_memberships")
+  // Phase 3: membership rosters (and, through the profiles RLS join,
+  // co-member profiles) are company.manage_team data, but the decision-owner
+  // picker is a plain collaboration surface — names/emails of the caller's own
+  // teammates. The caller already passed project RLS to get here, so the
+  // roster + profile reads run on the admin client scoped to this project's
+  // organization. Falls back to the caller's client (self-only rows, a
+  // degraded but safe picker) when admin credentials are not configured.
+  let rosterClient: unknown = context.supabase;
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    rosterClient = supabaseAdmin;
+  } catch {
+    // Local/dev without a service role key: keep the user's client.
+  }
+  const projectMembersQuery = dynamicTable(rosterClient, "project_memberships")
     .select("user_id,role,status")
     .eq("project_id", project.id);
   const organizationMembersQuery = project.organization_id
-    ? dynamicTable(context.supabase, "organization_memberships")
+    ? dynamicTable(rosterClient, "organization_memberships")
         .select("user_id,role,status,invited_email")
         .eq("organization_id", project.organization_id)
     : Promise.resolve({ data: [], error: null });
@@ -1188,7 +1231,7 @@ async function loadDecisionOwnerOptions(
   const profilesRes =
     userIds.length === 0
       ? { data: [], error: null }
-      : await dynamicTable(context.supabase, "profiles")
+      : await dynamicTable(rosterClient, "profiles")
           .select("id,email,full_name,company_title")
           .in("id", userIds);
   if (profilesRes.error && !isMissingRestRelation(profilesRes.error, "profiles")) {
@@ -1580,6 +1623,25 @@ export const listProjects = createServerFn({ method: "GET" })
               .in("id", organizationIds);
       if (fallbackOrganizationsRes.error) throw new Error(fallbackOrganizationsRes.error.message);
       organizationRows = (fallbackOrganizationsRes.data ?? []) as Record<string, unknown>[];
+    }
+    // Phase 3: plain members can no longer read the organizations base row, so
+    // the read above returns fewer rows for them (RLS filters, no error). Fill
+    // the gaps from the member-safe directory projection so portfolio rows
+    // keep their company name/logo. Directory misses (pre-migration RPC or
+    // non-member orgs) simply stay unlabeled, as before.
+    {
+      const foundOrganizationIds = new Set(organizationRows.map((row) => str(row.id)));
+      const missingOrganizationIds = organizationIds.filter((id) => !foundOrganizationIds.has(id));
+      if (missingOrganizationIds.length > 0) {
+        const directoryRows = await Promise.all(
+          missingOrganizationIds.map((id) =>
+            organizationDirectoryRow(context, id).catch(() => null),
+          ),
+        );
+        for (const row of directoryRows) {
+          if (row) organizationRows.push(row);
+        }
+      }
     }
 
     let dailyReportRows: Record<string, unknown>[] = [];
@@ -2033,32 +2095,53 @@ export const getProject = createServerFn({ method: "GET" })
 
     let project = normalizeProject(pRes.data as Record<string, unknown>);
     if (project.organization_id) {
-      const organizationRes = await dynamicTable(context.supabase, "organizations")
-        .select("id,name,logo_url,updated_at")
-        .eq("id", project.organization_id)
-        .maybeSingle();
-      if (organizationRes.error) {
-        if (!isMissingRestColumn(organizationRes.error, "logo_url")) {
-          throw new Error(organizationRes.error.message);
-        }
-        const fallbackOrganizationRes = await dynamicTable(context.supabase, "organizations")
-          .select("id,name,updated_at")
+      // Phase 3: the base organizations row is settings/billing/team data;
+      // every member gets name + logo from the directory projection instead.
+      const directoryOrganization = await organizationDirectoryRow(
+        context,
+        project.organization_id,
+      );
+      if (directoryOrganization) {
+        project = {
+          ...project,
+          organization_name: str(directoryOrganization.name),
+          organization_logo_url: organizationLogoUrl(context.supabase, directoryOrganization),
+        };
+      } else if (directoryOrganization === undefined) {
+        // Pre-migration window: the old member-read policy still applies.
+        const organizationRes = await dynamicTable(context.supabase, "organizations")
+          .select("id,name,logo_url,updated_at")
           .eq("id", project.organization_id)
           .maybeSingle();
-        if (fallbackOrganizationRes.error) throw new Error(fallbackOrganizationRes.error.message);
-        const fallbackOrganization = fallbackOrganizationRes.data as Record<string, unknown> | null;
-        project = {
-          ...project,
-          organization_name: str(fallbackOrganization?.name),
-          organization_logo_url: organizationLogoUrl(context.supabase, fallbackOrganization ?? {}),
-        };
-      } else if (organizationRes.data) {
-        const organization = organizationRes.data as Record<string, unknown>;
-        project = {
-          ...project,
-          organization_name: str(organization.name),
-          organization_logo_url: organizationLogoUrl(context.supabase, organization),
-        };
+        if (organizationRes.error) {
+          if (!isMissingRestColumn(organizationRes.error, "logo_url")) {
+            throw new Error(organizationRes.error.message);
+          }
+          const fallbackOrganizationRes = await dynamicTable(context.supabase, "organizations")
+            .select("id,name,updated_at")
+            .eq("id", project.organization_id)
+            .maybeSingle();
+          if (fallbackOrganizationRes.error) throw new Error(fallbackOrganizationRes.error.message);
+          const fallbackOrganization = fallbackOrganizationRes.data as Record<
+            string,
+            unknown
+          > | null;
+          project = {
+            ...project,
+            organization_name: str(fallbackOrganization?.name),
+            organization_logo_url: organizationLogoUrl(
+              context.supabase,
+              fallbackOrganization ?? {},
+            ),
+          };
+        } else if (organizationRes.data) {
+          const organization = organizationRes.data as Record<string, unknown>;
+          project = {
+            ...project,
+            organization_name: str(organization.name),
+            organization_logo_url: organizationLogoUrl(context.supabase, organization),
+          };
+        }
       }
     }
     const projectWithOrganization = project;
@@ -2447,14 +2530,24 @@ export const createProject = createServerFn({ method: "POST" })
       organizationId = activeOrganizationId as string;
     }
 
-    const { data: organization, error: orgError } = await context.supabase
-      .from("organizations")
-      .select("id,project_limit")
-      .eq("id", organizationId)
-      .single();
-    if (orgError) throw new Error(orgError.message);
-
-    const projectLimit = Number(organization.project_limit ?? 0);
+    // Phase 3: project creators don't necessarily hold the settings/billing/
+    // team capabilities that read the organizations base row; the member-safe
+    // directory projection carries project_limit for every active member.
+    let projectLimit = 0;
+    const directoryRow = await organizationDirectoryRow(context, organizationId);
+    if (directoryRow !== undefined) {
+      if (!directoryRow) throw new Error("This company is not available for your account.");
+      projectLimit = Number(directoryRow.project_limit ?? 0);
+    } else {
+      // Pre-migration window: the old member-read policy still applies.
+      const { data: organization, error: orgError } = await context.supabase
+        .from("organizations")
+        .select("id,project_limit")
+        .eq("id", organizationId)
+        .single();
+      if (orgError) throw new Error(orgError.message);
+      projectLimit = Number(organization.project_limit ?? 0);
+    }
     if (projectLimit > 0) {
       const { count: activeProjectCount, error: activeProjectError } = await context.supabase
         .from("projects")

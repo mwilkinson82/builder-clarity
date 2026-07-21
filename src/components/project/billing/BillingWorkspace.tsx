@@ -237,10 +237,15 @@ export function BillingWorkspace({
   focusStage?: string;
 }) {
   const loadPaymentMethodContext = useServerFn(getPaymentMethodContext);
-  const { data: paymentMethodContext } = useQuery({
+  // Phase 3: getPaymentMethodContext refuses callers without billing.manage /
+  // company.manage_settings. That refusal is expected for most of the project
+  // team — the workspace quietly hides the payment-method affordances instead
+  // of surfacing an error nobody here can act on.
+  const { data: paymentMethodContext, isError: paymentMethodContextRefused } = useQuery({
     queryKey: ["payment-method-context", project.id],
     queryFn: () => loadPaymentMethodContext({ data: { projectId: project.id } }),
     staleTime: 60_000,
+    retry: false,
   });
   const pendingCOs = changeOrders.filter((co) => co.status === "Pending");
   const weightedPending = pendingCOs.reduce(
@@ -378,7 +383,9 @@ export function BillingWorkspace({
       : invoiceRecipients.length === 0
         ? "Turn Billing On for at least one client seat in Client Portal before emailing invoices."
         : !paymentMethodContext
-          ? "PDF and email are ready. Checking online payment status..."
+          ? paymentMethodContextRefused
+            ? "PDF and email are ready. Online payment setup lives with your billing manager."
+            : "PDF and email are ready. Checking online payment status..."
           : !paymentMethodContext.stripeReady
             ? paymentMethodContext.stripeConnectStatus === "pending"
               ? "PDF and email are ready. Stripe is verifying the company account — card and bank debit unlock when verification finishes in Getting Paid."

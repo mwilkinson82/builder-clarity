@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireProjectOrgCapability } from "@/lib/capabilities-server";
 import {
   approvalGateDecisionStatus,
   calculateSelectionDates,
@@ -179,20 +180,18 @@ const str = (value: unknown, fallback = "") => (typeof value === "string" ? valu
 const num = (value: unknown) => (typeof value === "number" ? value : Number(value ?? 0));
 const bool = (value: unknown) => value === true;
 
+// Code-only missing-table matchers (PGRST205 = PostgREST unknown table,
+// 42P01 = Postgres undefined table). Message-TEXT matching is banned on
+// permission-adjacent branches: a permission-denied error naming the table
+// must SURFACE as an error, never render the panel silently empty.
 function isMissingSelections(error: unknown) {
   const candidate = error as { code?: string; message?: string } | null;
-  return (
-    candidate?.code === "PGRST205" ||
-    /project_selections|schema cache|could not find the table/i.test(candidate?.message ?? "")
-  );
+  return candidate?.code === "PGRST205" || candidate?.code === "42P01";
 }
 
 function isMissingApprovalGateLog(error: unknown) {
   const candidate = error as { code?: string; message?: string } | null;
-  return (
-    candidate?.code === "PGRST205" ||
-    /submittal_log_entries|schema cache|could not find the table/i.test(candidate?.message ?? "")
-  );
+  return candidate?.code === "PGRST205" || candidate?.code === "42P01";
 }
 
 function normalizeOption(row: Record<string, unknown>): ProjectSelectionOptionRow {
@@ -680,6 +679,14 @@ export const sendSelectionForClientDecision = createServerFn({ method: "POST" })
     const selection = selectionRes.data as Record<string, unknown>;
     const projectId = str(selection.project_id);
     await canManage(ctx, projectId);
+    // Phase 3: sending a package for a client decision flips client
+    // visibility — that is client-access management (client_portal.manage),
+    // not plain project editing (docs/ROLES.md §5).
+    await requireProjectOrgCapability(
+      { supabase: ctx.supabase, userId: ctx.userId },
+      projectId,
+      "client_portal.manage",
+    );
     const gateType = str(selection.approval_gate_type, "owner_selection");
     const rfiOutcome = str(selection.rfi_outcome);
     const requiresClientDecision =

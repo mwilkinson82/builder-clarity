@@ -7,7 +7,7 @@ import {
   jsonOk,
   readServerEnv,
   requireAuthedStripeContext,
-  requireCanManageOrganization,
+  requireManageSettings,
   stripePost,
   type StripeCheckoutSession,
 } from "@/lib/stripe.server";
@@ -100,7 +100,7 @@ export const Route = createFileRoute("/api/stripe/checkout/subscription")({
           const body = subscriptionCheckoutInput.parse(await request.json());
           const context = await requireAuthedStripeContext(request);
           const organizationId = await resolveOrganizationId(body.organizationId, context);
-          await requireCanManageOrganization(context, organizationId);
+          await requireManageSettings(context, organizationId);
 
           const { data: organization, error: orgError } = await dynamicTable(
             context.admin,

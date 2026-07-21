@@ -45,6 +45,42 @@ export function isMissingCreditsSchema(error: DynamicSupabaseError | null | unde
 export const CREDITS_SCHEMA_PENDING_MESSAGE =
   "AI credits are still being set up for this workspace. Try again after the latest database migration is applied.";
 
+/**
+ * Org credit balance for the caller. Phase 3 capability split: raw
+ * credit_ledger rows are company.manage_settings data, so every member reads
+ * the BALANCE through the SECURITY DEFINER public.get_org_credit_balance
+ * (is_org_member-checked inside). When that RPC is not deployed yet
+ * (pre-migration window) this falls back to the old direct ledger read, which
+ * the pre-split members-read RLS still allows. Errors (including the
+ * missing-credits-schema shape) are returned to the caller unchanged so each
+ * site keeps its own handling.
+ */
+export async function readOrgCreditBalance(
+  supabase: unknown,
+  organizationId: string,
+): Promise<DynamicSupabaseResult<number>> {
+  const viaRpc = await (
+    supabase as {
+      rpc(fn: string, args: Record<string, unknown>): Promise<DynamicSupabaseResult<number>>;
+    }
+  ).rpc("get_org_credit_balance", { p_org_id: organizationId });
+  if (!viaRpc.error) return { data: Math.trunc(num(viaRpc.data)), error: null };
+
+  const message = viaRpc.error.message?.toLowerCase() ?? "";
+  const rpcMissing =
+    viaRpc.error.code === "PGRST202" ||
+    viaRpc.error.code === "42883" ||
+    message.includes("function get_org_credit_balance");
+  if (!rpcMissing) return { data: null, error: viaRpc.error };
+
+  const ledger = (await dynamicTable(supabase, "credit_ledger")
+    .select("delta")
+    .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
+  if (ledger.error) return { data: null, error: ledger.error };
+  const balance = (ledger.data ?? []).reduce((sum, row) => sum + num(row.delta), 0);
+  return { data: Math.trunc(balance), error: null };
+}
+
 export interface AiOperationRow {
   id: string;
   organization_id: string;

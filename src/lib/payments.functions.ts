@@ -50,8 +50,16 @@ function isMissingRestFunction(
   error: { code?: string; message?: string } | null,
   fn: string,
 ): boolean {
-  const message = (error?.message ?? "").toLowerCase();
-  return error?.code === "PGRST202" || message.includes(`function ${fn.toLowerCase()}`);
+  if (!error) return false;
+  // Genuine "the function is not deployed yet" only. Code-based: PGRST202
+  // (PostgREST cannot find it in the schema cache) / 42883 (Postgres
+  // undefined_function). A permission-denied error is 42501 ("permission
+  // denied for function <fn>") and is a REAL denial — it must fail closed and
+  // must never be classified as missing, which would route to a coarser
+  // fallback check.
+  if (error.code === "PGRST202" || error.code === "42883") return true;
+  const message = (error.message ?? "").toLowerCase();
+  return message.includes("could not find the function") && message.includes(fn.toLowerCase());
 }
 
 /**
@@ -106,6 +114,51 @@ async function requireBillingOrSettingsCapability(
     if (canManage) return;
   }
   throw new Error("You do not have permission to manage how this company gets paid.");
+}
+
+/**
+ * Bank remittance details (raw routing/account numbers) may only leave the
+ * server for callers holding billing.manage OR financials.view on the
+ * invoice's project. Pre-migration fallback (house pattern): when the
+ * capability RPCs are not deployed yet, only can_manage_project callers keep
+ * the pre-split behavior.
+ */
+async function requireRemittanceAccess(
+  context: PaymentsServerContext,
+  organizationId: string,
+  projectId: string,
+) {
+  const denied = new Error(
+    'Your access does not include invoice bank details — ask an admin for the "Run billing" or "See financials" capability.',
+  );
+  const billing = await hasOrgCapability(context, organizationId, "billing.manage");
+  if (billing === true) return;
+
+  const fin = await dynamicRpc(context.supabase, "can_view_financials", {
+    p_project_id: projectId,
+  });
+  if (!fin.error && fin.data) return;
+  if (fin.error && !isMissingRestFunction(fin.error, "can_view_financials")) {
+    throw new Error(fin.error.message);
+  }
+
+  // The pre-split can_manage_project fallback fires ONLY when the capability
+  // layer is genuinely absent (pre-migration) — i.e. BOTH capability RPCs are
+  // missing. An explicit `false` from either arm (RPC deployed, caller simply
+  // lacks the flag) is a denial, never a fallback: fail closed so a fin-only
+  // holder can't be handed bank routing/account numbers via can_manage_project.
+  const capabilityLayerMissing =
+    billing === null &&
+    fin.error != null &&
+    isMissingRestFunction(fin.error, "can_view_financials");
+  if (capabilityLayerMissing) {
+    const manage = await dynamicRpc(context.supabase, "can_manage_project", {
+      p_project_id: projectId,
+    });
+    if (manage.error) throw new Error(manage.error.message);
+    if (manage.data) return;
+  }
+  throw denied;
 }
 
 type PaymentProfileRow = {
@@ -355,6 +408,10 @@ async function buildPaymentMethodContext(
   ctx: PaymentsServerContext,
   organizationId: string,
 ): Promise<PaymentMethodContext> {
+  // Phase 3 verified: every caller of this builder sits behind
+  // requireBillingOrSettingsCapability, and both billing.manage and
+  // company.manage_settings pass the tightened organizations SELECT policy —
+  // so these reads stay on the user's client.
   const [{ row: profile }, org] = await Promise.all([
     loadPaymentProfileRow(ctx.supabase, organizationId),
     loadOrganizationStripe(ctx.supabase, organizationId),
@@ -417,6 +474,12 @@ export const getInvoiceRemittance = createServerFn({ method: "GET" })
     const organizationId =
       ((project as Record<string, unknown> | null)?.organization_id as string | null) ?? null;
     if (!organizationId) return null;
+
+    // Phase 3: raw routing/account numbers require billing.manage OR
+    // financials.view on this project — invoice readability alone is not
+    // enough. (Portal clients get remittance through getClientPortalProject's
+    // invoicePaymentOptions, never through this function.)
+    await requireRemittanceAccess(ctx, organizationId, invoiceRow.project_id as string);
 
     const { row: profile } = await loadPaymentProfileRow(ctx.supabase, organizationId);
     const view = profileView(profile, false);
@@ -1017,5 +1080,8 @@ export const getPaymentMethodContext = createServerFn({ method: "GET" })
       organizationId = (project as { organization_id?: string } | null)?.organization_id ?? null;
     }
     if (!organizationId) organizationId = await ensureCurrentOrganization(ctx);
+    // Phase 3: Stripe account ids, Connect statuses, and the payment limit
+    // are billing/settings data — no longer returned to every authed member.
+    await requireBillingOrSettingsCapability(ctx, organizationId);
     return buildPaymentMethodContext(ctx, organizationId);
   });

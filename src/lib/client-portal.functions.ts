@@ -10,6 +10,7 @@ import type {
   PaymentLedgerRow,
 } from "@/lib/projects.functions";
 import type { BillingLineItemRow } from "@/lib/billing.functions";
+import { requireProjectOrgCapability } from "@/lib/capabilities-server";
 import { ORGANIZATION_STRIPE_SELECT, stripeConnectionForMode } from "@/lib/stripe-mode";
 
 export type ClientAccessStatus = "pending" | "active" | "revoked";
@@ -206,69 +207,56 @@ function db(context: ServerContext) {
   return context.supabase as SupabaseLike;
 }
 
+/**
+ * Error-code-only matchers. Permission-relevant branches must never key off
+ * message TEXT: a permission-denied error whose message happens to mention a
+ * table or "schema cache" is a real failure, not a pre-migration state, and
+ * has to surface — never render as an empty-but-healthy portal (fail closed).
+ * PGRST202/42883 = function not deployed; PGRST205/42P01 = table not deployed.
+ */
 function isMissingRpcError(error: unknown) {
-  const message = str((error as { message?: unknown })?.message);
   const code = str((error as { code?: unknown })?.code);
-  return (
-    code === "PGRST202" ||
-    /schema cache|could not find the function|function .* does not exist/i.test(message)
-  );
+  return code === "PGRST202" || code === "42883";
 }
 
-function isMissingBillingApplicationsError(error: unknown) {
-  const message = str((error as { message?: unknown })?.message);
+function isMissingRelationError(error: unknown) {
   const code = str((error as { code?: unknown })?.code);
-  return (
-    code === "PGRST205" ||
-    /billing_applications|schema cache|could not find the table/i.test(message)
-  );
+  return code === "PGRST205" || code === "42P01";
 }
 
-function isMissingBillingApplicationEventsError(error: unknown) {
-  const message = str((error as { message?: unknown })?.message);
-  const code = str((error as { code?: unknown })?.code);
-  return (
-    code === "PGRST205" ||
-    /billing_application_events|schema cache|could not find the table/i.test(message)
-  );
-}
-
-function isMissingBillingInvoicesError(error: unknown) {
-  const message = str((error as { message?: unknown })?.message);
-  const code = str((error as { code?: unknown })?.code);
-  return (
-    code === "PGRST205" || /billing_invoices|schema cache|could not find the table/i.test(message)
-  );
-}
-
-function isMissingPaymentLedgerError(error: unknown) {
-  const message = str((error as { message?: unknown })?.message);
-  const code = str((error as { code?: unknown })?.code);
-  return (
-    code === "PGRST205" || /payment_ledger|schema cache|could not find the table/i.test(message)
-  );
-}
-
-function isMissingBillingLineItemsError(error: unknown) {
-  const message = str((error as { message?: unknown })?.message);
-  const code = str((error as { code?: unknown })?.code);
-  return (
-    code === "PGRST205" || /billing_line_items|schema cache|could not find the table/i.test(message)
-  );
-}
-
+/**
+ * Per-seat module switch, fail CLOSED: a failed permission read never grants
+ * a module. The only tolerated error is the RPC not being deployed yet
+ * (code-matched), which also denies the module rather than falling open to
+ * base client access; any other error throws so the portal shows an error
+ * instead of silently mis-rendering.
+ */
 async function readClientModuleAccess(
   context: ServerContext,
   functionName: string,
   projectId: string,
-  fallback: boolean,
 ) {
   const { data, error } = await db(context).rpc(functionName, { p_project_id: projectId });
   if (error) {
-    if (isMissingRpcError(error)) return fallback;
+    if (isMissingRpcError(error)) return false;
     throw new Error(error.message);
   }
   return Boolean(data);
+}
+
+/**
+ * Phase 3: internal users' billing visibility in the portal preview follows
+ * financials.view (can_view_financials = the capability on a readable
+ * project), not bare project read. Pre-migration fallback: only
+ * can_manage_project callers keep the pre-split behavior.
+ */
+async function internalCanViewProjectFinancials(context: ServerContext, projectId: string) {
+  const res = await db(context).rpc("can_view_financials", { p_project_id: projectId });
+  if (!res.error) return Boolean(res.data);
+  if (!isMissingRpcError(res.error)) throw new Error(res.error.message);
+  const manage = await db(context).rpc("can_manage_project", { p_project_id: projectId });
+  if (manage.error) throw new Error(manage.error.message);
+  return Boolean(manage.data);
 }
 
 function normalizeContact(row: Record<string, unknown>): ClientContactRow {
@@ -296,10 +284,12 @@ function normalizeAccess(row: Record<string, unknown>): ProjectClientAccessRow {
     client_user_id: (row.client_user_id as string | null) ?? null,
     role: str(row.role, "client"),
     status: str(row.status, "pending") as ClientAccessStatus,
-    can_view_change_orders: bool(row.can_view_change_orders, true),
+    // Phase 3 fail-closed: the DB gate fns require the flag to be literally
+    // true, so a legacy NULL already denies at the portal — display the same.
+    can_view_change_orders: bool(row.can_view_change_orders),
     can_view_daily_reports: bool(row.can_view_daily_reports),
     can_view_billing: bool(row.can_view_billing),
-    can_view_selections: bool(row.can_view_selections, true),
+    can_view_selections: bool(row.can_view_selections),
     accepted_at: (row.accepted_at as string | null) ?? null,
     last_sent_at: (row.last_sent_at as string | null) ?? null,
     created_at: str(row.created_at),
@@ -548,8 +538,24 @@ async function requireCanManageProject(context: ServerContext, projectId: string
   if (!data) throw new Error("You do not have permission to manage this project.");
 }
 
-async function loadProjectForManagement(context: ServerContext, projectId: string) {
+/**
+ * Phase 3: client-access management (contacts, portal seats, per-seat
+ * switches, share-to-client actions) requires the "Manage client access"
+ * capability ON TOP of project-manage (docs/ROLES.md §5). Project owners
+ * keep managing their own project's client access; pre-migration the
+ * combined check degrades to can_manage_project (the pre-split behavior).
+ */
+async function requireClientPortalManage(context: ServerContext, projectId: string) {
   await requireCanManageProject(context, projectId);
+  await requireProjectOrgCapability(
+    { supabase: context.supabase, userId: context.userId },
+    projectId,
+    "client_portal.manage",
+  );
+}
+
+async function loadProjectForManagement(context: ServerContext, projectId: string) {
+  await requireClientPortalManage(context, projectId);
   const { data, error } = await db(context)
     .from("projects")
     .select("id,organization_id,name,client,job_number,project_manager")
@@ -704,7 +710,7 @@ export const updateClientProjectAccess = createServerFn({ method: "POST" })
       .single();
     if (accessError) throw new Error(accessError.message);
     const accessRow = record(access);
-    await requireCanManageProject(context as ServerContext, accessRow.project_id as string);
+    await requireClientPortalManage(context as ServerContext, accessRow.project_id as string);
 
     const { data: saved, error } = await db(context)
       .from("project_client_access")
@@ -729,7 +735,7 @@ export const revokeClientProjectAccess = createServerFn({ method: "POST" })
       .single();
     if (accessError) throw new Error(accessError.message);
     const accessRow = record(access);
-    await requireCanManageProject(context as ServerContext, accessRow.project_id as string);
+    await requireClientPortalManage(context as ServerContext, accessRow.project_id as string);
 
     const { error } = await db(context)
       .from("project_client_access")
@@ -752,7 +758,7 @@ export const setChangeOrderClientVisibility = createServerFn({ method: "POST" })
       .single();
     if (coError) throw new Error(coError.message);
     const changeOrderRow = record(co);
-    await requireCanManageProject(context as ServerContext, changeOrderRow.project_id as string);
+    await requireClientPortalManage(context as ServerContext, changeOrderRow.project_id as string);
 
     const patch = data.client_visible
       ? {
@@ -793,7 +799,7 @@ export const sendChangeOrderToClient = createServerFn({ method: "POST" })
       .single();
     if (coError) throw new Error(coError.message);
     const changeOrderRow = record(co);
-    await requireCanManageProject(context as ServerContext, changeOrderRow.project_id as string);
+    await requireClientPortalManage(context as ServerContext, changeOrderRow.project_id as string);
 
     const alreadySent = Boolean(changeOrderRow.client_sent_at);
     const currentStatus = str(changeOrderRow.client_status, "not_sent");
@@ -957,25 +963,29 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
     }
 
     const [canViewChangeOrders, canViewDailyReports, canViewBilling] = internalCanReadProject
-      ? [true, true, true]
+      ? // Internal users: project read shows the portal preview, but the
+        // billing block (invoices, payment ledger, bank remittance) follows
+        // the financials capability.
+        [
+          true,
+          true,
+          await internalCanViewProjectFinancials(context as ServerContext, data.projectId),
+        ]
       : await Promise.all([
           readClientModuleAccess(
             context as ServerContext,
             "can_view_client_change_orders",
             data.projectId,
-            clientCanReadProject,
           ),
           readClientModuleAccess(
             context as ServerContext,
             "can_view_client_daily_reports",
             data.projectId,
-            false,
           ),
           readClientModuleAccess(
             context as ServerContext,
             "can_view_client_billing",
             data.projectId,
-            false,
           ),
         ]);
 
@@ -1053,19 +1063,16 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
     if (projectRes.error) throw new Error(projectRes.error.message);
     if (changeOrdersRes.error) throw new Error(changeOrdersRes.error.message);
     if (approvalsRes.error) throw new Error(approvalsRes.error.message);
-    if (
-      billingApplicationsRes.error &&
-      !isMissingBillingApplicationsError(billingApplicationsRes.error)
-    ) {
+    if (billingApplicationsRes.error && !isMissingRelationError(billingApplicationsRes.error)) {
       throw new Error(billingApplicationsRes.error.message);
     }
-    if (billingEventsRes.error && !isMissingBillingApplicationEventsError(billingEventsRes.error)) {
+    if (billingEventsRes.error && !isMissingRelationError(billingEventsRes.error)) {
       throw new Error(billingEventsRes.error.message);
     }
-    if (billingInvoicesRes.error && !isMissingBillingInvoicesError(billingInvoicesRes.error)) {
+    if (billingInvoicesRes.error && !isMissingRelationError(billingInvoicesRes.error)) {
       throw new Error(billingInvoicesRes.error.message);
     }
-    if (paymentLedgerRes.error && !isMissingPaymentLedgerError(paymentLedgerRes.error)) {
+    if (paymentLedgerRes.error && !isMissingRelationError(paymentLedgerRes.error)) {
       throw new Error(paymentLedgerRes.error.message);
     }
     if (dailyReportsRes.error) throw new Error(dailyReportsRes.error.message);
@@ -1102,7 +1109,7 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
           normalizedBillingApplications.map((app: ClientPortalBillingApplication) => app.id),
         )
         .order("sort_order");
-      if (lineItemsRes.error && !isMissingBillingLineItemsError(lineItemsRes.error)) {
+      if (lineItemsRes.error && !isMissingRelationError(lineItemsRes.error)) {
         throw new Error(lineItemsRes.error.message);
       }
       if (!lineItemsRes.error) {

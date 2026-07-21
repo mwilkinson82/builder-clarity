@@ -1043,6 +1043,18 @@ function TeamPage() {
     clientPermissionSavingKey === `${accessId}:${field}`;
   // One admin list: the workspace payload asks the database's is_super_admin().
   const canOpenOverwatchAdmin = Boolean(team?.isSuperAdmin);
+  // Phase 3: client-portal management is its own capability, no longer
+  // bundled with people management. The server enforces client_portal.manage
+  // on every client-access mutation (crm.manage only reads client data), so
+  // the Clients controls follow the same flag.
+  const canManageClients = Boolean(team?.canManageClientPortal || team?.isSuperAdmin);
+  // Phase 3: the commercial block (plan limits, subscription, Stripe state)
+  // is only in the payload for settings/billing holders — everyone else gets
+  // zero values from the projection, which must read as "restricted", never
+  // as a real $0/0-limit company.
+  const canSeeCommercialBlock = Boolean(
+    team?.isSuperAdmin || team?.canManageSettings || team?.canManageBilling,
+  );
   const subscriptionReady = Boolean(
     team?.organization.stripe_customer_id && team?.organization.stripe_subscription_id,
   );
@@ -1250,7 +1262,30 @@ function TeamPage() {
                 </div>
               )}
 
-              {section === "plan" && (
+              {section === "plan" && !canSeeCommercialBlock && (
+                <section
+                  data-testid="company-command-center-restricted"
+                  className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline shadow-card md:grid-cols-2"
+                >
+                  <UsageCard
+                    icon={<ShieldCheck className="h-4 w-4" />}
+                    label="Access"
+                    value={accessLabelForMember(
+                      team.currentUserRole ?? "member",
+                      team.currentUserCapabilities,
+                    )}
+                    sub={team.canManageTeam ? "can manage people" : "limited access"}
+                  />
+                  <UsageCard
+                    icon={<Gauge className="h-4 w-4" />}
+                    label="Plan & usage"
+                    value="Restricted"
+                    sub={'Needs the "Manage company settings" or "Run billing" capability'}
+                  />
+                </section>
+              )}
+
+              {section === "plan" && canSeeCommercialBlock && (
                 <section
                   data-testid="company-command-center"
                   className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline shadow-card md:grid-cols-3 xl:grid-cols-6"
@@ -1650,7 +1685,7 @@ function TeamPage() {
                       <Label>Project</Label>
                       <Select
                         value={clientInviteForm.projectId}
-                        disabled={!team.canManageTeam}
+                        disabled={!canManageClients}
                         onValueChange={(projectId) =>
                           setClientInviteForm((current) => ({ ...current, projectId }))
                         }
@@ -1673,7 +1708,7 @@ function TeamPage() {
                       <Label>Client name</Label>
                       <Input
                         value={clientInviteForm.name}
-                        disabled={!team.canManageTeam}
+                        disabled={!canManageClients}
                         onChange={(event) =>
                           setClientInviteForm((current) => ({
                             ...current,
@@ -1688,7 +1723,7 @@ function TeamPage() {
                       <Input
                         type="email"
                         value={clientInviteForm.email}
-                        disabled={!team.canManageTeam}
+                        disabled={!canManageClients}
                         onChange={(event) =>
                           setClientInviteForm((current) => ({
                             ...current,
@@ -1702,7 +1737,7 @@ function TeamPage() {
                       <Label>Client company</Label>
                       <Input
                         value={clientInviteForm.company}
-                        disabled={!team.canManageTeam}
+                        disabled={!canManageClients}
                         onChange={(event) =>
                           setClientInviteForm((current) => ({
                             ...current,
@@ -1715,7 +1750,7 @@ function TeamPage() {
                       <Label>Title</Label>
                       <Input
                         value={clientInviteForm.title}
-                        disabled={!team.canManageTeam}
+                        disabled={!canManageClients}
                         onChange={(event) =>
                           setClientInviteForm((current) => ({
                             ...current,
@@ -1728,7 +1763,7 @@ function TeamPage() {
                       <Label>Phone</Label>
                       <Input
                         value={clientInviteForm.phone}
-                        disabled={!team.canManageTeam}
+                        disabled={!canManageClients}
                         onChange={(event) =>
                           setClientInviteForm((current) => ({
                             ...current,
@@ -1741,7 +1776,7 @@ function TeamPage() {
                       <Label>Notes</Label>
                       <Input
                         value={clientInviteForm.notes}
-                        disabled={!team.canManageTeam}
+                        disabled={!canManageClients}
                         onChange={(event) =>
                           setClientInviteForm((current) => ({
                             ...current,
@@ -1763,7 +1798,7 @@ function TeamPage() {
                                 type="button"
                                 size="sm"
                                 variant={active ? "default" : "outline"}
-                                disabled={!team.canManageTeam}
+                                disabled={!canManageClients}
                                 onClick={() =>
                                   setClientInviteForm((current) => ({
                                     ...current,
@@ -1779,7 +1814,7 @@ function TeamPage() {
                       </div>
                       <Button
                         disabled={
-                          !team.canManageTeam ||
+                          !canManageClients ||
                           !clientInviteForm.projectId ||
                           !clientInviteForm.name.trim() ||
                           !clientInviteForm.email.trim() ||
@@ -1861,7 +1896,7 @@ function TeamPage() {
                                     size="sm"
                                     variant={active ? "default" : "outline"}
                                     disabled={
-                                      !team.canManageTeam ||
+                                      !canManageClients ||
                                       isClientPermissionSaving(access.id, field)
                                     }
                                     onClick={() =>
@@ -1887,7 +1922,7 @@ function TeamPage() {
                                 size="icon"
                                 title="Send portal link"
                                 disabled={
-                                  !team.canManageTeam || clientAccessSendLinkMutation.isPending
+                                  !canManageClients || clientAccessSendLinkMutation.isPending
                                 }
                                 onClick={() => clientAccessSendLinkMutation.mutate(access)}
                               >
@@ -1897,9 +1932,7 @@ function TeamPage() {
                                 variant="ghost"
                                 size="icon"
                                 title="Remove client access"
-                                disabled={
-                                  !team.canManageTeam || clientAccessRevokeMutation.isPending
-                                }
+                                disabled={!canManageClients || clientAccessRevokeMutation.isPending}
                                 onClick={() => clientAccessRevokeMutation.mutate(access.id)}
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -1913,7 +1946,7 @@ function TeamPage() {
                 </section>
               )}
 
-              {section === "plan" && usage && (
+              {section === "plan" && usage && canSeeCommercialBlock && (
                 <PlanReadinessPanel
                   planCode={team.organization.plan_code}
                   billingStatus={team.organization.billing_status}

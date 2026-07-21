@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 import { HARBOR_DEMO_CLIENT, HARBOR_DEMO_JOB_NUMBER, HARBOR_DEMO_NAME } from "@/lib/demo-seed";
 import { planCrmDemoSeed } from "@/lib/pipeline-demo-seed";
 
@@ -1019,8 +1020,21 @@ export const listPipelineMembers = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const organizationId = await currentOrganizationId(context);
+    // Phase 3: the membership roster (and, through the profiles RLS join,
+    // co-member profiles) is company.manage_team data, but this is a plain
+    // assignment picker — names/emails of the caller's own teammates, no
+    // capability flags. organizationId is the caller's own org (resolved from
+    // their own membership above), so the reads run on the admin client;
+    // falls back to the caller's client (self-only) without a service key.
+    let rosterClient: unknown = context.supabase;
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      rosterClient = supabaseAdmin;
+    } catch {
+      // Local/dev without a service role key: keep the user's client.
+    }
     const { data: memberships, error } = await dynamicTable(
-      context.supabase,
+      rosterClient,
       "organization_memberships",
     )
       .select("user_id,invited_email,status,created_at")
@@ -1034,7 +1048,7 @@ export const listPipelineMembers = createServerFn({ method: "GET" })
     const profilesRes =
       userIds.length === 0
         ? { data: [], error: null }
-        : await dynamicTable(context.supabase, "profiles")
+        : await dynamicTable(rosterClient, "profiles")
             .select("id,email,full_name")
             .in("id", userIds)
             .limit(500);
@@ -1201,6 +1215,7 @@ export const createNextAction = createServerFn({ method: "POST" })
   .inputValidator((input) => nextActionInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     if (!data.opportunity_id && !data.account_id && !data.contact_id) {
       throw new Error("Link this action to an opportunity, account, or contact.");
     }
@@ -1242,6 +1257,7 @@ export const completeNextAction = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const { data: actionRow, error: lookupError } = await dynamicTable(
       context.supabase,
       "pipeline_next_actions",
@@ -1286,6 +1302,7 @@ export const ensurePipelineCrmDemo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const { data: existingRows, error: existingError } = await dynamicTable(
       context.supabase,
       "pipeline_opportunities",
@@ -1631,6 +1648,7 @@ export const createOpportunity = createServerFn({ method: "POST" })
   .inputValidator((input) => createOpportunityInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     let accountId: string | null;
     let contactId: string | null;
     try {
@@ -1751,6 +1769,7 @@ export const updateOpportunity = createServerFn({ method: "POST" })
   .inputValidator((input) => updateOpportunityInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const { data: beforeRow, error: beforeError } = await dynamicTable(
       context.supabase,
       "pipeline_opportunities",
@@ -1927,6 +1946,7 @@ export const addOpportunityNote = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const { data: row, error } = await dynamicTable(context.supabase, "pipeline_opportunities")
       .select("id,organization_id")
       .eq("id", data.id)
@@ -1963,6 +1983,12 @@ export const convertToProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    const organizationId = await currentOrganizationId(context);
+    // Phase 3: converting an opportunity creates a live project + seeds IOR
+    // contingency — pipeline capability required. (Whether it should ALSO
+    // require projects.manage is a flagged founder decision; the SECURITY
+    // DEFINER command's own check is the DB lane's territory.)
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const { data: projectId, error } = await dynamicClient(context.supabase).rpc(
       "convert_pipeline_opportunity_to_project",
       { p_opportunity_id: data.id },
@@ -1977,6 +2003,7 @@ export const archiveOpportunity = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const { data: existing, error: lookupError } = await dynamicTable(
       context.supabase,
       "pipeline_opportunities",

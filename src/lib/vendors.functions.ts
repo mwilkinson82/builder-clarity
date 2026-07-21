@@ -7,6 +7,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -110,6 +111,10 @@ export const findOrCreateVendor = createServerFn({ method: "POST" })
       throw new Error(findError.message);
     }
     if (existing) return normalizeVendor(existing as Record<string, unknown>);
+    // Phase 3 (provisional mapping): adding a vendor to the org directory
+    // requires projects.manage until the founder assigns the directory its
+    // own capability. Directory edits/deletes stay manager-gated by RLS.
+    await requireOrgCapability(context.supabase, organizationId, "projects.manage");
     const { data: created, error: createError } = await table()
       .insert({ organization_id: organizationId, name, source: "user" })
       .select("id,name,trade")
@@ -204,6 +209,10 @@ export const saveVendor = createServerFn({ method: "POST" })
         .single();
     };
 
+    if (!existing) {
+      // Phase 3 (provisional): new directory vendors require projects.manage.
+      await requireOrgCapability(context.supabase, organizationId, "projects.manage");
+    }
     let res = await writeRow(details);
     if (res.error && isMissingAddressColumn(res.error)) {
       // Pre-migration workspace: save everything except the address.

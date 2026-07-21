@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 import { findHarborDemoProject, harborDemoSeedAction } from "@/lib/demo-seed";
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "@/lib/estimate-seed-data";
 import type { Json } from "@/integrations/supabase/types";
@@ -693,45 +694,70 @@ async function getOrganizationId(context: { supabase: unknown; userId: string })
 }
 
 async function ensureCostLibrarySeeded(context: { supabase: unknown }, organizationId: string) {
-  const { data: existing, error: existingError } = await dynamicTable(
-    context.supabase,
-    "cost_library_items",
-  )
-    .select("external_id,source")
-    .eq("organization_id", organizationId)
-    .limit(5000);
-  if (existingError) throw new Error(existingError.message);
+  // Best-effort convenience: seeding the shared SYSTEM cost library must NEVER
+  // break a read/list. Phase 3 retargets the cost_library_items INSERT policy
+  // onto cost_library.write, so a member without that flag (PM, company member,
+  // executive, viewer) would get a 42501 if this seeded on their RLS-bound
+  // client — failing listEstimates / getEstimate / searchCostLibrary /
+  // listCostLibraryItems / createEstimate for them. The system seed therefore
+  // runs on the service-role admin client (a system seed is not a user write),
+  // and the whole thing is swallowed: a missing service key (the lazy admin
+  // Proxy throws on first property access) or any insert failure is logged and
+  // ignored rather than propagated. Reads never fail because of the seed.
+  try {
+    const { data: existing, error: existingError } = await dynamicTable(
+      context.supabase,
+      "cost_library_items",
+    )
+      .select("external_id,source")
+      .eq("organization_id", organizationId)
+      .limit(5000);
+    if (existingError) throw new Error(existingError.message);
 
-  const existingSystemIds = new Set(
-    ((existing ?? []) as Record<string, unknown>[])
-      .filter((row) => str(row.source) === "system")
-      .map((row) => str(row.external_id))
-      .filter(Boolean),
-  );
+    const existingSystemIds = new Set(
+      ((existing ?? []) as Record<string, unknown>[])
+        .filter((row) => str(row.source) === "system")
+        .map((row) => str(row.external_id))
+        .filter(Boolean),
+    );
 
-  const rows = ESTIMATE_SEED_LIBRARY_ITEMS.filter(
-    (item) => item.external_id && !existingSystemIds.has(item.external_id),
-  ).map((item) => ({
-    organization_id: organizationId,
-    external_id: item.external_id,
-    csi_division: item.csi_division,
-    csi_code: item.csi_code,
-    category: item.category,
-    description: item.description,
-    unit: item.unit,
-    material_cost_cents: item.material_cost_cents,
-    labor_cost_cents: item.labor_cost_cents,
-    crew_size: item.crew_size,
-    productivity_per_hour: item.productivity_per_hour,
-    synonyms: item.synonyms as Json,
-    keywords: item.keywords as Json,
-    source: "system",
-    base_region: "national",
-  }));
+    const rows = ESTIMATE_SEED_LIBRARY_ITEMS.filter(
+      (item) => item.external_id && !existingSystemIds.has(item.external_id),
+    ).map((item) => ({
+      organization_id: organizationId,
+      external_id: item.external_id,
+      csi_division: item.csi_division,
+      csi_code: item.csi_code,
+      category: item.category,
+      description: item.description,
+      unit: item.unit,
+      material_cost_cents: item.material_cost_cents,
+      labor_cost_cents: item.labor_cost_cents,
+      crew_size: item.crew_size,
+      productivity_per_hour: item.productivity_per_hour,
+      synonyms: item.synonyms as Json,
+      keywords: item.keywords as Json,
+      source: "system",
+      base_region: "national",
+    }));
+    if (rows.length === 0) return;
 
-  for (const part of chunk(rows, 100)) {
-    const { error } = await dynamicTable(context.supabase, "cost_library_items").insert(part);
-    if (error && error.code !== "23505") throw new Error(error.message);
+    // Touch the lazy service-role Proxy so an absent key throws HERE (importing
+    // never throws — the client is built on first property access) and we skip
+    // the seed silently instead of falling back to the user client (42501).
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    void (supabaseAdmin as { from: unknown }).from;
+
+    for (const part of chunk(rows, 100)) {
+      const { error } = await dynamicTable(supabaseAdmin, "cost_library_items").insert(part);
+      if (error && error.code !== "23505") throw new Error(error.message);
+    }
+  } catch (error) {
+    // Never let a best-effort system seed break the surrounding read/list.
+    console.error("ensureCostLibrarySeeded skipped (best-effort system seed)", {
+      organization_id: organizationId,
+      error,
+    });
   }
 }
 
@@ -739,144 +765,173 @@ async function ensureHarborDemoEstimate(
   context: { supabase: unknown; userId: string },
   organizationId: string,
 ) {
-  let existingResult = await dynamicTable(context.supabase, "estimates")
-    .select("id,name,project_id,is_canonical_demo,canonical_demo_key")
-    .eq("organization_id", organizationId)
-    .limit(500);
-  if (existingResult.error && isMissingCanonicalDemoColumn(existingResult.error)) {
-    // Until Lovable applies the migration, preserve the legacy seed behavior
-    // without presenting a sample as protected when the database cannot lock it.
-    existingResult = await dynamicTable(context.supabase, "estimates")
-      .select("id,name,project_id")
+  // Best-effort system seed on the estimates-list read path: it must never
+  // break the surrounding list for the person who happens to trigger it. The
+  // canonical-protection columns are REVOKE'd from authenticated (only the
+  // service role may mark a row as the protected sample), so the protection
+  // writes go through supabaseAdmin; a viewer who cannot run the create command
+  // simply doesn't seed, and still sees the list.
+  try {
+    let existingResult = await dynamicTable(context.supabase, "estimates")
+      .select("id,name,project_id,is_canonical_demo,canonical_demo_key")
       .eq("organization_id", organizationId)
       .limit(500);
-    if (existingResult.error) throw new Error(existingResult.error.message);
-    const legacyRows = (existingResult.data ?? []) as Record<string, unknown>[];
-    if (
-      legacyRows.some(
-        (estimate) => str(estimate.name).toLowerCase() === HARBOR_DEMO_ESTIMATE_NAME.toLowerCase(),
-      )
-    ) {
+    if (existingResult.error && isMissingCanonicalDemoColumn(existingResult.error)) {
+      // Until Lovable applies the migration, preserve the legacy seed behavior
+      // without presenting a sample as protected when the database cannot lock it.
+      existingResult = await dynamicTable(context.supabase, "estimates")
+        .select("id,name,project_id")
+        .eq("organization_id", organizationId)
+        .limit(500);
+      if (existingResult.error) throw new Error(existingResult.error.message);
+      const legacyRows = (existingResult.data ?? []) as Record<string, unknown>[];
+      if (
+        legacyRows.some(
+          (estimate) =>
+            str(estimate.name).toLowerCase() === HARBOR_DEMO_ESTIMATE_NAME.toLowerCase(),
+        )
+      ) {
+        return;
+      }
+      // Do not attempt a partially protected seed. The next list request after
+      // the migration lands will create the canonical sample atomically.
       return;
+    } else if (existingResult.error) {
+      throw new Error(existingResult.error.message);
+    } else {
+      const existingRows = (existingResult.data ?? []) as Record<string, unknown>[];
+      if (
+        existingRows.some(
+          (estimate) =>
+            estimate.is_canonical_demo === true &&
+            str(estimate.canonical_demo_key) === HARBOR_CANONICAL_DEMO_KEY,
+        )
+      ) {
+        return;
+      }
     }
-    // Do not attempt a partially protected seed. The next list request after
-    // the migration lands will create the canonical sample atomically.
-    return;
-  } else if (existingResult.error) {
-    throw new Error(existingResult.error.message);
-  } else {
-    const existingRows = (existingResult.data ?? []) as Record<string, unknown>[];
-    if (
-      existingRows.some(
-        (estimate) =>
-          estimate.is_canonical_demo === true &&
-          str(estimate.canonical_demo_key) === HARBOR_CANONICAL_DEMO_KEY,
-      )
-    ) {
-      return;
+
+    // Acquire the service-role client up front. The canonical-protection write
+    // and the stale-demo rename below both touch estimates columns/rows the
+    // caller may not be permitted to (is_canonical_demo is REVOKE'd; the base
+    // UPDATE policy is can_manage_estimate). Touch the lazy Proxy so an absent
+    // service key throws HERE; without it we skip the whole seed rather than
+    // create a half-protected sample.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    void (supabaseAdmin as { from: unknown }).from;
+
+    const { data: projects, error: projectsError } = await dynamicTable(
+      context.supabase,
+      "projects",
+    )
+      .select("id,name,client,job_number,archived_at")
+      .eq("organization_id", organizationId)
+      .limit(100);
+    if (projectsError) throw new Error(projectsError.message);
+
+    const harborProject = findHarborDemoProject((projects ?? []) as Record<string, unknown>[]);
+    // An archived demo project means the company opted out of the demo:
+    // the sample estimate must not come back either.
+    if (harborDemoSeedAction(harborProject) === "skip") return;
+
+    const externalIds = Array.from(
+      new Set(HARBOR_CANONICAL_ESTIMATE_LINES.map((line) => line.external_id).filter(Boolean)),
+    );
+    const libraryResult =
+      externalIds.length > 0
+        ? await dynamicTable(context.supabase, "cost_library_items")
+            .select("id,external_id")
+            .eq("organization_id", organizationId)
+            .in("external_id", externalIds)
+        : { data: [], error: null };
+    if (libraryResult.error) throw new Error(libraryResult.error.message);
+
+    const libraryIds = new Map(
+      ((libraryResult.data ?? []) as Record<string, unknown>[]).map((row) => [
+        str(row.external_id),
+        str(row.id),
+      ]),
+    );
+
+    // The estimate row, every canonical line, and the authoritative totals are
+    // one create_estimate_atomic transaction. The deterministic key plus the
+    // command's content fingerprint make the seed idempotent: a crash between
+    // create and protect resumes with the same estimate id, never a duplicate.
+    // The command always creates a draft; the worksheet is frozen further down
+    // only after all lines and totals exist (final estimates reject line DML).
+    const summary = await createEstimateAtomicCommand(context, {
+      organizationId,
+      header: {
+        name: HARBOR_CANONICAL_ESTIMATE_NAME,
+        description:
+          "Read-only estimating workbench sample. Create a working copy before changing quantities, pricing, takeoffs, or drawings.",
+        project_type: "residential",
+        kind: "estimate",
+        region: "national",
+        region_multiplier: 1,
+        overhead_pct: 800,
+        profit_pct: 1200,
+        contingency_pct: 500,
+        bond_pct: 0,
+        tax_pct: 0,
+        general_conditions_pct: 450,
+        custom_markups: [],
+      },
+      initialLines: harborSeedLineInputs(
+        HARBOR_CANONICAL_ESTIMATE_LINES,
+        libraryIds,
+        "Canonical Harbor Residence learning estimate. Duplicate before editing.",
+      ),
+      // Org-scoped: the create-operation journal is unique per (actor, key) and
+      // the fingerprint includes the organization, so a super admin seeding a
+      // second company must not collide with the first seed's key.
+      operationKey: `canonical:harbor-residence-v1:create:${organizationId}`,
+      fallbackMessage: "Harbor sample estimate did not save.",
+    });
+
+    const estimateId = str(summary.id);
+    const commandTotals =
+      summary.totals && typeof summary.totals === "object" && !Array.isArray(summary.totals)
+        ? (summary.totals as Record<string, unknown>)
+        : {};
+    const totalCents = Math.round(num(commandTotals.total_with_markups_cents));
+    if (totalCents !== HARBOR_CANONICAL_TOTAL_CENTS) {
+      throw new Error(`Canonical Harbor sample total drifted to ${totalCents} cents.`);
     }
+
+    const finalizeResult = await dynamicRpc(context.supabase, "update_estimate_header_atomic", {
+      p_estimate_id: estimateId,
+      p_patch: { status: "final" },
+      p_operation_key: `canonical:${estimateId}:finalize:v1`,
+    });
+    if (finalizeResult.error) throw new Error(finalizeResult.error.message);
+
+    const { error: protectError } = await dynamicTable(supabaseAdmin, "estimates")
+      .update({
+        is_canonical_demo: true,
+        canonical_demo_key: HARBOR_CANONICAL_DEMO_KEY,
+        canonical_demo_version: 1,
+        canonical_expected_total_cents: HARBOR_CANONICAL_TOTAL_CENTS,
+      })
+      .eq("id", estimateId);
+    if (protectError) throw new Error(protectError.message);
+
+    // Old seeded demos remain useful company data, but they must not masquerade
+    // as the protected sample in the list. Renaming rides the same service-role
+    // client: the base UPDATE policy is now can_manage_estimate and this runs on
+    // the read path for any caller.
+    await dynamicTable(supabaseAdmin, "estimates")
+      .update({ name: HARBOR_WORKING_COPY_NAME })
+      .eq("organization_id", organizationId)
+      .eq("name", HARBOR_DEMO_ESTIMATE_NAME)
+      .neq("id", estimateId);
+  } catch (error) {
+    // Never let a best-effort canonical-sample seed break the estimates list.
+    console.error("ensureHarborDemoEstimate skipped (best-effort system seed)", {
+      organization_id: organizationId,
+      error,
+    });
   }
-
-  const { data: projects, error: projectsError } = await dynamicTable(context.supabase, "projects")
-    .select("id,name,client,job_number,archived_at")
-    .eq("organization_id", organizationId)
-    .limit(100);
-  if (projectsError) throw new Error(projectsError.message);
-
-  const harborProject = findHarborDemoProject((projects ?? []) as Record<string, unknown>[]);
-  // An archived demo project means the company opted out of the demo:
-  // the sample estimate must not come back either.
-  if (harborDemoSeedAction(harborProject) === "skip") return;
-
-  const externalIds = Array.from(
-    new Set(HARBOR_CANONICAL_ESTIMATE_LINES.map((line) => line.external_id).filter(Boolean)),
-  );
-  const libraryResult =
-    externalIds.length > 0
-      ? await dynamicTable(context.supabase, "cost_library_items")
-          .select("id,external_id")
-          .eq("organization_id", organizationId)
-          .in("external_id", externalIds)
-      : { data: [], error: null };
-  if (libraryResult.error) throw new Error(libraryResult.error.message);
-
-  const libraryIds = new Map(
-    ((libraryResult.data ?? []) as Record<string, unknown>[]).map((row) => [
-      str(row.external_id),
-      str(row.id),
-    ]),
-  );
-
-  // The estimate row, every canonical line, and the authoritative totals are
-  // one create_estimate_atomic transaction. The deterministic key plus the
-  // command's content fingerprint make the seed idempotent: a crash between
-  // create and protect resumes with the same estimate id, never a duplicate.
-  // The command always creates a draft; the worksheet is frozen further down
-  // only after all lines and totals exist (final estimates reject line DML).
-  const summary = await createEstimateAtomicCommand(context, {
-    organizationId,
-    header: {
-      name: HARBOR_CANONICAL_ESTIMATE_NAME,
-      description:
-        "Read-only estimating workbench sample. Create a working copy before changing quantities, pricing, takeoffs, or drawings.",
-      project_type: "residential",
-      kind: "estimate",
-      region: "national",
-      region_multiplier: 1,
-      overhead_pct: 800,
-      profit_pct: 1200,
-      contingency_pct: 500,
-      bond_pct: 0,
-      tax_pct: 0,
-      general_conditions_pct: 450,
-      custom_markups: [],
-    },
-    initialLines: harborSeedLineInputs(
-      HARBOR_CANONICAL_ESTIMATE_LINES,
-      libraryIds,
-      "Canonical Harbor Residence learning estimate. Duplicate before editing.",
-    ),
-    // Org-scoped: the create-operation journal is unique per (actor, key) and
-    // the fingerprint includes the organization, so a super admin seeding a
-    // second company must not collide with the first seed's key.
-    operationKey: `canonical:harbor-residence-v1:create:${organizationId}`,
-    fallbackMessage: "Harbor sample estimate did not save.",
-  });
-
-  const estimateId = str(summary.id);
-  const commandTotals =
-    summary.totals && typeof summary.totals === "object" && !Array.isArray(summary.totals)
-      ? (summary.totals as Record<string, unknown>)
-      : {};
-  const totalCents = Math.round(num(commandTotals.total_with_markups_cents));
-  if (totalCents !== HARBOR_CANONICAL_TOTAL_CENTS) {
-    throw new Error(`Canonical Harbor sample total drifted to ${totalCents} cents.`);
-  }
-
-  const finalizeResult = await dynamicRpc(context.supabase, "update_estimate_header_atomic", {
-    p_estimate_id: estimateId,
-    p_patch: { status: "final" },
-    p_operation_key: `canonical:${estimateId}:finalize:v1`,
-  });
-  if (finalizeResult.error) throw new Error(finalizeResult.error.message);
-
-  const { error: protectError } = await dynamicTable(context.supabase, "estimates")
-    .update({
-      is_canonical_demo: true,
-      canonical_demo_key: HARBOR_CANONICAL_DEMO_KEY,
-      canonical_demo_version: 1,
-      canonical_expected_total_cents: HARBOR_CANONICAL_TOTAL_CENTS,
-    })
-    .eq("id", estimateId);
-  if (protectError) throw new Error(protectError.message);
-
-  // Old seeded demos remain useful company data, but they must not masquerade
-  // as the protected sample in the list.
-  await dynamicTable(context.supabase, "estimates")
-    .update({ name: HARBOR_WORKING_COPY_NAME })
-    .eq("organization_id", organizationId)
-    .eq("name", HARBOR_DEMO_ESTIMATE_NAME)
-    .neq("id", estimateId);
 }
 
 // Estimate creation is one database command: header validation, optional
@@ -1685,89 +1740,105 @@ async function ensureHarborSampleMasterSheet(
   context: { supabase: unknown; userId: string },
   organizationId: string,
 ) {
-  let existingResult = await dynamicTable(context.supabase, "estimates")
-    .select("id,name,project_type,kind")
-    .eq("organization_id", organizationId)
-    .limit(500);
-  if (existingResult.error && isMissingEstimateKindColumn(existingResult.error)) {
-    existingResult = await dynamicTable(context.supabase, "estimates")
-      .select("id,name,project_type")
+  // Best-effort system seed on the estimates/master-sheets read path: it must
+  // never break the surrounding list for whoever triggers it. This batch
+  // retargets create_estimate_atomic's body onto estimating.write, so the
+  // create below raises 42501 for a viewer/executive — swallow it (they just
+  // don't seed; a writer's next visit does) exactly like the sibling seeds.
+  try {
+    let existingResult = await dynamicTable(context.supabase, "estimates")
+      .select("id,name,project_type,kind")
       .eq("organization_id", organizationId)
       .limit(500);
-  }
-  if (existingResult.error) throw new Error(existingResult.error.message);
+    if (existingResult.error && isMissingEstimateKindColumn(existingResult.error)) {
+      existingResult = await dynamicTable(context.supabase, "estimates")
+        .select("id,name,project_type")
+        .eq("organization_id", organizationId)
+        .limit(500);
+    }
+    if (existingResult.error) throw new Error(existingResult.error.message);
 
-  const estimates = (existingResult.data ?? []) as Record<string, unknown>[];
-  if (
-    estimates.some(
-      (estimate) =>
-        (str(estimate.kind) === "master_sheet" ||
-          str(estimate.project_type) === MASTER_ESTIMATE_PROJECT_TYPE) &&
-        str(estimate.name).toLowerCase() === HARBOR_SAMPLE_MASTER_SHEET_NAME.toLowerCase(),
+    const estimates = (existingResult.data ?? []) as Record<string, unknown>[];
+    if (
+      estimates.some(
+        (estimate) =>
+          (str(estimate.kind) === "master_sheet" ||
+            str(estimate.project_type) === MASTER_ESTIMATE_PROJECT_TYPE) &&
+          str(estimate.name).toLowerCase() === HARBOR_SAMPLE_MASTER_SHEET_NAME.toLowerCase(),
+      )
+    ) {
+      return;
+    }
+
+    const { data: projects, error: projectsError } = await dynamicTable(
+      context.supabase,
+      "projects",
     )
-  ) {
-    return;
+      .select("id,name,client,job_number,archived_at")
+      .eq("organization_id", organizationId)
+      .limit(100);
+    if (projectsError) throw new Error(projectsError.message);
+
+    const harborProject = findHarborDemoProject((projects ?? []) as Record<string, unknown>[]);
+    // Same opt-out rule as the sample estimate: archived demo, no reseed.
+    if (harborDemoSeedAction(harborProject) === "skip") return;
+
+    const externalIds = Array.from(
+      new Set(HARBOR_SAMPLE_MASTER_SHEET_LINES.map((line) => line.external_id).filter(Boolean)),
+    );
+    const libraryResult =
+      externalIds.length > 0
+        ? await dynamicTable(context.supabase, "cost_library_items")
+            .select("id,external_id")
+            .eq("organization_id", organizationId)
+            .in("external_id", externalIds)
+        : { data: [], error: null };
+    if (libraryResult.error) throw new Error(libraryResult.error.message);
+
+    const libraryIds = new Map(
+      ((libraryResult.data ?? []) as Record<string, unknown>[]).map((row) => [
+        str(row.external_id),
+        str(row.id),
+      ]),
+    );
+
+    // One create_estimate_atomic transaction seeds the master sheet and all of
+    // its sample lines; the org-scoped deterministic key makes reseeds no-ops.
+    // The sample is no longer linked to the demo project: a non-null project_id
+    // marks an estimate as converted, which would freeze this editable sample.
+    await createEstimateAtomicCommand(context, {
+      organizationId,
+      header: {
+        name: HARBOR_SAMPLE_MASTER_SHEET_NAME,
+        description:
+          "Sample reusable master sheet seeded from Harbor Residence. Open it to see the format, copy it for your company, or create a project estimate from it.",
+        project_type: "commercial",
+        kind: "master_sheet",
+        region: "national",
+        region_multiplier: 1,
+        overhead_pct: 800,
+        profit_pct: 1200,
+        contingency_pct: 500,
+        bond_pct: 0,
+        tax_pct: 0,
+        general_conditions_pct: 450,
+        custom_markups: [],
+      },
+      initialLines: harborSeedLineInputs(
+        HARBOR_SAMPLE_MASTER_SHEET_LINES,
+        libraryIds,
+        "Sample master sheet line. Copy the master, update pricing, then create an estimate.",
+      ),
+      operationKey: `harbor-sample-master-sheet:v1:${organizationId}`,
+      fallbackMessage: "Harbor sample master sheet did not save.",
+    });
+  } catch (error) {
+    // Never let a best-effort sample-master-sheet seed break the estimates list.
+    console.error("ensureHarborSampleMasterSheet skipped (best-effort system seed)", {
+      organization_id: organizationId,
+      error,
+    });
   }
-
-  const { data: projects, error: projectsError } = await dynamicTable(context.supabase, "projects")
-    .select("id,name,client,job_number,archived_at")
-    .eq("organization_id", organizationId)
-    .limit(100);
-  if (projectsError) throw new Error(projectsError.message);
-
-  const harborProject = findHarborDemoProject((projects ?? []) as Record<string, unknown>[]);
-  // Same opt-out rule as the sample estimate: archived demo, no reseed.
-  if (harborDemoSeedAction(harborProject) === "skip") return;
-
-  const externalIds = Array.from(
-    new Set(HARBOR_SAMPLE_MASTER_SHEET_LINES.map((line) => line.external_id).filter(Boolean)),
-  );
-  const libraryResult =
-    externalIds.length > 0
-      ? await dynamicTable(context.supabase, "cost_library_items")
-          .select("id,external_id")
-          .eq("organization_id", organizationId)
-          .in("external_id", externalIds)
-      : { data: [], error: null };
-  if (libraryResult.error) throw new Error(libraryResult.error.message);
-
-  const libraryIds = new Map(
-    ((libraryResult.data ?? []) as Record<string, unknown>[]).map((row) => [
-      str(row.external_id),
-      str(row.id),
-    ]),
-  );
-
-  // One create_estimate_atomic transaction seeds the master sheet and all of
-  // its sample lines; the org-scoped deterministic key makes reseeds no-ops.
-  // The sample is no longer linked to the demo project: a non-null project_id
-  // marks an estimate as converted, which would freeze this editable sample.
-  await createEstimateAtomicCommand(context, {
-    organizationId,
-    header: {
-      name: HARBOR_SAMPLE_MASTER_SHEET_NAME,
-      description:
-        "Sample reusable master sheet seeded from Harbor Residence. Open it to see the format, copy it for your company, or create a project estimate from it.",
-      project_type: "commercial",
-      kind: "master_sheet",
-      region: "national",
-      region_multiplier: 1,
-      overhead_pct: 800,
-      profit_pct: 1200,
-      contingency_pct: 500,
-      bond_pct: 0,
-      tax_pct: 0,
-      general_conditions_pct: 450,
-      custom_markups: [],
-    },
-    initialLines: harborSeedLineInputs(
-      HARBOR_SAMPLE_MASTER_SHEET_LINES,
-      libraryIds,
-      "Sample master sheet line. Copy the master, update pricing, then create an estimate.",
-    ),
-    operationKey: `harbor-sample-master-sheet:v1:${organizationId}`,
-    fallbackMessage: "Harbor sample master sheet did not save.",
-  });
 }
 
 export const listEstimateRegions = createServerFn({ method: "GET" }).handler(async () => ({
@@ -2411,6 +2482,7 @@ export const createCostLibraryItem = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const organizationId = await getOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "cost_library.write");
     if (data.labor_basis === "installed" && data.material_cost_cents > 0) {
       throw new Error(INSTALLED_MATERIAL_MESSAGE);
     }
@@ -2453,6 +2525,7 @@ export const importCostLibraryItems = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const organizationId = await getOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "cost_library.write");
     const keyFor = (row: { csi_code: string; description: string; unit: string }) =>
       [row.csi_code.trim().toLowerCase(), row.description.trim().toLowerCase(), row.unit.trim()]
         .join("\u001f")
@@ -2594,6 +2667,8 @@ export const updateCostLibraryItem = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
+    const organizationId = await getOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "cost_library.write");
     let current = await dynamicTable(context.supabase, "cost_library_items")
       .select("source,material_cost_cents,labor_basis")
       .eq("id", data.id)
@@ -2654,6 +2729,8 @@ export const deleteCostLibraryItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    const organizationId = await getOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "cost_library.write");
     const current = await dynamicTable(context.supabase, "cost_library_items")
       .select("source")
       .eq("id", data.id)
@@ -2679,6 +2756,7 @@ export const saveEstimateMarkupDefaults = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const organizationId = await getOrganizationId(context);
     const region = clean(data.default_region ?? "", 64);
+    await requireOrgCapability(context.supabase, organizationId, "cost_library.write");
     const { error } = await dynamicTable(context.supabase, "estimate_markup_defaults").upsert(
       {
         organization_id: organizationId,

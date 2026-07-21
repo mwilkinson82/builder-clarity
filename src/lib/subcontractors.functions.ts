@@ -7,6 +7,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -116,6 +117,12 @@ export const saveSubcontractor = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<SubcontractorRow> => {
     const organizationId = await getOrganizationId(context);
     const { id, ...fields } = data;
+    if (!id) {
+      // Phase 3 (provisional mapping): adding a subcontractor to the org
+      // directory requires projects.manage until the founder assigns the
+      // directory its own capability. Edits/deletes stay manager-gated by RLS.
+      await requireOrgCapability(context.supabase, organizationId, "projects.manage");
+    }
     const table = dynamicTable(context.supabase, "subcontractors");
     const query = id
       ? table.update(fields).eq("id", id).select("*").single()

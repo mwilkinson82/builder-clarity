@@ -312,7 +312,14 @@ export const saveTomorrowPlanItem = createServerFn({ method: "POST" })
           .maybeSingle();
         if (projectError) throw new Error(projectError.message);
         if (project?.organization_id) {
-          const { data: leaders, error: leadersError } = await context.supabase
+          // Phase 3: the performer saving this override is usually a plain
+          // member who can no longer read OTHER members' membership rows, but
+          // company leaders must still be notified of the course-correction.
+          // The recipients list is computed server-side only (never returned),
+          // and the org id came from an RLS-passed project read, so the
+          // leaders lookup runs on the admin client.
+          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+          const { data: leaders, error: leadersError } = await supabaseAdmin
             .from("organization_memberships")
             .select("user_id,role")
             .eq("organization_id", project.organization_id)

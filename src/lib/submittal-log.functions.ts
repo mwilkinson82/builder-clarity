@@ -292,7 +292,20 @@ export const getProjectLetterhead = createServerFn({ method: "GET" })
       : "";
     if (!orgId) return empty;
 
-    const orgRes = await dynamicTable(context.supabase, "organizations")
+    // Phase 3: the organizations base row is settings/billing/team data, but
+    // any project member may print a transmittal cover. The org id came from
+    // an RLS-passed project read and only company-identity letterhead fields
+    // are selected, so the read runs on the admin client (falls back to the
+    // caller's client — and then possibly the empty letterhead — without a
+    // service key).
+    let letterheadClient: unknown = context.supabase;
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      letterheadClient = supabaseAdmin;
+    } catch {
+      // Local/dev without a service role key: keep the user's client.
+    }
+    const orgRes = await dynamicTable(letterheadClient, "organizations")
       .select(
         "id,name,legal_name,logo_url,logo_path,address_line1,address_line2,city,state,postal_code,office_phone,license_number,updated_at",
       )

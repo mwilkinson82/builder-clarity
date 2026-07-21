@@ -152,7 +152,9 @@ export const getReceivablesCockpit = createServerFn({ method: "GET" })
 
     // Resolve each project's owning company so the portfolio receivables list
     // can label rows that share a name/number across companies (e.g. a demo
-    // seeded into several orgs). Degrades to no label if orgs aren't readable.
+    // seeded into several orgs). Degrades to no label if orgs aren't readable
+    // — which, post-Phase 3, includes callers without the settings/billing/
+    // team capabilities (label-only, deliberate).
     const orgIds = [
       ...new Set(
         projects

@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 import {
   DEFAULT_VALUE_FOLLOWUP_PLAYBOOK,
   followupDueDate,
@@ -225,6 +226,7 @@ export const ensureCrmFollowupDefaults = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const existingResult = await table(context.supabase, "crm_followup_playbooks")
       .select("*")
       .eq("organization_id", organizationId)
@@ -489,6 +491,7 @@ export const createCrmValueAsset = createServerFn({ method: "POST" })
   .inputValidator((input) => valueAssetInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const storagePath = data.storage_path.trim();
     const externalUrl = data.external_url.trim();
     if (data.source_type === "upload" && !storagePath.startsWith(`${organizationId}/`)) {
@@ -543,6 +546,7 @@ export const enrollOpportunityInFollowupPlaybook = createServerFn({ method: "POS
   .inputValidator((input) => enrollmentInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const [opportunityResult, playbookResult, stepResult, existingResult] = await Promise.all([
       table(context.supabase, "pipeline_opportunities")
         .select("*")
@@ -589,7 +593,19 @@ export const enrollOpportunityInFollowupPlaybook = createServerFn({ method: "POS
     if (stepRows.length === 0) throw new Error("This playbook has no active follow-up steps.");
 
     const ownerUserId = data.owner_user_id ?? context.userId;
-    const membership = await table(context.supabase, "organization_memberships")
+    // Phase 3: CRM managers don't necessarily hold company.manage_team, so
+    // OTHER members' membership rows are no longer readable on the user's
+    // client. This is only an "active member of the caller's own org" check,
+    // so it runs on the admin client (self-ownership still validates on the
+    // user's client when a service key is not configured).
+    let membershipCheckClient: unknown = context.supabase;
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      membershipCheckClient = supabaseAdmin;
+    } catch {
+      // Local/dev without a service role key: keep the user's client.
+    }
+    const membership = await table(membershipCheckClient, "organization_memberships")
       .select("user_id")
       .eq("organization_id", organizationId)
       .eq("user_id", ownerUserId)
@@ -691,6 +707,7 @@ export const updatePreparedFollowup = createServerFn({ method: "POST" })
   .inputValidator((input) => draftInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     if (data.value_asset_id) {
       const asset = await table(context.supabase, "crm_value_assets")
         .select("id")
@@ -743,6 +760,7 @@ export const completePreparedFollowup = createServerFn({ method: "POST" })
   .inputValidator((input) => completionInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const action = await table(context.supabase, "pipeline_next_actions")
       .select("*")
       .eq("id", data.id)

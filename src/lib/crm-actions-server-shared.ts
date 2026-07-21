@@ -1,5 +1,6 @@
 import type { Json } from "@/integrations/supabase/types";
-import { computeApiCostCents, creditBalance } from "@/lib/credits/credits-domain";
+import { computeApiCostCents } from "@/lib/credits/credits-domain";
+import { readOrgCreditBalance } from "@/lib/ai-takeoff/ai-takeoff-server-shared";
 import { CRM_ASSIST_CREDITS } from "@/lib/crm-action-suite-domain";
 
 export type DynamicError = { code?: string; message: string };
@@ -128,14 +129,12 @@ export async function runCrmAiOperation<T>(input: {
     if (grant.error && grant.error.code !== "PGRST202" && grant.error.code !== "42883") {
       throw new Error(grant.error.message);
     }
-    const ledger = await table(input.context.supabase, "credit_ledger")
-      .select("delta")
-      .eq("organization_id", input.organizationId);
-    if (ledger.error) throw new Error(ledger.error.message);
-    if (
-      creditBalance((Array.isArray(ledger.data) ? ledger.data : []) as Array<{ delta: number }>) <
-      chargedCredits
-    ) {
+    // Phase 3: raw credit_ledger rows are company.manage_settings data; every
+    // member reads the balance via the SECURITY DEFINER get_org_credit_balance
+    // RPC (falls back to the direct read pre-migration).
+    const balanceRes = await readOrgCreditBalance(input.context.supabase, input.organizationId);
+    if (balanceRes.error) throw new Error(balanceRes.error.message);
+    if ((balanceRes.data ?? 0) < chargedCredits) {
       throw new Error(
         "This CRM assist needs 1 AI credit. Add credits or wait for the next plan grant.",
       );

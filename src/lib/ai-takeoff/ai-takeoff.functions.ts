@@ -11,7 +11,6 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   computeApiCostCents,
-  creditBalance,
   DEFAULT_MAX_SHEETS_PER_SCAN,
   quoteScanCredits,
   refundEntryForFailedScan,
@@ -62,6 +61,7 @@ import {
   isMissingCreditsSchema,
   normalizeOperation,
   pruneOldDiagnostics,
+  readOrgCreditBalance,
   str,
   uploadDiagnostic,
   type AiOperationRow,
@@ -293,17 +293,16 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
         throw new Error(monthlyGrant.error.message);
       }
 
-      // Balance pre-check with the user's own read access (RLS members-read).
-      const ledgerResult = (await dynamicTable(context.supabase, "credit_ledger")
-        .select("delta")
-        .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
-      if (ledgerResult.error) {
-        if (isMissingCreditsSchema(ledgerResult.error)) {
+      // Balance pre-check as the caller. Phase 3: raw ledger rows are
+      // manage_settings data; members read the balance via the definer RPC.
+      const balanceResult = await readOrgCreditBalance(context.supabase, organizationId);
+      if (balanceResult.error) {
+        if (isMissingCreditsSchema(balanceResult.error)) {
           throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
         }
-        throw new Error(ledgerResult.error.message);
+        throw new Error(balanceResult.error.message);
       }
-      const balance = creditBalance(ledgerResult.data ?? []);
+      const balance = balanceResult.data ?? 0;
       if (balance < quote) {
         throw new Error(
           `This scan needs ${quote} credit${quote === 1 ? "" : "s"} and your company has ${balance}. Buy a credit pack to continue.`,
