@@ -41,6 +41,7 @@ import type { ChangeOrderAllocationInput } from "@/components/billing/ChangeOrde
 import { fmtUSDCents } from "@/lib/billing-format";
 import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
 import { friendlyErrorMessage } from "@/lib/friendly-error";
+import { reportLovableError } from "@/lib/lovable-error-reporting";
 import { applySovBucketPatch } from "@/lib/sov-rollup";
 import { BudgetLineDrawer } from "@/components/outcome/BudgetLineDrawer";
 import { ChangeOrdersTable, type ChangeOrderDraft } from "@/components/outcome/ChangeOrdersTable";
@@ -343,6 +344,7 @@ function ProjectRouteError({ error, reset }: { error: Error; reset: () => void }
   const router = useRouter();
   useEffect(() => {
     console.error("Project view crashed:", error);
+    reportLovableError(error, { boundary: "project_route_error_component" });
   }, [error]);
   return (
     <div className="p-10">

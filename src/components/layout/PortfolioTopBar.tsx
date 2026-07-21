@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { LifeBuoy } from "lucide-react";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -102,6 +103,14 @@ export function PortfolioTopBar({ active, actions }: { active: NavKey; actions?:
 
       <div className="ml-auto flex items-center gap-3">
         {actions}
+        <Link
+          to="/support"
+          aria-label="Help and support"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <LifeBuoy className="h-4 w-4" />
+          <span className="hidden sm:inline">Help</span>
+        </Link>
         <NotificationBell />
         <button
           type="button"
