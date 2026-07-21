@@ -314,7 +314,7 @@ export const saveTakeoffAssembly = createServerFn({ method: "POST" })
       },
     );
     if (isAssemblySchemaPending(result.error)) {
-      throw new Error("Assembly Workbench is waiting for its Lovable database migration.");
+      throw new Error("Assembly Workbench isn't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     const row = (result.data ?? [])[0];
@@ -343,7 +343,7 @@ export const handoffTakeoffAssemblyOutput = createServerFn({ method: "POST" })
       },
     );
     if (isAssemblyOutputHandoffPending(result.error)) {
-      throw new Error("Assembly output handoff is waiting for its Lovable database migration.");
+      throw new Error("Assembly output handoff isn't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     const row = (result.data ?? [])[0];
@@ -368,7 +368,7 @@ export const unlinkTakeoffAssemblyOutput = createServerFn({ method: "POST" })
       p_output_key: data.output_key,
     });
     if (isAssemblyOutputHandoffPending(result.error)) {
-      throw new Error("Assembly output handoff is waiting for its Lovable database migration.");
+      throw new Error("Assembly output handoff isn't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     return { estimate_line_item_id: str(result.data) };
@@ -510,7 +510,7 @@ async function loadAssemblyReviewContext({
     .eq("status", "completed")
     .limit(20);
   if (isAssemblySchemaPending(scopeResult.error)) {
-    throw new Error("Assembly Workbench is waiting for its Lovable database migration.");
+    throw new Error("Assembly Workbench isn't available yet.");
   }
   if (scopeResult.error) throw new Error(scopeResult.error.message);
   const rawCitations = (scopeResult.data ?? []) as Record<string, unknown>[];
@@ -546,7 +546,7 @@ export const proposeTakeoffAssemblyInputs = createServerFn({ method: "POST" })
     const { isVisionConfigured, resolveVisionModel } =
       await import("@/lib/ai-takeoff/vision.server");
     if (!isVisionConfigured()) {
-      throw new Error("Assembly AI is not configured. Add an OpenAI or Anthropic key in Lovable.");
+      throw new Error("Assembly AI isn't set up for this workspace yet.");
     }
     await requireEstimateManager(context.supabase, data.estimate_id);
     const { measurement, citations } = await loadAssemblyReviewContext({
@@ -625,7 +625,7 @@ export const proposeTakeoffAssemblyInputs = createServerFn({ method: "POST" })
       }
       throw new Error(
         isAssemblySchemaPending(operationResult.error)
-          ? "Assembly Workbench is waiting for its Lovable database migration."
+          ? "Assembly Workbench isn't available yet."
           : (operationResult.error?.message ?? "Assembly note review could not start."),
       );
     }

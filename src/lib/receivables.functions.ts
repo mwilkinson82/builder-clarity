@@ -459,9 +459,7 @@ export const appendInvoiceCollectionsNote = createServerFn({ method: "POST" })
     });
     if (result.error) {
       if (isMissingSchema(result.error)) {
-        throw new Error(
-          "Collections notes need the Getting Paid database migration. Apply it, then retry.",
-        );
+        throw new Error("Collections notes aren't available yet. Try again in a few minutes.");
       }
       throw new Error(result.error.message);
     }

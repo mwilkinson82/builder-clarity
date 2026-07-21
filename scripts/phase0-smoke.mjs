@@ -2609,7 +2609,7 @@ await expectContains(
     /validateScopeBriefTakeoffSource/,
     /scopeBriefTakeoffSourceError/,
     /scope_brief_review_id: data\.scope_brief_review_id \?\? null/,
-    /waiting for its Lovable database migration/,
+    /Scope Brief takeoff status isn't available yet/,
   ],
   "manual LF/SF takeoffs validate and retain their exact Scope Brief review provenance",
 );
@@ -2645,7 +2645,7 @@ await expectContains(
   [
     /estimate_scope_brief_reviews/,
     /save_estimate_scope_brief_review/,
-    /Scope Brief decisions are waiting for their Lovable database migration/,
+    /Scope Brief decisions aren't available yet/,
   ],
   "scope brief action register reads durable reviews and writes through one narrow RPC",
 );

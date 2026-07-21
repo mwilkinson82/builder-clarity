@@ -832,9 +832,7 @@ export function EstimateWorkspace({
 
     const reviewState = reviewActivityQuery.data;
     if (!reviewState?.ready) {
-      toast.error(
-        "Estimator sign-off is not ready yet. Confirm the database migration, then retry.",
-      );
+      toast.error("Estimator sign-off isn't available yet. Try again in a few minutes.");
       return;
     }
     if (!estimateReleaseNeedsOverride(reviewState)) {

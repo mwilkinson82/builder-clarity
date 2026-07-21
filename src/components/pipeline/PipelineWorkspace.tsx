@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { createEstimate } from "@/lib/estimates.functions";
+import { friendlyActionError } from "@/lib/friendly-error";
 import {
   addOpportunityNote,
   archiveOpportunity,
@@ -771,7 +772,7 @@ function sortOpportunities(
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Unknown error";
+  return friendlyActionError(error, "Something went wrong. Try again.");
 }
 
 function applyDemoOpportunityOverride(

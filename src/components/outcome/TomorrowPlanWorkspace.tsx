@@ -220,8 +220,8 @@ export function TomorrowPlanWorkspace({
       <div className="rounded-2xl border border-warning/30 bg-warning/5 p-6">
         <p className="font-serif text-2xl text-foreground">Tomorrow Plan is ready in the app.</p>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Publish the pending database migration to turn it on. Daily Reports and Daily WIP continue
-          working normally until then.
+          This isn't available yet. Daily Reports and Daily WIP continue working normally until
+          then.
         </p>
       </div>
     );

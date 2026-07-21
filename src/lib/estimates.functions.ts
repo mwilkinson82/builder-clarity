@@ -43,7 +43,7 @@ const dynamicRpc = (supabase: unknown, functionName: string, args?: Record<strin
   (supabase as DynamicSupabaseClient).rpc(functionName, args);
 
 const ATOMIC_ESTIMATE_IMPORT_PENDING =
-  "The atomic estimate-import update is still being applied. The original worksheet was not changed; try again after the Lovable migration completes.";
+  "The atomic estimate-import update is still being applied. The original worksheet was not changed; try again in a few minutes.";
 
 function isMissingAtomicEstimateImport(error: DynamicSupabaseError | null) {
   const message = error?.message ?? "";
@@ -55,7 +55,7 @@ function isMissingAtomicEstimateImport(error: DynamicSupabaseError | null) {
 }
 
 const ESTIMATE_CREATE_COMMAND_PENDING =
-  "Estimate creation is still being enabled on the backend. Nothing was saved; wait for Lovable to finish the migration, then try again.";
+  "Estimate creation is still being enabled on the backend. Nothing was saved; try again in a few minutes.";
 
 // Raw INSERT authority on public.estimates and public.estimate_line_items is
 // revoked in the same migration batch that ships the create commands, so there
@@ -403,7 +403,7 @@ const isMissingCanonicalDemoColumn = (error: { code?: string; message?: string }
 };
 
 const LABOR_BASIS_PENDING_MESSAGE =
-  "Labor pricing basis is still being enabled on the backend. Wait for the database migration to finish, then try again.";
+  "Labor pricing basis isn't available yet. Try again in a few minutes.";
 
 const INSTALLED_MATERIAL_MESSAGE =
   "Installed costs already include material in the labor price. Set Material $/Unit to 0, or pick a different labor basis.";
@@ -2069,7 +2069,7 @@ export const updateEstimate = createServerFn({ method: "POST" })
     });
     if (result.error && "folder" in patch && isMissingEstimateFolderColumn(result.error)) {
       throw new Error(
-        "Estimate folders are still being enabled on the backend. Wait for Lovable to finish the migration, then try again.",
+        "Estimate folders are still being enabled on the backend. Try again in a few minutes.",
       );
     }
     if (result.error) throw new Error(result.error.message);
@@ -2097,7 +2097,7 @@ export const deleteEstimate = createServerFn({ method: "POST" })
     });
     if (result.error && isMissingEstimateFolderColumn(result.error)) {
       throw new Error(
-        "Estimate archiving is still being enabled on the backend. Wait for Lovable to finish the migration, then try again.",
+        "Estimate archiving is still being enabled on the backend. Try again in a few minutes.",
       );
     }
     if (result.error) throw new Error(result.error.message);
@@ -2795,7 +2795,7 @@ async function convertEstimateToSovInternal(
   );
   if (error) {
     throw new Error(
-      `Estimate was not pushed and the prior project budget was preserved: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
+      `Estimate was not pushed and the prior project budget was preserved: ${error.message}. Try again in a few minutes.`,
     );
   }
   if (!result || typeof result !== "object" || Array.isArray(result)) {

@@ -21,6 +21,7 @@ import type {
   CrmValueAsset,
 } from "@/lib/crm-followup.functions";
 import { appendValueAssetToBody, followupTiming } from "@/lib/crm-followup-domain";
+import { friendlyActionError } from "@/lib/friendly-error";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
@@ -133,7 +134,7 @@ export function PreparedFollowupCard({
     },
     onError: (error) =>
       toast.error("AI draft was not prepared", {
-        description: error instanceof Error ? error.message : "Unknown error",
+        description: friendlyActionError(error, "Something went wrong. Try again."),
       }),
   });
 
@@ -165,7 +166,7 @@ export function PreparedFollowupCard({
     },
     onError: (error) =>
       toast.error("Email was not sent", {
-        description: error instanceof Error ? error.message : "Unknown error",
+        description: friendlyActionError(error, "Something went wrong. Try again."),
       }),
   });
 

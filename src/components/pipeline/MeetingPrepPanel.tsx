@@ -85,9 +85,7 @@ export function MeetingPrepPanel({ opportunities, onOpenOpportunity }: MeetingPr
         description="OverWatch turns the opportunity history, open actions, pricing state, and stated goal into a practical brief. The salesperson still reviews every recommendation."
       />
       {!suiteQuery.data?.enabled && (
-        <SurfaceMessage>
-          AI meeting briefs will activate with the CRM action-suite migration.
-        </SurfaceMessage>
+        <SurfaceMessage>AI meeting briefs aren't available yet.</SurfaceMessage>
       )}
       <div className="grid items-start gap-4 xl:grid-cols-[0.8fr_1.2fr]">
         <div className="rounded-xl border border-hairline bg-surface p-5 shadow-card">

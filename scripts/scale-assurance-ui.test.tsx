@@ -150,7 +150,7 @@ test("shows persisted two-check proof only for the current scale revision", () =
   );
 });
 
-test("blocks assurance actions while the Lovable migration is pending", () => {
+test("blocks assurance actions while the feature is unavailable", () => {
   mount({ scaleAssuranceReady: false });
   expect(
     container!.querySelector('[data-testid="scale-assurance-migration-pending"]'),

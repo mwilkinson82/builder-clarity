@@ -181,9 +181,7 @@ export const saveVendor = createServerFn({ method: "POST" })
       .maybeSingle();
     if (findError) {
       if (isMissingVendorTable(findError)) {
-        throw new Error(
-          "The vendor directory isn't enabled on this workspace yet — the vendors migration hasn't been applied.",
-        );
+        throw new Error("The vendor directory isn't available on this workspace yet.");
       }
       throw new Error(findError.message);
     }

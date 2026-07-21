@@ -19,6 +19,7 @@ import {
   getHarborCrmDemoStatus,
   resetHarborCrmDemo,
 } from "@/lib/crm-demo.functions";
+import { friendlyActionError } from "@/lib/friendly-error";
 
 const LOCAL_DEMO_KEYS = [
   "overwatch.crm.demo-opportunity-overrides.v1",
@@ -62,7 +63,7 @@ export function CrmDemoControl() {
     },
     onError: (error) =>
       toast.error("Harbor CRM did not restore", {
-        description: error instanceof Error ? error.message : "Unknown error",
+        description: friendlyActionError(error, "Something went wrong. Try again."),
       }),
   });
 

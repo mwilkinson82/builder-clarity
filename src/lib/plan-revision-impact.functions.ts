@@ -119,9 +119,7 @@ export const savePlanRevisionImpactReview = createServerFn({ method: "POST" })
       },
     );
     if (isRevisionImpactSchemaPending(result.error)) {
-      throw new Error(
-        "The revision impact register is waiting for its Lovable database migration.",
-      );
+      throw new Error("The revision impact register isn't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     const row = ((result.data ?? [])[0] ?? null) as Record<string, unknown> | null;

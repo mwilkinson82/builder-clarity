@@ -230,9 +230,7 @@ export const analyzePlanSheetMeasurementNotes = createServerFn({ method: "POST" 
     const { isVisionConfigured, resolveMeasurementVisionModel } =
       await import("@/lib/ai-takeoff/vision.server");
     if (!isVisionConfigured()) {
-      throw new Error(
-        "The Measurement Assistant is not configured. Add an OpenAI or Anthropic key in Lovable.",
-      );
+      throw new Error("The Measurement Assistant isn't set up for this workspace yet.");
     }
 
     const { data: estimate, error: estimateError } = await dynamicTable(
@@ -325,7 +323,7 @@ export const analyzePlanSheetMeasurementNotes = createServerFn({ method: "POST" 
       if (isMissingCreditsSchema(operationError)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
       throw new Error(
         isMissingMeasurementAssistantSchema(operationError)
-          ? "The Measurement Assistant is waiting for its Lovable database migration."
+          ? "The Measurement Assistant isn't available yet."
           : (operationError?.message ?? "The measurement review could not start."),
       );
     }

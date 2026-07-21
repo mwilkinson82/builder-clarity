@@ -217,7 +217,7 @@ export const saveCpmProgressControl = createServerFn({ method: "POST" })
       .single();
     if (result.error) {
       if (isMissingProgressSchema(result.error)) {
-        throw new Error("CPM progress review is waiting on its Lovable database migration.");
+        throw new Error("CPM progress review isn't available yet.");
       }
       throw new Error(result.error.message);
     }
@@ -240,7 +240,7 @@ export const applyCpmProgressReview = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<CpmProgressReview> => {
     const reviewContext = await readCpmProgressReviewContext(context.supabase, data.projectId);
     if (!reviewContext.enabled) {
-      throw new Error("CPM progress review is waiting on its Lovable database migration.");
+      throw new Error("CPM progress review isn't available yet.");
     }
     const recommendation = reviewContext.recommendations.find(
       (row) => row.id === data.scheduleActivityId,
@@ -288,7 +288,7 @@ export const applyCpmProgressReview = createServerFn({ method: "POST" })
     });
     if (result.error) {
       if (isMissingProgressSchema(result.error)) {
-        throw new Error("CPM progress review is waiting on its Lovable database migration.");
+        throw new Error("CPM progress review isn't available yet.");
       }
       throw new Error(result.error.message);
     }

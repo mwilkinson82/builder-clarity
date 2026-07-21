@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listCrmActionSuite, type CrmActionSuiteSnapshot } from "@/lib/crm-actions.functions";
+import { friendlyActionError } from "@/lib/friendly-error";
 
 export function useCrmActionSuite() {
   const listFn = useServerFn(listCrmActionSuite);
@@ -11,5 +12,5 @@ export function useCrmActionSuite() {
 }
 
 export function crmActionError(error: unknown) {
-  return error instanceof Error ? error.message : "Unknown error";
+  return friendlyActionError(error, "Something went wrong. Try again.");
 }

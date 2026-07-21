@@ -320,13 +320,11 @@ export function PlanScopeBriefPanel({
 
         {briefQuery.data?.ready === false ? (
           <p className="mt-3 text-xs text-warning">
-            Scope Brief audit history is waiting for its Lovable migration.
+            Scope Brief audit history isn't available yet.
           </p>
         ) : null}
         {reviewsQuery.data?.ready === false ? (
-          <p className="mt-3 text-xs text-warning">
-            Scope Brief decisions are waiting for their Lovable migration.
-          </p>
+          <p className="mt-3 text-xs text-warning">Scope Brief decisions aren't available yet.</p>
         ) : null}
         {pending && progress ? (
           <p className="mt-3 text-xs text-muted-foreground">{progress}</p>
@@ -521,7 +519,7 @@ export function PlanScopeBriefPanel({
                                               <p className="mt-1 text-[10px] text-muted-foreground">
                                                 The cited decision is retained, but downstream work
                                                 could not be verified. Refresh; if this persists,
-                                                verify the provenance migration.
+                                                verify the provenance records.
                                               </p>
                                             </div>
                                           ) : null}

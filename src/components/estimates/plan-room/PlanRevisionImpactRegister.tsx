@@ -218,7 +218,7 @@ export function PlanRevisionImpactRegister({
 
       {!schemaReady ? (
         <p className="mt-2 rounded border border-dashed border-hairline p-2 text-[10px] text-muted-foreground">
-          The revision impact register is waiting for its Lovable database migration.
+          The revision impact register isn't available yet.
         </p>
       ) : latestReview ? (
         <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">

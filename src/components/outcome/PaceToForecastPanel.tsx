@@ -386,7 +386,7 @@ export function PaceToForecastPanel({
           </div>
           {!contextQuery.data?.certificationEnabled ? (
             <span className="rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-xs font-semibold text-warning">
-              Migration required to certify
+              Certification not available yet
             </span>
           ) : null}
         </div>

@@ -99,21 +99,25 @@ function isMissingRestRelation(error: DynamicSupabaseError | null, relation: str
 // an unknown state and must stop the rollup so the UI cannot overstate margin.
 function requireFinancialQuery(error: DynamicSupabaseError | null, source: string) {
   if (error) {
+    // Keep the raw PostgREST/RLS string in server logs only; the client sees a
+    // plain-English message, never "permission denied for table…".
+    console.error(`Financial query failed (${source}):`, error);
     throw new Error(
-      `Financial data is unavailable because ${source} could not be loaded. ${error.message}`,
+      `Financial data is unavailable because ${source} could not be loaded. Refresh and try again.`,
     );
   }
 }
 
 function throwAtomicBillingRpcError(error: DynamicSupabaseError, action: string): never {
+  console.error(`Atomic billing command failed (${action}):`, error);
   if (
     /generate_billing_line_items_atomic|apply_billing_line_item_mutations_atomic|update_billing_application_retainage_atomic|schema cache|could not find the function/i.test(
       error.message,
     )
   ) {
-    throw new Error(`${action} is waiting on the Lovable billing-integrity migration.`);
+    throw new Error(`${action} isn't available yet. This workspace is still being set up.`);
   }
-  throw new Error(error.message);
+  throw new Error(`${action} could not be completed. Please try again.`);
 }
 
 async function requireCanReadProject(context: BillingServerContext, projectId: string) {
@@ -532,7 +536,7 @@ const normalizeProductionSovBillingHandoff = (
 const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => {
   if (!("amount_cents" in row)) {
     throw new Error(
-      "Cost financial data is unavailable because the Lovable cost-integrity migration is not live.",
+      "Cost financial data isn't available yet. This workspace is still being set up.",
     );
   }
   const amountCents = num(row.amount_cents);
@@ -1036,7 +1040,9 @@ export const applyCertifiedSovPositionToBilling = createServerFn({ method: "POST
           result.error.message,
         )
       ) {
-        throw new Error("Certified WIP handoff is waiting on the Lovable database migration.");
+        throw new Error(
+          "Certified WIP handoff isn't available yet. This workspace is still being set up.",
+        );
       }
       throw new Error(result.error.message);
     }
@@ -1069,12 +1075,12 @@ export const getCostLedgerDetails = createServerFn({ method: "GET" })
 
     if (isMissingRestRelation(paymentRes.error, "cost_actual_payments")) {
       throw new Error(
-        "Cost settlements are unavailable because the Lovable cost-integrity migration is not live.",
+        "Cost settlements aren't available yet. This workspace is still being set up.",
       );
     }
     if (isMissingRestRelation(budgetItemRes.error, "cost_budget_items")) {
       throw new Error(
-        "Cost breakdowns are unavailable because the Lovable billing-settlement migration is not live.",
+        "Cost breakdowns aren't available yet. This workspace is still being set up.",
       );
     }
     requireFinancialQuery(paymentRes.error, "cost settlement payments");
@@ -1121,7 +1127,7 @@ export const recordCostActualPayment = createServerFn({ method: "POST" })
     if (result.error) {
       if (/record_cost_actual_payment_atomic|schema cache|function/i.test(result.error.message)) {
         throw new Error(
-          "Cost payments are unavailable because the Lovable cost-integrity migration is not live.",
+          "Cost payments aren't available yet. This workspace is still being set up.",
         );
       }
       throw new Error(result.error.message);
@@ -1175,9 +1181,7 @@ export const saveCostBudgetItem = createServerFn({ method: "POST" })
       : await dynamicTable(ctx.supabase, "cost_budget_items").insert(payload).select("*").single();
     if (saveRes.error) {
       if (isMissingRestRelation(saveRes.error, "cost_budget_items")) {
-        throw new Error(
-          "Budget breakdowns are not enabled yet (database update pending). Apply the billing breakdown migration, then try again.",
-        );
+        throw new Error("Budget breakdowns aren't available yet. Try again in a few minutes.");
       }
       throw new Error(saveRes.error.message);
     }
@@ -1449,19 +1453,19 @@ const costActualInput = z
 // instead of surfacing a constraint name.
 const mapCostStatusError = (message: string) => {
   if (/credit_applies_to_id|credit link/i.test(message)) {
-    return "Linked credits are not enabled yet (database update pending). Apply the billing settlement migration, then try again.";
+    return "Linked credits aren't available yet. Try again in a few minutes.";
   }
   if (/invoice_attachment_(path|name|type|size)/i.test(message)) {
-    return "Invoice uploads are not enabled yet (database update pending). Apply the cost invoice attachment migration, then try again.";
+    return "Invoice uploads aren't available yet. Try again in a few minutes.";
   }
   if (/subcontract_change_order_id|subcontract_payment_id|subcontract link/i.test(message)) {
-    return "Subcontract cost links are not enabled yet (database update pending). Apply the cost-to-subcontract migration, then try again.";
+    return "Subcontract cost links aren't available yet. Try again in a few minutes.";
   }
   if (message.includes("cost_actuals_status_check")) {
     return 'The invoice approval stages are not enabled yet (database update pending). Save the cost as "Committed" or "Paid" for now.';
   }
   if (message.includes("cost_actuals_amount_check")) {
-    return "Credits and refunds (negative amounts) are not enabled yet (database update pending). Enter a positive amount for now.";
+    return "Credits and refunds (negative amounts) aren't available yet. Enter a positive amount for now.";
   }
   return message;
 };
@@ -1472,9 +1476,7 @@ const throwCostCommandError = (error: DynamicSupabaseError, action: string): nev
       error.message,
     )
   ) {
-    throw new Error(
-      `${action} is unavailable because the Lovable cost-integrity migration is not live.`,
-    );
+    throw new Error(`${action} isn't available yet. This workspace is still being set up.`);
   }
   throw new Error(mapCostStatusError(error.message));
 };

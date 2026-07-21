@@ -528,7 +528,7 @@ export const createCrmValueAsset = createServerFn({ method: "POST" })
       .single();
     if (inserted.error) {
       if (missingFollowupSchema(inserted.error)) {
-        throw new Error("The Follow-Up Studio database migration has not been applied yet.");
+        throw new Error("The Follow-Up Studio isn't available yet.");
       }
       throw new Error(inserted.error.message);
     }
@@ -578,7 +578,7 @@ export const enrollOpportunityInFollowupPlaybook = createServerFn({ method: "POS
       opportunityResult.error ?? playbookResult.error ?? stepResult.error ?? existingResult.error;
     if (lookupError) {
       if (missingFollowupSchema(lookupError)) {
-        throw new Error("The Follow-Up Studio database migration has not been applied yet.");
+        throw new Error("The Follow-Up Studio isn't available yet.");
       }
       throw new Error(lookupError.message);
     }

@@ -43,7 +43,7 @@ export function isMissingCreditsSchema(error: DynamicSupabaseError | null | unde
 }
 
 export const CREDITS_SCHEMA_PENDING_MESSAGE =
-  "AI credits are still being set up for this workspace. Try again after the latest database migration is applied.";
+  "AI credits are still being set up for this workspace. Try again in a few minutes.";
 
 /**
  * Org credit balance for the caller. Phase 3 capability split: raw

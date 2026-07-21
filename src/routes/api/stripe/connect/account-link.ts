@@ -106,7 +106,7 @@ function normalizedInternalPath(value: string | undefined, fallback: string) {
 function stripeConnectSchemaNotReady(error: { message?: string } | null) {
   return new RouteError(
     "stripe_schema_not_ready",
-    "Stripe setup is waiting on the latest billing database migration. Deploy the current Overwatch migration, then try Connect Stripe again.",
+    "Stripe setup isn't available yet. Try again in a few minutes.",
     409,
     { cause: error?.message ?? "" },
   );

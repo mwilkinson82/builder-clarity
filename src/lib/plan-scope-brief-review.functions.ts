@@ -239,7 +239,7 @@ export const savePlanScopeBriefReview = createServerFn({ method: "POST" })
       p_review_notes: data.review_notes,
     });
     if (isScopeBriefReviewSchemaPending(result.error)) {
-      throw new Error("Scope Brief decisions are waiting for their Lovable database migration.");
+      throw new Error("Scope Brief decisions aren't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     const row = ((result.data ?? [])[0] ?? null) as Record<string, unknown> | null;

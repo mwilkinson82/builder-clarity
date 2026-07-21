@@ -79,7 +79,7 @@ const exactCentNonnegativeMoney = z
   );
 
 const ATOMIC_PAYMENT_UPDATE_PENDING =
-  "The financial-integrity database update is still being applied. No payment or lien waiver was changed; try again after the Lovable migration completes.";
+  "The financial-integrity database update is still being applied. No payment or lien waiver was changed; try again in a few minutes.";
 
 function isMissingAtomicPaymentFunction(error: DynamicSupabaseError | null) {
   const message = error?.message ?? "";
@@ -344,7 +344,7 @@ export async function readProjectSubcontracts(
     if (error) {
       if (isMissingSubcontractTable(error)) {
         throw new Error(
-          `${NOT_ENABLED} Financial totals and actions are blocked until the Lovable migration is complete.`,
+          `${NOT_ENABLED} Financial totals and actions are blocked until setup is complete.`,
         );
       }
       throw new Error(

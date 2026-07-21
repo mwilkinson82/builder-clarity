@@ -428,7 +428,7 @@ export const sendCrmFollowupEmail = createServerFn({ method: "POST" })
     if (created.error || !created.data) {
       throw new Error(
         missingCrmActionSchema(created.error)
-          ? "Native CRM email is waiting for its Lovable database migration."
+          ? "Native CRM email isn't available yet."
           : (created.error?.message ?? "The delivery record could not be created."),
       );
     }
@@ -655,7 +655,7 @@ export const createCrmOnboardingPlan = createServerFn({ method: "POST" })
         throw new Error("This opportunity already has an active onboarding plan.");
       throw new Error(
         missingCrmActionSchema(plan.error)
-          ? "Onboarding is waiting for its Lovable database migration."
+          ? "Onboarding isn't available yet."
           : (plan.error?.message ?? "The onboarding plan could not be created."),
       );
     }

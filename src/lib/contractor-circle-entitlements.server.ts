@@ -163,7 +163,7 @@ export async function reconcileContractorCircleEntitlement({
       checked: false,
       memberEmail: "",
       tier: "",
-      message: "The commercial entitlement migration has not been applied yet.",
+      message: "This isn't available yet.",
     };
   }
   if (!organization) throw new Error("OverWatch company not found.");

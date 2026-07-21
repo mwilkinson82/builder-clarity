@@ -25,6 +25,7 @@ import {
   type CreateCrmValueAssetInput,
 } from "@/lib/crm-followup.functions";
 import { followupTiming } from "@/lib/crm-followup-domain";
+import { friendlyActionError } from "@/lib/friendly-error";
 import { supabase } from "@/integrations/supabase/client";
 import type { PipelineMember, PipelineOpportunityRow } from "@/lib/pipeline.functions";
 import { Button } from "@/components/ui/button";
@@ -144,7 +145,7 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
 
   const createAssetMutation = useMutation({
     mutationFn: async () => {
-      if (!snapshot?.enabled) throw new Error("The Follow-Up Studio migration is not active yet.");
+      if (!snapshot?.enabled) throw new Error("The Follow-Up Studio isn't available yet.");
       if (!assetForm.title.trim()) throw new Error("Give this resource a clear title.");
 
       let storagePath = "";
@@ -254,10 +255,10 @@ export function FollowUpStudio({ opportunities, members, onOpenOpportunity }: Fo
     <div className="space-y-5">
       {!snapshot?.enabled && (
         <div className="rounded-xl border border-warning/35 bg-warning/5 px-4 py-3 text-sm text-foreground">
-          <div className="font-semibold">Follow-Up Studio migration is ready</div>
+          <div className="font-semibold">Follow-Up Studio isn't fully set up yet</div>
           <p className="mt-1 text-muted-foreground">
-            The interface and default playbook are visible in preview. Lovable still needs to apply
-            the CRM follow-up migration before resources and enrollments can be saved.
+            You can preview the interface and default playbook here. Saving resources and
+            enrollments will be available once setup is complete.
           </p>
         </div>
       )}
@@ -689,5 +690,5 @@ function formatBytes(bytes: number) {
 }
 
 function message(error: unknown) {
-  return error instanceof Error ? error.message : "Unknown error";
+  return friendlyActionError(error, "Something went wrong. Try again.");
 }

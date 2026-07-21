@@ -993,7 +993,7 @@ const fallbackExposurePayloadForInspection = (
     created_by: inspection.created_by ?? null,
   };
   const humanNotes = [
-    "Inspection saved through the shared risk ledger because the dedicated inspection table is not available in this Supabase schema yet.",
+    "Inspection saved through the shared risk ledger because the dedicated inspection table is not available yet.",
     `Status: ${payload.status}. Result: ${payload.result}. Attempt: ${payload.attempt_number}.`,
     authority ? `Authority: ${authority}.` : "",
     payload.inspector ? `Inspector: ${payload.inspector}.` : "",
@@ -1101,7 +1101,6 @@ function stripDecisionEnhancementFields<T extends Record<string, unknown>>(input
   return next;
 }
 
-const PROJECT_METADATA_MIGRATION = "20260622140000_project_metadata_hardening.sql";
 const PROJECT_METADATA_COLUMNS = [
   "job_number",
   "project_manager",
@@ -1115,7 +1114,7 @@ const cleanOptionalDate = (value: string | null | undefined) =>
   value && value.trim() ? value : null;
 
 const projectSchemaError = (column: string) =>
-  `Supabase schema is missing public.projects.${column}. Apply ${PROJECT_METADATA_MIGRATION} and refresh the Supabase schema cache before saving project metadata.`;
+  `Project metadata (${column}) isn't available yet. This workspace is still being set up.`;
 
 const throwIfProjectSchemaError = (error: { code?: string; message?: string } | null) => {
   for (const column of PROJECT_METADATA_COLUMNS) {
@@ -1125,9 +1124,7 @@ const throwIfProjectSchemaError = (error: { code?: string; message?: string } | 
 
 function requireProjectBudgetLock(row: Record<string, unknown>): string | null {
   if (!Object.prototype.hasOwnProperty.call(row, "budget_locked_at")) {
-    throw new Error(
-      "Financial data unavailable: projects.budget_locked_at was not returned. Apply the budget/SOV authority migration and refresh the Supabase schema cache before relying on the budget.",
-    );
+    throw new Error("Financial data isn't available yet. This workspace is still being set up.");
   }
   const value = row.budget_locked_at;
   if (value === null) return null;
@@ -2586,7 +2583,7 @@ export const createProject = createServerFn({ method: "POST" })
     if (result.error) {
       if (/schema cache|could not find the function|does not exist/i.test(result.error.message)) {
         throw new Error(
-          "Project financial commands are still being enabled. No project or budget line was created; try again after Lovable finishes the migration.",
+          "Project financial commands are still being enabled. No project or budget line was created; try again in a few minutes.",
         );
       }
       throw new Error(result.error.message);
@@ -2646,7 +2643,7 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
     if (result.error) {
       if (/schema cache|could not find the function|does not exist/i.test(result.error.message)) {
         throw new Error(
-          "Project financial commands are still being enabled. No project header was changed; try again after Lovable finishes the migration.",
+          "Project financial commands are still being enabled. No project header was changed; try again in a few minutes.",
         );
       }
       throw new Error(result.error.message);
@@ -3251,9 +3248,7 @@ export const allocateChangeOrder = createServerFn({ method: "POST" })
         error.code === "PGRST202" ||
         /allocate_change_order_atomic|schema cache|function/i.test(error.message)
       ) {
-        throw new Error(
-          "Change-order allocation integrity is not enabled on this workspace yet. Apply the project financial integrity migration before allocating.",
-        );
+        throw new Error("Change-order allocation isn't available on this workspace yet.");
       }
       throw new Error(error.message);
     }
@@ -3341,7 +3336,7 @@ export const lockProjectBudget = createServerFn({ method: "POST" })
         )
       ) {
         throw new Error(
-          "Budget locking is still being enabled. No lock state changed; try again after Lovable finishes the migration.",
+          "Budget locking is still being enabled. No lock state changed; try again in a few minutes.",
         );
       }
       throw new Error(result.error.message);
@@ -3495,9 +3490,7 @@ export const buildBudgetFromEstimate = createServerFn({ method: "POST" })
       },
     );
     if (error) {
-      throw new Error(
-        `Budget build did not commit: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
-      );
+      throw new Error(`Budget build did not commit: ${error.message}. Try again in a few minutes.`);
     }
     if (!result || typeof result !== "object") {
       throw new Error("Budget build did not return a committed operation result.");
@@ -3961,9 +3954,7 @@ export const updateBucket = createServerFn({ method: "POST" })
       },
     );
     if (error) {
-      throw new Error(
-        `Budget line did not commit: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
-      );
+      throw new Error(`Budget line did not commit: ${error.message}. Try again in a few minutes.`);
     }
     if (!result || typeof result !== "object") {
       throw new Error("Budget line did not return a committed operation result.");
@@ -4000,9 +3991,7 @@ export const createBucket = createServerFn({ method: "POST" })
       },
     );
     if (error) {
-      throw new Error(
-        `Budget line was not created: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
-      );
+      throw new Error(`Budget line was not created: ${error.message}. Try again in a few minutes.`);
     }
     if (!result || typeof result !== "object") {
       throw new Error("Budget line creation did not return a committed operation result.");
@@ -4032,9 +4021,7 @@ export const deleteBucket = createServerFn({ method: "POST" })
       },
     );
     if (error) {
-      throw new Error(
-        `Budget line was not deleted: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
-      );
+      throw new Error(`Budget line was not deleted: ${error.message}. Try again in a few minutes.`);
     }
     if (!result || typeof result !== "object") {
       throw new Error("Budget line deletion did not return a committed operation result.");
@@ -4648,9 +4635,7 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
         error.code === "PGRST202" ||
         /record_invoice_payment_atomic|schema cache|function/i.test(error.message)
       ) {
-        throw new Error(
-          "Atomic payment recording is not enabled on this workspace yet. Apply the project financial integrity migration before recording cash.",
-        );
+        throw new Error("Payment recording isn't available on this workspace yet.");
       }
       throw new Error(error.message);
     }
@@ -4688,9 +4673,7 @@ export const reconcileInvoicePayments = createServerFn({ method: "POST" })
         error.code === "PGRST202" ||
         /reconcile_invoice_payment_rollup|schema cache|function/i.test(error.message)
       ) {
-        throw new Error(
-          "Payment reconciliation is not enabled on this workspace yet. Apply the financial-integrity migration and retry.",
-        );
+        throw new Error("Payment reconciliation isn't available on this workspace yet.");
       }
       throw new Error(error.message);
     }
@@ -5050,7 +5033,7 @@ export const importCostBuckets = createServerFn({ method: "POST" })
     );
     if (error) {
       throw new Error(
-        `SOV import did not commit and the prior budget was preserved: ${error.message}. Apply the budget/SOV authority migration if the atomic command is unavailable.`,
+        `SOV import did not commit and the prior budget was preserved: ${error.message}. Try again in a few minutes.`,
       );
     }
     if (!result || typeof result !== "object") {
@@ -7754,7 +7737,7 @@ const ensureVersionedHarborDemoModules = async (
   const recordModuleRun = async (run: HarborDemoModuleRun) => {
     if (!registryAvailable) {
       addRegistryWarning(
-        "Harbor demo version registry is waiting for the Lovable database migration; canonical module data was still ensured.",
+        "Harbor demo version registry isn't available yet; canonical module data was still ensured.",
       );
       return;
     }
@@ -8080,9 +8063,7 @@ export const resetHarborDemoModule = createServerFn({ method: "POST" })
       seedWarnings,
     );
     if (!engine.registryAvailable) {
-      throw new Error(
-        "The Harbor demo version migration must be applied before reset is available.",
-      );
+      throw new Error("Harbor demo reset isn't available yet.");
     }
 
     const resetWarningStart = seedWarnings.length;
@@ -8328,7 +8309,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
     if (projectError) {
       if (/schema cache|could not find the function|does not exist/i.test(projectError.message)) {
         throw new Error(
-          "Harbor project financial commands are still being enabled. No demo project was created; try again after Lovable finishes the migration.",
+          "Harbor project financial commands are still being enabled. No demo project was created; try again in a few minutes.",
         );
       }
       throw new Error(projectError.message);

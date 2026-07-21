@@ -77,7 +77,7 @@ export function MeasurementScopeQueuePanel({
 
       {!ready ? (
         <p className="mt-3 rounded-md border border-dashed border-hairline px-3 py-2 text-xs text-muted-foreground">
-          The durable scope queue is waiting for its Lovable database migration.
+          The durable scope queue isn't available yet.
         </p>
       ) : items.length === 0 ? (
         <p className="mt-3 rounded-md border border-dashed border-hairline px-3 py-3 text-xs text-muted-foreground">

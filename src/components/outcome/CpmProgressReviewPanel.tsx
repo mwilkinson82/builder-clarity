@@ -366,7 +366,7 @@ export function CpmProgressReviewPanel({ projectId }: { projectId: string }) {
         </div>
       ) : !query.data?.enabled ? (
         <div className="px-5 py-8 text-center text-sm text-muted-foreground">
-          CPM progress review will appear after Lovable applies the Slice 3 database migration.
+          CPM progress review isn't available yet.
         </div>
       ) : query.data.recommendations.length === 0 ? (
         <div className="px-5 py-8 text-center">

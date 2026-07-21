@@ -160,7 +160,7 @@ export const requestStripePaymentLimit = createServerFn({ method: "POST" })
       .single();
     if (orgResult.error) {
       if (missingSchema(orgResult.error)) {
-        throw new Error("Payment-limit requests are waiting on the latest Lovable migration.");
+        throw new Error("Payment-limit requests aren't available yet.");
       }
       throw new Error(orgResult.error.message);
     }
@@ -197,7 +197,7 @@ export const requestStripePaymentLimit = createServerFn({ method: "POST" })
         throw new Error("This company already has an open payment-limit request.");
       }
       if (missingSchema(error)) {
-        throw new Error("Payment-limit requests are waiting on the latest Lovable migration.");
+        throw new Error("Payment-limit requests aren't available yet.");
       }
       throw new Error(error.message);
     }

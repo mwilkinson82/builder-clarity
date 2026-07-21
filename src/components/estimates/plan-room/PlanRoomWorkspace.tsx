@@ -4212,7 +4212,7 @@ export function PlanRoomWorkspace({
             <p className="font-medium">Plan Room backend is still coming online</p>
             <p className="mt-1 text-warning">
               {schemaMessage ||
-                "Lovable needs to apply the Plan Room migration and refresh the Supabase schema cache before uploads and takeoff saves are available."}
+                "The Plan Room isn't available yet. Uploads and takeoff saves will work once setup is complete."}
             </p>
           </section>
         )}

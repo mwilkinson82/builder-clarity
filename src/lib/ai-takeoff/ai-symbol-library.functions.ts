@@ -12,7 +12,7 @@ import {
 
 export const AI_SYMBOL_LIBRARY_BUCKET = "ai-symbol-library";
 export const SYMBOL_LIBRARY_SCHEMA_PENDING_MESSAGE =
-  "The company symbol library is waiting for its Lovable database migration.";
+  "The company symbol library isn't available yet.";
 
 const saveExampleInput = z.object({
   estimate_id: z.string().uuid(),

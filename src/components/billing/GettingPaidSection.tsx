@@ -355,8 +355,7 @@ export function GettingPaidSection({
 
       {profile?.schemaMissing && (
         <div className="mt-4 rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-          The payments database migration has not been applied yet. Bank details can be entered
-          after the Payments Phase 1 migrations run.
+          Payments aren't available yet. Bank details can be entered once this workspace is set up.
         </div>
       )}
 

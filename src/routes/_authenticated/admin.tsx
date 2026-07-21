@@ -200,8 +200,8 @@ function AdminPage() {
             </div>
           ) : !data?.schemaReady ? (
             <div className="mt-5 rounded-md border border-warning/30 bg-warning/10 px-4 py-5 text-sm text-warning">
-              Activity table is waiting for the database migration. Heartbeats will appear here
-              after Lovable applies the schema.
+              Activity data isn't available yet. Heartbeats will appear here once this workspace is
+              set up.
             </div>
           ) : data.activeSessions.length === 0 ? (
             <div className="mt-5 rounded-md border border-hairline bg-surface px-4 py-8 text-center text-sm text-muted-foreground">

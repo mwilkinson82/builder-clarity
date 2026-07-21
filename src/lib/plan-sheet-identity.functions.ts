@@ -163,9 +163,7 @@ export const identifyPlanSheetsWithAi = createServerFn({ method: "POST" })
     const { isOpenAiConfigured, resolveOpenAiModel } =
       await import("@/lib/ai-takeoff/openai.server");
     if (!isOpenAiConfigured()) {
-      throw new Error(
-        "AI title-block reading is not configured. Add the existing AI key in Lovable.",
-      );
+      throw new Error("AI title-block reading isn't set up for this workspace yet.");
     }
 
     const { data: estimate, error: estimateError } = await dynamicTable(
@@ -255,7 +253,7 @@ export const identifyPlanSheetsWithAi = createServerFn({ method: "POST" })
       if (isMissingCreditsSchema(operationError)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
       throw new Error(
         isMissingSheetIdentitySchema(operationError)
-          ? "AI title-block reading is waiting for its Lovable database migration."
+          ? "AI title-block reading isn't available yet."
           : (operationError?.message ?? "AI title-block reading could not start."),
       );
     }

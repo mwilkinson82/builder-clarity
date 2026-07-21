@@ -67,7 +67,7 @@ describe("subcontract financial server reads", () => {
     });
 
     await expect(readProjectSubcontracts(client, PROJECT_ID)).rejects.toThrow(
-      /Financial totals and actions are blocked until the Lovable migration is complete/,
+      /Financial totals and actions are blocked until setup is complete/,
     );
   });
 

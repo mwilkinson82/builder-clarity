@@ -415,7 +415,7 @@ export const analyzePlanRevisionSet = createServerFn({ method: "POST" })
     const { isVisionConfigured, resolveVisionModel } =
       await import("@/lib/ai-takeoff/vision.server");
     if (!isVisionConfigured()) {
-      throw new Error("Revision matching needs the existing OpenAI or Anthropic key in Lovable.");
+      throw new Error("Revision matching isn't set up for this workspace yet.");
     }
     const organizationId = str((estimate as Record<string, unknown>).organization_id);
     // Phase 3: AI assists write via the service-role client and spend org AI
@@ -478,7 +478,7 @@ export const analyzePlanRevisionSet = createServerFn({ method: "POST" })
     if (operationError || !operation) {
       throw new Error(
         isRevisionSchemaPending(operationError)
-          ? "Revision matching is waiting for its Lovable database migration."
+          ? "Revision matching isn't available yet."
           : (operationError?.message ?? "Revision matching could not start."),
       );
     }
@@ -641,9 +641,7 @@ export const analyzeAcceptedPlanRevisionScope = createServerFn({ method: "POST" 
     const { isVisionConfigured, resolveVisionModel } =
       await import("@/lib/ai-takeoff/vision.server");
     if (!isVisionConfigured()) {
-      throw new Error(
-        "Revision note review needs the existing OpenAI or Anthropic key in Lovable.",
-      );
+      throw new Error("Revision note review isn't set up for this workspace yet.");
     }
     const organizationId = str((estimate as Record<string, unknown>).organization_id);
     // Phase 3: AI assists write via the service-role client and spend org AI
@@ -710,7 +708,7 @@ export const analyzeAcceptedPlanRevisionScope = createServerFn({ method: "POST" 
     if (operationError || !operation) {
       throw new Error(
         isRevisionSchemaPending(operationError)
-          ? "Revision note review is waiting for its Lovable database migration."
+          ? "Revision note review isn't available yet."
           : (operationError?.message ?? "Revision note review could not start."),
       );
     }
@@ -814,7 +812,7 @@ export const savePlanRevisionDecisions = createServerFn({ method: "POST" })
       },
     );
     if (isRevisionSchemaPending(result.error)) {
-      throw new Error("Revision matching is waiting for its Lovable database migration.");
+      throw new Error("Revision matching isn't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     return {

@@ -36,8 +36,7 @@ function isMissingTable(error: DynamicSupabaseError | null) {
     /project_documents|schema cache|does not exist|relation/i.test(message)
   );
 }
-const NOT_ENABLED =
-  "The file room isn't enabled on this workspace yet — the project_documents migration hasn't been applied.";
+const NOT_ENABLED = "The file room isn't available on this workspace yet.";
 
 // The preset category vocabulary the app supplies. The column is intentionally
 // free text so project teams can also create their own categories without a

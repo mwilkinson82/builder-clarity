@@ -339,8 +339,7 @@ export function BillingEnhancementPanels({
   if (!workspace?.schemaReady) {
     return (
       <div className="rounded-md border border-warning/30 bg-warning/10 p-5 text-sm text-warning">
-        Enhanced billing tables are not available yet. Apply the Billing and WIP foundation
-        migration, then refresh this project.
+        Enhanced billing tables aren't available yet. This workspace is still being set up.
       </div>
     );
   }
@@ -935,7 +934,7 @@ function CertifiedSovBillingHandoffPanel({
           PM billing handoff
         </div>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          Certified WIP positions will appear here after the Lovable database migration. Billing can
+          Certified WIP positions will appear here once this workspace is set up. Billing can
           continue manually in the meantime.
         </p>
       </div>

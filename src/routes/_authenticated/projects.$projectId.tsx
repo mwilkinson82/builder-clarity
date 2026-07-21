@@ -40,6 +40,7 @@ import {
 import type { ChangeOrderAllocationInput } from "@/components/billing/ChangeOrderAllocationPanel";
 import { fmtUSDCents } from "@/lib/billing-format";
 import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { applySovBucketPatch } from "@/lib/sov-rollup";
 import { BudgetLineDrawer } from "@/components/outcome/BudgetLineDrawer";
 import { ChangeOrdersTable, type ChangeOrderDraft } from "@/components/outcome/ChangeOrdersTable";
@@ -332,7 +333,47 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
     };
   },
   component: ProjectRoute,
+  errorComponent: ProjectRouteError,
 });
+
+// Route-level boundary: a throw in any child renders a recoverable card (retry
+// or head back to the portfolio), never a blank shell. The raw error stays in
+// the console/monitoring; the reader sees a mapped, plain-English reason.
+function ProjectRouteError({ error, reset }: { error: Error; reset: () => void }) {
+  const router = useRouter();
+  useEffect(() => {
+    console.error("Project view crashed:", error);
+  }, [error]);
+  return (
+    <div className="p-10">
+      <section
+        role="alert"
+        className="max-w-xl rounded-xl border border-danger/30 bg-danger/10 p-5 shadow-card"
+      >
+        <h2 className="font-serif text-xl text-foreground">This page hit a snag</h2>
+        <p className="mt-2 text-sm leading-relaxed text-danger">
+          {friendlyErrorMessage(error, "Something went wrong loading this project. Try again.")}
+        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="signal"
+            size="sm"
+            onClick={() => {
+              router.invalidate();
+              reset();
+            }}
+          >
+            Try again
+          </Button>
+          <Button asChild type="button" variant="outline" size="sm">
+            <Link to="/">Back to portfolio</Link>
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 // v2 floating rail (docs/THEMING.md structural signatures): a rounded paper
 // card that floats on the page wash — radius 15, hairline border, one soft
@@ -477,7 +518,13 @@ function ProjectPage() {
     });
   };
 
-  const { data, isLoading, error } = useQuery({
+  const {
+    data,
+    isLoading,
+    error,
+    refetch: refetchProject,
+    isFetching: projectFetching,
+  } = useQuery({
     queryKey: ["project", projectId],
     queryFn: () => get({ data: { projectId } }),
   });
@@ -1368,7 +1415,7 @@ function ProjectPage() {
     },
     onError: (err) => {
       toast.error("SOV mapping did not save", {
-        description: err instanceof Error ? err.message : "Try again after setup is complete.",
+        description: err instanceof Error ? err.message : "Try again in a moment.",
       });
     },
   });
@@ -1417,10 +1464,7 @@ function ProjectPage() {
     },
     onError: (err) => {
       toast.error("Invoice did not save", {
-        description:
-          err instanceof Error
-            ? err.message
-            : "Publish the invoice/payment migration and try again.",
+        description: err instanceof Error ? err.message : "Try again in a moment.",
       });
     },
   });
@@ -1475,7 +1519,7 @@ function ProjectPage() {
     },
     onError: (err) => {
       toast.error("Billing lines did not generate", {
-        description: err instanceof Error ? err.message : "Try again after the migration runs.",
+        description: err instanceof Error ? err.message : "Try again in a moment.",
       });
     },
   });
@@ -1664,12 +1708,32 @@ function ProjectPage() {
 
   if (isLoading) return <div className="p-10 text-muted-foreground">Loading…</div>;
   if (error || !data) {
+    if (error) console.error("Project load failed:", error);
     return (
       <div className="p-10">
-        <p className="text-sm text-danger">Could not load project.</p>
-        <Link to="/" className="mt-4 inline-block text-sm underline">
-          ← Back to portfolio
-        </Link>
+        <section
+          role="alert"
+          className="max-w-xl rounded-xl border border-danger/30 bg-danger/10 p-5 shadow-card"
+        >
+          <h2 className="font-serif text-xl text-foreground">This project didn't load</h2>
+          <p className="mt-2 text-sm leading-relaxed text-danger">
+            {friendlyErrorMessage(error, "We couldn't load this project. Try again.")}
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="signal"
+              size="sm"
+              disabled={projectFetching}
+              onClick={() => void refetchProject()}
+            >
+              {projectFetching ? "Retrying…" : "Retry"}
+            </Button>
+            <Button asChild type="button" variant="outline" size="sm">
+              <Link to="/">Back to portfolio</Link>
+            </Button>
+          </div>
+        </section>
       </div>
     );
   }
@@ -2515,8 +2579,7 @@ function ProjectPage() {
       });
     } catch (err) {
       toast.error("Payment did not save", {
-        description:
-          err instanceof Error ? err.message : "Publish the payment ledger migration and retry.",
+        description: err instanceof Error ? err.message : "Try again in a moment.",
       });
       throw err;
     }
