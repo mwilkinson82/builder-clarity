@@ -11,11 +11,12 @@ import { Link } from "@tanstack/react-router";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import { daysOverdue, daysUntilDue, invoiceOpenBalanceCents } from "@/lib/receivables";
+import { isHarborDemoProject } from "@/lib/demo-seed";
 import type { ReceivableInvoiceRow } from "@/lib/receivables.functions";
 import type { PortfolioBillingProject } from "@/lib/billing.functions";
 import { ReceivablesCockpit } from "@/components/billing/ReceivablesCockpit";
 import { MONO_LABEL, overdueTotal, type PortfolioBillingTotals } from "./portfolio-billing-shared";
-import { StatTile } from "./PortfolioStatTiles";
+import { SamplePill, StatTile } from "./PortfolioStatTiles";
 
 const WORKLIST_CAP = 8;
 
@@ -73,6 +74,18 @@ export function CollectionsTab({
 
   const worklist = openInvoices.slice(0, WORKLIST_CAP);
   const worklistOverflow = openInvoices.length - worklist.length;
+  // For the first-run CTA, prefer a real project over the seeded demo.
+  const firstProject =
+    projects.find(
+      (project) =>
+        !isHarborDemoProject({
+          name: project.project_name,
+          job_number: project.job_number,
+          client: project.client,
+        }),
+    ) ??
+    projects[0] ??
+    null;
 
   return (
     <div className="space-y-4">
@@ -121,9 +134,38 @@ export function CollectionsTab({
                 Open invoices did not load. Retry from the worklist detail below.
               </div>
             ) : worklist.length === 0 ? (
-              <div className="border-t border-hairline py-8 text-center text-sm text-muted-foreground">
-                No open invoices. Everything billed is collected.
-              </div>
+              // Distinguish "nothing billed yet" (first run) from "everything
+              // billed is collected" (a real, earned all-clear). Never assert
+              // collection for an account that has never billed.
+              totals.total_billed <= 0 ? (
+                <div className="border-t border-hairline py-8 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No invoices sent yet. Cut a pay application from a project and its open balance
+                    shows up here to collect.
+                  </p>
+                  {firstProject ? (
+                    <Link
+                      to="/projects/$projectId"
+                      params={{ projectId: firstProject.project_id }}
+                      search={{ tab: "billing" }}
+                      className="mt-3 inline-flex rounded-lg border border-hairline px-3 py-1.5 text-[12px] font-semibold text-foreground transition hover:border-foreground"
+                    >
+                      Cut your first pay app →
+                    </Link>
+                  ) : (
+                    <a
+                      href="/?tab=projects"
+                      className="mt-3 inline-flex rounded-lg border border-hairline px-3 py-1.5 text-[12px] font-semibold text-foreground transition hover:border-foreground"
+                    >
+                      Set up a project to bill →
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <div className="border-t border-hairline py-8 text-center text-sm text-muted-foreground">
+                  No open invoices. Everything billed is collected.
+                </div>
+              )
             ) : (
               <>
                 {worklist.map((invoice) => (
@@ -228,8 +270,11 @@ function WorklistRow({ invoice, today }: { invoice: ReceivableInvoiceRow; today:
   return (
     <div className="grid items-center gap-x-3 gap-y-1 border-t border-hairline py-3 sm:grid-cols-[1.4fr_100px_90px_80px_auto]">
       <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold text-foreground">
-          {invoice.project_name}
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-[13px] font-semibold text-foreground">
+            {invoice.project_name}
+          </span>
+          {isHarborDemoProject({ name: invoice.project_name }) ? <SamplePill /> : null}
         </div>
         <div className="text-[11px] text-muted-foreground">
           {billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice")}

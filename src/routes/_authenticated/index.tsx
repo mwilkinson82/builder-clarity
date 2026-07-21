@@ -42,16 +42,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  AlertTriangle,
-  BriefcaseBusiness,
-  MailPlus,
-  Plus,
-  RotateCcw,
-  Search,
-  Trash2,
-  Users,
-} from "lucide-react";
+import { BriefcaseBusiness, MailPlus, Plus, RotateCcw, Search, Trash2, Users } from "lucide-react";
+import { PortfolioLoadError } from "@/components/home/portfolio-load-error";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import { computeScheduleVarianceWeeks } from "@/lib/ior";
 import { toast } from "sonner";
@@ -205,6 +197,15 @@ function PortfolioPage({
     }
   };
   const [search, setSearch] = useState("");
+  // The redesigned home header's search affordance deep-links here with a #find
+  // hash; focus the real project search on arrival so that control is honest
+  // (it takes you to working search) rather than a dead box.
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.hash === "#find") {
+      searchInputRef.current?.focus();
+    }
+  }, []);
   const [seedError, setSeedError] = useState<string | null>(null);
   const [companyFilter, setCompanyFilter] = useState("all");
   const [managerFilter, setManagerFilter] = useState("all");
@@ -537,6 +538,7 @@ function PortfolioPage({
                     <div className="relative flex-1">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                       <Input
+                        ref={searchInputRef}
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder="Search project, job number, client, PM, or company"
@@ -1028,39 +1030,6 @@ function PortfolioLedgerState({
 }
 
 type PortfolioProject = Awaited<ReturnType<typeof listProjects>>[number];
-
-function PortfolioLoadError({
-  title,
-  description,
-  detail,
-  onRetry,
-}: {
-  title: string;
-  description: string;
-  detail: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="mb-6 rounded-lg border border-danger/30 bg-danger/10 p-5 text-danger">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div className="flex gap-3">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-          <div>
-            <h2 className="font-serif text-2xl text-danger">{title}</h2>
-            <p className="mt-1 max-w-2xl text-sm text-danger/80">{description}</p>
-            <pre className="mt-3 max-w-3xl overflow-auto rounded-md border border-danger/20 bg-background/70 p-3 text-left text-xs text-foreground">
-              {detail}
-            </pre>
-          </div>
-        </div>
-        <Button type="button" variant="outline" onClick={onRetry} className="shrink-0 gap-1.5">
-          <RotateCcw className="h-3.5 w-3.5" />
-          Retry
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 function EmptyState() {
   return (

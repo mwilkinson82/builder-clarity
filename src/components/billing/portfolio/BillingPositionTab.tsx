@@ -5,6 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { daysUntilDue } from "@/lib/receivables";
+import { isHarborDemoProject } from "@/lib/demo-seed";
 import type { PortfolioBillingProject } from "@/lib/billing.functions";
 import {
   MONO_LABEL,
@@ -12,7 +13,7 @@ import {
   shortDate,
   type PortfolioBillingTotals,
 } from "./portfolio-billing-shared";
-import { MoneyCell, StatTile } from "./PortfolioStatTiles";
+import { MoneyCell, SamplePill, StatTile } from "./PortfolioStatTiles";
 
 // An overbilled job reads crit once the overbilling passes 5% of earned
 // revenue (judgment call — the mock colors a ~7.7% overbill crit and a ~2.1%
@@ -83,8 +84,17 @@ export function BillingPositionTab({
           </div>
         </div>
         {sortedProjects.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-            No active projects are available for billing yet.
+          <div className="px-4 py-10 text-center">
+            <p className="mx-auto max-w-md text-sm text-muted-foreground">
+              No projects to bill yet. Create a project and set up its schedule of values, then bill
+              its progress from here.
+            </p>
+            <a
+              href="/?tab=projects"
+              className="mt-3 inline-flex rounded-lg border border-hairline px-3 py-1.5 text-[12px] font-semibold text-foreground transition hover:border-foreground"
+            >
+              Create your first project →
+            </a>
           </div>
         ) : (
           sortedProjects.map((project) => (
@@ -117,8 +127,17 @@ function PositionRow({ project }: { project: PortfolioBillingProject }) {
   return (
     <div className="grid items-center gap-x-3.5 gap-y-2 border-t border-hairline px-4 py-3.5 first:border-t-0 md:grid-cols-[1.4fr_0.9fr_0.9fr_1.3fr_0.9fr_0.8fr_auto]">
       <div className="min-w-0">
-        <div className="truncate text-[13.5px] font-semibold text-foreground">
-          {project.project_name}
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-[13.5px] font-semibold text-foreground">
+            {project.project_name}
+          </span>
+          {isHarborDemoProject({
+            name: project.project_name,
+            job_number: project.job_number,
+            client: project.client,
+          }) ? (
+            <SamplePill />
+          ) : null}
         </div>
         <div className="truncate text-[11px] text-muted-foreground">
           {[project.job_number ? `Job ${project.job_number}` : "", project.client]
