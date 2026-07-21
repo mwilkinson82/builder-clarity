@@ -229,12 +229,44 @@ export const upsertDailyReport = createServerFn({ method: "POST" })
         .maybeSingle();
       if (existingError) throw new Error(existingError.message);
 
-      const { data: organization, error: orgError } = await context.supabase
-        .from("organizations")
-        .select("daily_report_limit_per_month,storage_limit_mb")
-        .eq("id", project.organization_id)
-        .single();
-      if (orgError) throw new Error(orgError.message);
+      // Phase 3 capability split: the organizations base row is no longer
+      // readable by plain members, but plain members MUST still be able to
+      // save daily reports. The SECURITY DEFINER organizations_directory
+      // projection carries exactly the two quota fields this check needs, so
+      // the read stays on the user's client (membership enforced inside the
+      // RPC). Pre-migration (RPC not deployed) falls back to the old direct
+      // read, which the pre-split member-read policy still allows.
+      const directoryRes = await (
+        context.supabase as unknown as {
+          rpc(
+            fn: string,
+            args: Record<string, unknown>,
+          ): Promise<{ data: unknown; error: { code?: string; message?: string } | null }>;
+        }
+      ).rpc("organizations_directory", { p_org_id: project.organization_id });
+      let organization: { daily_report_limit_per_month?: unknown; storage_limit_mb?: unknown };
+      if (!directoryRes.error) {
+        const rows = Array.isArray(directoryRes.data)
+          ? directoryRes.data
+          : [directoryRes.data].filter(Boolean);
+        const row = (rows[0] ?? null) as typeof organization | null;
+        if (!row) throw new Error("This project's company is not available for your account.");
+        organization = row;
+      } else {
+        const message = (directoryRes.error.message ?? "").toLowerCase();
+        const rpcMissing =
+          directoryRes.error.code === "PGRST202" ||
+          directoryRes.error.code === "42883" ||
+          message.includes("function organizations_directory");
+        if (!rpcMissing) throw new Error(directoryRes.error.message ?? "Company lookup failed.");
+        const { data: legacyOrganization, error: orgError } = await context.supabase
+          .from("organizations")
+          .select("daily_report_limit_per_month,storage_limit_mb")
+          .eq("id", project.organization_id)
+          .single();
+        if (orgError) throw new Error(orgError.message);
+        organization = legacyOrganization;
+      }
 
       const { data: organizationProjects, error: orgProjectsError } = await context.supabase
         .from("projects")

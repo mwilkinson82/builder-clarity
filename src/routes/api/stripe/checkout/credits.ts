@@ -14,7 +14,7 @@ import {
   jsonOk,
   readServerEnv,
   requireAuthedStripeContext,
-  requireCanManageOrganization,
+  requireManageSettings,
   stripePost,
   type StripeCheckoutSession,
 } from "@/lib/stripe.server";
@@ -56,7 +56,7 @@ export const Route = createFileRoute("/api/stripe/checkout/credits")({
           if (!organizationId) {
             throw new Error("No Overwatch company workspace is available for this user.");
           }
-          await requireCanManageOrganization(context, String(organizationId));
+          await requireManageSettings(context, String(organizationId));
 
           const packs = creditPacksFromEnv(process.env.CREDIT_PACKS_JSON);
           const pack = findCreditPack(packs, body.packId);

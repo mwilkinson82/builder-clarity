@@ -1,12 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 import type { Json } from "@/integrations/supabase/types";
 import {
   CREDITS_SCHEMA_PENDING_MESSAGE,
   dynamicTable,
   isMissingCreditsSchema,
   num,
+  readOrgCreditBalance,
   str,
   type DynamicSupabaseError,
   type DynamicSupabaseResult,
@@ -14,7 +16,6 @@ import {
 import {
   AI_REVISION_SCOPE_REVIEW_CREDITS_PER_PAIR,
   computeApiCostCents,
-  creditBalance,
 } from "@/lib/credits/credits-domain";
 import type { MeasurementSourceLine } from "@/lib/plan-room-measurement-assistant";
 import {
@@ -417,6 +418,10 @@ export const analyzePlanRevisionSet = createServerFn({ method: "POST" })
       throw new Error("Revision matching needs the existing OpenAI or Anthropic key in Lovable.");
     }
     const organizationId = str((estimate as Record<string, unknown>).organization_id);
+    // Phase 3: AI assists write via the service-role client and spend org AI
+    // credits: they require the "Build estimates" capability, not just
+    // estimate read (docs/ROLES.md section 5: estimating writes -> estimating.write).
+    await requireOrgCapability(context.supabase, organizationId, "estimating.write");
     const superAdmin = await isSuperAdmin(context.supabase);
     const chargedCredits = superAdmin ? 0 : revisionMatchCredits(aiReviewable.length);
     if (!superAdmin) {
@@ -430,14 +435,15 @@ export const analyzePlanRevisionSet = createServerFn({ method: "POST" })
       ).rpc("ensure_monthly_ai_credit_grant", { p_organization_id: organizationId });
       if (grant.error && !isMissingMonthlyGrantRpc(grant.error))
         throw new Error(grant.error.message);
-      const ledger = (await dynamicTable(context.supabase, "credit_ledger")
-        .select("delta")
-        .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
-      if (ledger.error) {
-        if (isMissingCreditsSchema(ledger.error)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
-        throw new Error(ledger.error.message);
+      // Phase 3: raw ledger rows are manage_settings data; members read the
+      // balance via the SECURITY DEFINER get_org_credit_balance RPC.
+      const balanceRes = await readOrgCreditBalance(context.supabase, organizationId);
+      if (balanceRes.error) {
+        if (isMissingCreditsSchema(balanceRes.error))
+          throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
+        throw new Error(balanceRes.error.message);
       }
-      const balance = creditBalance(ledger.data ?? []);
+      const balance = balanceRes.data ?? 0;
       if (balance < chargedCredits) {
         throw new Error(
           `This revision review needs ${chargedCredits} credit${chargedCredits === 1 ? "" : "s"} and your company has ${balance}.`,
@@ -640,6 +646,10 @@ export const analyzeAcceptedPlanRevisionScope = createServerFn({ method: "POST" 
       );
     }
     const organizationId = str((estimate as Record<string, unknown>).organization_id);
+    // Phase 3: AI assists write via the service-role client and spend org AI
+    // credits: they require the "Build estimates" capability, not just
+    // estimate read (docs/ROLES.md section 5: estimating writes -> estimating.write).
+    await requireOrgCapability(context.supabase, organizationId, "estimating.write");
     const superAdmin = await isSuperAdmin(context.supabase);
     const chargedCredits = superAdmin ? 0 : AI_REVISION_SCOPE_REVIEW_CREDITS_PER_PAIR;
     if (!superAdmin) {
@@ -654,14 +664,15 @@ export const analyzeAcceptedPlanRevisionScope = createServerFn({ method: "POST" 
       if (grant.error && !isMissingMonthlyGrantRpc(grant.error)) {
         throw new Error(grant.error.message);
       }
-      const ledger = (await dynamicTable(context.supabase, "credit_ledger")
-        .select("delta")
-        .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
-      if (ledger.error) {
-        if (isMissingCreditsSchema(ledger.error)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
-        throw new Error(ledger.error.message);
+      // Phase 3: raw ledger rows are manage_settings data; members read the
+      // balance via the SECURITY DEFINER get_org_credit_balance RPC.
+      const balanceRes = await readOrgCreditBalance(context.supabase, organizationId);
+      if (balanceRes.error) {
+        if (isMissingCreditsSchema(balanceRes.error))
+          throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
+        throw new Error(balanceRes.error.message);
       }
-      const balance = creditBalance(ledger.data ?? []);
+      const balance = balanceRes.data ?? 0;
       if (balance < chargedCredits) {
         throw new Error(
           `This revision note review needs ${chargedCredits} credit and your company has ${balance}.`,

@@ -327,8 +327,10 @@ function ClientProjectPage() {
     dailyReports,
     portalPermissions,
   } = projectQuery.data;
-  const canViewChangeOrders = portalPermissions?.canViewChangeOrders ?? true;
-  const canViewDailyReports = portalPermissions?.canViewDailyReports ?? true;
+  // Phase 3: portal permissions fail CLOSED — a missing permissions block
+  // means "show nothing gated", never "show everything".
+  const canViewChangeOrders = portalPermissions?.canViewChangeOrders ?? false;
+  const canViewDailyReports = portalPermissions?.canViewDailyReports ?? false;
   const canViewBilling = portalPermissions?.canViewBilling ?? false;
   // Review-first split: undecided change orders drive the one-at-a-time flow;
   // decided ones fall to a summary list below so nothing is hidden.

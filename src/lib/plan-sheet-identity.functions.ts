@@ -1,17 +1,18 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 import type { Json } from "@/integrations/supabase/types";
 import { parsePlanSheetIdentityResponse } from "@/lib/plan-sheet-identity";
 import {
   AI_SHEET_IDENTITY_CREDITS_PER_PLAN_SET,
   computeApiCostCents,
-  creditBalance,
 } from "@/lib/credits/credits-domain";
 import {
   CREDITS_SCHEMA_PENDING_MESSAGE,
   dynamicTable,
   isMissingCreditsSchema,
+  readOrgCreditBalance,
   str,
   type DynamicSupabaseError,
   type DynamicSupabaseResult,
@@ -177,6 +178,10 @@ export const identifyPlanSheetsWithAi = createServerFn({ method: "POST" })
     if (estimateError) throw new Error(estimateError.message);
     if (!estimate) throw new Error("Estimate was not found.");
     const organizationId = str((estimate as Record<string, unknown>).organization_id);
+    // Phase 3: AI assists write via the service-role client and spend org AI
+    // credits: they require the "Build estimates" capability, not just
+    // estimate read (docs/ROLES.md section 5: estimating writes -> estimating.write).
+    await requireOrgCapability(context.supabase, organizationId, "estimating.write");
 
     const sheetIds = data.sheets.map((sheet) => sheet.plan_sheet_id);
     const { data: ownedSheets, error: sheetError } = (await dynamicTable(
@@ -205,14 +210,15 @@ export const identifyPlanSheetsWithAi = createServerFn({ method: "POST" })
       ).rpc("ensure_monthly_ai_credit_grant", { p_organization_id: organizationId });
       if (grant.error && !isMissingMonthlyGrantRpc(grant.error))
         throw new Error(grant.error.message);
-      const ledger = (await dynamicTable(context.supabase, "credit_ledger")
-        .select("delta")
-        .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
-      if (ledger.error) {
-        if (isMissingCreditsSchema(ledger.error)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
-        throw new Error(ledger.error.message);
+      // Phase 3: raw ledger rows are manage_settings data; members read the
+      // balance via the SECURITY DEFINER get_org_credit_balance RPC.
+      const balanceRes = await readOrgCreditBalance(context.supabase, organizationId);
+      if (balanceRes.error) {
+        if (isMissingCreditsSchema(balanceRes.error))
+          throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
+        throw new Error(balanceRes.error.message);
       }
-      const balance = creditBalance(ledger.data ?? []);
+      const balance = balanceRes.data ?? 0;
       if (balance < chargedCredits) {
         throw new Error(`AI title-block reading needs 1 credit and your company has ${balance}.`);
       }

@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
+import { safeInternalPath } from "@/lib/safe-internal-path";
 import { cn } from "@/lib/utils";
 
 type NotificationRow = {
@@ -71,7 +72,10 @@ export function NotificationBell({ className }: { className?: string }) {
             : row,
         ),
       );
-      if (notification.url) window.location.assign(notification.url);
+      // notification.url is DB data any org member can seed via
+      // create_notification — never navigate to it unvalidated. Only a
+      // same-origin relative path is followed; anything else goes home.
+      if (notification.url) window.location.assign(safeInternalPath(notification.url));
     },
   });
 

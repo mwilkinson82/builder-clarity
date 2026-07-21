@@ -6,7 +6,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { creditBalance, creditPacksFromEnv, type CreditPack } from "@/lib/credits/credits-domain";
+import { creditPacksFromEnv, type CreditPack } from "@/lib/credits/credits-domain";
+import { readOrgCreditBalance } from "@/lib/ai-takeoff/ai-takeoff-server-shared";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -109,7 +110,13 @@ export const getCreditSummary = createServerFn({ method: "GET" })
 
     let planCode = "free";
     let monthlyAllowanceCredits = 0;
-    const organizationResult = await dynamicTable(context.supabase, "organizations")
+    // Phase 3: the organizations base row is no longer readable by plain
+    // members, and contractor_circle_grant is deliberately NOT in the
+    // organizations_directory projection. organizationId came from
+    // ensure_current_user_account (the caller's own membership), so the
+    // admin client only reads plan identity the member is entitled to see.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const organizationResult = await dynamicTable(supabaseAdmin, "organizations")
       .select("plan_code,contractor_circle_grant")
       .eq("id", organizationId)
       .maybeSingle();
@@ -129,11 +136,12 @@ export const getCreditSummary = createServerFn({ method: "GET" })
       }
     }
 
-    const ledgerResult = (await dynamicTable(context.supabase, "credit_ledger")
-      .select("delta")
-      .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
-    if (ledgerResult.error) {
-      if (isMissingCreditsSchema(ledgerResult.error)) {
+    // Phase 3: raw credit_ledger rows are company.manage_settings data; every
+    // member reads the balance via the SECURITY DEFINER get_org_credit_balance
+    // RPC (falls back to the direct read pre-migration).
+    const balanceResult = await readOrgCreditBalance(context.supabase, organizationId);
+    if (balanceResult.error) {
+      if (isMissingCreditsSchema(balanceResult.error)) {
         return {
           ...base,
           balanceCredits: 0,
@@ -142,12 +150,12 @@ export const getCreditSummary = createServerFn({ method: "GET" })
           schemaReady: false,
         };
       }
-      throw new Error(ledgerResult.error.message);
+      throw new Error(balanceResult.error.message);
     }
 
     return {
       ...base,
-      balanceCredits: creditBalance(ledgerResult.data ?? []),
+      balanceCredits: balanceResult.data ?? 0,
       monthlyAllowanceCredits,
       planCode,
       schemaReady: true,

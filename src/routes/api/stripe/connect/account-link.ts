@@ -8,7 +8,7 @@ import {
   jsonError,
   jsonOk,
   requireAuthedStripeContext,
-  requireCanManageOrganization,
+  requireManageSettings,
   RouteError,
   stripeGet,
   stripePost,
@@ -245,7 +245,7 @@ export const Route = createFileRoute("/api/stripe/connect/account-link")({
           const body = connectAccountLinkInput.parse(await request.json());
           const context = await requireAuthedStripeContext(request);
           const organizationId = await resolveOrganizationId(body.organizationId, context);
-          await requireCanManageOrganization(context, organizationId);
+          await requireManageSettings(context, organizationId);
 
           const orgRecord = await loadOrganizationForConnect(context, organizationId);
           if (!orgRecord.id) throw new Error("Organization not found.");

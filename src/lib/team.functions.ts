@@ -316,6 +316,47 @@ function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
   };
 }
 
+/**
+ * Phase 3 per-capability projection: members without company.manage_settings
+ * (or billing.manage) keep the org's identity — name, branding, address,
+ * plan/billing status — but never the commercial block: tax id, billing
+ * contacts, Stripe/Connect ids, subscription state, entitlement internals
+ * (including the Contractor Circle member's personal email), or plan limits.
+ * Shape stays identical; sensitive fields are blanked to their zero values.
+ */
+function redactOrganizationForMember(org: TeamOrganization): TeamOrganization {
+  return {
+    ...org,
+    tax_identifier: "",
+    billing_email: "",
+    billing_contact_name: "",
+    stripe_customer_id: "",
+    stripe_subscription_id: "",
+    stripe_price_id: "",
+    stripe_checkout_session_id: "",
+    stripe_connect_account_id: "",
+    stripe_connect_status: "not_connected",
+    stripe_connect_account_id_test: "",
+    stripe_connect_status_test: "not_connected",
+    stripe_connect_account_id_live: "",
+    stripe_connect_status_live: "not_connected",
+    subscription_current_period_end: "",
+    subscription_cancel_at_period_end: false,
+    payment_processor_ready: false,
+    project_limit: 0,
+    seat_limit: 0,
+    storage_limit_mb: 0,
+    daily_report_limit_per_month: 0,
+    contractor_circle_grant: false,
+    entitlement_source: "free",
+    entitlement_expires_at: "",
+    billing_grace_ends_at: "",
+    circle_entitlement_checked_at: "",
+    circle_entitlement_member_email: "",
+    circle_entitlement_tier: "",
+  };
+}
+
 function organizationLogoUrl(
   supabase: SupabaseClient,
   organization: Pick<TeamOrganization, "id" | "logo_url" | "updated_at">,
@@ -369,17 +410,29 @@ async function requireCanManageOrganization(context: TeamServerContext, organiza
  * before and after the migration is applied.
  */
 function effectiveCapabilities(row: { role: AccountRole; capabilities?: unknown }): CapabilitySet {
-  const explicit = normalizeCapabilities(row.capabilities);
-  if (Object.keys(explicit).length > 0) return explicit;
-  return seedCapabilitiesForRole(row.role);
+  // A genuinely absent column (pre-migration NULL/undefined) means "not migrated
+  // yet" — fall back to the role's behavior-preserving seed so gating matches the
+  // pre-migration world. But an EXPLICIT empty object is the documented
+  // "no capabilities" state (ROLES.md Appendix A): the Phase 3 DB is now
+  // authoritative and has_org_capability returns false for every flag on a
+  // zeroed member, so the app must project nothing — not the full role preset,
+  // which would leak the roster's real capability flags to a stripped admin.
+  if (row.capabilities == null) return seedCapabilitiesForRole(row.role);
+  return normalizeCapabilities(row.capabilities);
 }
 
 function isMissingRestFunction(
   error: { code?: string; message?: string } | null,
   fn: string,
 ): boolean {
-  const message = (error?.message ?? "").toLowerCase();
-  return error?.code === "PGRST202" || message.includes(`function ${fn.toLowerCase()}`);
+  if (!error) return false;
+  // Genuine "the function is not deployed yet" only. A permission-denied error
+  // (42501, "permission denied for function <fn>") is a real denial and must
+  // fail closed — never classified as missing, which would route to the coarser
+  // can_manage_org fallback.
+  if (error.code === "PGRST202" || error.code === "42883") return true;
+  const message = (error.message ?? "").toLowerCase();
+  return message.includes("could not find the function") && message.includes(fn.toLowerCase());
 }
 
 /**
@@ -416,6 +469,40 @@ async function requireCanManageProject(context: TeamServerContext, projectId: st
   if (!canManage) throw new Error("You do not have permission to manage this project.");
 }
 
+/**
+ * "Zero rows" from PostgREST .single() — post-Phase 3 this is what a plain
+ * member gets from the organizations base row (RLS filters the row; there is
+ * no permission error to distinguish).
+ */
+function isNoRowsError(error: { code?: string; message?: string } | null) {
+  const message = (error?.message ?? "").toLowerCase();
+  return error?.code === "PGRST116" || message.includes("(or no) rows");
+}
+
+/**
+ * Phase 3 member fallback: the SECURITY DEFINER organizations_directory
+ * projection (identity + plan + quota fields, membership checked inside).
+ * Returns null when the RPC is unavailable or the caller is not a member.
+ */
+async function loadOrganizationDirectory(
+  context: TeamServerContext,
+  organizationId: string,
+): Promise<TeamOrganization | null> {
+  const res = await (
+    context.supabase as unknown as {
+      rpc(
+        fn: string,
+        args: Record<string, unknown>,
+      ): Promise<{ data: unknown; error: { message?: string } | null }>;
+    }
+  ).rpc("organizations_directory", { p_org_id: organizationId });
+  if (res.error) return null;
+  const rows = Array.isArray(res.data) ? res.data : [res.data].filter(Boolean);
+  const row = (rows[0] ?? null) as Record<string, unknown> | null;
+  if (!row) return null;
+  return normalizeOrganization(row);
+}
+
 async function loadOrganization(context: TeamServerContext, organizationId: string) {
   const extended = await context.supabase
     .from("organizations")
@@ -425,6 +512,16 @@ async function loadOrganization(context: TeamServerContext, organizationId: stri
 
   if (!extended.error)
     return normalizeOrganization(extended.data as unknown as Record<string, unknown>);
+  // Phase 3 capability split: members without company.manage_settings /
+  // billing.manage / company.manage_team cannot read the base row at all —
+  // the query reports zero rows. Those members still need company identity
+  // (name, logo, plan) for the app shell, so serve the member-safe directory
+  // projection; commercial fields normalize to their zero values.
+  if (isNoRowsError(extended.error)) {
+    const directory = await loadOrganizationDirectory(context, organizationId);
+    if (directory) return directory;
+    throw new Error(extended.error.message);
+  }
   if (
     !missingIdentityOrganizationColumn(extended.error) &&
     !missingCommercialOrganizationColumn(extended.error)
@@ -631,8 +728,9 @@ function normalizeTeamClientProjectAccess(
     project_name: project?.name ?? "Project",
     project_job_number: project?.job_number ?? "",
     status: str(row.status, "pending") as TeamClientProjectAccess["status"],
-    can_view_change_orders:
-      row.can_view_change_orders == null ? true : bool(row.can_view_change_orders),
+    // Phase 3 fail-closed: the DB portal gate requires the flag to be
+    // literally true, so a legacy NULL already denies — display the same.
+    can_view_change_orders: bool(row.can_view_change_orders),
     can_view_daily_reports: bool(row.can_view_daily_reports),
     can_view_billing: bool(row.can_view_billing),
     accepted_at: (row.accepted_at as string | null) ?? null,
@@ -701,19 +799,91 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       });
     }
 
-    const [orgRes, membersRes, invitesRes, projectsRes] = await Promise.all([
-      loadOrganization(context, organizationId),
-      context.supabase
+    // Phase 3 tightened the organization_memberships SELECT policy to
+    // self-or-manage_team, so a plain member reading the roster on their own
+    // JWT would see only themselves — but ROLES.md §3 promises everyone the
+    // roster read-only (names/roles/status; capabilities redacted per-member
+    // below). The caller's org membership is already proven
+    // (ensureCurrentOrganization), so the roster — and teammate profile display
+    // fields further down — is read on the service-role admin client. Importing
+    // the client never throws (it is lazily built on first property access), so
+    // touch it here to surface a missing service key and degrade to the
+    // caller's own client (the self-or-manage_team subset) instead of
+    // hard-failing.
+    let adminClient: unknown = null;
+    try {
+      const mod = await import("@/integrations/supabase/client.server");
+      void (mod.supabaseAdmin as { from: unknown }).from;
+      adminClient = mod.supabaseAdmin;
+    } catch {
+      adminClient = null;
+    }
+    const rosterClient = (adminClient ?? context.supabase) as typeof context.supabase;
+
+    // The caller's own membership row decides which sensitive blocks the rest
+    // of the payload may include (Phase 3 per-capability projection).
+    const [membersRes, superAdminRes] = await Promise.all([
+      rosterClient
         .from("organization_memberships")
         .select("*")
         .eq("organization_id", organizationId)
         .order("created_at", { ascending: true }),
-      context.supabase
-        .from("organization_invites")
-        .select("*")
-        .eq("organization_id", organizationId)
-        .eq("status", "pending")
-        .order("created_at", { ascending: false }),
+      context.supabase.rpc("is_super_admin"),
+    ]);
+    if (membersRes.error) throw new Error(membersRes.error.message);
+
+    const memberRows = membersRes.data ?? [];
+    const isSuperAdmin = !superAdminRes.error && Boolean(superAdminRes.data);
+    const currentMemberRow =
+      memberRows.find((m) => (m.user_id as string) === context.userId) ?? null;
+    const currentMemberRole = str(currentMemberRow?.role, "member") as AccountRole;
+    const currentMemberActive = str(currentMemberRow?.status, "active") === "active";
+    const currentMemberCapabilities = currentMemberRow
+      ? effectiveCapabilities({
+          role: currentMemberRole,
+          capabilities: (currentMemberRow as Record<string, unknown>).capabilities,
+        })
+      : {};
+    const canManageTeam =
+      Boolean(currentMemberRow) &&
+      currentMemberActive &&
+      hasCapability(currentMemberCapabilities, "company.manage_team");
+    const canManageSettings =
+      Boolean(currentMemberRow) &&
+      currentMemberActive &&
+      hasCapability(currentMemberCapabilities, "company.manage_settings");
+    const canManageBilling =
+      Boolean(currentMemberRow) &&
+      currentMemberActive &&
+      hasCapability(currentMemberCapabilities, "billing.manage");
+    const canManageClientPortal =
+      Boolean(currentMemberRow) &&
+      currentMemberActive &&
+      hasCapability(currentMemberCapabilities, "client_portal.manage");
+    const canManageCrm =
+      Boolean(currentMemberRow) &&
+      currentMemberActive &&
+      hasCapability(currentMemberCapabilities, "crm.manage");
+
+    // Projection gates. effectiveCapabilities already carries the documented
+    // pre-migration fallback (explicit flags, else the role-preset seed), and
+    // super admins see everything — matching has_org_capability semantics.
+    const canSeeCommercialBlock = isSuperAdmin || canManageSettings || canManageBilling;
+    const canSeeInvites = isSuperAdmin || canManageTeam;
+    const canSeeMemberCapabilities = isSuperAdmin || canManageTeam;
+    const canSeeClientData = isSuperAdmin || canManageClientPortal || canManageCrm;
+
+    const emptyResult = { data: [], error: null };
+    const [orgRes, invitesRes, projectsRes] = await Promise.all([
+      loadOrganization(context, organizationId),
+      canSeeInvites
+        ? context.supabase
+            .from("organization_invites")
+            .select("*")
+            .eq("organization_id", organizationId)
+            .eq("status", "pending")
+            .order("created_at", { ascending: false })
+        : Promise.resolve(emptyResult),
       context.supabase
         .from("projects")
         .select("id,name,job_number,client,project_manager,owner_id")
@@ -722,7 +892,6 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
         .order("name", { ascending: true }),
     ]);
 
-    if (membersRes.error) throw new Error(membersRes.error.message);
     if (invitesRes.error) throw new Error(invitesRes.error.message);
     if (projectsRes.error) throw new Error(projectsRes.error.message);
 
@@ -748,13 +917,17 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
             .in("project_id", projectIds)
             .order("created_at", { ascending: true }),
       loadDailyReportUsage(context, meteredProjectIds),
-      context.supabase
-        .from("client_contacts")
-        .select("id,name,email,company,title,phone,status")
-        .eq("organization_id", organizationId)
-        .neq("status", "inactive")
-        .order("created_at", { ascending: false }),
-      projectIds.length === 0
+      // Client contact PII and portal grants are client_portal.manage /
+      // crm.manage data — plain members get empty lists.
+      canSeeClientData
+        ? context.supabase
+            .from("client_contacts")
+            .select("id,name,email,company,title,phone,status")
+            .eq("organization_id", organizationId)
+            .neq("status", "inactive")
+            .order("created_at", { ascending: false })
+        : Promise.resolve(emptyResult),
+      !canSeeClientData || projectIds.length === 0
         ? { data: [], error: null }
         : context.supabase
             .from("project_client_access")
@@ -769,7 +942,6 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
     if (contactsRes.error) throw new Error(contactsRes.error.message);
     if (clientAccessRes.error) throw new Error(clientAccessRes.error.message);
 
-    const memberRows = membersRes.data ?? [];
     const projectMemberRows = projectMembersRes.data ?? [];
     const userIds = Array.from(
       new Set([
@@ -777,11 +949,17 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
         ...projectMemberRows.map((m) => m.user_id as string),
       ]),
     );
+    // Phase 3: the profiles RLS policy proves co-membership through the
+    // organization_memberships table, which plain members can no longer read
+    // beyond their own row — so their project teammates' names would come back
+    // blank. The ids here came from RLS-passed membership/project-membership
+    // reads, so the display-fields lookup reuses the same admin client resolved
+    // above (falls back to the caller's client when no service key is present).
+    const profilesClient: unknown = adminClient ?? context.supabase;
     const profilesRes =
       userIds.length === 0
         ? { data: [], error: null }
-        : await context.supabase
-            .from("profiles")
+        : await dynamicTable(profilesClient, "profiles")
             .select("id,email,full_name,phone,company_title,avatar_url,default_organization_id")
             .in("id", userIds);
     if (profilesRes.error) throw new Error(profilesRes.error.message);
@@ -793,11 +971,14 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       ]),
     );
 
-    const organization = orgRes;
+    // Commercial/tax/Stripe/entitlement columns are settings-or-billing data;
+    // everyone else gets the identity projection.
+    const organization = canSeeCommercialBlock ? orgRes : redactOrganizationForMember(orgRes);
 
     const members: TeamMember[] = memberRows.map((m) => {
       const profile = profilesById.get(m.user_id as string);
       const role = str(m.role, "member") as AccountRole;
+      const isSelf = (m.user_id as string) === context.userId;
       return {
         id: m.id as string,
         organization_id: m.organization_id as string,
@@ -808,27 +989,21 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
         status: str(m.status, "active") as MemberStatus,
         // Cast: the generated row types predate the Phase 2 capabilities
         // column; regenerate after the migration is applied.
-        capabilities: effectiveCapabilities({
-          role,
-          capabilities: (m as Record<string, unknown>).capabilities,
-        }),
+        // Other members' capability detail is manage_team data: plain members
+        // see the role PRESET (public knowledge from the invite UI) instead
+        // of the person's real flags; the caller always sees their own.
+        capabilities:
+          canSeeMemberCapabilities || isSelf
+            ? effectiveCapabilities({
+                role,
+                capabilities: (m as Record<string, unknown>).capabilities,
+              })
+            : { ...ROLE_PRESETS[role] },
         created_at: str(m.created_at),
       };
     });
 
     const currentMember = members.find((member) => member.user_id === context.userId);
-    const canManageTeam =
-      currentMember?.status === "active" &&
-      hasCapability(currentMember.capabilities, "company.manage_team");
-    const canManageSettings =
-      currentMember?.status === "active" &&
-      hasCapability(currentMember.capabilities, "company.manage_settings");
-    const canManageBilling =
-      currentMember?.status === "active" &&
-      hasCapability(currentMember.capabilities, "billing.manage");
-
-    const superAdminRes = await context.supabase.rpc("is_super_admin");
-    const isSuperAdmin = !superAdminRes.error && Boolean(superAdminRes.data);
 
     const projectMembers: TeamProjectMember[] = projectMemberRows.map((m) => {
       const profile = profilesById.get(m.user_id as string);
@@ -900,6 +1075,8 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       canManageTeam,
       canManageSettings,
       canManageBilling,
+      canManageClientPortal,
+      canManageCrm,
       isSuperAdmin,
       usage: {
         projects: meteredProjectIds.length,
@@ -1340,7 +1517,14 @@ export const revokeTeamInvite = createServerFn({ method: "POST" })
   .inputValidator((input: z.input<typeof inviteIdInput>) => inviteIdInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await ensureCurrentOrganization(context);
-    await requireCanManageOrganization(context, organizationId);
+    // Matches createTeamInvite: invite lifecycle is "Manage people" work, not
+    // the coarse manage_team-OR-manage_settings bundle.
+    await requireOrgCapability(
+      context,
+      organizationId,
+      "company.manage_team",
+      "You do not have permission to manage invites for this Overwatch company.",
+    );
 
     const { data: invite, error: inviteError } = await context.supabase
       .from("organization_invites")
@@ -1384,15 +1568,28 @@ export const assignProjectMember = createServerFn({ method: "POST" })
     if (!project.organization_id)
       throw new Error("This project is not attached to an Overwatch company.");
 
-    const { data: teamMember, error: teamMemberError } = await context.supabase
-      .from("organization_memberships")
+    // Phase 3: this caller holds project-manage rights, not necessarily
+    // company.manage_team, so it can no longer read OTHER members' membership
+    // rows. The check only validates "is an active member of this project's
+    // own org", so it runs on the admin client (falls back to the caller's
+    // client pre-migration / without a service key — self-assignment still
+    // passes there).
+    let membershipCheckClient: unknown = context.supabase;
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      membershipCheckClient = supabaseAdmin;
+    } catch {
+      // Local/dev without a service role key: keep the user's client.
+    }
+    const teamMemberRes = await dynamicTable(membershipCheckClient, "organization_memberships")
       .select("id,status")
       .eq("organization_id", project.organization_id)
       .eq("user_id", data.userId)
       .eq("status", "active")
       .maybeSingle();
-    if (teamMemberError) throw new Error(teamMemberError.message);
-    if (!teamMember) throw new Error("Only active company members can be assigned to projects.");
+    if (teamMemberRes.error) throw new Error(teamMemberRes.error.message);
+    if (!teamMemberRes.data)
+      throw new Error("Only active company members can be assigned to projects.");
 
     const { data: membership, error } = await context.supabase
       .from("project_memberships")

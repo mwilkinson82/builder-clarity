@@ -295,6 +295,48 @@ export async function requireCanManageOrganization(
   }
 }
 
+function isMissingRpcFunction(error: { code?: string; message?: string } | null, fn: string) {
+  if (!error) return false;
+  // Genuine "the function is not deployed yet" only. A permission-denied error
+  // (42501, "permission denied for function <fn>") is a real denial and must
+  // fail closed — never classified as missing, which would route to the coarser
+  // can_manage_org fallback on these admin-client-only Stripe/checkout routes.
+  if (error.code === "PGRST202" || error.code === "42883") return true;
+  const message = (error.message ?? "").toLowerCase();
+  return message.includes("could not find the function") && message.includes(fn.toLowerCase());
+}
+
+/**
+ * Phase 3 split: the company's money plumbing (subscription checkout, Stripe
+ * Billing Portal, Connect onboarding/activation/live-mode/dashboard, credit
+ * packs) and branding (logo upload) require "Manage company settings" — not
+ * the coarse manage_team-OR-manage_settings bundle. These routes write with
+ * the service-role admin client, so this app-layer check is the ONLY gate.
+ *
+ * Pre-migration fallback (house pattern, docs/ROLES.md Appendix D): if the
+ * has_org_capability RPC is not deployed yet, fall back to can_manage_org.
+ */
+export async function requireManageSettings(context: AuthedStripeContext, organizationId: string) {
+  const { data, error } = await context.authed.rpc("has_org_capability", {
+    p_org_id: organizationId,
+    p_capability: "company.manage_settings",
+  });
+  if (error) {
+    if (isMissingRpcFunction(error, "has_org_capability")) {
+      await requireCanManageOrganization(context, organizationId);
+      return;
+    }
+    throw new RouteError("organization_access_check_failed", error.message, 500);
+  }
+  if (!data) {
+    throw new RouteError(
+      "forbidden",
+      'Your access does not include managing company settings — ask an admin for the "Manage company settings" capability.',
+      403,
+    );
+  }
+}
+
 export type StripeCheckoutSession = {
   id: string;
   url?: string | null;

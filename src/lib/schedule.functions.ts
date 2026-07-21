@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireProjectOrgCapability } from "@/lib/capabilities-server";
 import type { Database, Json, TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
 import {
   computeScheduleVarianceWeeks,
@@ -1045,6 +1046,37 @@ export const listScheduleCpmTemplates = createServerFn({ method: "GET" })
     };
   });
 
+// Phase 3: schedule writes require the "Build schedules" capability
+// (schedule.manage). The DB helper can_manage_schedule requires
+// has_org_capability('schedule.manage') AND can_manage_project, so a
+// per-project owner/manager/editor assignment does NOT substitute for the
+// capability — the app guard matches that (intended tightening; the PM/owner/
+// admin presets that build schedules all hold schedule.manage). Pre-migration
+// the check degrades to can_manage_project, the pre-split behavior these
+// writes rode on.
+async function requireScheduleManage(
+  context: { supabase: unknown; userId: string },
+  projectId: string,
+) {
+  await requireProjectOrgCapability(context, projectId, "schedule.manage");
+}
+
+async function scheduleRowProjectId(
+  supabase: unknown,
+  relation: "schedule_milestones" | "schedule_delay_fragments" | "schedule_risks",
+  id: string,
+) {
+  const { data, error } = await (supabase as DynamicSupabaseClient)
+    .from(relation)
+    .select("project_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(error.message ?? "Schedule record lookup failed.");
+  const projectId = str(((data ?? {}) as Record<string, unknown>).project_id);
+  if (!projectId) throw new Error("That schedule record was not found.");
+  return projectId;
+}
+
 export const saveCurrentScheduleAsCpmTemplate = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string; name: string; description?: string }) =>
@@ -1057,6 +1089,7 @@ export const saveCurrentScheduleAsCpmTemplate = createServerFn({ method: "POST" 
       .parse(input),
   )
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(context, data.projectId);
     const [activitiesRes, wbsRes] = await Promise.all([
       context.supabase
         .from("schedule_activities")
@@ -1105,6 +1138,7 @@ export const importScheduleCpmTemplate = createServerFn({ method: "POST" })
     z.object({ projectId: z.string().uuid(), templateId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(context, data.projectId);
     const templateRes = await context.supabase
       .from("schedule_cpm_templates")
       .select("*")
@@ -1187,6 +1221,7 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
     createScheduleUpdateInput.parse(input),
   )
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(context, data.projectId);
     const { data: project, error: projectError } = await context.supabase
       .from("projects")
       .select("baseline_completion_date, forecast_completion_date")
@@ -1374,6 +1409,7 @@ export const annotateScheduleUpdate = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { id, projectId } = data;
+    await requireScheduleManage(context, projectId);
     const cleanPatch: TablesUpdate<"schedule_updates"> = {};
     if (data.notes !== undefined) cleanPatch.notes = data.notes;
     if (data.schedule_money_exposure !== undefined) {
@@ -1417,6 +1453,7 @@ export const createMilestone = createServerFn({ method: "POST" })
     z.object({ projectId: z.string().uuid(), name: z.string().min(1).max(200) }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(context, data.projectId);
     const { data: last } = await context.supabase
       .from("schedule_milestones")
       .select("sort_order")
@@ -1440,6 +1477,10 @@ export const updateMilestone = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), patch: milestonePatch }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(
+      context,
+      await scheduleRowProjectId(context.supabase, "schedule_milestones", data.id),
+    );
     const { error } = await context.supabase
       .from("schedule_milestones")
       .update(data.patch)
@@ -1452,6 +1493,10 @@ export const deleteMilestone = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(
+      context,
+      await scheduleRowProjectId(context.supabase, "schedule_milestones", data.id),
+    );
     const { error } = await context.supabase.from("schedule_milestones").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -1704,6 +1749,7 @@ export const createScheduleWbsSection = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(context, data.projectId);
     await ensureScheduleWbsSection(
       context.supabase,
       data.projectId,
@@ -1728,6 +1774,7 @@ export const renameScheduleWbsSection = createServerFn({ method: "POST" })
     const sectionRecord = section as unknown as Record<string, unknown>;
     const oldName = str(sectionRecord.name, "General");
     const projectId = sectionRecord.project_id as string;
+    await requireScheduleManage(context, projectId);
 
     const { error: updateError } = await context.supabase
       .from("schedule_wbs_sections")
@@ -1772,6 +1819,7 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
       .single();
     if (sectionError) throw new Error(sectionError.message);
     const section = normalizeScheduleWbsSection(sectionRow as unknown as Record<string, unknown>);
+    await requireScheduleManage(context, section.project_id);
     if ((section.parent_id ?? null) === nextParentId) return { ok: true };
 
     const { data: allRows, error: allRowsError } = await context.supabase
@@ -1845,6 +1893,7 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const parentId = data.parentId ?? null;
+    await requireScheduleManage(context, data.projectId);
     const callRpc = context.supabase.rpc as unknown as (
       fnName: string,
       args: Record<string, unknown>,
@@ -1935,6 +1984,7 @@ export const createScheduleDelayFragment = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
+    await requireScheduleManage(context, projectId);
     const payload = {
       project_id: projectId,
       schedule_activity_id: rest.schedule_activity_id ?? null,
@@ -1966,6 +2016,10 @@ export const updateScheduleDelayFragment = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), patch: delayFragmentPatch }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(
+      context,
+      await scheduleRowProjectId(context.supabase, "schedule_delay_fragments", data.id),
+    );
     const { error } = await context.supabase
       .from("schedule_delay_fragments")
       .update(data.patch as ScheduleDelayFragmentUpdate)
@@ -1978,6 +2032,10 @@ export const deleteScheduleDelayFragment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(
+      context,
+      await scheduleRowProjectId(context.supabase, "schedule_delay_fragments", data.id),
+    );
     const { error } = await context.supabase
       .from("schedule_delay_fragments")
       .delete()
@@ -2004,6 +2062,7 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
+    await requireScheduleManage(context, projectId);
     const { wbs_section_id: requestedWbsSectionId, ...activityFields } = rest;
     const wbsSectionId =
       requestedWbsSectionId ??
@@ -2073,6 +2132,7 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       beforeRow as unknown as Record<string, unknown>,
     );
     const beforeNotes = str((beforeRow as unknown as Record<string, unknown>).notes);
+    await requireScheduleManage(context, beforeActivity.project_id);
 
     const error = await updateScheduleActivityWithSchemaFallback(
       context.supabase,
@@ -2135,6 +2195,7 @@ export const deleteScheduleActivity = createServerFn({ method: "POST" })
     const beforeActivity = normalizeScheduleActivity(
       beforeRow as unknown as Record<string, unknown>,
     );
+    await requireScheduleManage(context, beforeActivity.project_id);
 
     const { error } = await context.supabase.from("schedule_activities").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
@@ -2190,6 +2251,7 @@ export const createScheduleRisk = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
+    await requireScheduleManage(context, projectId);
     const { error } = await context.supabase.from("schedule_risks").insert({
       project_id: projectId,
       ...rest,
@@ -2204,6 +2266,10 @@ export const updateScheduleRisk = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), patch: riskPatch }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(
+      context,
+      await scheduleRowProjectId(context.supabase, "schedule_risks", data.id),
+    );
     const savePatch = (patch: z.input<typeof riskPatch>) =>
       context.supabase.from("schedule_risks").update(patch).eq("id", data.id);
     let { error } = await savePatch(data.patch);
@@ -2234,6 +2300,10 @@ export const deleteScheduleRisk = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    await requireScheduleManage(
+      context,
+      await scheduleRowProjectId(context.supabase, "schedule_risks", data.id),
+    );
     const { error } = await context.supabase.from("schedule_risks").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };

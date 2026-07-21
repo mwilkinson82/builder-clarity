@@ -1,16 +1,17 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 import type { Json } from "@/integrations/supabase/types";
 import {
   AI_MEASUREMENT_PLAN_CREDITS_PER_SHEET,
   computeApiCostCents,
-  creditBalance,
 } from "@/lib/credits/credits-domain";
 import {
   CREDITS_SCHEMA_PENDING_MESSAGE,
   dynamicTable,
   isMissingCreditsSchema,
+  readOrgCreditBalance,
   str,
   type DynamicSupabaseError,
   type DynamicSupabaseResult,
@@ -244,6 +245,10 @@ export const analyzePlanSheetMeasurementNotes = createServerFn({ method: "POST" 
     if (estimateError) throw new Error(estimateError.message);
     if (!estimate) throw new Error("Estimate was not found.");
     const organizationId = str((estimate as Record<string, unknown>).organization_id);
+    // Phase 3: AI assists write via the service-role client and spend org AI
+    // credits: they require the "Build estimates" capability, not just
+    // estimate read (docs/ROLES.md section 5: estimating writes -> estimating.write).
+    await requireOrgCapability(context.supabase, organizationId, "estimating.write");
 
     const { data: sheet, error: sheetError } = await dynamicTable(
       context.supabase,
@@ -272,14 +277,15 @@ export const analyzePlanSheetMeasurementNotes = createServerFn({ method: "POST" 
         throw new Error(grant.error.message);
       }
 
-      const ledger = (await dynamicTable(context.supabase, "credit_ledger")
-        .select("delta")
-        .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
-      if (ledger.error) {
-        if (isMissingCreditsSchema(ledger.error)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
-        throw new Error(ledger.error.message);
+      // Phase 3: raw ledger rows are manage_settings data; members read the
+      // balance via the SECURITY DEFINER get_org_credit_balance RPC.
+      const balanceRes = await readOrgCreditBalance(context.supabase, organizationId);
+      if (balanceRes.error) {
+        if (isMissingCreditsSchema(balanceRes.error))
+          throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
+        throw new Error(balanceRes.error.message);
       }
-      const balance = creditBalance(ledger.data ?? []);
+      const balance = balanceRes.data ?? 0;
       if (balance < chargedCredits) {
         throw new Error(
           `This note review needs ${chargedCredits} credit and your company has ${balance}.`,

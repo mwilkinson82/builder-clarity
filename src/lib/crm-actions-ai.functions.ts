@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireOrgCapability } from "@/lib/capabilities-server";
 import {
   parseCrmAiFollowupDraft,
   parseCrmMeetingBrief,
@@ -79,6 +80,7 @@ export const generateCrmFollowupDraft = createServerFn({ method: "POST" })
   .inputValidator((input) => draftInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const actionResult = await table(context.supabase, "pipeline_next_actions")
       .select("*")
       .eq("id", data.action_id)
@@ -210,6 +212,7 @@ export const generateCrmMeetingBrief = createServerFn({ method: "POST" })
   .inputValidator((input) => meetingInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    await requireOrgCapability(context.supabase, organizationId, "crm.manage");
     const [opportunityResult, activities, actions] = await Promise.all([
       table(context.supabase, "pipeline_opportunities")
         .select("*")

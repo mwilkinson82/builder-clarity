@@ -1600,7 +1600,9 @@ await expectContains(
     /isMissingSupabaseColumn/,
     /action === "status"/,
     /connectDetails/,
-    /requireCanManageOrganization/,
+    // Phase 3 capability split: Connect ops require company.manage_settings
+    // (requireManageSettings), no longer the coarse can_manage_org bundle.
+    /requireManageSettings/,
   ],
   "Stripe Connect onboarding route handles billing-email schema drift, creates account links, and updates company readiness",
 );

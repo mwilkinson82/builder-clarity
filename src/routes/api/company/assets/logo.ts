@@ -4,7 +4,7 @@ import {
   jsonError,
   jsonOk,
   requireAuthedStripeContext,
-  requireCanManageOrganization,
+  requireManageSettings,
   RouteError,
 } from "@/lib/stripe.server";
 import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
@@ -109,7 +109,7 @@ export const Route = createFileRoute("/api/company/assets/logo")({
             organizationId: formData.get("organizationId"),
             oldPath: formData.get("oldPath") || undefined,
           });
-          await requireCanManageOrganization(context, input.organizationId);
+          await requireManageSettings(context, input.organizationId);
 
           const logo = readLogoFile(formData);
           await ensureCompanyAssetBucket(context.admin.storage);

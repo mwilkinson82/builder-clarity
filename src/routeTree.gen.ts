@@ -9,47 +9,47 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
+import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
-import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
-import { Route as AuthenticatedBillingRouteImport } from './routes/_authenticated/billing'
-import { Route as AuthenticatedCostLibraryRouteImport } from './routes/_authenticated/cost-library'
-import { Route as AuthenticatedEstimateMastersRouteImport } from './routes/_authenticated/estimate-masters'
-import { Route as AuthenticatedEstimatesRouteImport } from './routes/_authenticated/estimates'
-import { Route as AuthenticatedHomePreviewRouteImport } from './routes/_authenticated/home-preview'
-import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
-import { Route as AuthenticatedSupportRouteImport } from './routes/_authenticated/support'
-import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
-import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as EmailUnsubscribeRouteImport } from './routes/email/unsubscribe'
-import { Route as AuthenticatedEstimatesEstimateIdRouteImport } from './routes/_authenticated/estimates.$estimateId'
-import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated/projects.$projectId'
-import { Route as ApiAuthMagicLinkRouteImport } from './routes/api/auth/magic-link'
-import { Route as ApiStripeWebhookRouteImport } from './routes/api/stripe/webhook'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
+import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
+import { Route as AuthenticatedSupportRouteImport } from './routes/_authenticated/support'
+import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
+import { Route as AuthenticatedHomePreviewRouteImport } from './routes/_authenticated/home-preview'
+import { Route as AuthenticatedEstimatesRouteImport } from './routes/_authenticated/estimates'
+import { Route as AuthenticatedEstimateMastersRouteImport } from './routes/_authenticated/estimate-masters'
+import { Route as AuthenticatedCostLibraryRouteImport } from './routes/_authenticated/cost-library'
+import { Route as AuthenticatedBillingRouteImport } from './routes/_authenticated/billing'
+import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as LovableEmailSuppressionRouteImport } from './routes/lovable/email/suppression'
-import { Route as AuthenticatedClientProjectsProjectIdRouteImport } from './routes/_authenticated/client.projects.$projectId'
-import { Route as AuthenticatedEstimatesEstimateIdPlanRoomRouteImport } from './routes/_authenticated/estimates.$estimateId.plan-room'
-import { Route as AuthenticatedProjectsProjectIdScheduleRouteImport } from './routes/_authenticated/projects.$projectId.schedule'
-import { Route as ApiCompanyAssetsLogoRouteImport } from './routes/api/company/assets/logo'
-import { Route as ApiStripeCheckoutCreditsRouteImport } from './routes/api/stripe/checkout/credits'
-import { Route as ApiStripeCheckoutInvoiceRouteImport } from './routes/api/stripe/checkout/invoice'
-import { Route as ApiStripeCheckoutSubscriptionRouteImport } from './routes/api/stripe/checkout/subscription'
-import { Route as ApiStripeConnectAccountLinkRouteImport } from './routes/api/stripe/connect/account-link'
-import { Route as ApiStripeSubscriptionPortalRouteImport } from './routes/api/stripe/subscription/portal'
-import { Route as LovableEmailAuthPreviewRouteImport } from './routes/lovable/email/auth/preview'
-import { Route as LovableEmailAuthWebhookRouteImport } from './routes/lovable/email/auth/webhook'
-import { Route as LovableEmailQueueProcessRouteImport } from './routes/lovable/email/queue/process'
-import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/lovable/email/transactional/preview'
+import { Route as ApiStripeWebhookRouteImport } from './routes/api/stripe/webhook'
+import { Route as ApiAuthMagicLinkRouteImport } from './routes/api/auth/magic-link'
+import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated/projects.$projectId'
+import { Route as AuthenticatedEstimatesEstimateIdRouteImport } from './routes/_authenticated/estimates.$estimateId'
 import { Route as LovableEmailTransactionalSendRouteImport } from './routes/lovable/email/transactional/send'
+import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/lovable/email/transactional/preview'
+import { Route as LovableEmailQueueProcessRouteImport } from './routes/lovable/email/queue/process'
+import { Route as LovableEmailAuthWebhookRouteImport } from './routes/lovable/email/auth/webhook'
+import { Route as LovableEmailAuthPreviewRouteImport } from './routes/lovable/email/auth/preview'
+import { Route as ApiStripeSubscriptionPortalRouteImport } from './routes/api/stripe/subscription/portal'
+import { Route as ApiStripeConnectAccountLinkRouteImport } from './routes/api/stripe/connect/account-link'
+import { Route as ApiStripeCheckoutSubscriptionRouteImport } from './routes/api/stripe/checkout/subscription'
+import { Route as ApiStripeCheckoutInvoiceRouteImport } from './routes/api/stripe/checkout/invoice'
+import { Route as ApiStripeCheckoutCreditsRouteImport } from './routes/api/stripe/checkout/credits'
+import { Route as ApiCompanyAssetsLogoRouteImport } from './routes/api/company/assets/logo'
+import { Route as AuthenticatedProjectsProjectIdScheduleRouteImport } from './routes/_authenticated/projects.$projectId.schedule'
+import { Route as AuthenticatedEstimatesEstimateIdPlanRoomRouteImport } from './routes/_authenticated/estimates.$estimateId.plan-room'
+import { Route as AuthenticatedClientProjectsProjectIdRouteImport } from './routes/_authenticated/client.projects.$projectId'
 
-const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
-  id: '/_authenticated',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
+  id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
@@ -57,31 +57,29 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
-  id: '/admin',
-  path: '/admin',
+const EmailUnsubscribeRoute = EmailUnsubscribeRouteImport.update({
+  id: '/email/unsubscribe',
+  path: '/email/unsubscribe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/callback',
+  path: '/callback',
+  getParentRoute: () => AuthRoute,
+} as any)
+const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedBillingRoute = AuthenticatedBillingRouteImport.update({
-  id: '/billing',
-  path: '/billing',
+const AuthenticatedSupportRoute = AuthenticatedSupportRouteImport.update({
+  id: '/support',
+  path: '/support',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedCostLibraryRoute =
-  AuthenticatedCostLibraryRouteImport.update({
-    id: '/cost-library',
-    path: '/cost-library',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedEstimateMastersRoute =
-  AuthenticatedEstimateMastersRouteImport.update({
-    id: '/estimate-masters',
-    path: '/estimate-masters',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedEstimatesRoute = AuthenticatedEstimatesRouteImport.update({
-  id: '/estimates',
-  path: '/estimates',
+const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedHomePreviewRoute =
@@ -90,46 +88,36 @@ const AuthenticatedHomePreviewRoute =
     path: '/home-preview',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
+const AuthenticatedEstimatesRoute = AuthenticatedEstimatesRouteImport.update({
+  id: '/estimates',
+  path: '/estimates',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedSupportRoute = AuthenticatedSupportRouteImport.update({
-  id: '/support',
-  path: '/support',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
-  id: '/team',
-  path: '/team',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthCallbackRoute = AuthCallbackRouteImport.update({
-  id: '/callback',
-  path: '/callback',
-  getParentRoute: () => AuthRoute,
-} as any)
-const EmailUnsubscribeRoute = EmailUnsubscribeRouteImport.update({
-  id: '/email/unsubscribe',
-  path: '/email/unsubscribe',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthenticatedEstimatesEstimateIdRoute =
-  AuthenticatedEstimatesEstimateIdRouteImport.update({
-    id: '/$estimateId',
-    path: '/$estimateId',
-    getParentRoute: () => AuthenticatedEstimatesRoute,
-  } as any)
-const AuthenticatedProjectsProjectIdRoute =
-  AuthenticatedProjectsProjectIdRouteImport.update({
-    id: '/projects/$projectId',
-    path: '/projects/$projectId',
+const AuthenticatedEstimateMastersRoute =
+  AuthenticatedEstimateMastersRouteImport.update({
+    id: '/estimate-masters',
+    path: '/estimate-masters',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const ApiAuthMagicLinkRoute = ApiAuthMagicLinkRouteImport.update({
-  id: '/api/auth/magic-link',
-  path: '/api/auth/magic-link',
+const AuthenticatedCostLibraryRoute =
+  AuthenticatedCostLibraryRouteImport.update({
+    id: '/cost-library',
+    path: '/cost-library',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedBillingRoute = AuthenticatedBillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const LovableEmailSuppressionRoute = LovableEmailSuppressionRouteImport.update({
+  id: '/lovable/email/suppression',
+  path: '/lovable/email/suppression',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiStripeWebhookRoute = ApiStripeWebhookRouteImport.update({
@@ -137,78 +125,27 @@ const ApiStripeWebhookRoute = ApiStripeWebhookRouteImport.update({
   path: '/api/stripe/webhook',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LovableEmailSuppressionRoute = LovableEmailSuppressionRouteImport.update({
-  id: '/lovable/email/suppression',
-  path: '/lovable/email/suppression',
+const ApiAuthMagicLinkRoute = ApiAuthMagicLinkRouteImport.update({
+  id: '/api/auth/magic-link',
+  path: '/api/auth/magic-link',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedClientProjectsProjectIdRoute =
-  AuthenticatedClientProjectsProjectIdRouteImport.update({
-    id: '/client/projects/$projectId',
-    path: '/client/projects/$projectId',
+const AuthenticatedProjectsProjectIdRoute =
+  AuthenticatedProjectsProjectIdRouteImport.update({
+    id: '/projects/$projectId',
+    path: '/projects/$projectId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedEstimatesEstimateIdPlanRoomRoute =
-  AuthenticatedEstimatesEstimateIdPlanRoomRouteImport.update({
-    id: '/plan-room',
-    path: '/plan-room',
-    getParentRoute: () => AuthenticatedEstimatesEstimateIdRoute,
+const AuthenticatedEstimatesEstimateIdRoute =
+  AuthenticatedEstimatesEstimateIdRouteImport.update({
+    id: '/$estimateId',
+    path: '/$estimateId',
+    getParentRoute: () => AuthenticatedEstimatesRoute,
   } as any)
-const AuthenticatedProjectsProjectIdScheduleRoute =
-  AuthenticatedProjectsProjectIdScheduleRouteImport.update({
-    id: '/schedule',
-    path: '/schedule',
-    getParentRoute: () => AuthenticatedProjectsProjectIdRoute,
-  } as any)
-const ApiCompanyAssetsLogoRoute = ApiCompanyAssetsLogoRouteImport.update({
-  id: '/api/company/assets/logo',
-  path: '/api/company/assets/logo',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiStripeCheckoutCreditsRoute =
-  ApiStripeCheckoutCreditsRouteImport.update({
-    id: '/api/stripe/checkout/credits',
-    path: '/api/stripe/checkout/credits',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiStripeCheckoutInvoiceRoute =
-  ApiStripeCheckoutInvoiceRouteImport.update({
-    id: '/api/stripe/checkout/invoice',
-    path: '/api/stripe/checkout/invoice',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiStripeCheckoutSubscriptionRoute =
-  ApiStripeCheckoutSubscriptionRouteImport.update({
-    id: '/api/stripe/checkout/subscription',
-    path: '/api/stripe/checkout/subscription',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiStripeConnectAccountLinkRoute =
-  ApiStripeConnectAccountLinkRouteImport.update({
-    id: '/api/stripe/connect/account-link',
-    path: '/api/stripe/connect/account-link',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiStripeSubscriptionPortalRoute =
-  ApiStripeSubscriptionPortalRouteImport.update({
-    id: '/api/stripe/subscription/portal',
-    path: '/api/stripe/subscription/portal',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const LovableEmailAuthPreviewRoute = LovableEmailAuthPreviewRouteImport.update({
-  id: '/lovable/email/auth/preview',
-  path: '/lovable/email/auth/preview',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LovableEmailAuthWebhookRoute = LovableEmailAuthWebhookRouteImport.update({
-  id: '/lovable/email/auth/webhook',
-  path: '/lovable/email/auth/webhook',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LovableEmailQueueProcessRoute =
-  LovableEmailQueueProcessRouteImport.update({
-    id: '/lovable/email/queue/process',
-    path: '/lovable/email/queue/process',
+const LovableEmailTransactionalSendRoute =
+  LovableEmailTransactionalSendRouteImport.update({
+    id: '/lovable/email/transactional/send',
+    path: '/lovable/email/transactional/send',
     getParentRoute: () => rootRouteImport,
   } as any)
 const LovableEmailTransactionalPreviewRoute =
@@ -217,11 +154,74 @@ const LovableEmailTransactionalPreviewRoute =
     path: '/lovable/email/transactional/preview',
     getParentRoute: () => rootRouteImport,
   } as any)
-const LovableEmailTransactionalSendRoute =
-  LovableEmailTransactionalSendRouteImport.update({
-    id: '/lovable/email/transactional/send',
-    path: '/lovable/email/transactional/send',
+const LovableEmailQueueProcessRoute =
+  LovableEmailQueueProcessRouteImport.update({
+    id: '/lovable/email/queue/process',
+    path: '/lovable/email/queue/process',
     getParentRoute: () => rootRouteImport,
+  } as any)
+const LovableEmailAuthWebhookRoute = LovableEmailAuthWebhookRouteImport.update({
+  id: '/lovable/email/auth/webhook',
+  path: '/lovable/email/auth/webhook',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LovableEmailAuthPreviewRoute = LovableEmailAuthPreviewRouteImport.update({
+  id: '/lovable/email/auth/preview',
+  path: '/lovable/email/auth/preview',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiStripeSubscriptionPortalRoute =
+  ApiStripeSubscriptionPortalRouteImport.update({
+    id: '/api/stripe/subscription/portal',
+    path: '/api/stripe/subscription/portal',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiStripeConnectAccountLinkRoute =
+  ApiStripeConnectAccountLinkRouteImport.update({
+    id: '/api/stripe/connect/account-link',
+    path: '/api/stripe/connect/account-link',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiStripeCheckoutSubscriptionRoute =
+  ApiStripeCheckoutSubscriptionRouteImport.update({
+    id: '/api/stripe/checkout/subscription',
+    path: '/api/stripe/checkout/subscription',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiStripeCheckoutInvoiceRoute =
+  ApiStripeCheckoutInvoiceRouteImport.update({
+    id: '/api/stripe/checkout/invoice',
+    path: '/api/stripe/checkout/invoice',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiStripeCheckoutCreditsRoute =
+  ApiStripeCheckoutCreditsRouteImport.update({
+    id: '/api/stripe/checkout/credits',
+    path: '/api/stripe/checkout/credits',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiCompanyAssetsLogoRoute = ApiCompanyAssetsLogoRouteImport.update({
+  id: '/api/company/assets/logo',
+  path: '/api/company/assets/logo',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedProjectsProjectIdScheduleRoute =
+  AuthenticatedProjectsProjectIdScheduleRouteImport.update({
+    id: '/schedule',
+    path: '/schedule',
+    getParentRoute: () => AuthenticatedProjectsProjectIdRoute,
+  } as any)
+const AuthenticatedEstimatesEstimateIdPlanRoomRoute =
+  AuthenticatedEstimatesEstimateIdPlanRoomRouteImport.update({
+    id: '/plan-room',
+    path: '/plan-room',
+    getParentRoute: () => AuthenticatedEstimatesEstimateIdRoute,
+  } as any)
+const AuthenticatedClientProjectsProjectIdRoute =
+  AuthenticatedClientProjectsProjectIdRouteImport.update({
+    id: '/client/projects/$projectId',
+    path: '/client/projects/$projectId',
+    getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -456,18 +456,18 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/_authenticated': {
-      id: '/_authenticated'
-      path: ''
-      fullPath: '/'
-      preLoaderRoute: typeof AuthenticatedRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/auth': {
       id: '/auth'
       path: '/auth'
       fullPath: '/auth'
       preLoaderRoute: typeof AuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/': {
@@ -477,53 +477,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/admin': {
-      id: '/_authenticated/admin'
-      path: '/admin'
-      fullPath: '/admin'
-      preLoaderRoute: typeof AuthenticatedAdminRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
+    '/email/unsubscribe': {
+      id: '/email/unsubscribe'
+      path: '/email/unsubscribe'
+      fullPath: '/email/unsubscribe'
+      preLoaderRoute: typeof EmailUnsubscribeRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/billing': {
-      id: '/_authenticated/billing'
-      path: '/billing'
-      fullPath: '/billing'
-      preLoaderRoute: typeof AuthenticatedBillingRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof AuthRoute
     }
-    '/_authenticated/cost-library': {
-      id: '/_authenticated/cost-library'
-      path: '/cost-library'
-      fullPath: '/cost-library'
-      preLoaderRoute: typeof AuthenticatedCostLibraryRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/estimate-masters': {
-      id: '/_authenticated/estimate-masters'
-      path: '/estimate-masters'
-      fullPath: '/estimate-masters'
-      preLoaderRoute: typeof AuthenticatedEstimateMastersRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/estimates': {
-      id: '/_authenticated/estimates'
-      path: '/estimates'
-      fullPath: '/estimates'
-      preLoaderRoute: typeof AuthenticatedEstimatesRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/home-preview': {
-      id: '/_authenticated/home-preview'
-      path: '/home-preview'
-      fullPath: '/home-preview'
-      preLoaderRoute: typeof AuthenticatedHomePreviewRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/reports': {
-      id: '/_authenticated/reports'
-      path: '/reports'
-      fullPath: '/reports'
-      preLoaderRoute: typeof AuthenticatedReportsRouteImport
+    '/_authenticated/team': {
+      id: '/_authenticated/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof AuthenticatedTeamRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/support': {
@@ -533,46 +505,60 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSupportRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/team': {
-      id: '/_authenticated/team'
-      path: '/team'
-      fullPath: '/team'
-      preLoaderRoute: typeof AuthenticatedTeamRouteImport
+    '/_authenticated/reports': {
+      id: '/_authenticated/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof AuthenticatedReportsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/auth/callback': {
-      id: '/auth/callback'
-      path: '/callback'
-      fullPath: '/auth/callback'
-      preLoaderRoute: typeof AuthCallbackRouteImport
-      parentRoute: typeof AuthRoute
-    }
-    '/email/unsubscribe': {
-      id: '/email/unsubscribe'
-      path: '/email/unsubscribe'
-      fullPath: '/email/unsubscribe'
-      preLoaderRoute: typeof EmailUnsubscribeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_authenticated/estimates/$estimateId': {
-      id: '/_authenticated/estimates/$estimateId'
-      path: '/$estimateId'
-      fullPath: '/estimates/$estimateId'
-      preLoaderRoute: typeof AuthenticatedEstimatesEstimateIdRouteImport
-      parentRoute: typeof AuthenticatedEstimatesRoute
-    }
-    '/_authenticated/projects/$projectId': {
-      id: '/_authenticated/projects/$projectId'
-      path: '/projects/$projectId'
-      fullPath: '/projects/$projectId'
-      preLoaderRoute: typeof AuthenticatedProjectsProjectIdRouteImport
+    '/_authenticated/home-preview': {
+      id: '/_authenticated/home-preview'
+      path: '/home-preview'
+      fullPath: '/home-preview'
+      preLoaderRoute: typeof AuthenticatedHomePreviewRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/api/auth/magic-link': {
-      id: '/api/auth/magic-link'
-      path: '/api/auth/magic-link'
-      fullPath: '/api/auth/magic-link'
-      preLoaderRoute: typeof ApiAuthMagicLinkRouteImport
+    '/_authenticated/estimates': {
+      id: '/_authenticated/estimates'
+      path: '/estimates'
+      fullPath: '/estimates'
+      preLoaderRoute: typeof AuthenticatedEstimatesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/estimate-masters': {
+      id: '/_authenticated/estimate-masters'
+      path: '/estimate-masters'
+      fullPath: '/estimate-masters'
+      preLoaderRoute: typeof AuthenticatedEstimateMastersRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/cost-library': {
+      id: '/_authenticated/cost-library'
+      path: '/cost-library'
+      fullPath: '/cost-library'
+      preLoaderRoute: typeof AuthenticatedCostLibraryRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/billing': {
+      id: '/_authenticated/billing'
+      path: '/billing'
+      fullPath: '/billing'
+      preLoaderRoute: typeof AuthenticatedBillingRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/admin': {
+      id: '/_authenticated/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AuthenticatedAdminRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/lovable/email/suppression': {
+      id: '/lovable/email/suppression'
+      path: '/lovable/email/suppression'
+      fullPath: '/lovable/email/suppression'
+      preLoaderRoute: typeof LovableEmailSuppressionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/stripe/webhook': {
@@ -582,95 +568,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiStripeWebhookRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/lovable/email/suppression': {
-      id: '/lovable/email/suppression'
-      path: '/lovable/email/suppression'
-      fullPath: '/lovable/email/suppression'
-      preLoaderRoute: typeof LovableEmailSuppressionRouteImport
+    '/api/auth/magic-link': {
+      id: '/api/auth/magic-link'
+      path: '/api/auth/magic-link'
+      fullPath: '/api/auth/magic-link'
+      preLoaderRoute: typeof ApiAuthMagicLinkRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/client/projects/$projectId': {
-      id: '/_authenticated/client/projects/$projectId'
-      path: '/client/projects/$projectId'
-      fullPath: '/client/projects/$projectId'
-      preLoaderRoute: typeof AuthenticatedClientProjectsProjectIdRouteImport
+    '/_authenticated/projects/$projectId': {
+      id: '/_authenticated/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof AuthenticatedProjectsProjectIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/estimates/$estimateId/plan-room': {
-      id: '/_authenticated/estimates/$estimateId/plan-room'
-      path: '/plan-room'
-      fullPath: '/estimates/$estimateId/plan-room'
-      preLoaderRoute: typeof AuthenticatedEstimatesEstimateIdPlanRoomRouteImport
-      parentRoute: typeof AuthenticatedEstimatesEstimateIdRoute
+    '/_authenticated/estimates/$estimateId': {
+      id: '/_authenticated/estimates/$estimateId'
+      path: '/$estimateId'
+      fullPath: '/estimates/$estimateId'
+      preLoaderRoute: typeof AuthenticatedEstimatesEstimateIdRouteImport
+      parentRoute: typeof AuthenticatedEstimatesRoute
     }
-    '/_authenticated/projects/$projectId/schedule': {
-      id: '/_authenticated/projects/$projectId/schedule'
-      path: '/schedule'
-      fullPath: '/projects/$projectId/schedule'
-      preLoaderRoute: typeof AuthenticatedProjectsProjectIdScheduleRouteImport
-      parentRoute: typeof AuthenticatedProjectsProjectIdRoute
-    }
-    '/api/company/assets/logo': {
-      id: '/api/company/assets/logo'
-      path: '/api/company/assets/logo'
-      fullPath: '/api/company/assets/logo'
-      preLoaderRoute: typeof ApiCompanyAssetsLogoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/stripe/checkout/credits': {
-      id: '/api/stripe/checkout/credits'
-      path: '/api/stripe/checkout/credits'
-      fullPath: '/api/stripe/checkout/credits'
-      preLoaderRoute: typeof ApiStripeCheckoutCreditsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/stripe/checkout/invoice': {
-      id: '/api/stripe/checkout/invoice'
-      path: '/api/stripe/checkout/invoice'
-      fullPath: '/api/stripe/checkout/invoice'
-      preLoaderRoute: typeof ApiStripeCheckoutInvoiceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/stripe/checkout/subscription': {
-      id: '/api/stripe/checkout/subscription'
-      path: '/api/stripe/checkout/subscription'
-      fullPath: '/api/stripe/checkout/subscription'
-      preLoaderRoute: typeof ApiStripeCheckoutSubscriptionRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/stripe/connect/account-link': {
-      id: '/api/stripe/connect/account-link'
-      path: '/api/stripe/connect/account-link'
-      fullPath: '/api/stripe/connect/account-link'
-      preLoaderRoute: typeof ApiStripeConnectAccountLinkRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/stripe/subscription/portal': {
-      id: '/api/stripe/subscription/portal'
-      path: '/api/stripe/subscription/portal'
-      fullPath: '/api/stripe/subscription/portal'
-      preLoaderRoute: typeof ApiStripeSubscriptionPortalRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/lovable/email/auth/preview': {
-      id: '/lovable/email/auth/preview'
-      path: '/lovable/email/auth/preview'
-      fullPath: '/lovable/email/auth/preview'
-      preLoaderRoute: typeof LovableEmailAuthPreviewRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/lovable/email/auth/webhook': {
-      id: '/lovable/email/auth/webhook'
-      path: '/lovable/email/auth/webhook'
-      fullPath: '/lovable/email/auth/webhook'
-      preLoaderRoute: typeof LovableEmailAuthWebhookRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/lovable/email/queue/process': {
-      id: '/lovable/email/queue/process'
-      path: '/lovable/email/queue/process'
-      fullPath: '/lovable/email/queue/process'
-      preLoaderRoute: typeof LovableEmailQueueProcessRouteImport
+    '/lovable/email/transactional/send': {
+      id: '/lovable/email/transactional/send'
+      path: '/lovable/email/transactional/send'
+      fullPath: '/lovable/email/transactional/send'
+      preLoaderRoute: typeof LovableEmailTransactionalSendRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/lovable/email/transactional/preview': {
@@ -680,12 +603,89 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LovableEmailTransactionalPreviewRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/lovable/email/transactional/send': {
-      id: '/lovable/email/transactional/send'
-      path: '/lovable/email/transactional/send'
-      fullPath: '/lovable/email/transactional/send'
-      preLoaderRoute: typeof LovableEmailTransactionalSendRouteImport
+    '/lovable/email/queue/process': {
+      id: '/lovable/email/queue/process'
+      path: '/lovable/email/queue/process'
+      fullPath: '/lovable/email/queue/process'
+      preLoaderRoute: typeof LovableEmailQueueProcessRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/lovable/email/auth/webhook': {
+      id: '/lovable/email/auth/webhook'
+      path: '/lovable/email/auth/webhook'
+      fullPath: '/lovable/email/auth/webhook'
+      preLoaderRoute: typeof LovableEmailAuthWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lovable/email/auth/preview': {
+      id: '/lovable/email/auth/preview'
+      path: '/lovable/email/auth/preview'
+      fullPath: '/lovable/email/auth/preview'
+      preLoaderRoute: typeof LovableEmailAuthPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stripe/subscription/portal': {
+      id: '/api/stripe/subscription/portal'
+      path: '/api/stripe/subscription/portal'
+      fullPath: '/api/stripe/subscription/portal'
+      preLoaderRoute: typeof ApiStripeSubscriptionPortalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stripe/connect/account-link': {
+      id: '/api/stripe/connect/account-link'
+      path: '/api/stripe/connect/account-link'
+      fullPath: '/api/stripe/connect/account-link'
+      preLoaderRoute: typeof ApiStripeConnectAccountLinkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stripe/checkout/subscription': {
+      id: '/api/stripe/checkout/subscription'
+      path: '/api/stripe/checkout/subscription'
+      fullPath: '/api/stripe/checkout/subscription'
+      preLoaderRoute: typeof ApiStripeCheckoutSubscriptionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stripe/checkout/invoice': {
+      id: '/api/stripe/checkout/invoice'
+      path: '/api/stripe/checkout/invoice'
+      fullPath: '/api/stripe/checkout/invoice'
+      preLoaderRoute: typeof ApiStripeCheckoutInvoiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stripe/checkout/credits': {
+      id: '/api/stripe/checkout/credits'
+      path: '/api/stripe/checkout/credits'
+      fullPath: '/api/stripe/checkout/credits'
+      preLoaderRoute: typeof ApiStripeCheckoutCreditsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/company/assets/logo': {
+      id: '/api/company/assets/logo'
+      path: '/api/company/assets/logo'
+      fullPath: '/api/company/assets/logo'
+      preLoaderRoute: typeof ApiCompanyAssetsLogoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/projects/$projectId/schedule': {
+      id: '/_authenticated/projects/$projectId/schedule'
+      path: '/schedule'
+      fullPath: '/projects/$projectId/schedule'
+      preLoaderRoute: typeof AuthenticatedProjectsProjectIdScheduleRouteImport
+      parentRoute: typeof AuthenticatedProjectsProjectIdRoute
+    }
+    '/_authenticated/estimates/$estimateId/plan-room': {
+      id: '/_authenticated/estimates/$estimateId/plan-room'
+      path: '/plan-room'
+      fullPath: '/estimates/$estimateId/plan-room'
+      preLoaderRoute: typeof AuthenticatedEstimatesEstimateIdPlanRoomRouteImport
+      parentRoute: typeof AuthenticatedEstimatesEstimateIdRoute
+    }
+    '/_authenticated/client/projects/$projectId': {
+      id: '/_authenticated/client/projects/$projectId'
+      path: '/client/projects/$projectId'
+      fullPath: '/client/projects/$projectId'
+      preLoaderRoute: typeof AuthenticatedClientProjectsProjectIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
   }
 }

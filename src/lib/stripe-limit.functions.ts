@@ -73,6 +73,9 @@ export const getStripePaymentLimitContext = createServerFn({ method: "GET" })
     const organizationId = await currentOrganization(server);
     await requireBillingManager(server, organizationId);
 
+    // Phase 3 verified: this read stays on the user's client — the caller
+    // holds billing.manage (checked above), which the tightened organizations
+    // SELECT policy admits.
     let organization = await server.supabase
       .from("organizations")
       .select(
@@ -148,6 +151,8 @@ export const requestStripePaymentLimit = createServerFn({ method: "POST" })
     const organizationId = await currentOrganization(server);
     await requireBillingManager(server, organizationId);
 
+    // Phase 3 verified: billing.manage (checked above) passes the tightened
+    // organizations SELECT policy, so this stays on the user's client.
     const orgResult = await server.supabase
       .from("organizations")
       .select("stripe_payment_limit_cents,stripe_connect_account_id_live")

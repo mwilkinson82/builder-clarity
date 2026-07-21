@@ -7,7 +7,7 @@ import {
   jsonOk,
   readServerEnv,
   requireAuthedStripeContext,
-  requireCanManageOrganization,
+  requireManageSettings,
   stripePost,
 } from "@/lib/stripe.server";
 
@@ -62,7 +62,7 @@ export const Route = createFileRoute("/api/stripe/subscription/portal")({
           const body = portalInput.parse(await request.json());
           const context = await requireAuthedStripeContext(request);
           const organizationId = await resolveOrganizationId(body.organizationId, context);
-          await requireCanManageOrganization(context, organizationId);
+          await requireManageSettings(context, organizationId);
 
           const { data: organization, error } = await dynamicTable(context.admin, "organizations")
             .select("id,stripe_customer_id,stripe_mode")
