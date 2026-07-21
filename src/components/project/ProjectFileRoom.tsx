@@ -346,7 +346,7 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
                     <span className="truncate text-sm font-semibold text-foreground">
                       {doc.title || doc.file_name}
                     </span>
-                    <span className="shrink-0 rounded-sm border border-hairline px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[.12em] text-muted-foreground">
+                    <span className="shrink-0 rounded-sm border border-hairline px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[.12em] text-muted-foreground">
                       {categoryLabel(doc.category)}
                     </span>
                   </div>

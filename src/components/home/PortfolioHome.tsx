@@ -8,8 +8,15 @@
 // preserved and restyled onto the ALP house tokens (via the portfolio-home.css
 // alias layer). No figure is fabricated: the band is pure display off the same
 // aggregates that feed the posture tiles and hero stats.
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type AnchorHTMLAttributes,
+  type ReactNode,
+} from "react";
+import { Link, useRouter } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Plus } from "lucide-react";
@@ -37,10 +44,80 @@ import { compactUSD, type HomeMetrics } from "./portfolio-home-metrics";
 import { AvatarMenu } from "./home-avatar-menu";
 import { PortfolioLoadError } from "./portfolio-load-error";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { Skeleton } from "@/components/ui/skeleton";
 import "./portfolio-home.css";
 
 type HomeView = "owner" | "pm";
 type WorklistFilter = "all" | "at-risk" | "overdue";
+
+// Intra-app anchor that keeps the exact `<a href>` markup (so the ow-* button /
+// nav CSS, middle-click, and cmd-click-to-new-tab all behave natively) but makes
+// an ordinary left-click a client-side navigation — no full page reload on the
+// primary journeys. Every call site passes an app-internal href constant, so no
+// URL sanitization is needed here (unlike NotificationBell, which routes DB data
+// through safeInternalPath).
+function InternalLink({
+  href,
+  className,
+  children,
+  ...rest
+}: {
+  href: string;
+  className?: string;
+  children: ReactNode;
+} & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href" | "className" | "children" | "onClick">) {
+  const router = useRouter();
+  return (
+    <a
+      href={href}
+      className={className}
+      onClick={(event) => {
+        // Defer to the browser for modified / non-primary clicks (new tab, etc.).
+        if (
+          event.defaultPrevented ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        ) {
+          return;
+        }
+        event.preventDefault();
+        void router.history.push(href);
+      }}
+      {...rest}
+    >
+      {children}
+    </a>
+  );
+}
+
+// First-load placeholder that reserves the home's eventual shape — the briefing
+// hero (headline + four stat tiles), the narrative band, and a short worklist —
+// so the page holds its layout while the portfolio + pipeline reads settle.
+function HomeSkeleton() {
+  return (
+    <div className="space-y-6" aria-hidden="true">
+      <div className="rounded-2xl border border-hairline bg-card p-6 shadow-card">
+        <Skeleton className="h-3 w-40" />
+        <Skeleton className="mt-3 h-8 w-72" />
+        <Skeleton className="mt-3 h-4 w-full max-w-xl" />
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-20 rounded-xl" />
+          ))}
+        </div>
+      </div>
+      <Skeleton className="h-24 w-full rounded-2xl" />
+      <div className="space-y-2.5">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-16 w-full rounded-xl" />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** Render a "**bold**" placeholder string with the bold spans emphasized. */
 function boldParts(text: string) {
@@ -163,12 +240,12 @@ function BriefingCard({
             <span className="ow-brief__alert-body">{boldParts(alert.body)}</span>
           </div>
           <div className="ow-brief__cta">
-            <a href={primary.href} className="ow-btn ow-btn--dark">
+            <InternalLink href={primary.href} className="ow-btn ow-btn--dark">
               {primary.label}
-            </a>
-            <a href={secondary.href} className="ow-btn ow-btn--outline">
+            </InternalLink>
+            <InternalLink href={secondary.href} className="ow-btn ow-btn--outline">
               {secondary.label}
-            </a>
+            </InternalLink>
           </div>
         </div>
         <div className="ow-brief__stats">
@@ -357,11 +434,11 @@ export function PortfolioHome({ onNewProject }: { onNewProject: () => void }) {
             <span className="ow-switcher__caret">▾</span>
           </Link>
           <nav className="ow-nav">
-            <a className="is-active" href="/" aria-current="page">
+            <InternalLink className="is-active" href="/" aria-current="page">
               Portfolio
-            </a>
-            <a href={PROJECTS_HREF}>Projects</a>
-            {access.canSeeOwnerView ? <a href={CRM_HREF}>CRM</a> : null}
+            </InternalLink>
+            <InternalLink href={PROJECTS_HREF}>Projects</InternalLink>
+            {access.canSeeOwnerView ? <InternalLink href={CRM_HREF}>CRM</InternalLink> : null}
             <Link to="/estimates">Estimates</Link>
             <Link to="/billing">Billing</Link>
             <Link to="/reports">Reports</Link>
@@ -371,7 +448,7 @@ export function PortfolioHome({ onNewProject }: { onNewProject: () => void }) {
             {/* Real control: takes you to the working project search (the
                 ?tab=projects worklist) and focuses it on arrival — never a
                 dead box. */}
-            <a
+            <InternalLink
               className="ow-search"
               href={`${PROJECTS_HREF}#find`}
               role="search"
@@ -380,7 +457,7 @@ export function PortfolioHome({ onNewProject }: { onNewProject: () => void }) {
             >
               <span aria-hidden="true">⌕</span>
               <span>Search projects</span>
-            </a>
+            </InternalLink>
             <button type="button" className="ow-btn ow-btn--signal" onClick={onNewProject}>
               + New project
             </button>
@@ -399,6 +476,13 @@ export function PortfolioHome({ onNewProject }: { onNewProject: () => void }) {
               detail={errorMessage ?? "Unknown error"}
               onRetry={refetch}
             />
+          </div>
+        ) : loading ? (
+          // First load, no cached data yet: reserve the hero + posture + worklist
+          // so we never flash the "$0 / all caught up" empty state (metrics built
+          // from empty arrays read as isEmpty) as if it were the final answer.
+          <div className="ow-wrap" style={{ paddingTop: 24, paddingBottom: 24 }}>
+            <HomeSkeleton />
           </div>
         ) : metrics.isEmpty ? (
           // Genuinely empty org (no projects, no pipeline): a welcome + first-run
@@ -603,15 +687,15 @@ function OwnerView({
                 <span className="ow-track__title-sub">— CRM → Estimating → Contract</span>
               </div>
             </div>
-            <a href={CRM_HREF} className="ow-btn ow-btn--dark">
+            <InternalLink href={CRM_HREF} className="ow-btn ow-btn--dark">
               Open {identity.companyName} CRM board →
-            </a>
+            </InternalLink>
           </div>
           <div className="ow-pipeline">
             {metrics.pipeline.map((stage) => (
               // Estimating opens the Estimates module (its bid); every other stage
               // opens that opportunity on the CRM board.
-              <a
+              <InternalLink
                 key={stage.key}
                 href={stage.estimatesLink ? "/estimates" : crmHref(stage.oppId)}
                 className={`ow-stage${stage.dim ? " is-dim" : ""}${
@@ -635,7 +719,7 @@ function OwnerView({
                 ) : (
                   <div className="ow-stage__empty">{stage.meta}</div>
                 )}
-              </a>
+              </InternalLink>
             ))}
           </div>
 
@@ -650,9 +734,9 @@ function OwnerView({
                   below.
                 </span>
               </div>
-              <a href={CRM_HREF} className="ow-btn ow-btn--outline">
+              <InternalLink href={CRM_HREF} className="ow-btn ow-btn--outline">
                 See conversions →
-              </a>
+              </InternalLink>
             </div>
           ) : null}
 
@@ -798,7 +882,7 @@ function OwnerView({
                   </div>
                 ) : null}
                 {metrics.pursuits.map((pursuit, i) => (
-                  <a
+                  <InternalLink
                     className="ow-pursuit"
                     key={`${pursuit.title}-${i}`}
                     href={crmHref(pursuit.oppId)}
@@ -812,7 +896,7 @@ function OwnerView({
                       </span>
                     </span>
                     <span className="ow-pursuit__context">{pursuit.context}</span>
-                  </a>
+                  </InternalLink>
                 ))}
               </div>
 

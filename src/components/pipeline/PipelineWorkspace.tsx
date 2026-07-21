@@ -118,7 +118,16 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
   const archiveFn = useServerFn(archiveOpportunity);
   const completeActionFn = useServerFn(completeNextAction);
 
-  const [viewMode, setViewMode] = useState<PipelineViewMode>("kanban");
+  // The Kanban board changes stage only via HTML5 drag, which is unusable on a
+  // touchscreen. On phones we open to the List view instead — its per-row stage
+  // <Select> works with a tap. Desktop is unchanged (opens to the board); either
+  // view stays reachable from the toggle. (This route is ssr:false, so `window`
+  // is always available here; the guard is belt-and-suspenders.)
+  const [viewMode, setViewMode] = useState<PipelineViewMode>(() =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
+      ? "list"
+      : "kanban",
+  );
   const [workspaceMode, setWorkspaceMode] = useState<"pipeline" | "followup">("pipeline");
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState<PipelineStage | "all">("all");

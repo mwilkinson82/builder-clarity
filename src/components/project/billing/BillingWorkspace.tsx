@@ -1258,7 +1258,7 @@ export function BillingWorkspace({
                             {fmtUSDCents(app.amount_billed)}
                           </span>
                           <span
-                            className={`shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.08em] ${pillClass}`}
+                            className={`shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] ${pillClass}`}
                           >
                             {pillLabel}
                           </span>

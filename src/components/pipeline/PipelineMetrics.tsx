@@ -10,7 +10,7 @@ type PipelineGlanceCardProps = {
 };
 
 const MONO_LABEL =
-  "font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground";
+  "font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground";
 
 // "Pipeline at a glance" — the right column of the CRM header grid. This
 // consolidates the old PipelineMetrics stat cards: every metric they showed

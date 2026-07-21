@@ -356,12 +356,12 @@ export function ActivityDetailDialog({
               {activity.name}
             </DialogTitle>
             {isCriticalPath && (
-              <span className="shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.08em] text-danger">
+              <span className="shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-danger">
                 Critical
               </span>
             )}
             {updateImpact.slipTone === "danger" && (
-              <span className="shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.08em] text-warning">
+              <span className="shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-warning">
                 {updateImpact.slipValue} slip
               </span>
             )}

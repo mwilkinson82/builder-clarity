@@ -241,7 +241,7 @@ export function SubcontractCompliance({
   return (
     <div className="mt-4 border-t border-hairline pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
           Compliance
         </div>
         <div className="flex items-center gap-3">
@@ -418,7 +418,7 @@ export function SubcontractCompliance({
 
       {/* Lien waivers */}
       <div className="mt-3">
-        <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
           Lien waivers
         </div>
         {waivers.length > 0 ? (

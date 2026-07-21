@@ -6,6 +6,7 @@ import { BarChart3 } from "lucide-react";
 
 import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   listPortfolioBilling,
   listPortfolioBillingHistory,
@@ -238,7 +239,7 @@ function ReportsPage() {
 
         <div>
           {activeReportLoading ? (
-            <p className="text-sm text-muted-foreground">Loading report...</p>
+            <ReportSkeleton />
           ) : activeReportError ? (
             <div className="rounded-lg border border-danger/30 bg-danger/10 p-5">
               <div className="text-sm font-medium text-danger">Report did not load</div>
@@ -307,6 +308,29 @@ function ReportsPage() {
           ) : null}
         </div>
       </main>
+    </div>
+  );
+}
+
+// Reserve the report body (title block + a dense table) so switching reports or
+// first load holds the layout instead of collapsing to a one-line "Loading…".
+function ReportSkeleton() {
+  return (
+    <div className="space-y-5" aria-hidden="true">
+      <div className="space-y-2">
+        <Skeleton className="h-7 w-64" />
+        <Skeleton className="h-4 w-80" />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-20 rounded-xl" />
+        ))}
+      </div>
+      <div className="space-y-2 rounded-lg border border-hairline p-4">
+        {Array.from({ length: 8 }).map((_, index) => (
+          <Skeleton key={index} className="h-9 w-full" />
+        ))}
+      </div>
     </div>
   );
 }

@@ -226,7 +226,7 @@
   align-items: center;
   gap: 7px;
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -250,7 +250,7 @@
 }
 .ow-viewas__label {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -327,7 +327,7 @@
 }
 .ow-brief__eyebrow {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -353,7 +353,7 @@
   align-items: center;
   gap: 6px;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -403,7 +403,7 @@
 }
 .ow-brief__stat-label {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -462,7 +462,7 @@
 }
 .ow-posbar__label {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -518,7 +518,7 @@
 }
 .ow-position__mark-label {
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -543,7 +543,7 @@
 .ow-eyebrow {
   font-family: var(--mono);
   font-weight: 700;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--clay);
@@ -561,7 +561,7 @@
 }
 .ow-track__summary {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -606,7 +606,7 @@
 }
 .ow-stage__label {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -620,7 +620,7 @@
 }
 .ow-stage__link {
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--clay);
   text-decoration: none;
@@ -726,7 +726,7 @@
 }
 .ow-tile__label {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -791,7 +791,7 @@
 }
 .ow-worklist-head__count {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -799,7 +799,7 @@
 }
 .ow-clear {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -837,7 +837,7 @@
   flex: none;
   width: 76px;
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.05em;
 }
@@ -853,7 +853,7 @@
   align-items: center;
   justify-content: center;
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--muted);
 }
@@ -927,7 +927,7 @@
 .ow-jobrow__close {
   flex: none;
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -948,7 +948,7 @@
   text-align: center;
   font-family: var(--mono);
   font-weight: 700;
-  font-size: 8.5px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--clay);
@@ -996,7 +996,7 @@
 }
 .ow-pursuit__due {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -1039,7 +1039,7 @@
 }
 .ow-company__eyebrow {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;

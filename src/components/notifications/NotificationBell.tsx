@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { Bell, CheckCheck, CircleDollarSign } from "lucide-react";
 import { toast } from "sonner";
 
@@ -37,6 +38,7 @@ function ageLabel(createdAt: string) {
 
 export function NotificationBell({ className }: { className?: string }) {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const query = useQuery({
     queryKey: ["notifications"],
     queryFn: async () => {
@@ -75,8 +77,10 @@ export function NotificationBell({ className }: { className?: string }) {
       );
       // notification.url is DB data any org member can seed via
       // create_notification — never navigate to it unvalidated. Only a
-      // same-origin relative path is followed; anything else goes home.
-      if (notification.url) window.location.assign(safeInternalPath(notification.url));
+      // same-origin relative path is followed; anything else goes home. The
+      // sanitization is unchanged — we just navigate client-side (no full page
+      // reload) via the router instead of window.location.assign.
+      if (notification.url) void router.history.push(safeInternalPath(notification.url));
     },
     onError: (error) => {
       console.error("Mark notification read failed:", error);

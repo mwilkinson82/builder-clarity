@@ -100,7 +100,7 @@ export function PipelineKanban({ opportunities, onOpen, onStageChange }: Pipelin
                       overStage === stage && "ring-2 ring-clay/40",
                     )}
                   >
-                    <div className="px-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                    <div className="px-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
                       {STAGE_LABELS[stage]}
                     </div>
                     {items.length === 0 ? <DropHint /> : renderCards(items)}

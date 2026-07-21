@@ -7,7 +7,7 @@ interface InstalledQuantity {
 export function InstalledQuantities({ items }: { items: InstalledQuantity[] }) {
   return (
     <div className="rounded-lg border border-hairline bg-background p-3">
-      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+      <div className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
         Installed quantities from the field
       </div>
       <p className="mt-0.5 text-[10px] text-muted-foreground">

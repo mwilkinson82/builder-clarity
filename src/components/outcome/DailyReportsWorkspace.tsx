@@ -774,7 +774,7 @@ export function DailyReportsWorkspace({
                       {report.work_performed || "—"}
                     </span>
                     {report.delays.trim() ? (
-                      <span className="flex-none rounded-full border border-current px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-danger">
+                      <span className="flex-none rounded-full border border-current px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-danger">
                         Delay logged
                       </span>
                     ) : (
@@ -1261,7 +1261,7 @@ function DailyMetric({
 }) {
   return (
     <div className="rounded-lg border border-hairline bg-card px-3.5 py-3">
-      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+      <div className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
         {label}
       </div>
       <div

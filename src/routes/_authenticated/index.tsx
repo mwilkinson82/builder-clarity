@@ -42,7 +42,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BriefcaseBusiness, MailPlus, Plus, RotateCcw, Search, Trash2, Users } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  BriefcaseBusiness,
+  MailPlus,
+  Plus,
+  RotateCcw,
+  Search,
+  SlidersHorizontal,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { PortfolioLoadError } from "@/components/home/portfolio-load-error";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import { computeScheduleVarianceWeeks } from "@/lib/ior";
@@ -214,6 +224,9 @@ function PortfolioPage({
   const [reviewFilter, setReviewFilter] = useState<PortfolioReviewFilter>("all");
   const [dailyFilter, setDailyFilter] = useState<PortfolioDailyFilter>("all");
   const [sortMode, setSortMode] = useState<PortfolioSortMode>("manager");
+  // Phones (<md) collapse the 7 filter controls behind a "Filters" disclosure so
+  // the worklist isn't pushed below the fold; md+ keeps every control inline.
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [failedOrganizationLogos, setFailedOrganizationLogos] = useState<Set<string>>(
     () => new Set(),
   );
@@ -515,7 +528,7 @@ function PortfolioPage({
               </div>
             ) : null}
             {isLoading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
+              <PortfolioProjectsSkeleton />
             ) : projectsDidError ? (
               <PortfolioLoadError
                 title="Portfolio did not load"
@@ -544,42 +557,76 @@ function PortfolioPage({
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder="Search project, job number, client, PM, or company"
+                        aria-label="Search projects"
                         className="pl-9"
                       />
                     </div>
-                    <Select value={managerFilter} onValueChange={setManagerFilter}>
-                      <SelectTrigger className="w-full lg:w-[220px]">
-                        <SelectValue placeholder="Project manager" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All project managers</SelectItem>
-                        {managerNames.map((manager) => (
-                          <SelectItem key={manager} value={manager}>
-                            {manager}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select
-                      value={sortMode}
-                      onValueChange={(v) => setSortMode(v as PortfolioSortMode)}
+                    {/* Phone-only disclosure toggle; md+ never renders it and every
+                        control stays inline. */}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="justify-between md:hidden"
+                      aria-expanded={filtersOpen}
+                      onClick={() => setFiltersOpen((open) => !open)}
                     >
-                      <SelectTrigger className="w-full lg:w-[220px]">
-                        <SelectValue placeholder="Sort" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="manager">PM A-Z</SelectItem>
-                        <SelectItem value="profitability">Profitability low to high</SelectItem>
-                        <SelectItem value="gp-risk">GP at risk high to low</SelectItem>
-                        <SelectItem value="schedule">Schedule risk high to low</SelectItem>
-                        <SelectItem value="overdue">Overdue to-dos high to low</SelectItem>
-                        <SelectItem value="name">Project A-Z</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      <span className="inline-flex items-center gap-2">
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        Filters
+                      </span>
+                      {activeFilterCount > 0 ? (
+                        <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-semibold tabular text-accent">
+                          {activeFilterCount}
+                        </span>
+                      ) : null}
+                    </Button>
+                    {/* At md+ this wrapper is display:contents, so manager + sort
+                        flow into the flex row exactly as before; on phones it is a
+                        stacked group revealed by the Filters toggle. */}
+                    <div
+                      className={`flex-col gap-3 md:contents ${filtersOpen ? "flex" : "hidden"}`}
+                    >
+                      <Select value={managerFilter} onValueChange={setManagerFilter}>
+                        <SelectTrigger
+                          className="w-full lg:w-[220px]"
+                          aria-label="Filter by project manager"
+                        >
+                          <SelectValue placeholder="Project manager" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All project managers</SelectItem>
+                          {managerNames.map((manager) => (
+                            <SelectItem key={manager} value={manager}>
+                              {manager}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={sortMode}
+                        onValueChange={(v) => setSortMode(v as PortfolioSortMode)}
+                      >
+                        <SelectTrigger className="w-full lg:w-[220px]" aria-label="Sort projects">
+                          <SelectValue placeholder="Sort" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="manager">PM A-Z</SelectItem>
+                          <SelectItem value="profitability">Profitability low to high</SelectItem>
+                          <SelectItem value="gp-risk">GP at risk high to low</SelectItem>
+                          <SelectItem value="schedule">Schedule risk high to low</SelectItem>
+                          <SelectItem value="overdue">Overdue to-dos high to low</SelectItem>
+                          <SelectItem value="name">Project A-Z</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.1fr_repeat(4,minmax(0,1fr))_auto]">
+                  <div
+                    className={`gap-3 md:grid md:grid-cols-2 xl:grid-cols-[1.1fr_repeat(4,minmax(0,1fr))_auto] ${
+                      filtersOpen ? "grid" : "hidden"
+                    }`}
+                  >
                     <Select value={companyFilter} onValueChange={setCompanyFilter}>
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Filter by company">
                         <SelectValue placeholder="Company" />
                       </SelectTrigger>
                       <SelectContent>
@@ -595,7 +642,7 @@ function PortfolioPage({
                       value={riskFilter}
                       onValueChange={(v) => setRiskFilter(v as PortfolioRiskFilter)}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Filter by risk status">
                         <SelectValue placeholder="Risk status" />
                       </SelectTrigger>
                       <SelectContent>
@@ -609,7 +656,7 @@ function PortfolioPage({
                       value={scheduleFilter}
                       onValueChange={(v) => setScheduleFilter(v as PortfolioScheduleFilter)}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Filter by schedule status">
                         <SelectValue placeholder="Schedule" />
                       </SelectTrigger>
                       <SelectContent>
@@ -623,7 +670,7 @@ function PortfolioPage({
                       value={reviewFilter}
                       onValueChange={(v) => setReviewFilter(v as PortfolioReviewFilter)}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Filter by review status">
                         <SelectValue placeholder="Needs review" />
                       </SelectTrigger>
                       <SelectContent>
@@ -637,7 +684,7 @@ function PortfolioPage({
                       value={dailyFilter}
                       onValueChange={(v) => setDailyFilter(v as PortfolioDailyFilter)}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Filter by daily report status">
                         <SelectValue placeholder="Daily reports" />
                       </SelectTrigger>
                       <SelectContent>
@@ -697,6 +744,36 @@ function PortfolioPill({ children, className }: { children: ReactNode; className
     >
       {children}
     </span>
+  );
+}
+
+// Reserve the filter bar + a few ledger rows so the projects tab holds its shape
+// on first load instead of collapsing to a single "Loading…" line.
+function PortfolioProjectsSkeleton() {
+  return (
+    <div className="space-y-6" aria-hidden="true">
+      <div className="space-y-3 rounded-lg border border-hairline bg-surface-elevated/80 p-3 shadow-card">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+          <Skeleton className="h-10 w-full xl:w-[260px]" />
+          <Skeleton className="h-10 flex-1" />
+          <Skeleton className="h-10 w-full xl:w-[220px]" />
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="border-b border-hairline px-4 py-5 last:border-b-0">
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-10 w-10 shrink-0 rounded-sm" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-5 w-56 max-w-full" />
+                <Skeleton className="h-3 w-40 max-w-full" />
+              </div>
+              <Skeleton className="hidden h-6 w-20 shrink-0 rounded-full md:block" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -770,7 +847,6 @@ function PortfolioProjectLedger({
               project.days_since_daily_report,
             );
             const jobNumber = project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`;
-            const projectHref = `/projects/${project.id}`;
             const highlightRisk = status.label === "At Risk" || project.gp_at_risk > 0;
             const isDemo = project.job_number === "DEMO-HARBOR";
             const organizationLogoUrl =
@@ -788,9 +864,10 @@ function PortfolioProjectLedger({
               .slice(0, 1)
               .toUpperCase();
             return (
-              <a
+              <Link
                 key={project.id}
-                href={projectHref}
+                to="/projects/$projectId"
+                params={{ projectId: project.id }}
                 className={`group grid gap-4 px-4 py-4 text-foreground transition hover:bg-surface/70 active:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-2 ${PROJECT_LEDGER_GRID_CLASS} ${
                   highlightRisk ? "border-l-2 border-l-danger/60 bg-danger/5" : ""
                 }`}
@@ -964,7 +1041,7 @@ function PortfolioProjectLedger({
                     Open project
                   </span>
                 </div>
-              </a>
+              </Link>
             );
           })}
         </div>
@@ -1333,8 +1410,9 @@ function InviteByMagicLinkButton() {
           {(!team || team.canManageTeam) && (
             <div className="grid gap-3 rounded-md border border-hairline p-3 md:grid-cols-[1fr_190px_auto] md:items-end">
               <div className="space-y-1.5">
-                <Label>Email</Label>
+                <Label htmlFor="company-invite-email">Email</Label>
                 <Input
+                  id="company-invite-email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -1342,9 +1420,9 @@ function InviteByMagicLinkButton() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Company role</Label>
+                <Label htmlFor="company-invite-role">Company role</Label>
                 <Select value={role} onValueChange={(v) => setRole(v as AccountRole)}>
-                  <SelectTrigger>
+                  <SelectTrigger id="company-invite-role">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1745,34 +1823,43 @@ function NewProjectButton({
         <form className="grid gap-4 py-2" onSubmit={handleCreateProject}>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Project name</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} />
+              <Label htmlFor="new-project-name">Project name</Label>
+              <Input id="new-project-name" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label>Job number</Label>
-              <Input value={jobNumber} onChange={(e) => setJobNumber(e.target.value)} />
+              <Label htmlFor="new-project-job-number">Job number</Label>
+              <Input
+                id="new-project-job-number"
+                value={jobNumber}
+                onChange={(e) => setJobNumber(e.target.value)}
+              />
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label>Client</Label>
-            <Input value={client} onChange={(e) => setClient(e.target.value)} />
+            <Label htmlFor="new-project-client">Client</Label>
+            <Input
+              id="new-project-client"
+              value={client}
+              onChange={(e) => setClient(e.target.value)}
+            />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Project manager</Label>
+              <Label htmlFor="new-project-manager">Project manager</Label>
               <Input
+                id="new-project-manager"
                 value={projectManager}
                 onChange={(e) => setProjectManager(e.target.value)}
                 placeholder="Assign a project manager"
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Phase</Label>
+              <Label htmlFor="new-project-phase">Phase</Label>
               <Select
                 value={phase}
                 onValueChange={(v) => setPhase(v as "Early" | "Middle" | "Late")}
               >
-                <SelectTrigger>
+                <SelectTrigger id="new-project-phase">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1785,12 +1872,18 @@ function NewProjectButton({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Original contract (USD)</Label>
-              <Input type="number" value={contract} onChange={(e) => setContract(e.target.value)} />
+              <Label htmlFor="new-project-contract">Original contract (USD)</Label>
+              <Input
+                id="new-project-contract"
+                type="number"
+                value={contract}
+                onChange={(e) => setContract(e.target.value)}
+              />
             </div>
             <div className="space-y-1.5">
-              <Label>Original cost budget (USD)</Label>
+              <Label htmlFor="new-project-cost-budget">Original cost budget (USD)</Label>
               <Input
+                id="new-project-cost-budget"
                 type="number"
                 value={costBudget}
                 onChange={(e) => setCostBudget(e.target.value)}
@@ -1799,16 +1892,18 @@ function NewProjectButton({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Baseline completion</Label>
+              <Label htmlFor="new-project-baseline">Baseline completion</Label>
               <Input
+                id="new-project-baseline"
                 type="date"
                 value={baselineCompletion}
                 onChange={(e) => setBaselineCompletion(e.target.value)}
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Forecast completion</Label>
+              <Label htmlFor="new-project-forecast">Forecast completion</Label>
               <Input
+                id="new-project-forecast"
                 type="date"
                 value={forecastCompletion}
                 onChange={(e) => setForecastCompletion(e.target.value)}

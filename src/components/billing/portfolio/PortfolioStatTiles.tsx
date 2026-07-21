@@ -36,7 +36,7 @@ export function SamplePill() {
   return (
     <span
       title="Seeded Harbor Residence demo — sample data. Safe to explore, or archive it from the project."
-      className="inline-flex shrink-0 items-center rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-accent"
+      className="inline-flex shrink-0 items-center rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-accent"
     >
       Sample
     </span>

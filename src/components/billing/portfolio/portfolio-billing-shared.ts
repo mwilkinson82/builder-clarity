@@ -7,7 +7,7 @@ import type { PortfolioBillingProject, PortfolioBillingSummary } from "@/lib/bil
 export type PortfolioBillingTotals = PortfolioBillingSummary["totals"];
 
 // House mono microlabel (mock: var(--mono) 8.5px, .12em tracking).
-export const MONO_LABEL = "font-mono text-[8.5px] font-bold uppercase tracking-[0.12em]";
+export const MONO_LABEL = "font-mono text-[11px] font-bold uppercase tracking-[0.12em]";
 
 export type StatTone = "neutral" | "good" | "warn" | "crit";
 

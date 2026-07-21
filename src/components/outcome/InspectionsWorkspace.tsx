@@ -711,7 +711,7 @@ function InspectionDialog({
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <Label className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+      <Label className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
         {label}
       </Label>
       {children}
@@ -737,7 +737,7 @@ function InspectionMetric({
         tone === "success" && "border-success/30 bg-success/5",
       )}
     >
-      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+      <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
       <div
@@ -758,7 +758,7 @@ function InspectionMetric({
 function RiskReadout({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
-      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+      <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
       <div className="mt-1 font-serif text-xl tabular text-foreground">{value}</div>

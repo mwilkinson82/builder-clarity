@@ -127,7 +127,7 @@ function RailCard({
     >
       <div
         className={cn(
-          "pb-1 pt-4 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em]",
+          "pb-1 pt-4 font-mono text-[11px] font-bold uppercase tracking-[0.12em]",
           tone === "danger" ? "text-danger" : "text-muted-foreground",
         )}
       >
