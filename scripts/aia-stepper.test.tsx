@@ -67,7 +67,7 @@ function generateButton(): HTMLButtonElement {
 function billButton(): HTMLButtonElement {
   const buttons = Array.from(container!.querySelectorAll("button")) as HTMLButtonElement[];
   const match = buttons.find((btn) =>
-    /Create invoice draft|Creating invoice/.test(btn.textContent ?? ""),
+    /Bill the owner|Confirm & bill|^Billing/.test(btn.textContent ?? ""),
   );
   if (!match) throw new Error("bill button not found");
   return match;
@@ -135,36 +135,71 @@ test("no imported lines blocks generation with the SOV reason", () => {
   expect(onGenerate).not.toHaveBeenCalled();
 });
 
-// After the package is generated, invoice creation becomes available. Creation
-// is draft-only; recipient-confirmed Send is the audited action that starts A/R.
-test("bill step is disabled until the package is generated", () => {
+// The pay application IS the owner's bill: billing is one terminal action,
+// available as soon as the application is ready — no "download the package
+// first" dance. Recipient-confirmed Send from Receivables still starts A/R.
+test("bill the owner is available as soon as the application is ready — no download-first", () => {
   const onBillOwner = vi.fn();
-  mount(READY, [], { onBillOwner }); // hasGenerated not set → generate first
-  expect(container?.textContent).toMatch(/Generate the package above first/);
-  click(billButton());
-  expect(onBillOwner).not.toHaveBeenCalled();
-});
-
-test("once generated, one click creates the invoice draft for review", () => {
-  const onBillOwner = vi.fn();
-  mount({ ...READY, hasGenerated: true }, [], { onBillOwner });
-  expect(container?.textContent).toMatch(/Create invoice draft — \$1,000\.00/);
-  expect(container?.textContent).toMatch(/Review and send it from Invoices/);
+  mount(READY, [], { onBillOwner }); // hasGenerated NOT set
+  expect(container?.textContent).toMatch(/Bill the owner — \$1,000\.00/);
+  // The G702/G703 download sits beside it as the printed copy, not a gate.
+  expect(container?.textContent).toMatch(/Download AIA G702\/G703/);
   click(billButton());
   expect(onBillOwner).toHaveBeenCalledTimes(1);
 });
 
-test("an application with an invoice shows the created state, no duplicate action", () => {
+test("billing an overbilled application requires one explicit confirm", () => {
+  const onBillOwner = vi.fn();
+  mount({ ...READY, overbilledCount: 1 }, [OVERBILLED], { onBillOwner });
+  const button = billButton();
+  click(button);
+  // First click arms the confirm instead of billing.
+  expect(onBillOwner).not.toHaveBeenCalled();
+  expect(billButton().textContent).toMatch(/Confirm & bill anyway/);
+  // Second click bills.
+  click(billButton());
+  expect(onBillOwner).toHaveBeenCalledTimes(1);
+});
+
+// The Bill and Download overbilled confirms are INDEPENDENT: arming the
+// co-located Download must never pre-confirm the money-committing Bill action
+// (a single shared flag once let an overbilled receivable commit on one click).
+test("download and bill keep independent overbilled confirms — no cross-arming", () => {
+  const onBillOwner = vi.fn();
+  const onGenerate = vi.fn();
+  mount({ ...READY, overbilledCount: 1 }, [OVERBILLED], { onBillOwner, onGenerate });
+  // Arm the download confirm.
+  click(generateButton());
+  expect(onGenerate).not.toHaveBeenCalled();
+  expect(generateButton().textContent).toMatch(/Confirm & download anyway/);
+  // The bill button is NOT armed by the download click.
+  expect(billButton().textContent).toMatch(/Bill the owner/);
+  expect(billButton().textContent).not.toMatch(/Confirm & bill/);
+  // A first click on Bill arms it (does not commit) — it has its own confirm.
+  click(billButton());
+  expect(onBillOwner).not.toHaveBeenCalled();
+  expect(billButton().textContent).toMatch(/Confirm & bill anyway/);
+});
+
+test("not ready (no imported lines) blocks billing with the SOV reason", () => {
+  const onBillOwner = vi.fn();
+  mount({ ...READY, lineCount: 0 }, [], { onBillOwner });
+  expect(container?.textContent).toMatch(/Import your schedule of values first/);
+  click(billButton());
+  expect(onBillOwner).not.toHaveBeenCalled();
+});
+
+test("an application with an invoice shows the owner-billed state, no duplicate action", () => {
   const onBillOwner = vi.fn();
   mount(
-    { ...READY, hasGenerated: true, hasInvoice: true },
+    { ...READY, hasInvoice: true },
     [],
     { onBillOwner },
     {
       invoiceExists: true,
     },
   );
-  expect(container?.textContent).toMatch(/Invoice created/);
-  expect(() => billButton()).toThrow(); // the create-invoice action is gone
+  expect(container?.textContent).toMatch(/Owner billed/);
+  expect(() => billButton()).toThrow(); // the bill action is gone once billed
   expect(onBillOwner).not.toHaveBeenCalled();
 });

@@ -748,11 +748,15 @@ export function BillingLineItemsPanel({
         />
       ) : null}
 
-      {/* Always-visible progression: format, SOV import, entries, generate —
-          each actionable or disabled-with-reason, never hidden (GP3 Task 0). */}
+      {/* Always-visible progression: format, SOV import, entries, bill the owner
+          — each actionable or disabled-with-reason, never hidden (GP3 Task 0).
+          Billing is the one terminal action; the G702/G703 is its printed copy. */}
       {selectedPayApp ? (
         <div className="mt-4">
           <AiaApplicationStepper
+            // Remount per pay-app so transient UI state (overbilled confirms,
+            // routed-step highlight) never bleeds from one application to the next.
+            key={selectedPayApp.id}
             snapshot={builderSnapshot}
             overbilled={overbilled}
             canImport={Boolean(selectedPayApp)}
