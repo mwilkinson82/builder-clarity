@@ -308,6 +308,50 @@ export type Database = {
           },
         ]
       }
+      billing_application_commands: {
+        Row: {
+          actor_id: string
+          billing_application_id: string
+          command_type: string
+          created_at: string
+          id: string
+          idempotency_fingerprint: string
+          idempotency_key: string
+          project_id: string
+          result: Json
+        }
+        Insert: {
+          actor_id: string
+          billing_application_id: string
+          command_type: string
+          created_at?: string
+          id?: string
+          idempotency_fingerprint: string
+          idempotency_key: string
+          project_id: string
+          result?: Json
+        }
+        Update: {
+          actor_id?: string
+          billing_application_id?: string
+          command_type?: string
+          created_at?: string
+          id?: string
+          idempotency_fingerprint?: string
+          idempotency_key?: string
+          project_id?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_application_commands_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       billing_application_events: {
         Row: {
           amount: number
@@ -367,6 +411,7 @@ export type Database = {
           amount_billed: number
           application_number: string
           billing_period: string
+          billing_snapshot_bucket_count: number
           change_order_amount: number
           contract_amount: number
           created_at: string
@@ -390,6 +435,7 @@ export type Database = {
           amount_billed?: number
           application_number?: string
           billing_period?: string
+          billing_snapshot_bucket_count?: number
           change_order_amount?: number
           contract_amount?: number
           created_at?: string
@@ -413,6 +459,7 @@ export type Database = {
           amount_billed?: number
           application_number?: string
           billing_period?: string
+          billing_snapshot_bucket_count?: number
           change_order_amount?: number
           contract_amount?: number
           created_at?: string
@@ -442,11 +489,188 @@ export type Database = {
           },
         ]
       }
+      billing_invoice_commands: {
+        Row: {
+          actor_id: string
+          billing_invoice_id: string
+          command_type: string
+          created_at: string
+          id: string
+          idempotency_fingerprint: string
+          idempotency_key: string
+          project_id: string
+          result: Json
+        }
+        Insert: {
+          actor_id: string
+          billing_invoice_id: string
+          command_type: string
+          created_at?: string
+          id?: string
+          idempotency_fingerprint: string
+          idempotency_key: string
+          project_id: string
+          result?: Json
+        }
+        Update: {
+          actor_id?: string
+          billing_invoice_id?: string
+          command_type?: string
+          created_at?: string
+          id?: string
+          idempotency_fingerprint?: string
+          idempotency_key?: string
+          project_id?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_invoice_commands_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_invoice_legacy_repairs: {
+        Row: {
+          after_state: Json
+          before_state: Json
+          billing_application_id: string | null
+          billing_invoice_id: string
+          created_at: string
+          id: string
+          project_id: string
+          reason: string
+          repair_type: string
+        }
+        Insert: {
+          after_state: Json
+          before_state: Json
+          billing_application_id?: string | null
+          billing_invoice_id: string
+          created_at?: string
+          id?: string
+          project_id: string
+          reason: string
+          repair_type: string
+        }
+        Update: {
+          after_state?: Json
+          before_state?: Json
+          billing_application_id?: string | null
+          billing_invoice_id?: string
+          created_at?: string
+          id?: string
+          project_id?: string
+          reason?: string
+          repair_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_invoice_legacy_repairs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_invoice_portal_view_commands: {
+        Row: {
+          billing_invoice_id: string
+          created_at: string
+          event_key: string
+          id: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+          user_agent: string
+          viewed_at: string
+          viewer_email: string
+          viewer_user_id: string
+        }
+        Insert: {
+          billing_invoice_id: string
+          created_at?: string
+          event_key: string
+          id?: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+          user_agent?: string
+          viewed_at: string
+          viewer_email?: string
+          viewer_user_id: string
+        }
+        Update: {
+          billing_invoice_id?: string
+          created_at?: string
+          event_key?: string
+          id?: string
+          project_id?: string
+          request_fingerprint?: string
+          result?: Json
+          user_agent?: string
+          viewed_at?: string
+          viewer_email?: string
+          viewer_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_invoice_portal_view_commands_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_invoice_processor_commands: {
+        Row: {
+          billing_invoice_id: string
+          created_at: string
+          id: string
+          idempotency_key: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          billing_invoice_id: string
+          created_at?: string
+          id?: string
+          idempotency_key: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Update: {
+          billing_invoice_id?: string
+          created_at?: string
+          id?: string
+          idempotency_key?: string
+          project_id?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_invoice_processor_commands_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       billing_invoices: {
         Row: {
           billing_application_id: string | null
           client_visible: boolean
           collections_log: string
+          correction_of_invoice_id: string | null
           created_at: string
           created_by: string | null
           due_date: string | null
@@ -480,6 +704,7 @@ export type Database = {
           billing_application_id?: string | null
           client_visible?: boolean
           collections_log?: string
+          correction_of_invoice_id?: string | null
           created_at?: string
           created_by?: string | null
           due_date?: string | null
@@ -513,6 +738,7 @@ export type Database = {
           billing_application_id?: string | null
           client_visible?: boolean
           collections_log?: string
+          correction_of_invoice_id?: string | null
           created_at?: string
           created_by?: string | null
           due_date?: string | null
@@ -551,7 +777,192 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "billing_invoices_correction_of_invoice_id_fkey"
+            columns: ["correction_of_invoice_id"]
+            isOneToOne: false
+            referencedRelation: "billing_invoices"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "billing_invoices_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_line_change_order_allocations: {
+        Row: {
+          billing_application_id: string
+          billing_line_item_id: string
+          captured_at: string
+          change_order_allocation_id: string
+          contract_amount_cents: number
+          cost_amount_cents: number
+          cost_bucket_id: string | null
+          project_id: string
+        }
+        Insert: {
+          billing_application_id: string
+          billing_line_item_id: string
+          captured_at?: string
+          change_order_allocation_id: string
+          contract_amount_cents: number
+          cost_amount_cents: number
+          cost_bucket_id?: string | null
+          project_id: string
+        }
+        Update: {
+          billing_application_id?: string
+          billing_line_item_id?: string
+          captured_at?: string
+          change_order_allocation_id?: string
+          contract_amount_cents?: number
+          cost_amount_cents?: number
+          cost_bucket_id?: string | null
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_line_change_order_alloc_change_order_allocation_id_fkey"
+            columns: ["change_order_allocation_id"]
+            isOneToOne: false
+            referencedRelation: "change_order_allocations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_line_change_order_allocatio_billing_application_id_fkey"
+            columns: ["billing_application_id"]
+            isOneToOne: false
+            referencedRelation: "billing_applications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_line_change_order_allocations_billing_line_item_id_fkey"
+            columns: ["billing_line_item_id"]
+            isOneToOne: false
+            referencedRelation: "billing_line_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_line_change_order_allocations_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_line_change_order_allocations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_line_co_provenance_findings: {
+        Row: {
+          billing_application_id: string
+          billing_line_item_id: string
+          candidate_allocation_ids: string[]
+          candidate_contract_amount_cents: number
+          candidate_count: number
+          captured_change_order_value_cents: number
+          cost_bucket_id: string | null
+          detected_at: string
+          finding_reason: string
+          finding_status: string
+          project_id: string
+        }
+        Insert: {
+          billing_application_id: string
+          billing_line_item_id: string
+          candidate_allocation_ids?: string[]
+          candidate_contract_amount_cents?: number
+          candidate_count?: number
+          captured_change_order_value_cents: number
+          cost_bucket_id?: string | null
+          detected_at?: string
+          finding_reason: string
+          finding_status?: string
+          project_id: string
+        }
+        Update: {
+          billing_application_id?: string
+          billing_line_item_id?: string
+          candidate_allocation_ids?: string[]
+          candidate_contract_amount_cents?: number
+          candidate_count?: number
+          captured_change_order_value_cents?: number
+          cost_bucket_id?: string | null
+          detected_at?: string
+          finding_reason?: string
+          finding_status?: string
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_line_co_provenance_findings_billing_application_id_fkey"
+            columns: ["billing_application_id"]
+            isOneToOne: false
+            referencedRelation: "billing_applications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_line_co_provenance_findings_billing_line_item_id_fkey"
+            columns: ["billing_line_item_id"]
+            isOneToOne: true
+            referencedRelation: "billing_line_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_line_co_provenance_findings_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_line_co_provenance_findings_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_line_item_commands: {
+        Row: {
+          changed_by: string
+          created_at: string
+          id: string
+          operation_key: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          changed_by: string
+          created_at?: string
+          id?: string
+          operation_key: string
+          project_id: string
+          request_fingerprint: string
+          result?: Json
+        }
+        Update: {
+          changed_by?: string
+          created_at?: string
+          id?: string
+          operation_key?: string
+          project_id?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_line_item_commands_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -662,6 +1073,47 @@ export type Database = {
           },
         ]
       }
+      budget_command_operations: {
+        Row: {
+          changed_by: string | null
+          created_at: string
+          id: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          changed_by?: string | null
+          created_at?: string
+          id?: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: string
+          result?: Json
+        }
+        Update: {
+          changed_by?: string | null
+          created_at?: string
+          id?: string
+          operation_key?: string
+          operation_type?: string
+          project_id?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budget_command_operations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       budget_line_overrides: {
         Row: {
           changed_by: string | null
@@ -672,7 +1124,9 @@ export type Database = {
           new_value: number
           note: string | null
           old_value: number
+          operation_key: string | null
           project_id: string
+          request_fingerprint: string | null
         }
         Insert: {
           changed_by?: string | null
@@ -683,7 +1137,9 @@ export type Database = {
           new_value?: number
           note?: string | null
           old_value?: number
+          operation_key?: string | null
           project_id: string
+          request_fingerprint?: string | null
         }
         Update: {
           changed_by?: string | null
@@ -694,7 +1150,9 @@ export type Database = {
           new_value?: number
           note?: string | null
           old_value?: number
+          operation_key?: string | null
           project_id?: string
+          request_fingerprint?: string | null
         }
         Relationships: [
           {
@@ -713,6 +1171,57 @@ export type Database = {
           },
         ]
       }
+      budget_money_repairs: {
+        Row: {
+          cost_bucket_id: string | null
+          created_at: string
+          field: string
+          id: string
+          migration_key: string
+          new_value: number
+          old_value: number
+          project_id: string
+          target_key: string
+        }
+        Insert: {
+          cost_bucket_id?: string | null
+          created_at?: string
+          field: string
+          id?: string
+          migration_key: string
+          new_value: number
+          old_value: number
+          project_id: string
+          target_key: string
+        }
+        Update: {
+          cost_bucket_id?: string | null
+          created_at?: string
+          field?: string
+          id?: string
+          migration_key?: string
+          new_value?: number
+          old_value?: number
+          project_id?: string
+          target_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budget_money_repairs_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "budget_money_repairs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       change_order_allocations: {
         Row: {
           change_order_id: string
@@ -723,6 +1232,8 @@ export type Database = {
           created_at: string
           description: string
           id: string
+          idempotency_fingerprint: string | null
+          idempotency_key: string | null
           project_id: string
           updated_at: string
         }
@@ -735,6 +1246,8 @@ export type Database = {
           created_at?: string
           description?: string
           id?: string
+          idempotency_fingerprint?: string | null
+          idempotency_key?: string | null
           project_id: string
           updated_at?: string
         }
@@ -747,6 +1260,8 @@ export type Database = {
           created_at?: string
           description?: string
           id?: string
+          idempotency_fingerprint?: string | null
+          idempotency_key?: string | null
           project_id?: string
           updated_at?: string
         }
@@ -885,6 +1400,50 @@ export type Database = {
           },
           {
             foreignKeyName: "change_order_documents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      change_order_operations: {
+        Row: {
+          change_order_id: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: Json
+          result: Json
+        }
+        Insert: {
+          change_order_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: Json
+          result?: Json
+        }
+        Update: {
+          change_order_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          operation_key?: string
+          operation_type?: string
+          project_id?: string
+          request_fingerprint?: Json
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "change_order_operations_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -1109,6 +1668,7 @@ export type Database = {
           created_by: string | null
           id: string
           notes: string
+          operation_key: string
           payment_date: string
           payment_method: string
           payment_reference: string
@@ -1121,6 +1681,7 @@ export type Database = {
           created_by?: string | null
           id?: string
           notes?: string
+          operation_key: string
           payment_date?: string
           payment_method?: string
           payment_reference?: string
@@ -1133,6 +1694,7 @@ export type Database = {
           created_by?: string | null
           id?: string
           notes?: string
+          operation_key?: string
           payment_date?: string
           payment_method?: string
           payment_reference?: string
@@ -1158,6 +1720,7 @@ export type Database = {
       cost_actuals: {
         Row: {
           amount: number
+          amount_cents: number
           approved_at: string | null
           approved_by: string | null
           budget_open_relief: number
@@ -1170,6 +1733,7 @@ export type Database = {
           created_by: string | null
           credit_applies_to_id: string | null
           daily_wip_offset: number
+          daily_wip_offset_cents: number
           description: string
           exposure_id: string | null
           id: string
@@ -1197,6 +1761,7 @@ export type Database = {
         }
         Insert: {
           amount?: number
+          amount_cents?: number
           approved_at?: string | null
           approved_by?: string | null
           budget_open_relief?: number
@@ -1209,6 +1774,7 @@ export type Database = {
           created_by?: string | null
           credit_applies_to_id?: string | null
           daily_wip_offset?: number
+          daily_wip_offset_cents?: number
           description: string
           exposure_id?: string | null
           id?: string
@@ -1236,6 +1802,7 @@ export type Database = {
         }
         Update: {
           amount?: number
+          amount_cents?: number
           approved_at?: string | null
           approved_by?: string | null
           budget_open_relief?: number
@@ -1248,6 +1815,7 @@ export type Database = {
           created_by?: string | null
           credit_applies_to_id?: string | null
           daily_wip_offset?: number
+          daily_wip_offset_cents?: number
           description?: string
           exposure_id?: string | null
           id?: string
@@ -2837,6 +3405,133 @@ export type Database = {
           },
         ]
       }
+      estimate_create_operations: {
+        Row: {
+          changed_by: string
+          created_at: string
+          estimate_id: string
+          id: string
+          operation_key: string
+          organization_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          changed_by: string
+          created_at?: string
+          estimate_id: string
+          id?: string
+          operation_key: string
+          organization_id: string
+          request_fingerprint: string
+          result?: Json
+        }
+        Update: {
+          changed_by?: string
+          created_at?: string
+          estimate_id?: string
+          id?: string
+          operation_key?: string
+          organization_id?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_create_operations_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_create_operations_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_duplicate_operations: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          mode: string
+          operation_key: string
+          result: Json
+          result_estimate_id: string
+          source_estimate_id: string
+          source_revision_fingerprint: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          mode: string
+          operation_key: string
+          result: Json
+          result_estimate_id: string
+          source_estimate_id: string
+          source_revision_fingerprint: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          mode?: string
+          operation_key?: string
+          result?: Json
+          result_estimate_id?: string
+          source_estimate_id?: string
+          source_revision_fingerprint?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_duplicate_operations_source_estimate_id_fkey"
+            columns: ["source_estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_import_operations: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          estimate_id: string
+          idempotency_fingerprint: string
+          idempotency_key: string
+          result: Json
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          estimate_id: string
+          idempotency_fingerprint: string
+          idempotency_key: string
+          result: Json
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          estimate_id?: string
+          idempotency_fingerprint?: string
+          idempotency_key?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_import_operations_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       estimate_line_items: {
         Row: {
           assembly_output_quantity: number | null
@@ -2929,6 +3624,50 @@ export type Database = {
             columns: ["library_item_id"]
             isOneToOne: false
             referencedRelation: "cost_library_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_line_operations: {
+        Row: {
+          changed_by: string
+          created_at: string
+          estimate_id: string
+          id: string
+          line_item_id: string | null
+          operation_key: string
+          operation_type: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          changed_by: string
+          created_at?: string
+          estimate_id: string
+          id?: string
+          line_item_id?: string | null
+          operation_key: string
+          operation_type: string
+          request_fingerprint: string
+          result?: Json
+        }
+        Update: {
+          changed_by?: string
+          created_at?: string
+          estimate_id?: string
+          id?: string
+          line_item_id?: string | null
+          operation_key?: string
+          operation_type?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_line_operations_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
             referencedColumns: ["id"]
           },
         ]
@@ -3745,6 +4484,54 @@ export type Database = {
           },
         ]
       }
+      estimate_sov_conversion_operations: {
+        Row: {
+          changed_by: string | null
+          created_at: string
+          estimate_id: string
+          id: string
+          operation_key: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          changed_by?: string | null
+          created_at?: string
+          estimate_id: string
+          id?: string
+          operation_key: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Update: {
+          changed_by?: string | null
+          created_at?: string
+          estimate_id?: string
+          id?: string
+          operation_key?: string
+          project_id?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_sov_conversion_operations_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_sov_conversion_operations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       estimate_takeoff_assemblies: {
         Row: {
           ai_operation_id: string | null
@@ -4155,6 +4942,7 @@ export type Database = {
           tool_type: string
           unit: string
           updated_at: string
+          version: number
           waste_pct: number
         }
         Insert: {
@@ -4189,6 +4977,7 @@ export type Database = {
           tool_type: string
           unit: string
           updated_at?: string
+          version?: number
           waste_pct?: number
         }
         Update: {
@@ -4223,6 +5012,7 @@ export type Database = {
           tool_type?: string
           unit?: string
           updated_at?: string
+          version?: number
           waste_pct?: number
         }
         Relationships: [
@@ -4266,6 +5056,50 @@ export type Database = {
             columns: ["scope_brief_review_id"]
             isOneToOne: false
             referencedRelation: "estimate_scope_brief_reviews"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_takeoff_operations: {
+        Row: {
+          changed_by: string
+          created_at: string
+          estimate_id: string
+          id: string
+          measurement_id: string | null
+          operation_key: string
+          operation_type: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          changed_by: string
+          created_at?: string
+          estimate_id: string
+          id?: string
+          measurement_id?: string | null
+          operation_key: string
+          operation_type: string
+          request_fingerprint: string
+          result: Json
+        }
+        Update: {
+          changed_by?: string
+          created_at?: string
+          estimate_id?: string
+          id?: string
+          measurement_id?: string | null
+          operation_key?: string
+          operation_type?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_takeoff_operations_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
             referencedColumns: ["id"]
           },
         ]
@@ -4501,6 +5335,53 @@ export type Database = {
           },
         ]
       }
+      exposure_allocation_operations: {
+        Row: {
+          allocation_id: string
+          changed_by: string
+          created_at: string
+          exposure_id: string
+          id: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          allocation_id: string
+          changed_by: string
+          created_at?: string
+          exposure_id: string
+          id?: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Update: {
+          allocation_id?: string
+          changed_by?: string
+          created_at?: string
+          exposure_id?: string
+          id?: string
+          operation_key?: string
+          operation_type?: string
+          project_id?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exposure_allocation_operations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       exposure_allocations: {
         Row: {
           amount: number
@@ -4511,6 +5392,7 @@ export type Database = {
           id: string
           project_id: string
           updated_at: string
+          version: number
         }
         Insert: {
           amount?: number
@@ -4521,6 +5403,7 @@ export type Database = {
           id?: string
           project_id: string
           updated_at?: string
+          version?: number
         }
         Update: {
           amount?: number
@@ -4531,6 +5414,7 @@ export type Database = {
           id?: string
           project_id?: string
           updated_at?: string
+          version?: number
         }
         Relationships: [
           {
@@ -5207,24 +6091,38 @@ export type Database = {
           created_at: string
           created_by: string | null
           currency: string
+          gross_received: number
+          gross_received_cents: number
           id: string
+          idempotency_key: string | null
           invoice_id: string
           net_payout: number
+          net_payout_cents: number
           notes: string
           organization_id: string | null
           overwatch_fee: number
+          overwatch_fee_cents: number
           paid_at: string
           payment_method: string
           processor: string
           processor_fee: number
+          processor_fee_cents: number
+          processor_fee_observed_at: string | null
+          processor_fee_source: string
           processor_payment_id: string
           project_id: string
           receipt_url: string
           reference: string
+          refunded_amount_cents: number
+          refunded_gross_cents: number
+          refunded_surcharge_cents: number
           status: string
+          stripe_balance_transaction_id: string
           stripe_charge_id: string
           stripe_checkout_session_id: string
           stripe_payment_intent_id: string
+          surcharge: number
+          surcharge_cents: number
           updated_at: string
         }
         Insert: {
@@ -5234,24 +6132,38 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           currency?: string
+          gross_received?: number
+          gross_received_cents?: number
           id?: string
+          idempotency_key?: string | null
           invoice_id: string
           net_payout?: number
+          net_payout_cents?: number
           notes?: string
           organization_id?: string | null
           overwatch_fee?: number
+          overwatch_fee_cents?: number
           paid_at?: string
           payment_method?: string
           processor?: string
           processor_fee?: number
+          processor_fee_cents?: number
+          processor_fee_observed_at?: string | null
+          processor_fee_source?: string
           processor_payment_id?: string
           project_id: string
           receipt_url?: string
           reference?: string
+          refunded_amount_cents?: number
+          refunded_gross_cents?: number
+          refunded_surcharge_cents?: number
           status?: string
+          stripe_balance_transaction_id?: string
           stripe_charge_id?: string
           stripe_checkout_session_id?: string
           stripe_payment_intent_id?: string
+          surcharge?: number
+          surcharge_cents?: number
           updated_at?: string
         }
         Update: {
@@ -5261,24 +6173,38 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           currency?: string
+          gross_received?: number
+          gross_received_cents?: number
           id?: string
+          idempotency_key?: string | null
           invoice_id?: string
           net_payout?: number
+          net_payout_cents?: number
           notes?: string
           organization_id?: string | null
           overwatch_fee?: number
+          overwatch_fee_cents?: number
           paid_at?: string
           payment_method?: string
           processor?: string
           processor_fee?: number
+          processor_fee_cents?: number
+          processor_fee_observed_at?: string | null
+          processor_fee_source?: string
           processor_payment_id?: string
           project_id?: string
           receipt_url?: string
           reference?: string
+          refunded_amount_cents?: number
+          refunded_gross_cents?: number
+          refunded_surcharge_cents?: number
           status?: string
+          stripe_balance_transaction_id?: string
           stripe_charge_id?: string
           stripe_checkout_session_id?: string
           stripe_payment_intent_id?: string
+          surcharge?: number
+          surcharge_cents?: number
           updated_at?: string
         }
         Relationships: [
@@ -5311,6 +6237,131 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      payment_refund_events: {
+        Row: {
+          billing_application_id: string | null
+          created_at: string
+          created_by: string | null
+          cumulative_refunded_gross_cents: number
+          id: string
+          idempotency_key: string
+          invoice_id: string
+          notes: string
+          organization_id: string | null
+          payment_id: string
+          processor: string
+          processor_event_id: string
+          project_id: string
+          receipt_url: string
+          refund_amount_cents: number
+          refund_gross_cents: number
+          refund_surcharge_cents: number
+          request_fingerprint: string
+          stripe_charge_id: string
+        }
+        Insert: {
+          billing_application_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          cumulative_refunded_gross_cents: number
+          id?: string
+          idempotency_key: string
+          invoice_id: string
+          notes?: string
+          organization_id?: string | null
+          payment_id: string
+          processor: string
+          processor_event_id?: string
+          project_id: string
+          receipt_url?: string
+          refund_amount_cents: number
+          refund_gross_cents: number
+          refund_surcharge_cents: number
+          request_fingerprint?: string
+          stripe_charge_id?: string
+        }
+        Update: {
+          billing_application_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          cumulative_refunded_gross_cents?: number
+          id?: string
+          idempotency_key?: string
+          invoice_id?: string
+          notes?: string
+          organization_id?: string | null
+          payment_id?: string
+          processor?: string
+          processor_event_id?: string
+          project_id?: string
+          receipt_url?: string
+          refund_amount_cents?: number
+          refund_gross_cents?: number
+          refund_surcharge_cents?: number
+          request_fingerprint?: string
+          stripe_charge_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_refund_events_billing_application_id_fkey"
+            columns: ["billing_application_id"]
+            isOneToOne: false
+            referencedRelation: "billing_applications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_refund_events_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "billing_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_refund_events_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payment_ledger"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_refund_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_rollup_backfill_evidence: {
+        Row: {
+          before_state: Json
+          created_at: string
+          id: string
+          migration_key: string
+          project_id: string | null
+          record_id: string
+          record_kind: string
+        }
+        Insert: {
+          before_state: Json
+          created_at?: string
+          id?: string
+          migration_key: string
+          project_id?: string | null
+          record_id: string
+          record_kind: string
+        }
+        Update: {
+          before_state?: Json
+          created_at?: string
+          id?: string
+          migration_key?: string
+          project_id?: string | null
+          record_id?: string
+          record_kind?: string
+        }
+        Relationships: []
       }
       pipeline_accounts: {
         Row: {
@@ -6352,6 +7403,91 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "project_documents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_financial_operations: {
+        Row: {
+          changed_by: string
+          created_at: string
+          id: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          changed_by: string
+          created_at?: string
+          id?: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: string
+          result?: Json
+        }
+        Update: {
+          changed_by?: string
+          created_at?: string
+          id?: string
+          operation_key?: string
+          operation_type?: string
+          project_id?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_financial_operations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_financial_overrides: {
+        Row: {
+          changed_by: string
+          created_at: string
+          field: string
+          id: string
+          new_value: Json | null
+          old_value: Json | null
+          operation_key: string
+          project_id: string
+          reason: string
+        }
+        Insert: {
+          changed_by: string
+          created_at?: string
+          field: string
+          id?: string
+          new_value?: Json | null
+          old_value?: Json | null
+          operation_key: string
+          project_id: string
+          reason: string
+        }
+        Update: {
+          changed_by?: string
+          created_at?: string
+          field?: string
+          id?: string
+          new_value?: Json | null
+          old_value?: Json | null
+          operation_key?: string
+          project_id?: string
+          reason?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_financial_overrides_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -7808,10 +8944,12 @@ export type Database = {
           inserted_count: number
           merged_rows: number
           mode: string
+          operation_key: string | null
           original_cost_budget: number
           profile: string
           project_id: string
           raw_rows: number
+          request_fingerprint: string | null
           selected_budget_column: number | null
           selected_budget_label: string
           skipped_count: number
@@ -7834,10 +8972,12 @@ export type Database = {
           inserted_count?: number
           merged_rows?: number
           mode?: string
+          operation_key?: string | null
           original_cost_budget?: number
           profile?: string
           project_id: string
           raw_rows?: number
+          request_fingerprint?: string | null
           selected_budget_column?: number | null
           selected_budget_label?: string
           skipped_count?: number
@@ -7860,10 +9000,12 @@ export type Database = {
           inserted_count?: number
           merged_rows?: number
           mode?: string
+          operation_key?: string | null
           original_cost_budget?: number
           profile?: string
           project_id?: string
           raw_rows?: number
+          request_fingerprint?: string | null
           selected_budget_column?: number | null
           selected_budget_label?: string
           skipped_count?: number
@@ -8052,6 +9194,53 @@ export type Database = {
             columns: ["subcontract_id"]
             isOneToOne: false
             referencedRelation: "subcontracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subcontract_authority_operations: {
+        Row: {
+          changed_by: string
+          created_at: string
+          id: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: string
+          resource_id: string
+          result: Json
+          subcontract_id: string | null
+        }
+        Insert: {
+          changed_by: string
+          created_at?: string
+          id?: string
+          operation_key: string
+          operation_type: string
+          project_id: string
+          request_fingerprint: string
+          resource_id: string
+          result: Json
+          subcontract_id?: string | null
+        }
+        Update: {
+          changed_by?: string
+          created_at?: string
+          id?: string
+          operation_key?: string
+          operation_type?: string
+          project_id?: string
+          request_fingerprint?: string
+          resource_id?: string
+          result?: Json
+          subcontract_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcontract_authority_operations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
             referencedColumns: ["id"]
           },
         ]
@@ -8246,6 +9435,50 @@ export type Database = {
           },
         ]
       }
+      subcontract_payment_draft_operations: {
+        Row: {
+          changed_by: string
+          created_at: string
+          id: string
+          operation_key: string
+          operation_type: string
+          payment_id: string
+          project_id: string
+          request_fingerprint: string
+          result: Json
+        }
+        Insert: {
+          changed_by: string
+          created_at?: string
+          id?: string
+          operation_key: string
+          operation_type: string
+          payment_id: string
+          project_id: string
+          request_fingerprint: string
+          result?: Json
+        }
+        Update: {
+          changed_by?: string
+          created_at?: string
+          id?: string
+          operation_key?: string
+          operation_type?: string
+          payment_id?: string
+          project_id?: string
+          request_fingerprint?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcontract_payment_draft_operations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subcontract_payments: {
         Row: {
           amount: number
@@ -8256,6 +9489,8 @@ export type Database = {
           created_at: string
           exposure_id: string | null
           id: string
+          idempotency_fingerprint: string | null
+          idempotency_key: string | null
           notes: string
           payment_date: string
           payment_method: string
@@ -8275,6 +9510,8 @@ export type Database = {
           created_at?: string
           exposure_id?: string | null
           id?: string
+          idempotency_fingerprint?: string | null
+          idempotency_key?: string | null
           notes?: string
           payment_date?: string
           payment_method?: string
@@ -8294,6 +9531,8 @@ export type Database = {
           created_at?: string
           exposure_id?: string | null
           id?: string
+          idempotency_fingerprint?: string | null
+          idempotency_key?: string | null
           notes?: string
           payment_date?: string
           payment_method?: string
@@ -8935,6 +10174,38 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      allocate_change_order_atomic: {
+        Args: {
+          p_change_order_id: string
+          p_contract_amount_cents: number
+          p_cost_amount_cents?: number
+          p_cost_bucket_id: string
+          p_idempotency_key?: string
+          p_project_id: string
+        }
+        Returns: Json
+      }
+      append_invoice_collections_note_atomic: {
+        Args: {
+          p_billing_invoice_id: string
+          p_idempotency_key: string
+          p_note: string
+        }
+        Returns: Json
+      }
+      apply_billing_line_item_mutations_atomic: {
+        Args: { p_items: Json; p_operation_key: string }
+        Returns: Json
+      }
+      apply_estimate_takeoff_line_rollup_internal: {
+        Args: {
+          p_estimate_id: string
+          p_force_manual?: boolean
+          p_force_unit?: boolean
+          p_line_item_id: string
+        }
+        Returns: Json
+      }
       apply_production_sov_certification_to_billing: {
         Args: { p_billing_application_id: string; p_certification_id: string }
         Returns: Json
@@ -8985,8 +10256,33 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      assert_safe_accounting_cents: {
+        Args: { p_allow_negative?: boolean; p_cents: number; p_label: string }
+        Returns: number
+      }
+      attach_lien_waiver_to_payment_atomic: {
+        Args: { p_payment_id: string; p_waiver_id: string }
+        Returns: boolean
+      }
+      build_budget_from_estimate_atomic: {
+        Args: {
+          p_operation_key: string
+          p_pricing: string
+          p_project_id: string
+        }
+        Returns: Json
+      }
       build_estimate_review_snapshot: {
         Args: { p_estimate_id: string }
+        Returns: Json
+      }
+      calculate_estimate_takeoff_geometry: {
+        Args: {
+          p_geometry: Json
+          p_sheet: Database["public"]["Tables"]["estimate_plan_sheets"]["Row"]
+          p_tool_type: string
+          p_unit: string
+        }
         Returns: Json
       }
       calculate_takeoff_assembly_outputs: {
@@ -9005,9 +10301,15 @@ export type Database = {
         Args: { p_org_id: string }
         Returns: boolean
       }
+      can_manage_billing: { Args: { p_project_id: string }; Returns: boolean }
+      can_manage_client_access: {
+        Args: { p_project_id: string }
+        Returns: boolean
+      }
       can_manage_estimate: { Args: { p_estimate_id: string }; Returns: boolean }
       can_manage_org: { Args: { p_org_id: string }; Returns: boolean }
       can_manage_project: { Args: { p_project_id: string }; Returns: boolean }
+      can_manage_schedule: { Args: { p_project_id: string }; Returns: boolean }
       can_read_client_project: {
         Args: { p_project_id: string }
         Returns: boolean
@@ -9035,6 +10337,8 @@ export type Database = {
         Returns: boolean
       }
       can_view_financials: { Args: { p_project_id: string }; Returns: boolean }
+      can_write_cost_library: { Args: { p_org_id: string }; Returns: boolean }
+      can_write_crm: { Args: { p_org_id: string }; Returns: boolean }
       complete_estimate_measurement_scope_item: {
         Args: { p_scope_item_id: string; p_takeoff_measurement_id: string }
         Returns: {
@@ -9071,13 +10375,105 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      convert_estimate_to_sov_atomic: {
+        Args: {
+          p_client: string
+          p_estimate_id: string
+          p_operation_key: string
+          p_project_id: string
+        }
+        Returns: Json
+      }
       convert_pipeline_opportunity_to_project: {
         Args: { p_opportunity_id: string }
         Returns: string
       }
+      correct_billing_invoice_atomic: {
+        Args: {
+          p_billing_invoice_id: string
+          p_expected_updated_at: string
+          p_idempotency_key: string
+          p_reason: string
+          p_replacement_payload: Json
+        }
+        Returns: Json
+      }
       cost_actual_rollup_amount: {
         Args: { p_amount: number; p_status: string }
         Returns: number
+      }
+      create_billing_application_atomic: {
+        Args: {
+          p_idempotency_key: string
+          p_payload: Json
+          p_project_id: string
+        }
+        Returns: Json
+      }
+      create_billing_invoice_atomic: {
+        Args: {
+          p_idempotency_key: string
+          p_payload: Json
+          p_project_id: string
+        }
+        Returns: Json
+      }
+      create_change_order_atomic: {
+        Args: {
+          p_co_type: string
+          p_contract_amount_cents: number
+          p_cost_amount_cents: number
+          p_date_initiated: string
+          p_description: string
+          p_financial_direction: string
+          p_notes: string
+          p_number: string
+          p_operation_key: string
+          p_owner: string
+          p_pricing_method: string
+          p_probability: number
+          p_project_id: string
+          p_requested_by: string
+          p_requested_id?: string
+          p_schedule_impact_days: number
+          p_status: string
+        }
+        Returns: Json
+      }
+      create_cost_actual_atomic: {
+        Args: {
+          p_idempotency_key: string
+          p_payload: Json
+          p_project_id: string
+        }
+        Returns: Json
+      }
+      create_cost_bucket_atomic: {
+        Args: { p_operation_key: string; p_payload: Json; p_project_id: string }
+        Returns: Json
+      }
+      create_estimate_atomic: {
+        Args: {
+          p_header: Json
+          p_initial_lines: Json
+          p_operation_key: string
+          p_organization_id: string
+        }
+        Returns: Json
+      }
+      create_estimate_line_items_atomic: {
+        Args: { p_estimate_id: string; p_lines: Json; p_operation_key: string }
+        Returns: Json
+      }
+      create_exposure_allocation_atomic: {
+        Args: {
+          p_amount_cents: number
+          p_cost_bucket_id: string
+          p_exposure_id: string
+          p_operation_key: string
+          p_project_id: string
+        }
+        Returns: Json
       }
       create_notification: {
         Args: {
@@ -9094,9 +10490,90 @@ export type Database = {
         }
         Returns: string
       }
+      create_project_financial_atomic: {
+        Args: {
+          p_header: Json
+          p_operation_key: string
+          p_organization_id: string
+        }
+        Returns: Json
+      }
+      delete_billing_application_draft_atomic: {
+        Args: { p_billing_application_id: string; p_idempotency_key: string }
+        Returns: Json
+      }
+      delete_billing_invoice_draft_atomic: {
+        Args: { p_billing_invoice_id: string; p_idempotency_key: string }
+        Returns: Json
+      }
+      delete_change_order_allocation_atomic: {
+        Args: { p_allocation_id: string }
+        Returns: Json
+      }
+      delete_change_order_atomic: {
+        Args: {
+          p_change_order_id: string
+          p_expected_updated_at: string
+          p_operation_key: string
+          p_project_id: string
+        }
+        Returns: Json
+      }
+      delete_cost_bucket_atomic: {
+        Args: {
+          p_bucket_id: string
+          p_operation_key: string
+          p_project_id: string
+        }
+        Returns: Json
+      }
       delete_email: {
         Args: { message_id: number; queue_name: string }
         Returns: boolean
+      }
+      delete_estimate_line_item_atomic: {
+        Args: {
+          p_estimate_id: string
+          p_line_item_id: string
+          p_operation_key: string
+        }
+        Returns: Json
+      }
+      delete_exposure_allocation_atomic: {
+        Args: {
+          p_allocation_id: string
+          p_expected_version: number
+          p_operation_key: string
+        }
+        Returns: Json
+      }
+      delete_subcontract_payment_draft_atomic: {
+        Args: {
+          p_expected_updated_at: string
+          p_operation_key: string
+          p_payment_id: string
+        }
+        Returns: Json
+      }
+      delete_untouched_subcontract_draft_atomic: {
+        Args: {
+          p_expected_updated_at: string
+          p_operation_key: string
+          p_subcontract_id: string
+        }
+        Returns: Json
+      }
+      detach_lien_waiver_from_payment_atomic: {
+        Args: { p_payment_id: string; p_waiver_id: string }
+        Returns: boolean
+      }
+      duplicate_estimate_atomic: {
+        Args: {
+          p_mode: string
+          p_operation_key: string
+          p_source_estimate_id: string
+        }
+        Returns: Json
       }
       email_queue_dispatch: { Args: never; Returns: undefined }
       enqueue_email: {
@@ -9116,10 +10593,15 @@ export type Database = {
         Args: { p_snapshot: Json }
         Returns: string
       }
+      generate_billing_line_items_atomic: {
+        Args: { p_billing_application_id: string; p_project_id: string }
+        Returns: Json
+      }
       get_estimate_review_state: {
         Args: { p_estimate_id: string }
         Returns: Json
       }
+      get_org_credit_balance: { Args: { p_org_id: string }; Returns: number }
       handoff_estimate_takeoff_assembly_output: {
         Args: {
           p_assembly_id: string
@@ -9158,8 +10640,64 @@ export type Database = {
         Args: { p_capability: string; p_org_id: string }
         Returns: boolean
       }
+      import_cost_actuals_atomic: {
+        Args: {
+          p_idempotency_key: string
+          p_project_id: string
+          p_rows: Json
+          p_source_name: string
+        }
+        Returns: Json
+      }
+      import_cost_buckets_atomic: {
+        Args: {
+          p_metadata: Json
+          p_mode: string
+          p_operation_key: string
+          p_project_id: string
+          p_rows: Json
+        }
+        Returns: Json
+      }
+      import_estimate_line_items_atomic: {
+        Args: {
+          p_estimate_id: string
+          p_idempotency_key?: string
+          p_mode: string
+          p_rows: Json
+        }
+        Returns: Json
+      }
+      insert_estimate_lines_authoritative: {
+        Args: { p_estimate_id: string; p_lines: Json }
+        Returns: Json
+      }
       is_org_member: { Args: { p_org_id: string }; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
+      link_change_order_exposure_atomic: {
+        Args: { p_change_order_id: string; p_exposure_id: string }
+        Returns: Json
+      }
+      link_claim_change_order_atomic: {
+        Args: { p_change_order_id: string; p_claim_id: string }
+        Returns: Json
+      }
+      link_estimate_takeoff_group_atomic: {
+        Args: {
+          p_estimate_id: string
+          p_expected_versions: number[]
+          p_force_manual?: boolean
+          p_force_unit?: boolean
+          p_line_item_id: string
+          p_measurement_ids: string[]
+          p_operation_key: string
+        }
+        Returns: Json
+      }
+      lock_project_budget_atomic: {
+        Args: { p_operation_key: string; p_project_id: string }
+        Returns: Json
+      }
       mark_all_notifications_read: {
         Args: { p_organization_id?: string }
         Returns: number
@@ -9173,9 +10711,61 @@ export type Database = {
         }
         Returns: number
       }
+      mutate_estimate_takeoff_measurement_atomic: {
+        Args: {
+          p_action: string
+          p_estimate_id: string
+          p_expected_version: number
+          p_force_manual?: boolean
+          p_force_unit?: boolean
+          p_measurement_id: string
+          p_operation_key: string
+          p_patch: Json
+          p_recalculate_from_geometry: boolean
+        }
+        Returns: Json
+      }
+      mutate_subcontract_allocation_atomic: {
+        Args: {
+          p_allocation_id: string
+          p_delete: boolean
+          p_expected_updated_at: string
+          p_operation_key: string
+          p_patch: Json
+          p_subcontract_id: string
+        }
+        Returns: Json
+      }
+      mutate_subcontract_change_order_atomic: {
+        Args: {
+          p_change_order_id: string
+          p_delete: boolean
+          p_expected_updated_at: string
+          p_operation_key: string
+          p_patch: Json
+          p_subcontract_id: string
+        }
+        Returns: Json
+      }
       normalize_assembly_output_unit: {
         Args: { p_unit: string }
         Returns: string
+      }
+      organizations_directory: {
+        Args: { p_org_id: string }
+        Returns: {
+          billing_status: string
+          daily_report_limit_per_month: number
+          id: string
+          logo_path: string
+          logo_url: string
+          name: string
+          plan_code: string
+          project_limit: number
+          seat_limit: number
+          slug: string
+          storage_limit_mb: number
+        }[]
       }
       overwatch_access_email_key: { Args: { p_email: string }; Returns: string }
       read_email_batch: {
@@ -9185,6 +10775,43 @@ export type Database = {
           msg_id: number
           read_ct: number
         }[]
+      }
+      recalculate_estimate_takeoff_sheet_atomic: {
+        Args: {
+          p_estimate_id: string
+          p_expected_scale_revision: number
+          p_force_manual?: boolean
+          p_force_unit?: boolean
+          p_operation_key: string
+          p_plan_sheet_id: string
+        }
+        Returns: Json
+      }
+      recalculate_estimate_totals_atomic: {
+        Args: { p_estimate_id: string }
+        Returns: Json
+      }
+      recalculate_estimate_totals_from_lines: {
+        Args: { p_estimate_id: string }
+        Returns: Json
+      }
+      reconcile_invoice_payment_rollup: {
+        Args: { p_invoice_id: string }
+        Returns: Json
+      }
+      reconcile_invoice_payment_rollups: {
+        Args: { p_application_ids?: string[]; p_invoice_ids: string[] }
+        Returns: Json
+      }
+      record_billing_invoice_portal_view_atomic: {
+        Args: {
+          p_billing_invoice_id: string
+          p_event_key: string
+          p_user_agent?: string
+          p_viewer_email: string
+          p_viewer_user_id: string
+        }
+        Returns: Json
       }
       record_client_change_order_decision: {
         Args: {
@@ -9213,6 +10840,18 @@ export type Database = {
           p_payment_date?: string
           p_payment_method?: string
           p_payment_reference?: string
+        }
+        Returns: Json
+      }
+      record_cost_actual_payment_atomic: {
+        Args: {
+          p_amount_cents: number
+          p_cost_actual_id: string
+          p_idempotency_key: string
+          p_notes: string
+          p_payment_date: string
+          p_payment_method: string
+          p_payment_reference: string
         }
         Returns: Json
       }
@@ -9358,6 +10997,118 @@ export type Database = {
           verified_at: string
         }[]
       }
+      record_invoice_payment_atomic: {
+        Args: {
+          p_amount_cents: number
+          p_idempotency_key?: string
+          p_invoice_id: string
+          p_notes?: string
+          p_overwatch_fee_cents?: number
+          p_paid_at?: string
+          p_payment_method?: string
+          p_processor?: string
+          p_processor_fee_cents?: number
+          p_processor_payment_id?: string
+          p_reference?: string
+        }
+        Returns: Json
+      }
+      record_invoice_payment_atomic_internal: {
+        Args: {
+          p_amount_cents: number
+          p_idempotency_key?: string
+          p_invoice_id: string
+          p_notes?: string
+          p_overwatch_fee_cents?: number
+          p_paid_at?: string
+          p_payment_method?: string
+          p_processor?: string
+          p_processor_fee_cents?: number
+          p_processor_payment_id?: string
+          p_reference?: string
+        }
+        Returns: Json
+      }
+      record_invoice_payment_atomic_pre_invoice_commands: {
+        Args: {
+          p_amount_cents: number
+          p_idempotency_key?: string
+          p_invoice_id: string
+          p_notes?: string
+          p_overwatch_fee_cents?: number
+          p_paid_at?: string
+          p_payment_method?: string
+          p_processor?: string
+          p_processor_fee_cents?: number
+          p_processor_payment_id?: string
+          p_reference?: string
+        }
+        Returns: Json
+      }
+      record_stripe_invoice_payment_atomic: {
+        Args: {
+          p_amount_cents: number
+          p_balance_transaction_currency: string
+          p_balance_transaction_fee_cents: number
+          p_balance_transaction_gross_cents: number
+          p_balance_transaction_net_cents: number
+          p_charge_id?: string
+          p_checkout_session_id?: string
+          p_cumulative_refunded_gross_cents?: number
+          p_gross_received_cents?: number
+          p_invoice_id: string
+          p_notes?: string
+          p_overwatch_fee_cents?: number
+          p_paid_at?: string
+          p_payment_intent_id?: string
+          p_payment_method?: string
+          p_processor_payment_id?: string
+          p_receipt_url?: string
+          p_reference?: string
+          p_refund_idempotency_key?: string
+          p_refund_processor_event_id?: string
+          p_stripe_balance_transaction_id: string
+          p_surcharge_cents?: number
+        }
+        Returns: Json
+      }
+      record_subcontract_payment_atomic: {
+        Args: {
+          p_amount_cents: number
+          p_exposure_id?: string
+          p_idempotency_key?: string
+          p_notes?: string
+          p_override_reason?: string
+          p_payment_date: string
+          p_project_id: string
+          p_reference?: string
+          p_retainage_held_cents: number
+          p_status?: string
+          p_subcontract_id: string
+        }
+        Returns: Json
+      }
+      refund_invoice_payment_atomic: {
+        Args: {
+          p_cumulative_refunded_gross_cents: number
+          p_idempotency_key?: string
+          p_notes?: string
+          p_payment_id: string
+          p_processor_event_id?: string
+          p_receipt_url?: string
+          p_stripe_charge_id?: string
+        }
+        Returns: Json
+      }
+      reorder_estimate_line_items_atomic: {
+        Args: {
+          p_estimate_id: string
+          p_expected_item_ids: string[]
+          p_item_ids: string[]
+          p_operation_key: string
+        }
+        Returns: Json
+      }
       reorder_schedule_wbs_sections: {
         Args: {
           p_ordered_ids: string[]
@@ -9365,6 +11116,10 @@ export type Database = {
           p_project_id: string
         }
         Returns: number
+      }
+      replace_subcontract_payment_allocations_atomic: {
+        Args: { p_payment_id: string; p_rows?: Json }
+        Returns: Json
       }
       role_preset_capabilities: {
         Args: { p_role: Database["public"]["Enums"]["account_role"] }
@@ -9515,10 +11270,21 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      save_subcontract_atomic: {
+        Args: {
+          p_expected_updated_at: string
+          p_operation_key: string
+          p_patch: Json
+          p_project_id: string
+          p_subcontract_id: string
+        }
+        Returns: Json
+      }
       seed_project_award_contingency: {
         Args: { p_contract: number; p_pct?: number; p_project_id: string }
         Returns: undefined
       }
+      shares_org_with: { Args: { target_user: string }; Returns: boolean }
       storage_estimate_id: { Args: { p_name: string }; Returns: string }
       storage_organization_id: { Args: { p_name: string }; Returns: string }
       storage_project_id: { Args: { p_name: string }; Returns: string }
@@ -9526,9 +11292,192 @@ export type Database = {
         Args: { p_billing_application_id: string }
         Returns: undefined
       }
+      sync_estimate_takeoff_quantity_atomic: {
+        Args: {
+          p_estimate_id: string
+          p_expected_updated_at: string
+          p_line_item_id: string
+          p_operation_key: string
+          p_quantity: number
+          p_takeoff_unit: string
+        }
+        Returns: Json
+      }
+      takeoff_unit_family: { Args: { p_unit: string }; Returns: string }
+      transition_billing_application_atomic: {
+        Args: {
+          p_billing_application_id: string
+          p_idempotency_key: string
+          p_reason: string
+          p_to_status: string
+        }
+        Returns: Json
+      }
+      transition_billing_invoice_atomic: {
+        Args: {
+          p_billing_invoice_id: string
+          p_expected_updated_at: string
+          p_idempotency_key: string
+          p_reason: string
+          p_sent_recipients: Json
+          p_to_status: string
+        }
+        Returns: Json
+      }
+      transition_cost_actual_atomic: {
+        Args: {
+          p_cost_actual_id: string
+          p_idempotency_key: string
+          p_payment_details: Json
+          p_target_status: string
+        }
+        Returns: Json
+      }
+      transition_subcontract_payment_atomic: {
+        Args: {
+          p_override_reason?: string
+          p_paid_date?: string
+          p_payment_id: string
+          p_payment_method?: string
+          p_payment_reference?: string
+          p_status: string
+        }
+        Returns: Json
+      }
+      unlink_change_order_exposure_atomic: {
+        Args: { p_change_order_id: string; p_exposure_id: string }
+        Returns: Json
+      }
       unlink_estimate_takeoff_assembly_output: {
         Args: { p_assembly_id: string; p_output_key: string }
         Returns: string
+      }
+      update_billing_application_atomic: {
+        Args: {
+          p_billing_application_id: string
+          p_idempotency_key: string
+          p_patch: Json
+        }
+        Returns: Json
+      }
+      update_billing_application_retainage_atomic: {
+        Args: { p_billing_application_id: string; p_retainage_pct: number }
+        Returns: Json
+      }
+      update_billing_invoice_atomic: {
+        Args: {
+          p_billing_invoice_id: string
+          p_expected_updated_at: string
+          p_idempotency_key: string
+          p_patch: Json
+        }
+        Returns: Json
+      }
+      update_billing_invoice_processor_state_atomic: {
+        Args: {
+          p_billing_invoice_id: string
+          p_checkout_session_id?: string
+          p_idempotency_key?: string
+          p_online_payment_status: string
+          p_payment_enabled?: boolean
+          p_payment_intent_id?: string
+          p_payment_link_sent_at?: string
+          p_payment_url?: string
+        }
+        Returns: Json
+      }
+      update_change_order_atomic: {
+        Args: {
+          p_change_order_id: string
+          p_co_type: string
+          p_contract_amount_cents: number
+          p_cost_amount_cents: number
+          p_date_initiated: string
+          p_description: string
+          p_expected_updated_at: string
+          p_financial_direction: string
+          p_notes: string
+          p_number: string
+          p_operation_key: string
+          p_owner: string
+          p_pricing_method: string
+          p_probability: number
+          p_project_id: string
+          p_requested_by: string
+          p_schedule_impact_days: number
+          p_status: string
+        }
+        Returns: Json
+      }
+      update_cost_actual_atomic: {
+        Args: {
+          p_cost_actual_id: string
+          p_idempotency_key: string
+          p_payload: Json
+        }
+        Returns: Json
+      }
+      update_cost_bucket_atomic: {
+        Args: {
+          p_bucket_id: string
+          p_note?: string
+          p_operation_key: string
+          p_patch: Json
+        }
+        Returns: Json
+      }
+      update_estimate_header_atomic: {
+        Args: { p_estimate_id: string; p_operation_key: string; p_patch: Json }
+        Returns: Json
+      }
+      update_estimate_line_item_atomic: {
+        Args: { p_line_item_id: string; p_operation_key: string; p_patch: Json }
+        Returns: Json
+      }
+      update_exposure_allocation_atomic: {
+        Args: {
+          p_allocation_id: string
+          p_amount_cents: number
+          p_cost_bucket_id: string
+          p_expected_version: number
+          p_operation_key: string
+        }
+        Returns: Json
+      }
+      update_project_financial_header_atomic: {
+        Args: {
+          p_expected_updated_at: string
+          p_operation_key: string
+          p_override_reason: string
+          p_patch: Json
+          p_project_id: string
+        }
+        Returns: Json
+      }
+      update_subcontract_payment_draft_atomic: {
+        Args: {
+          p_expected_updated_at: string
+          p_operation_key: string
+          p_patch: Json
+          p_payment_id: string
+        }
+        Returns: Json
+      }
+      user_is_active_org_member: {
+        Args: { p_org: string; p_user: string }
+        Returns: boolean
+      }
+      void_cost_actual_atomic: {
+        Args: {
+          p_cost_actual_id: string
+          p_idempotency_key: string
+          p_notes: string
+        }
+        Returns: Json
+      }
+      void_invoice_payment_atomic: {
+        Args: { p_payment_id: string; p_reason: string }
+        Returns: Json
       }
     }
     Enums: {
