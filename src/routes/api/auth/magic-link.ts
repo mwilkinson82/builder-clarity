@@ -1,6 +1,7 @@
 import { sendLovableEmail } from "@lovable.dev/email-js";
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import { buildMagicLinkConfirmationUrl } from "@/lib/auth/magic-link-url";
 
 const LIVE_AUTH_ORIGIN = "https://overwatch.alpcontractorcircle.com";
 const SITE_NAME = "Overwatch";
@@ -161,8 +162,8 @@ export const Route = createFileRoute("/api/auth/magic-link")({
 
           if (error) throw error;
 
-          const actionLink = data.properties?.action_link;
-          if (!actionLink) throw new Error("Supabase did not return a magic-link URL.");
+          const tokenHash = data.properties?.hashed_token;
+          const confirmationLink = buildMagicLinkConfirmationUrl(redirectTo, tokenHash ?? "");
 
           await supabaseAdmin.from("email_send_log").insert({
             message_id: messageId,
@@ -184,8 +185,8 @@ export const Route = createFileRoute("/api/auth/magic-link")({
               subject: isInviteContext
                 ? "You've been invited to Overwatch"
                 : "Sign in to Overwatch",
-              html: loginHtml(actionLink, parsed.data.context),
-              text: loginText(actionLink, parsed.data.context),
+              html: loginHtml(confirmationLink, parsed.data.context),
+              text: loginText(confirmationLink, parsed.data.context),
               purpose: "transactional",
               label,
               idempotency_key: idempotencyKey,

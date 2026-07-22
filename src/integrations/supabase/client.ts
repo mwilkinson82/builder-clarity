@@ -98,7 +98,10 @@ function createSupabaseClient() {
       storage: getAuthStorage(),
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      // /auth/callback owns every supported callback shape explicitly. Letting
+      // auth-js inspect the same URL races the manual PKCE/token-hash exchange
+      // and can consume a one-time code twice.
+      detectSessionInUrl: false,
     },
   });
 }

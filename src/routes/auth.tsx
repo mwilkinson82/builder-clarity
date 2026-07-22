@@ -27,11 +27,10 @@ function safeNextFromLocation() {
 }
 
 function goAfterAuth(next: string, navigate: ReturnType<typeof useNavigate>) {
-  if (next === "/") {
-    navigate({ to: "/", replace: true });
-  } else {
-    window.location.replace(next);
-  }
+  // Keep the current browser runtime alive. If storage is blocked and the
+  // Supabase client is using its in-memory fallback, a hard reload destroys the
+  // newly established session and sends the user back to /auth.
+  navigate({ to: next as never, replace: true });
 }
 
 function AuthPage() {
