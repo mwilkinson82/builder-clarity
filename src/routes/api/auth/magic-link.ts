@@ -12,9 +12,7 @@ const magicLinkInput = z.object({
   email: z.string().trim().email(),
   next: z.string().max(500).optional(),
   redirectTo: z.string().url().max(1000).optional(),
-  context: z
-    .enum(["login", "company_invite", "portfolio_invite", "client_portal"])
-    .optional(),
+  context: z.enum(["login", "company_invite", "portfolio_invite", "client_portal"]).optional(),
 });
 
 function jsonError(message: string, status = 400) {
@@ -41,17 +39,17 @@ function requestOrigin(request: Request) {
 function appOrigin(request: Request) {
   const origin = requestOrigin(request);
   const hostname = new URL(origin).hostname;
-  if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname.endsWith(".lovable.app")
-  ) {
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".lovable.app")) {
     return origin;
   }
   return LIVE_AUTH_ORIGIN;
 }
 
-function normalizeRedirectTo(request: Request, next: string | undefined, redirectTo: string | undefined) {
+function normalizeRedirectTo(
+  request: Request,
+  next: string | undefined,
+  redirectTo: string | undefined,
+) {
   const origin = appOrigin(request);
   if (redirectTo) {
     const url = new URL(redirectTo);
@@ -60,7 +58,10 @@ function normalizeRedirectTo(request: Request, next: string | undefined, redirec
     if (url.origin === LIVE_AUTH_ORIGIN || isLocal || isLovablePreview) return url.toString();
   }
 
-  return new URL(`/auth/callback?next=${encodeURIComponent(normalizeNext(next))}`, origin).toString();
+  return new URL(
+    `/auth/callback?next=${encodeURIComponent(normalizeNext(next))}`,
+    origin,
+  ).toString();
 }
 
 function loginHtml(actionLink: string, context: string | undefined) {
@@ -128,11 +129,35 @@ export const Route = createFileRoute("/api/auth/magic-link")({
             return Response.json({ success: true, recentlySent: true });
           }
 
-          const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-            type: "magiclink",
+          // Company/portfolio invites can target a brand-new email with no auth
+          // user yet. type "magiclink" only mints a link for an EXISTING user, so
+          // a new invitee never got one (the reported "invite not sending"). For
+          // invite contexts, mint an "invite" link instead: it creates the user
+          // and returns an action_link (generateLink does NOT send an email — we
+          // send our own below), and the on_auth_user_account_created trigger
+          // consumes the pending organization invite on first sign-in. If the
+          // invitee already has an account, fall back to a normal sign-in link.
+          // The "login" and "client_portal" paths are intentionally UNCHANGED.
+          const isInviteContext =
+            parsed.data.context === "company_invite" || parsed.data.context === "portfolio_invite";
+
+          let linkResult = await supabaseAdmin.auth.admin.generateLink({
+            type: isInviteContext ? "invite" : "magiclink",
             email,
             options: { redirectTo },
           });
+          if (
+            linkResult.error &&
+            isInviteContext &&
+            /already|registered|exist/i.test(linkResult.error.message ?? "")
+          ) {
+            linkResult = await supabaseAdmin.auth.admin.generateLink({
+              type: "magiclink",
+              email,
+              options: { redirectTo },
+            });
+          }
+          const { data, error } = linkResult;
 
           if (error) throw error;
 
@@ -156,7 +181,9 @@ export const Route = createFileRoute("/api/auth/magic-link")({
               to: email,
               from: `${SITE_NAME} <noreply@${FROM_DOMAIN}>`,
               sender_domain: SENDER_DOMAIN,
-              subject: "Sign in to Overwatch",
+              subject: isInviteContext
+                ? "You've been invited to Overwatch"
+                : "Sign in to Overwatch",
               html: loginHtml(actionLink, parsed.data.context),
               text: loginText(actionLink, parsed.data.context),
               purpose: "transactional",
