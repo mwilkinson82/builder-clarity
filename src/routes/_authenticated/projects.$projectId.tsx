@@ -750,7 +750,9 @@ function ProjectPage() {
       typeof globalThis.crypto?.randomUUID === "function"
         ? globalThis.crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const key = `change-order:${intent}:${nonce}`;
+    // Intent keys the retry map only; keep it out of the idempotency key (server
+    // caps at 200 chars; a change-order intent can embed a JSON draft).
+    const key = `change-order:${nonce}`;
     changeOrderRetryKeys.current.set(intent, key);
     return key;
   };
@@ -1445,7 +1447,11 @@ function ProjectPage() {
       typeof globalThis.crypto?.randomUUID === "function"
         ? globalThis.crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const key = `billing-application:${intent}:${nonce}`;
+    // The intent (which can embed a JSON.stringify of the draft) keys only the
+    // client-side retry map — it must NOT go into the idempotency key itself,
+    // which the server caps at 200 chars. The nonce is stable per intent (cached
+    // below), so retries reuse the same key and the server still dedupes.
+    const key = `billing-application:${nonce}`;
     billingCommandRetryKeys.current.set(intent, key);
     return key;
   };
@@ -1461,7 +1467,10 @@ function ProjectPage() {
       typeof globalThis.crypto?.randomUUID === "function"
         ? globalThis.crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const key = `invoice:${intent}:${nonce}`;
+    // Intent keys the retry map only; keep it OUT of the idempotency key (server
+    // caps it at 200 chars, and the intent can be a full JSON.stringify of the
+    // invoice draft). Nonce is cached per intent, so retries reuse the same key.
+    const key = `invoice:${nonce}`;
     invoiceCommandRetryKeys.current.set(intent, key);
     return key;
   };
