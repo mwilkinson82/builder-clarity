@@ -130,34 +130,34 @@ export const Route = createFileRoute("/api/auth/magic-link")({
           }
 
           // Company/portfolio invites can target a brand-new email with no auth
-          // user yet. type "magiclink" only mints a link for an EXISTING user, so
-          // a new invitee never got one (the reported "invite not sending"). For
-          // invite contexts, mint an "invite" link instead: it creates the user
-          // and returns an action_link (generateLink does NOT send an email — we
-          // send our own below), and the on_auth_user_account_created trigger
-          // consumes the pending organization invite on first sign-in. If the
-          // invitee already has an account, fall back to a normal sign-in link.
-          // The "login" and "client_portal" paths are intentionally UNCHANGED.
+          // user yet. A magic link can only be minted for an EXISTING user, so a
+          // new invitee never got one ("invite not sending"). For invite
+          // contexts, provision the account first (email marked confirmed so the
+          // link signs them straight in); the on_auth_user_account_created
+          // trigger then consumes their pending organization invite. If they
+          // already have an account, ignore and just send a normal sign-in link.
+          // The "login" and "client_portal" paths are intentionally UNCHANGED —
+          // they never provision, exactly as before.
           const isInviteContext =
             parsed.data.context === "company_invite" || parsed.data.context === "portfolio_invite";
 
-          let linkResult = await supabaseAdmin.auth.admin.generateLink({
-            type: isInviteContext ? "invite" : "magiclink",
+          if (isInviteContext) {
+            const { error: createError } = await supabaseAdmin.auth.admin.createUser({
+              email,
+              email_confirm: true,
+            });
+            // An existing account is expected (re-invite / already a user) — fall
+            // through to the sign-in link. Any other failure is real.
+            if (createError && !/already|registered|exist/i.test(createError.message ?? "")) {
+              throw createError;
+            }
+          }
+
+          const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+            type: "magiclink",
             email,
             options: { redirectTo },
           });
-          if (
-            linkResult.error &&
-            isInviteContext &&
-            /already|registered|exist/i.test(linkResult.error.message ?? "")
-          ) {
-            linkResult = await supabaseAdmin.auth.admin.generateLink({
-              type: "magiclink",
-              email,
-              options: { redirectTo },
-            });
-          }
-          const { data, error } = linkResult;
 
           if (error) throw error;
 
