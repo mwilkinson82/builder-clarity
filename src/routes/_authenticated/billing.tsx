@@ -9,10 +9,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { listPortfolioBilling } from "@/lib/billing.functions";
 import { getReceivablesCockpit } from "@/lib/receivables.functions";
 import { daysOverdue } from "@/lib/receivables";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { StripeConnectNudge } from "@/components/billing/StripeConnectNudge";
 import { CollectionsTab } from "@/components/billing/portfolio/CollectionsTab";
 import { BillingPositionTab } from "@/components/billing/portfolio/BillingPositionTab";
@@ -30,6 +32,30 @@ const NOTEBOOK_TABS = [
   { value: "position", title: "Billing position", sub: "Unbilled & over/under" },
   { value: "forecast", title: "Cash forecast", sub: "13-week inflow vs out" },
 ] as const;
+
+// Reserve the notebook tab strip + KPI tiles + worklist so the surface holds its
+// eventual shape while loading, instead of a bare "Loading…" line reflowing in.
+function BillingSkeleton() {
+  return (
+    <div className="space-y-5" aria-hidden="true">
+      <div className="flex gap-2 border-b border-hairline">
+        {NOTEBOOK_TABS.map((tab) => (
+          <Skeleton key={tab.value} className="h-14 w-40 rounded-b-none rounded-t-[11px]" />
+        ))}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-24 rounded-xl" />
+        ))}
+      </div>
+      <div className="space-y-2.5">
+        {Array.from({ length: 5 }).map((_, index) => (
+          <Skeleton key={index} className="h-14 w-full rounded-lg" />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function BillingPortfolioPage() {
   const listBilling = useServerFn(listPortfolioBilling);
@@ -74,7 +100,7 @@ function BillingPortfolioPage() {
       <header className="border-b border-hairline bg-surface-elevated">
         <div className="mx-auto max-w-[1500px] px-6 py-6 lg:px-10">
           <div>
-            <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+            <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
               {companyName} · Portfolio
             </div>
             <h1 className="mt-1.5 font-serif text-3xl text-foreground">Portfolio Billing</h1>
@@ -87,12 +113,12 @@ function BillingPortfolioPage() {
 
       <main className="mx-auto max-w-[1500px] space-y-5 px-6 py-8 lg:px-10">
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading billing command center...</p>
+          <BillingSkeleton />
         ) : error ? (
           <div className="rounded-lg border border-danger/30 bg-danger/10 p-5">
             <div className="text-sm font-medium text-danger">Billing did not load</div>
             <p className="mt-1 text-sm text-muted-foreground">
-              {error instanceof Error ? error.message : "Check the billing schema and try again."}
+              {friendlyErrorMessage(error, "We couldn't load billing. Try again.")}
             </p>
             <Button size="sm" variant="outline" className="mt-4" onClick={() => refetch()}>
               Retry
@@ -139,11 +165,9 @@ function BillingPortfolioPage() {
                     openInvoices={openInvoices}
                     cockpitLoading={cockpitQuery.isLoading}
                     cockpitError={
-                      cockpitQuery.error instanceof Error
-                        ? cockpitQuery.error.message
-                        : cockpitQuery.error
-                          ? "Open invoices did not load."
-                          : null
+                      cockpitQuery.error
+                        ? friendlyErrorMessage(cockpitQuery.error, "Open invoices did not load.")
+                        : null
                     }
                     onCockpitRetry={() => void cockpitQuery.refetch()}
                     today={today}

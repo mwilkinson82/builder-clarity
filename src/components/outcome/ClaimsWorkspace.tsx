@@ -103,7 +103,7 @@ const statusStyles: Record<ClaimStatus, string> = {
 
 // Shared pill shape for the type / status / relationship badges on a claim card.
 const badgePill =
-  "inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em]";
+  "inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em]";
 
 // ── Pipeline stepper (display-only) ─────────────────────────────────────────
 // Prep → Submitted → Review → Resolved. Statuses map onto the four stages;
@@ -170,7 +170,7 @@ function StatTile({
     tone === "success" ? "text-success" : tone === "danger" ? "text-danger" : "text-foreground";
   return (
     <div className="rounded-lg border border-hairline bg-card px-[15px] py-[13px]">
-      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+      <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
       <div className={`mt-1.5 font-serif text-[22px] leading-none tabular ${valueTone}`}>
@@ -339,7 +339,7 @@ export function ClaimsWorkspace({
     <div className="space-y-4">
       {/* 1 · Chip + Add claim */}
       <div className="flex items-center gap-2.5">
-        <span className="rounded-md border border-hairline px-[7px] py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-clay">
+        <span className="rounded-md border border-hairline px-[7px] py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-clay">
           Dispute resolution
         </span>
         <Button size="sm" className="ml-auto gap-1.5" onClick={openNew}>
@@ -426,7 +426,7 @@ export function ClaimsWorkspace({
               {/* Mini metric tiles */}
               <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                 <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
-                  <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                  <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
                     Amount sought
                   </div>
                   <div className="mt-1 font-serif text-lg leading-tight tabular">
@@ -437,7 +437,7 @@ export function ClaimsWorkspace({
                   </div>
                 </div>
                 <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
-                  <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                  <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
                     Amount awarded
                   </div>
                   <div
@@ -452,7 +452,7 @@ export function ClaimsWorkspace({
                   </div>
                 </div>
                 <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
-                  <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                  <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
                     Submitted
                   </div>
                   <div className="mt-1.5 text-[13.5px] font-semibold">
@@ -460,7 +460,7 @@ export function ClaimsWorkspace({
                   </div>
                 </div>
                 <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
-                  <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                  <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
                     Owner
                   </div>
                   <div className="mt-1.5 text-[13.5px] font-semibold">
@@ -511,7 +511,7 @@ export function ClaimsWorkspace({
                 </Button>
                 {(onSendToRisk || onPromoteToChangeOrder) && (
                   <div className="ml-auto flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-clay">
+                    <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-clay">
                       Push to →
                     </span>
                     {onSendToRisk &&

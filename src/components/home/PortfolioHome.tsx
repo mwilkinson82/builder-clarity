@@ -8,10 +8,18 @@
 // preserved and restyled onto the ALP house tokens (via the portfolio-home.css
 // alias layer). No figure is fabricated: the band is pure display off the same
 // aggregates that feed the posture tiles and hero stats.
-import { useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type AnchorHTMLAttributes,
+  type ReactNode,
+} from "react";
+import { Link, useRouter } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -25,18 +33,91 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { AppFooter } from "@/components/layout/AppFooter";
-import { closeProject } from "@/lib/projects.functions";
+import { closeProject, seedDemoIfEmpty } from "@/lib/projects.functions";
+import { FirstRunChecklist, type ChecklistStep } from "@/components/onboarding/FirstRunChecklist";
 import { type HeroStat, type WorklistJob } from "./portfolio-home-data";
 import { homeInitials, useHomeAccess, useHomeIdentity, type HomeIdentity } from "./home-identity";
 import { useHomeMetrics } from "./use-home-metrics";
 import { compactUSD, type HomeMetrics } from "./portfolio-home-metrics";
 import { AvatarMenu } from "./home-avatar-menu";
+import { PortfolioLoadError } from "./portfolio-load-error";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { Skeleton } from "@/components/ui/skeleton";
 import "./portfolio-home.css";
 
 type HomeView = "owner" | "pm";
 type WorklistFilter = "all" | "at-risk" | "overdue";
+
+// Intra-app anchor that keeps the exact `<a href>` markup (so the ow-* button /
+// nav CSS, middle-click, and cmd-click-to-new-tab all behave natively) but makes
+// an ordinary left-click a client-side navigation — no full page reload on the
+// primary journeys. Every call site passes an app-internal href constant, so no
+// URL sanitization is needed here (unlike NotificationBell, which routes DB data
+// through safeInternalPath).
+function InternalLink({
+  href,
+  className,
+  children,
+  ...rest
+}: {
+  href: string;
+  className?: string;
+  children: ReactNode;
+} & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href" | "className" | "children" | "onClick">) {
+  const router = useRouter();
+  return (
+    <a
+      href={href}
+      className={className}
+      onClick={(event) => {
+        // Defer to the browser for modified / non-primary clicks (new tab, etc.).
+        if (
+          event.defaultPrevented ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        ) {
+          return;
+        }
+        event.preventDefault();
+        void router.history.push(href);
+      }}
+      {...rest}
+    >
+      {children}
+    </a>
+  );
+}
+
+// First-load placeholder that reserves the home's eventual shape — the briefing
+// hero (headline + four stat tiles), the narrative band, and a short worklist —
+// so the page holds its layout while the portfolio + pipeline reads settle.
+function HomeSkeleton() {
+  return (
+    <div className="space-y-6" aria-hidden="true">
+      <div className="rounded-2xl border border-hairline bg-card p-6 shadow-card">
+        <Skeleton className="h-3 w-40" />
+        <Skeleton className="mt-3 h-8 w-72" />
+        <Skeleton className="mt-3 h-4 w-full max-w-xl" />
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-20 rounded-xl" />
+          ))}
+        </div>
+      </div>
+      <Skeleton className="h-24 w-full rounded-2xl" />
+      <div className="space-y-2.5">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-16 w-full rounded-xl" />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** Render a "**bold**" placeholder string with the bold spans emphasized. */
 function boldParts(text: string) {
@@ -159,12 +240,12 @@ function BriefingCard({
             <span className="ow-brief__alert-body">{boldParts(alert.body)}</span>
           </div>
           <div className="ow-brief__cta">
-            <a href={primary.href} className="ow-btn ow-btn--dark">
+            <InternalLink href={primary.href} className="ow-btn ow-btn--dark">
               {primary.label}
-            </a>
-            <a href={secondary.href} className="ow-btn ow-btn--outline">
+            </InternalLink>
+            <InternalLink href={secondary.href} className="ow-btn ow-btn--outline">
               {secondary.label}
-            </a>
+            </InternalLink>
           </div>
         </div>
         <div className="ow-brief__stats">
@@ -289,9 +370,31 @@ function NarrativeBand({
 export function PortfolioHome({ onNewProject }: { onNewProject: () => void }) {
   const identity = useHomeIdentity();
   const access = useHomeAccess();
-  const { metrics } = useHomeMetrics();
+  const { metrics, loading, isError, errorMessage, refetch } = useHomeMetrics();
   const [view, setView] = useState<HomeView>("owner");
   const [filter, setFilter] = useState<WorklistFilter>("all");
+
+  // The Harbor demo seed + the first-run checklist used to live ONLY inside the
+  // ?tab=projects view, so a fresh org landing on bare / got neither — just a
+  // hollow control room reading "$0 / all caught up". Seed here too so the demo
+  // teaches on the landing page, and (below) branch to a welcome panel when the
+  // org is genuinely empty. seedDemoIfEmpty is idempotent, so running it on both
+  // paths is safe.
+  const qc = useQueryClient();
+  const seedDemo = useServerFn(seedDemoIfEmpty);
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (loading || seededRef.current) return;
+    seededRef.current = true;
+    seedDemo()
+      .then((result) => {
+        if (result.seeded) qc.invalidateQueries({ queryKey: ["projects"] });
+      })
+      .catch(() => {
+        // Let the effect retry on the next settle; a failed seed must not wedge.
+        seededRef.current = false;
+      });
+  }, [loading, seedDemo, qc]);
 
   // PM-scoped users only ever see the PM view; the Owner⇄PM switch is theirs to
   // flip only when they can see the company-wide track.
@@ -331,21 +434,30 @@ export function PortfolioHome({ onNewProject }: { onNewProject: () => void }) {
             <span className="ow-switcher__caret">▾</span>
           </Link>
           <nav className="ow-nav">
-            <a className="is-active" href="/" aria-current="page">
+            <InternalLink className="is-active" href="/" aria-current="page">
               Portfolio
-            </a>
-            <a href={PROJECTS_HREF}>Projects</a>
-            {access.canSeeOwnerView ? <a href={CRM_HREF}>CRM</a> : null}
+            </InternalLink>
+            <InternalLink href={PROJECTS_HREF}>Projects</InternalLink>
+            {access.canSeeOwnerView ? <InternalLink href={CRM_HREF}>CRM</InternalLink> : null}
             <Link to="/estimates">Estimates</Link>
             <Link to="/billing">Billing</Link>
             <Link to="/reports">Reports</Link>
             <Link to="/team">Team</Link>
           </nav>
           <div className="ow-header__right">
-            <div className="ow-search" role="search">
-              <span>⌕</span>
-              <span>Search…</span>
-            </div>
+            {/* Real control: takes you to the working project search (the
+                ?tab=projects worklist) and focuses it on arrival — never a
+                dead box. */}
+            <InternalLink
+              className="ow-search"
+              href={`${PROJECTS_HREF}#find`}
+              role="search"
+              aria-label="Search projects"
+              style={{ cursor: "pointer", textDecoration: "none" }}
+            >
+              <span aria-hidden="true">⌕</span>
+              <span>Search projects</span>
+            </InternalLink>
             <button type="button" className="ow-btn ow-btn--signal" onClick={onNewProject}>
               + New project
             </button>
@@ -354,53 +466,173 @@ export function PortfolioHome({ onNewProject }: { onNewProject: () => void }) {
           </div>
         </header>
 
-        {/* ---------- level marker + live view toggle ---------- */}
-        <div className="ow-levelbar">
-          <span className="ow-levelpill">
-            <span className="ow-levelpill__dot" />
-            Portfolio level
-          </span>
-          {access.canSeeOwnerView ? (
-            <span className="ow-viewas">
-              <span className="ow-viewas__label">View as</span>
-              <span className="ow-toggle" role="group" aria-label="View as">
-                <button
-                  type="button"
-                  className={`ow-seg${view === "owner" ? " is-active" : ""}`}
-                  aria-pressed={view === "owner"}
-                  onClick={() => setView("owner")}
-                >
-                  ◔ Owner
-                </button>
-                <button
-                  type="button"
-                  className={`ow-seg${view === "pm" ? " is-active" : ""}`}
-                  aria-pressed={view === "pm"}
-                  onClick={() => setView("pm")}
-                >
-                  ◱ PM
-                </button>
-              </span>
-            </span>
-          ) : null}
-        </div>
-
-        {effectiveView === "owner" ? (
-          <OwnerView
-            identity={identity}
-            metrics={metrics}
-            filter={filter}
-            setFilter={setFilter}
-            filteredJobs={filteredJobs}
-            shownLabel={shownLabel}
-          />
+        {isError ? (
+          // A failed read renders a retry card, NOT a zero dashboard. The data
+          // is not gone — the query just failed — so we say so and let them retry.
+          <div className="ow-wrap" style={{ paddingTop: 24, paddingBottom: 24 }}>
+            <PortfolioLoadError
+              title="Your portfolio did not load"
+              description="Your projects and pipeline were not deleted. Overwatch could not read them just now — this is a load error, not an empty account. Retry to load them."
+              detail={errorMessage ?? "Unknown error"}
+              onRetry={refetch}
+            />
+          </div>
+        ) : loading ? (
+          // First load, no cached data yet: reserve the hero + posture + worklist
+          // so we never flash the "$0 / all caught up" empty state (metrics built
+          // from empty arrays read as isEmpty) as if it were the final answer.
+          <div className="ow-wrap" style={{ paddingTop: 24, paddingBottom: 24 }}>
+            <HomeSkeleton />
+          </div>
+        ) : metrics.isEmpty ? (
+          // Genuinely empty org (no projects, no pipeline): a welcome + first-run
+          // panel, never the control-room narrative's false "$0 / all caught up".
+          <div className="ow-wrap" style={{ paddingTop: 24, paddingBottom: 24 }}>
+            <HomeWelcome identity={identity} onNewProject={onNewProject} />
+          </div>
         ) : (
-          <PmView identity={identity} metrics={metrics} />
+          <>
+            {/* ---------- level marker + live view toggle ---------- */}
+            <div className="ow-levelbar">
+              <span className="ow-levelpill">
+                <span className="ow-levelpill__dot" />
+                Portfolio level
+              </span>
+              {access.canSeeOwnerView ? (
+                <span className="ow-viewas">
+                  <span className="ow-viewas__label">View as</span>
+                  <span className="ow-toggle" role="group" aria-label="View as">
+                    <button
+                      type="button"
+                      className={`ow-seg${view === "owner" ? " is-active" : ""}`}
+                      aria-pressed={view === "owner"}
+                      onClick={() => setView("owner")}
+                    >
+                      ◔ Owner
+                    </button>
+                    <button
+                      type="button"
+                      className={`ow-seg${view === "pm" ? " is-active" : ""}`}
+                      aria-pressed={view === "pm"}
+                      onClick={() => setView("pm")}
+                    >
+                      ◱ PM
+                    </button>
+                  </span>
+                </span>
+              ) : null}
+            </div>
+
+            {effectiveView === "owner" ? (
+              <OwnerView
+                identity={identity}
+                metrics={metrics}
+                filter={filter}
+                setFilter={setFilter}
+                filteredJobs={filteredJobs}
+                shownLabel={shownLabel}
+              />
+            ) : (
+              <PmView identity={identity} metrics={metrics} />
+            )}
+          </>
         )}
 
         <AppFooter context={`${identity.companyName} · Portfolio`} />
       </div>
     </div>
+  );
+}
+
+// First-run welcome for a genuinely empty org. Names the path (control room),
+// gives one primary CTA to create the first project, and reuses the shared
+// FirstRunChecklist so the guidance matches the ?tab=projects onboarding.
+function HomeWelcome({
+  identity,
+  onNewProject,
+}: {
+  identity: HomeIdentity;
+  onNewProject: () => void;
+}) {
+  const [checklistDismissed, setChecklistDismissed] = useState(false);
+  const hasCompany = Boolean(identity.companyName) && identity.companyName !== "Company";
+  const steps: ChecklistStep[] = [
+    {
+      key: "company",
+      title: "Set up your company",
+      description: "Add your company name and logo so pay apps and portals are branded.",
+      done: hasCompany,
+      action: (
+        <Button asChild size="sm" variant="outline">
+          <Link to="/team">Open company</Link>
+        </Button>
+      ),
+    },
+    {
+      key: "project",
+      title: "Create your first project",
+      description: "Start a real job — a name is all it takes to begin.",
+      done: false,
+      action: (
+        <Button size="sm" variant="outline" onClick={onNewProject}>
+          New project
+        </Button>
+      ),
+    },
+    {
+      key: "sov",
+      title: "Import a schedule of values",
+      description: "Open Billing, then Costs, and bring in your SOV cost codes.",
+      done: false,
+      blocked: true,
+      blockedReason: "Create your first project first — the schedule of values lives on a project.",
+      action: (
+        <Button size="sm" variant="outline" disabled>
+          Open billing
+        </Button>
+      ),
+    },
+    {
+      key: "payapp",
+      title: "Generate your first pay application",
+      description: "In Billing, then Pay Applications, bill your SOV progress.",
+      done: false,
+      blocked: true,
+      blockedReason: "Import a schedule of values first — pay apps are built from it.",
+      action: (
+        <Button size="sm" variant="outline" disabled>
+          Open billing
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <section className="rounded-lg border border-hairline bg-card p-6 shadow-card sm:p-10">
+      <div className="mx-auto max-w-2xl">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          Welcome to Overwatch
+        </div>
+        <h1 className="mt-2 font-serif text-3xl leading-tight text-foreground sm:text-4xl">
+          Let&rsquo;s get {hasCompany ? identity.companyName : "your company"} set up.
+        </h1>
+        <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
+          This becomes your control room — margin, schedule pressure, and field follow-through for
+          every active job, in one view. Nothing&rsquo;s here yet because you haven&rsquo;t added a
+          job. Start with your first project.
+        </p>
+        <div className="mt-5">
+          <Button variant="signal" onClick={onNewProject} className="gap-1.5">
+            <Plus className="h-4 w-4" /> Create your first project
+          </Button>
+        </div>
+        {!checklistDismissed ? (
+          <div className="mt-6">
+            <FirstRunChecklist steps={steps} onDismiss={() => setChecklistDismissed(true)} />
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -455,15 +687,15 @@ function OwnerView({
                 <span className="ow-track__title-sub">— CRM → Estimating → Contract</span>
               </div>
             </div>
-            <a href={CRM_HREF} className="ow-btn ow-btn--dark">
+            <InternalLink href={CRM_HREF} className="ow-btn ow-btn--dark">
               Open {identity.companyName} CRM board →
-            </a>
+            </InternalLink>
           </div>
           <div className="ow-pipeline">
             {metrics.pipeline.map((stage) => (
               // Estimating opens the Estimates module (its bid); every other stage
               // opens that opportunity on the CRM board.
-              <a
+              <InternalLink
                 key={stage.key}
                 href={stage.estimatesLink ? "/estimates" : crmHref(stage.oppId)}
                 className={`ow-stage${stage.dim ? " is-dim" : ""}${
@@ -487,7 +719,7 @@ function OwnerView({
                 ) : (
                   <div className="ow-stage__empty">{stage.meta}</div>
                 )}
-              </a>
+              </InternalLink>
             ))}
           </div>
 
@@ -502,9 +734,9 @@ function OwnerView({
                   below.
                 </span>
               </div>
-              <a href={CRM_HREF} className="ow-btn ow-btn--outline">
+              <InternalLink href={CRM_HREF} className="ow-btn ow-btn--outline">
                 See conversions →
-              </a>
+              </InternalLink>
             </div>
           ) : null}
 
@@ -650,7 +882,7 @@ function OwnerView({
                   </div>
                 ) : null}
                 {metrics.pursuits.map((pursuit, i) => (
-                  <a
+                  <InternalLink
                     className="ow-pursuit"
                     key={`${pursuit.title}-${i}`}
                     href={crmHref(pursuit.oppId)}
@@ -664,7 +896,7 @@ function OwnerView({
                       </span>
                     </span>
                     <span className="ow-pursuit__context">{pursuit.context}</span>
-                  </a>
+                  </InternalLink>
                 ))}
               </div>
 
@@ -692,7 +924,7 @@ function OwnerView({
                 </Link>
                 <Link to="/team" className="ow-company__row">
                   <span>Plan &amp; storage</span>
-                  <span className="ow-company__row-meta">62%</span>
+                  <span className="ow-company__row-meta">→</span>
                 </Link>
               </div>
             </aside>

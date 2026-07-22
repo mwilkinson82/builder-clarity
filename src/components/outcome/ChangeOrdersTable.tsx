@@ -177,7 +177,7 @@ function buildCoLogCsv(rows: ChangeOrderRow[]): string {
 
 function ReasonChip({ type }: { type: COType }) {
   return (
-    <span className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+    <span className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
       {CO_TYPE_SHORT[type] ?? "Other"}
     </span>
   );
@@ -185,7 +185,7 @@ function ReasonChip({ type }: { type: COType }) {
 
 function DirectionChip({ direction }: { direction: COFinancialDirection }) {
   return direction === "credit" ? (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-danger/25 bg-danger/5 px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-danger">
+    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-danger/25 bg-danger/5 px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-danger">
       <MinusCircle className="h-3 w-3" /> Owner credit
     </span>
   ) : null;
@@ -195,7 +195,7 @@ function DirectionChip({ direction }: { direction: COFinancialDirection }) {
 function PricingChip({ method }: { method: COPricingMethod }) {
   return (
     <span
-      className="whitespace-nowrap rounded border border-hairline bg-surface px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-muted-foreground"
+      className="whitespace-nowrap rounded border border-hairline bg-surface px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground"
       title={`Priced as ${PRICING_METHOD_LABELS[method].toLowerCase()}`}
     >
       {PRICING_METHOD_SHORT[method]}
@@ -208,7 +208,7 @@ function ScheduleChip({ days }: { days: number }) {
   if (!days) return null;
   return (
     <span
-      className="whitespace-nowrap rounded bg-warning/15 px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-warning"
+      className="whitespace-nowrap rounded bg-warning/15 px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-warning"
       title={`Adds ${days} calendar ${days === 1 ? "day" : "days"} to the schedule`}
     >
       +{days} {days === 1 ? "day" : "days"}

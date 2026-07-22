@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { LifeBuoy } from "lucide-react";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,10 @@ export function PortfolioTopBar({ active, actions }: { active: NavKey; actions?:
     queryFn: () => loadCompany(),
   });
 
+  // A freshly-provisioned workspace is literally named "Company" until the owner
+  // sets a real one. Treat that placeholder as unset so the top bar never presents
+  // it as a real brand — instead it prompts the owner to name the company.
+  const isNamed = Boolean(company?.name) && company?.name !== "Company";
   const name = company?.name || "Company";
   const logo = company?.logo_url || "";
 
@@ -60,21 +65,41 @@ export function PortfolioTopBar({ active, actions }: { active: NavKey; actions?:
 
   return (
     <header className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 overflow-hidden border-b border-hairline bg-surface px-5 py-3 sm:px-10">
-      {/* Company switcher — routes to Team (the settings console) as today;
-          real multi-company switching would be new behavior. */}
-      <Link to="/team" className="flex shrink-0 items-center gap-2" aria-label={`${name} settings`}>
-        {logo ? (
-          <img src={logo} alt="" className="h-7 w-7 rounded-lg object-contain" />
-        ) : (
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary font-serif text-[11px] text-primary-foreground">
-            {initialsOf(name)}
+      {/* Company link — routes to Team (the settings console). Not a real
+          multi-company switcher, so it carries no dropdown caret. When the
+          company is still unnamed, it turns into a one-click "name it" prompt. */}
+      {isNamed ? (
+        <Link
+          to="/team"
+          className="flex shrink-0 items-center gap-2"
+          aria-label={`${name} settings`}
+        >
+          {logo ? (
+            <img src={logo} alt="" className="h-7 w-7 rounded-lg object-contain" />
+          ) : (
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary font-serif text-[11px] text-primary-foreground">
+              {initialsOf(name)}
+            </span>
+          )}
+          <span className="max-w-[180px] truncate text-[13.5px] font-semibold text-foreground">
+            {name}
           </span>
-        )}
-        <span className="max-w-[180px] truncate text-[13.5px] font-semibold text-foreground">
-          {name}
-        </span>
-        <span className="text-[11px] text-muted-foreground">▾</span>
-      </Link>
+        </Link>
+      ) : (
+        <Link
+          to="/team"
+          search={{ section: "company" }}
+          className="flex shrink-0 items-center gap-2"
+          aria-label="Name your company"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-dashed border-clay/60 bg-clay/10 font-serif text-[13px] text-clay">
+            +
+          </span>
+          <span className="max-w-[200px] truncate text-[13.5px] font-semibold text-clay">
+            Name your company →
+          </span>
+        </Link>
+      )}
 
       <nav className="order-3 flex w-full min-w-0 items-center gap-5 overflow-x-auto pb-0.5 sm:order-none sm:w-auto sm:pb-0">
         <Link to="/" className={navItemClass("portfolio")}>
@@ -102,6 +127,14 @@ export function PortfolioTopBar({ active, actions }: { active: NavKey; actions?:
 
       <div className="ml-auto flex items-center gap-3">
         {actions}
+        <Link
+          to="/support"
+          aria-label="Help and support"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <LifeBuoy className="h-4 w-4" />
+          <span className="hidden sm:inline">Help</span>
+        </Link>
         <NotificationBell />
         <button
           type="button"

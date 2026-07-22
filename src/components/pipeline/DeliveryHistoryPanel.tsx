@@ -10,11 +10,7 @@ export function DeliveryHistoryPanel() {
     return <SurfaceMessage tone="danger">{crmActionError(query.error)}</SurfaceMessage>;
   }
   if (!query.data?.enabled) {
-    return (
-      <SurfaceMessage>
-        Delivery history will activate with the CRM action-suite migration.
-      </SurfaceMessage>
-    );
+    return <SurfaceMessage>Delivery history isn't available yet.</SurfaceMessage>;
   }
   const deliveries = query.data.outboundMessages.slice(0, 8);
   if (deliveries.length === 0) return null;
@@ -66,7 +62,7 @@ export function DeliveryHistoryPanel() {
 function providerLabel(provider: string) {
   if (provider === "demo") return "Demo delivery";
   if (provider === "resend") return "Resend";
-  return "Lovable email";
+  return "Email";
 }
 
 function formatTimestamp(value: string) {

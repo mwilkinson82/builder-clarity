@@ -482,7 +482,7 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
       <div>
         <div className="flex flex-wrap items-center gap-2.5">
           <span className="text-xs text-muted-foreground">Docs / RFIs &amp; submittals</span>
-          <span className="rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-clay">
+          <span className="rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-clay">
             {CHIP[kind]}
           </span>
           <div className="ml-auto inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
@@ -775,7 +775,7 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
       {txRecords.length > 0 ? (
         <div className="space-y-2">
           <div className="flex flex-wrap items-baseline gap-2">
-            <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-clay">
+            <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-clay">
               Transmittal log
             </span>
             <span className="text-[11px] text-muted-foreground">
@@ -883,7 +883,7 @@ function BoardView({
             <div className="mb-2 flex items-center justify-between px-0.5">
               <span
                 className={cn(
-                  "font-mono text-[8.5px] font-bold uppercase tracking-[0.12em]",
+                  "font-mono text-[11px] font-bold uppercase tracking-[0.12em]",
                   col.tone,
                 )}
               >
@@ -957,7 +957,7 @@ function BoardCard({
         <span className="font-mono text-[11px] text-muted-foreground">{entry.number || "—"}</span>
         <span
           className={cn(
-            "rounded border border-current px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.04em]",
+            "rounded border border-current px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.04em]",
             stage.tone,
           )}
         >
@@ -1402,7 +1402,7 @@ function AddEntryDialog({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <div className="text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+      <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
       {children}

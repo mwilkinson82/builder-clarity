@@ -40,8 +40,7 @@ function isMissingComplianceTable(error: DynamicSupabaseError | null) {
     )
   );
 }
-const NOT_ENABLED =
-  "Compliance tracking isn't enabled on this workspace yet — the migration hasn't been applied.";
+const NOT_ENABLED = "Compliance tracking isn't available on this workspace yet.";
 
 const WAIVER_TYPE_LABEL: Record<string, string> = {
   conditional_progress: "Conditional progress",

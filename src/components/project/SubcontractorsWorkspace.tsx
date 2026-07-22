@@ -102,7 +102,7 @@ function KpiTile({ label, value, tone }: { label: string; value: string; tone?: 
     tone === "good" ? "text-success" : tone === "crit" ? "text-danger" : "text-foreground";
   return (
     <div className={`rounded-[11px] border px-3.5 py-3 ${box}`}>
-      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+      <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
       <div className={`mt-1.5 font-serif text-[22px] tabular-nums ${val}`}>{value}</div>
@@ -1002,7 +1002,7 @@ export function SubcontractorsWorkspace({ projectId, buckets, exposures }: Props
           <span className="text-xs text-muted-foreground">
             Parties / Subcontractors · Financial IOR
           </span>
-          <span className="eyebrow rounded-md border border-hairline px-1.5 py-0.5 text-[8.5px]">
+          <span className="eyebrow rounded-md border border-hairline px-1.5 py-0.5 text-[11px]">
             Buyouts &amp; Payments
           </span>
           <Button

@@ -1398,8 +1398,9 @@ function TeamPage() {
                     </div>
                     <div className="mt-4 grid gap-3 md:grid-cols-[1fr_190px_auto] md:items-end">
                       <div className="space-y-1.5">
-                        <Label>Email</Label>
+                        <Label htmlFor="team-invite-email">Email</Label>
                         <Input
+                          id="team-invite-email"
                           type="email"
                           value={inviteEmail}
                           disabled={!team.canManageTeam}
@@ -1408,7 +1409,7 @@ function TeamPage() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label>Access preset</Label>
+                        <Label htmlFor="team-invite-role">Access preset</Label>
                         <Select
                           value={inviteRole}
                           disabled={!team.canManageTeam}
@@ -1419,7 +1420,7 @@ function TeamPage() {
                             setInviteCapabilities({ ...ROLE_PRESETS[role] });
                           }}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger id="team-invite-role">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -2164,12 +2165,13 @@ function TeamPage() {
                     />
                     <div className="mt-5 grid gap-4">
                       <div className="space-y-1.5">
-                        <Label>Email</Label>
-                        <Input value={team.currentProfile.email} disabled />
+                        <Label htmlFor="profile-email">Email</Label>
+                        <Input id="profile-email" value={team.currentProfile.email} disabled />
                       </div>
                       <div className="space-y-1.5">
-                        <Label>Name</Label>
+                        <Label htmlFor="profile-name">Name</Label>
                         <Input
+                          id="profile-name"
                           value={profileForm.full_name}
                           onChange={(event) =>
                             setProfileForm({ ...profileForm, full_name: event.target.value })
@@ -2178,8 +2180,9 @@ function TeamPage() {
                       </div>
                       <div className="grid gap-4 md:grid-cols-2">
                         <div className="space-y-1.5">
-                          <Label>Phone</Label>
+                          <Label htmlFor="profile-phone">Phone</Label>
                           <Input
+                            id="profile-phone"
                             value={profileForm.phone}
                             onChange={(event) =>
                               setProfileForm({ ...profileForm, phone: event.target.value })
@@ -2187,8 +2190,9 @@ function TeamPage() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label>Title</Label>
+                          <Label htmlFor="profile-title">Title</Label>
                           <Input
+                            id="profile-title"
                             value={profileForm.company_title}
                             onChange={(event) =>
                               setProfileForm({ ...profileForm, company_title: event.target.value })
@@ -2277,8 +2281,9 @@ function TeamPage() {
                         <div className="grid gap-4">
                           <div className="grid gap-4 md:grid-cols-[1fr_1fr_160px]">
                             <div className="space-y-1.5">
-                              <Label>Company name</Label>
+                              <Label htmlFor="org-name">Company name</Label>
                               <Input
+                                id="org-name"
                                 value={orgForm.name}
                                 disabled={!team.canManageSettings}
                                 onChange={(event) =>
@@ -2287,8 +2292,9 @@ function TeamPage() {
                               />
                             </div>
                             <div className="space-y-1.5">
-                              <Label>Legal name</Label>
+                              <Label htmlFor="org-legal-name">Legal name</Label>
                               <Input
+                                id="org-legal-name"
                                 value={orgForm.legal_name}
                                 disabled={!team.canManageSettings}
                                 onChange={(event) =>
@@ -2298,8 +2304,9 @@ function TeamPage() {
                               />
                             </div>
                             <div className="space-y-1.5">
-                              <Label>Slug</Label>
+                              <Label htmlFor="org-slug">Slug</Label>
                               <Input
+                                id="org-slug"
                                 value={orgForm.slug}
                                 disabled={!team.canManageSettings}
                                 onChange={(event) =>
@@ -2310,8 +2317,9 @@ function TeamPage() {
                           </div>
                           <div className="grid gap-4 md:grid-cols-3">
                             <div className="space-y-1.5">
-                              <Label>Website</Label>
+                              <Label htmlFor="org-website">Website</Label>
                               <Input
+                                id="org-website"
                                 value={orgForm.website_url}
                                 disabled={!team.canManageSettings}
                                 onChange={(event) =>
@@ -2321,8 +2329,9 @@ function TeamPage() {
                               />
                             </div>
                             <div className="space-y-1.5">
-                              <Label>Office phone</Label>
+                              <Label htmlFor="org-office-phone">Office phone</Label>
                               <Input
+                                id="org-office-phone"
                                 value={orgForm.office_phone}
                                 disabled={!team.canManageSettings}
                                 onChange={(event) =>
@@ -2331,8 +2340,9 @@ function TeamPage() {
                               />
                             </div>
                             <div className="space-y-1.5">
-                              <Label>Country</Label>
+                              <Label htmlFor="org-country">Country</Label>
                               <Input
+                                id="org-country"
                                 value={orgForm.country}
                                 disabled={!team.canManageSettings}
                                 onChange={(event) =>
@@ -2350,8 +2360,9 @@ function TeamPage() {
                         </div>
                         <div className="grid gap-4 md:grid-cols-2">
                           <div className="space-y-1.5">
-                            <Label>Address line 1</Label>
+                            <Label htmlFor="org-address-line1">Address line 1</Label>
                             <Input
+                              id="org-address-line1"
                               value={orgForm.address_line1}
                               disabled={!team.canManageSettings}
                               onChange={(event) =>
@@ -2360,8 +2371,9 @@ function TeamPage() {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label>Address line 2</Label>
+                            <Label htmlFor="org-address-line2">Address line 2</Label>
                             <Input
+                              id="org-address-line2"
                               value={orgForm.address_line2}
                               disabled={!team.canManageSettings}
                               onChange={(event) =>
@@ -2372,8 +2384,9 @@ function TeamPage() {
                         </div>
                         <div className="grid gap-4 md:grid-cols-[1fr_120px_140px]">
                           <div className="space-y-1.5">
-                            <Label>City</Label>
+                            <Label htmlFor="org-city">City</Label>
                             <Input
+                              id="org-city"
                               value={orgForm.city}
                               disabled={!team.canManageSettings}
                               onChange={(event) =>
@@ -2382,8 +2395,9 @@ function TeamPage() {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label>State</Label>
+                            <Label htmlFor="org-state">State</Label>
                             <Input
+                              id="org-state"
                               value={orgForm.state}
                               disabled={!team.canManageSettings}
                               onChange={(event) =>
@@ -2392,8 +2406,9 @@ function TeamPage() {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label>ZIP</Label>
+                            <Label htmlFor="org-postal-code">ZIP</Label>
                             <Input
+                              id="org-postal-code"
                               value={orgForm.postal_code}
                               disabled={!team.canManageSettings}
                               onChange={(event) =>
@@ -2409,8 +2424,9 @@ function TeamPage() {
                         </div>
                         <div className="grid gap-4 md:grid-cols-2">
                           <div className="space-y-1.5">
-                            <Label>License number</Label>
+                            <Label htmlFor="org-license-number">License number</Label>
                             <Input
+                              id="org-license-number"
                               value={orgForm.license_number}
                               disabled={!team.canManageSettings}
                               onChange={(event) =>
@@ -2419,8 +2435,9 @@ function TeamPage() {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label>Tax identifier</Label>
+                            <Label htmlFor="org-tax-identifier">Tax identifier</Label>
                             <Input
+                              id="org-tax-identifier"
                               value={orgForm.tax_identifier}
                               disabled={!team.canManageSettings}
                               onChange={(event) =>

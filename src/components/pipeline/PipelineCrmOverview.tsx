@@ -189,7 +189,7 @@ function HeaderCount({ label, value }: { label: string; value: number }) {
   return (
     <div className="text-right">
       <div className="font-serif text-lg leading-none text-foreground tabular-nums">{value}</div>
-      <div className="mt-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+      <div className="mt-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
     </div>

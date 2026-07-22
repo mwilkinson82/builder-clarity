@@ -121,7 +121,7 @@ export function EstimateReviewActivity({
             </p>
           ) : (
             <p className="mt-2 text-[11px] text-muted-foreground">
-              The sign-off ledger is waiting for its Lovable database migration.
+              The sign-off ledger isn't available yet.
             </p>
           )}
         </div>

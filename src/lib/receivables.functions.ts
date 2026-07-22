@@ -54,6 +54,10 @@ export interface ReceivableInvoiceRow {
   id: string;
   project_id: string;
   project_name: string;
+  // Exact seed job number ("DEMO-HARBOR") when this is the sample project, so
+  // the UI can mark demo money by identity — never a fuzzy name match that
+  // could stamp a real "Harbor Residence" customer project. Null for real work.
+  job_number: string | null;
   // Owning company — lets the portfolio receivables list tell apart invoices
   // that share a project name/number across companies (null at company level
   // when the org can't be resolved).
@@ -128,7 +132,7 @@ export const getReceivablesCockpit = createServerFn({ method: "GET" })
     const ctx = context as unknown as ServerContext;
 
     let projectQuery = table(ctx, "projects")
-      .select("id,name,organization_id")
+      .select("id,name,organization_id,job_number")
       .is("archived_at", null);
     if (data.projectId) projectQuery = projectQuery.eq("id", data.projectId);
     const projectRes = await projectQuery;
@@ -137,6 +141,7 @@ export const getReceivablesCockpit = createServerFn({ method: "GET" })
       id: String(row.id),
       name: str(row.name),
       organization_id: (row.organization_id as string | null) ?? null,
+      job_number: (row.job_number as string | null) ?? null,
     }));
     if (projects.length === 0) {
       return {
@@ -149,6 +154,7 @@ export const getReceivablesCockpit = createServerFn({ method: "GET" })
     }
     const projectIds = projects.map((project) => project.id);
     const projectNames = new Map(projects.map((project) => [project.id, project.name]));
+    const projectJobNumbers = new Map(projects.map((project) => [project.id, project.job_number]));
 
     // Resolve each project's owning company so the portfolio receivables list
     // can label rows that share a name/number across companies (e.g. a demo
@@ -265,6 +271,7 @@ export const getReceivablesCockpit = createServerFn({ method: "GET" })
           id: String(row.id),
           project_id: projectId,
           project_name: projectNames.get(projectId) ?? "Project",
+          job_number: projectJobNumbers.get(projectId) ?? null,
           company_name: projectCompanyNames.get(projectId) ?? null,
           invoice_number: str(row.invoice_number),
           title: str(row.title),
@@ -459,9 +466,7 @@ export const appendInvoiceCollectionsNote = createServerFn({ method: "POST" })
     });
     if (result.error) {
       if (isMissingSchema(result.error)) {
-        throw new Error(
-          "Collections notes need the Getting Paid database migration. Apply it, then retry.",
-        );
+        throw new Error("Collections notes aren't available yet. Try again in a few minutes.");
       }
       throw new Error(result.error.message);
     }

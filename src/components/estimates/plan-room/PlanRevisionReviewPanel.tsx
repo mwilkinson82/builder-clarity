@@ -291,7 +291,7 @@ export function PlanRevisionReviewPanel({
 
       {!schemaReady ? (
         <p className="mt-3 rounded-md border border-dashed border-hairline p-2 text-[11px] text-muted-foreground">
-          Revision matching is waiting for its Lovable database migration.
+          Revision matching isn't available yet.
         </p>
       ) : null}
 

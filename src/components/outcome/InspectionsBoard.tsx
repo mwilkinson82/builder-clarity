@@ -114,7 +114,7 @@ export function InspectionPill({
   return (
     <span
       className={cn(
-        "whitespace-nowrap rounded-full border px-2 py-[3px] font-mono text-[8.5px] font-bold uppercase tracking-[0.06em]",
+        "whitespace-nowrap rounded-full border px-2 py-[3px] font-mono text-[11px] font-bold uppercase tracking-[0.06em]",
         PILL_TONES[tone],
       )}
     >

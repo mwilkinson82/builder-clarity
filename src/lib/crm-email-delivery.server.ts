@@ -69,7 +69,7 @@ export async function deliverCrmEmail(
     },
     { apiKey: env.LOVABLE_API_KEY, sendUrl: env.LOVABLE_SEND_URL },
   );
-  if (!response.success) throw new Error("Lovable did not accept the email for delivery.");
+  if (!response.success) throw new Error("The email could not be sent. Try again.");
   return {
     provider: "lovable_email" as const,
     messageId: response.message_id || input.messageId,

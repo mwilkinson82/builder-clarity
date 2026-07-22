@@ -201,9 +201,7 @@ export const certifyProductionSovPosition = createServerFn({ method: "POST" })
       .order("updated_at", { ascending: false });
     if (reviewResult.error) {
       if (isMissingForecastSchema(reviewResult.error)) {
-        throw new Error(
-          "SOV certification is waiting on the production forecast database migration.",
-        );
+        throw new Error("SOV certification isn't available yet.");
       }
       throw new Error(reviewResult.error.message);
     }
@@ -256,9 +254,7 @@ export const certifyProductionSovPosition = createServerFn({ method: "POST" })
       .single();
     if (result.error) {
       if (isMissingForecastSchema(result.error)) {
-        throw new Error(
-          "SOV certification is waiting on the production forecast database migration.",
-        );
+        throw new Error("SOV certification isn't available yet.");
       }
       throw new Error(result.error.message);
     }

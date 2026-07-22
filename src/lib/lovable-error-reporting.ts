@@ -34,3 +34,33 @@ export function reportLovableError(error: unknown, context: Record<string, unkno
     },
   );
 }
+
+let globalHandlersInstalled = false;
+
+/**
+ * Forward uncaught errors and unhandled promise rejections to the monitoring
+ * sink. React error boundaries only catch render-phase errors inside the tree;
+ * this closes the gap for event handlers, async work, and anything thrown
+ * outside React. Idempotent — safe to call on every mount.
+ */
+export function installGlobalErrorReporting() {
+  if (typeof window === "undefined" || globalHandlersInstalled) return;
+  globalHandlersInstalled = true;
+
+  window.addEventListener("error", (event) => {
+    const error = event.error ?? event.message;
+    window.__lovableEvents?.captureException?.(
+      error,
+      { source: "window.onerror", route: window.location.pathname },
+      { mechanism: "onerror", handled: false, severity: "error" },
+    );
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    window.__lovableEvents?.captureException?.(
+      event.reason,
+      { source: "unhandledrejection", route: window.location.pathname },
+      { mechanism: "unhandledrejection", handled: false, severity: "error" },
+    );
+  });
+}

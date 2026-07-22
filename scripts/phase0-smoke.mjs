@@ -293,7 +293,10 @@ await expectContains(
     /toast\.success\("Project created/,
     /data-testid="portfolio-project-ledger"/,
     /PROJECT_LEDGER_GRID_CLASS/,
-    /href=\{projectHref\}/,
+    // Ledger rows navigate client-side via TanStack Link (no full page reload)
+    // instead of the former raw <a href={projectHref}>.
+    /to="\/projects\/\$projectId"/,
+    /params=\{\{ projectId: project\.id \}\}/,
     /Project worklist/,
     /max-w-\[1760px\]/,
     // Company identity in the header is now owned by the shared PortfolioTopBar
@@ -309,7 +312,9 @@ await expectContains(
   "src/components/home/PortfolioHome.tsx",
   [
     /const PROJECTS_HREF = "\/\?tab=projects"/,
-    /<a href=\{PROJECTS_HREF\}>Projects<\/a>/,
+    // Header nav now uses InternalLink (client-side left-click nav, real <a href>
+    // preserved for middle/cmd-click) instead of a plain reloading <a href>.
+    /<InternalLink href=\{PROJECTS_HREF\}>Projects<\/InternalLink>/,
     /<button type="button" className="ow-btn ow-btn--signal" onClick=\{onNewProject\}>/,
     /<Link to="\/team">Team<\/Link>/,
     /import \{ AppFooter \} from "@\/components\/layout\/AppFooter"/,
@@ -2609,7 +2614,7 @@ await expectContains(
     /validateScopeBriefTakeoffSource/,
     /scopeBriefTakeoffSourceError/,
     /scope_brief_review_id: data\.scope_brief_review_id \?\? null/,
-    /waiting for its Lovable database migration/,
+    /Scope Brief takeoff status isn't available yet/,
   ],
   "manual LF/SF takeoffs validate and retain their exact Scope Brief review provenance",
 );
@@ -2645,7 +2650,7 @@ await expectContains(
   [
     /estimate_scope_brief_reviews/,
     /save_estimate_scope_brief_review/,
-    /Scope Brief decisions are waiting for their Lovable database migration/,
+    /Scope Brief decisions aren't available yet/,
   ],
   "scope brief action register reads durable reviews and writes through one narrow RPC",
 );

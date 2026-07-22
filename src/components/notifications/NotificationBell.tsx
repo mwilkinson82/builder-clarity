@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { Bell, CheckCheck, CircleDollarSign } from "lucide-react";
+import { toast } from "sonner";
 
 import {
   DropdownMenu,
@@ -36,6 +38,7 @@ function ageLabel(createdAt: string) {
 
 export function NotificationBell({ className }: { className?: string }) {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const query = useQuery({
     queryKey: ["notifications"],
     queryFn: async () => {
@@ -74,8 +77,14 @@ export function NotificationBell({ className }: { className?: string }) {
       );
       // notification.url is DB data any org member can seed via
       // create_notification — never navigate to it unvalidated. Only a
-      // same-origin relative path is followed; anything else goes home.
-      if (notification.url) window.location.assign(safeInternalPath(notification.url));
+      // same-origin relative path is followed; anything else goes home. The
+      // sanitization is unchanged — we just navigate client-side (no full page
+      // reload) via the router instead of window.location.assign.
+      if (notification.url) void router.history.push(safeInternalPath(notification.url));
+    },
+    onError: (error) => {
+      console.error("Mark notification read failed:", error);
+      toast.error("Couldn't update that notification", { description: "Try again." });
     },
   });
 
@@ -84,11 +93,22 @@ export function NotificationBell({ className }: { className?: string }) {
       const { error } = await supabase.rpc("mark_all_notifications_read", {});
       if (error) throw new Error(error.message);
     },
-    onSuccess: () => {
+    // Optimistically clear the badge; roll back and tell the user if it fails.
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["notifications"] });
+      const previous = queryClient.getQueryData<NotificationRow[]>(["notifications"]);
       const readAt = new Date().toISOString();
       queryClient.setQueryData<NotificationRow[]>(["notifications"], (current = []) =>
         current.map((row) => ({ ...row, read_at: row.read_at ?? readAt })),
       );
+      return { previous };
+    },
+    onError: (error, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData<NotificationRow[]>(["notifications"], context.previous);
+      }
+      console.error("Mark all notifications read failed:", error);
+      toast.error("Couldn't mark all as read", { description: "Try again." });
     },
   });
 
@@ -130,6 +150,21 @@ export function NotificationBell({ className }: { className?: string }) {
         <div className="max-h-[420px] overflow-y-auto p-1">
           {query.isLoading ? (
             <div className="px-3 py-6 text-center text-sm text-muted-foreground">Loading…</div>
+          ) : query.isError ? (
+            <div className="px-3 py-6 text-center">
+              <p className="text-sm text-muted-foreground">Couldn't load notifications.</p>
+              <button
+                type="button"
+                className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-foreground underline underline-offset-2 hover:text-foreground/80"
+                disabled={query.isFetching}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void query.refetch();
+                }}
+              >
+                {query.isFetching ? "Retrying…" : "Retry"}
+              </button>
+            </div>
           ) : notifications.length === 0 ? (
             <div className="px-3 py-6 text-center text-sm text-muted-foreground">
               Nothing needs your attention.

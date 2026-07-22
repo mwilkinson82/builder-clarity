@@ -104,8 +104,8 @@ export function ScaleAssurancePanel({
           className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning"
           data-testid="scale-assurance-migration-pending"
         >
-          Scale Assurance is waiting for its Lovable database migration. Existing scale controls
-          remain available, but verification is paused.
+          Scale Assurance isn't available yet. Existing scale controls remain available, but
+          verification is paused.
         </div>
       )}
 

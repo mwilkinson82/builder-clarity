@@ -318,7 +318,7 @@ function Stat({
         quiet ? "min-w-0" : "min-w-0 rounded-md border border-hairline bg-surface px-3 py-2"
       }
     >
-      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+      <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
       <div
@@ -840,7 +840,7 @@ export function SubcontractCard({
       {/* Primary stat row (v2): six always-on tiles per the mock. */}
       <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-y border-hairline py-4 sm:grid-cols-3 lg:grid-cols-6">
         <div className="relative min-w-0 rounded-md border border-hairline bg-surface px-3 py-2">
-          <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+          <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
             Contract
           </div>
           <div className="mt-1 font-serif text-base tabular-nums text-foreground">
@@ -1310,7 +1310,7 @@ export function SubcontractCard({
       {/* Payments — the pay-app pipeline: draft → approved for payment → paid */}
       <div className="mt-5 border-t border-hairline pt-4">
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+          <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
             Pay applications
           </div>
           <span className="text-[11px] text-muted-foreground">
@@ -1679,7 +1679,7 @@ export function SubcontractCard({
               the pay-app's row (it needs the recorded payment) — here we preview
               the automatic pro-rata distribution and point to it. */}
           <div className="rounded-xl border border-hairline bg-background p-4">
-            <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+            <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
               Cost-code split
             </div>
             <div className="mt-1.5 text-[12.5px] text-muted-foreground">

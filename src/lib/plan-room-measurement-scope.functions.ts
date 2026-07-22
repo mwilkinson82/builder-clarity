@@ -200,7 +200,7 @@ export const saveMeasurementScopeDecision = createServerFn({ method: "POST" })
       },
     );
     if (isScopeQueueSchemaPending(result.error)) {
-      throw new Error("The measurement scope queue is waiting for its Lovable database migration.");
+      throw new Error("The measurement scope queue isn't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     const row = ((result.data ?? [])[0] ?? null) as Record<string, unknown> | null;
@@ -225,7 +225,7 @@ export const completeMeasurementScopeItem = createServerFn({ method: "POST" })
       },
     );
     if (isScopeQueueSchemaPending(result.error)) {
-      throw new Error("The measurement scope queue is waiting for its Lovable database migration.");
+      throw new Error("The measurement scope queue isn't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     const row = ((result.data ?? [])[0] ?? null) as Record<string, unknown> | null;

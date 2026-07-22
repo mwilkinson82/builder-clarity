@@ -263,8 +263,7 @@ export function SelectionsWorkspace({ projectId }: SelectionsWorkspaceProps) {
 
       {data?.migrationRequired ? (
         <div className="rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm">
-          The selections code is ready, but the database migration has not been applied yet. Apply
-          the merged selections migration through Lovable before using this workspace.
+          This part of the workspace isn't available yet. Check back in a few minutes.
         </div>
       ) : null}
 

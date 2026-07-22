@@ -297,9 +297,7 @@ export const saveCompanyPaymentProfile = createServerFn({ method: "POST" })
       organizationId,
     );
     if (schemaMissing) {
-      throw new Error(
-        "The payments database migration has not been applied yet. Apply the Payments Phase 1 migrations, then save again.",
-      );
+      throw new Error("Payments aren't available yet. This workspace is still being set up.");
     }
 
     const nextMethods = {

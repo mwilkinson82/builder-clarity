@@ -1178,7 +1178,7 @@ export function DailyWipWorkspace({
               </DialogHeader>
               <div className="grid gap-3.5 sm:grid-cols-2">
                 <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     Cost code (SOV line)
                   </span>
                   <select
@@ -1195,7 +1195,7 @@ export function DailyWipWorkspace({
                   </select>
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     Schedule activity (CPM)
                   </span>
                   <select
@@ -1232,12 +1232,12 @@ export function DailyWipWorkspace({
                         unmatched_vendor_name: unmatchedVendorName,
                       }))
                     }
-                    labelClassName="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground"
+                    labelClassName="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground"
                     flagUnmatched
                   />
                 </div>
                 <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     Activity / note
                   </span>
                   <Input
@@ -1249,7 +1249,7 @@ export function DailyWipWorkspace({
               </div>
               <div className="mt-1 grid gap-3.5 sm:grid-cols-5">
                 <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     Crews
                   </span>
                   <Input
@@ -1265,7 +1265,7 @@ export function DailyWipWorkspace({
                   </span>
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     People per crew
                   </span>
                   <Input
@@ -1282,7 +1282,7 @@ export function DailyWipWorkspace({
                   </span>
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     Hours per person
                   </span>
                   <Input
@@ -1294,7 +1294,7 @@ export function DailyWipWorkspace({
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     Blended rate ($/person hr)
                   </span>
                   <MoneyInput
@@ -1303,7 +1303,7 @@ export function DailyWipWorkspace({
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                     Labor (derived)
                   </span>
                   <div className="flex h-9 items-center rounded-md border border-hairline bg-muted/40 px-3 text-sm tabular-nums text-foreground">
@@ -1323,7 +1323,7 @@ export function DailyWipWorkspace({
                 ) : (
                   <>
                     <label className="flex flex-col gap-1">
-                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                      <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                         Quantity placed
                       </span>
                       <Input
@@ -1336,7 +1336,7 @@ export function DailyWipWorkspace({
                       />
                     </label>
                     <label className="flex flex-col gap-1">
-                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                      <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                         Unit
                       </span>
                       <Input
@@ -1361,7 +1361,7 @@ export function DailyWipWorkspace({
                   </div>
                   {draft.quantity_items.length > 1 ? (
                     <label className="flex flex-col gap-1 sm:col-span-2">
-                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                      <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                         Choose production measure
                       </span>
                       <select
@@ -1383,7 +1383,7 @@ export function DailyWipWorkspace({
                     </label>
                   ) : null}
                   <label className="flex flex-col gap-1">
-                    <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                       Target pace
                     </span>
                     <Input
@@ -1407,7 +1407,7 @@ export function DailyWipWorkspace({
                     </span>
                   </label>
                   <label className="flex flex-col gap-1">
-                    <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                    <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                       Cumulative progress
                     </span>
                     <Input

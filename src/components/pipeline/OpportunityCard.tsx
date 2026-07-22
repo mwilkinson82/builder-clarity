@@ -75,7 +75,7 @@ export function OpportunityCard({
           {initials(opportunity.assigned_to)}
         </span>
         <span className={cn("text-[11px] font-semibold", chip.tone)}>{chip.label}</span>
-        <span className="ml-auto font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        <span className="ml-auto font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
           {opportunity.probability}%
         </span>
       </div>

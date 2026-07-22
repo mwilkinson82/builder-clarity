@@ -462,13 +462,31 @@ export function PortfolioProductionReport({
       ) : selectedRows.length === 0 ? (
         <div className="rounded-xl border border-hairline bg-surface px-5 py-12 text-center">
           <Activity className="mx-auto h-5 w-5 text-muted-foreground" />
-          <h3 className="mt-3 font-serif text-xl text-foreground">
-            No production evidence in this portfolio view
-          </h3>
-          <p className="mx-auto mt-1 max-w-xl text-sm text-muted-foreground">
-            Widen the date range or clear a filter. Daily Reports need installed quantity and crew
-            hours before OverWatch can plot company production.
-          </p>
+          {rows.length === 0 ? (
+            // First run: no production evidence exists anywhere — do NOT blame a
+            // filter no one set. Name what feeds this report and point at it.
+            <>
+              <h3 className="mt-3 font-serif text-xl text-foreground">No production logged yet</h3>
+              <p className="mx-auto mt-1 max-w-xl text-sm text-muted-foreground">
+                Production intelligence plots itself from your Daily Reports. Log installed
+                quantities and crew hours on a project and the company pace shows up here.
+              </p>
+              <Button asChild variant="outline" size="sm" className="mt-4">
+                <a href="/?tab=projects">Open a project to log field work →</a>
+              </Button>
+            </>
+          ) : (
+            // Evidence exists, but the current filters/date range hid all of it.
+            <>
+              <h3 className="mt-3 font-serif text-xl text-foreground">
+                No production evidence in this view
+              </h3>
+              <p className="mx-auto mt-1 max-w-xl text-sm text-muted-foreground">
+                Widen the date range or clear a filter — there is logged production outside the
+                current selection.
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <>

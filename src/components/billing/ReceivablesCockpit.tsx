@@ -523,8 +523,7 @@ export function ReceivablesCockpit({
         </div>
         {!data.trackingReady ? (
           <p className="mt-3 text-xs text-warning">
-            Send/view tracking and collections notes activate once the Getting Paid database
-            migration is applied.
+            Send/view tracking and collections notes activate once this workspace is set up.
           </p>
         ) : null}
       </section>

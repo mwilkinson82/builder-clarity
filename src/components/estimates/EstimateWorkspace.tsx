@@ -542,7 +542,7 @@ export function EstimateWorkspace({
       );
       toast.success(
         isCanonicalDemo
-          ? "Your isolated Harbor working copy is ready"
+          ? "Your practice copy is ready"
           : asProjectEstimate
             ? "Estimate created from master"
             : isMasterSheet
@@ -832,9 +832,7 @@ export function EstimateWorkspace({
 
     const reviewState = reviewActivityQuery.data;
     if (!reviewState?.ready) {
-      toast.error(
-        "Estimator sign-off is not ready yet. Confirm the database migration, then retry.",
-      );
+      toast.error("Estimator sign-off isn't available yet. Try again in a few minutes.");
       return;
     }
     if (!estimateReleaseNeedsOverride(reviewState)) {
@@ -1261,7 +1259,7 @@ export function EstimateWorkspace({
                                     {run.rows.length} {run.rows.length === 1 ? "item" : "items"}
                                   </span>
                                   <span className="flex-1" />
-                                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
                                     Subtotal
                                   </span>
                                   <span className="font-serif text-[15px]">
@@ -2370,7 +2368,7 @@ function EstimateSummaryPanel({
           <div style={{ width: `${share(totals.labor_cents)}%`, backgroundColor: laborSwatch }} />
           <div style={{ width: `${share(markupCents)}%`, backgroundColor: "var(--clay)" }} />
         </div>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-dark-panel-foreground/60">
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-dark-panel-foreground/60">
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-[2px]" style={{ backgroundColor: materialSwatch }} />
             Material
@@ -2387,7 +2385,7 @@ function EstimateSummaryPanel({
       </div>
 
       <div className="p-4">
-        <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        <div className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
           Bid build-up
         </div>
         <div className="mt-1.5 space-y-0.5 text-sm">

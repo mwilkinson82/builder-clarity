@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { BarChart3 } from "lucide-react";
 
 import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   listPortfolioBilling,
   listPortfolioBillingHistory,
@@ -20,6 +21,7 @@ import { RetainageChangeOrderReport } from "@/components/reports/RetainageChange
 import { PortfolioProductionReport } from "@/components/reports/PortfolioProductionReport";
 import { PortfolioProductionBenchmarks } from "@/components/reports/PortfolioProductionBenchmarks";
 import { listPortfolioProduction } from "@/lib/portfolio-production.functions";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 
 export const Route = createFileRoute("/_authenticated/reports")({
   ssr: false,
@@ -144,6 +146,11 @@ function ReportsPage() {
     }
     void activeQuery.refetch();
   };
+  // Keep the raw backend string in monitoring only; the visible card shows the
+  // mapped plain-English message.
+  useEffect(() => {
+    if (activeReportError) console.error("Report load failed:", activeReportError);
+  }, [activeReportError]);
 
   // net retainage per project, reused from the WIP/billing engine so the
   // retainage report never disagrees with the WIP report.
@@ -232,14 +239,15 @@ function ReportsPage() {
 
         <div>
           {activeReportLoading ? (
-            <p className="text-sm text-muted-foreground">Loading report...</p>
+            <ReportSkeleton />
           ) : activeReportError ? (
             <div className="rounded-lg border border-danger/30 bg-danger/10 p-5">
               <div className="text-sm font-medium text-danger">Report did not load</div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {activeReportError instanceof Error
-                  ? activeReportError.message
-                  : "Check the billing schema and try again."}
+                {friendlyErrorMessage(
+                  activeReportError,
+                  "We couldn't load this report. Try again.",
+                )}
               </p>
               <Button size="sm" variant="outline" className="mt-4" onClick={retryActiveReport}>
                 Retry
@@ -300,6 +308,29 @@ function ReportsPage() {
           ) : null}
         </div>
       </main>
+    </div>
+  );
+}
+
+// Reserve the report body (title block + a dense table) so switching reports or
+// first load holds the layout instead of collapsing to a one-line "Loading…".
+function ReportSkeleton() {
+  return (
+    <div className="space-y-5" aria-hidden="true">
+      <div className="space-y-2">
+        <Skeleton className="h-7 w-64" />
+        <Skeleton className="h-4 w-80" />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-20 rounded-xl" />
+        ))}
+      </div>
+      <div className="space-y-2 rounded-lg border border-hairline p-4">
+        {Array.from({ length: 8 }).map((_, index) => (
+          <Skeleton key={index} className="h-9 w-full" />
+        ))}
+      </div>
     </div>
   );
 }

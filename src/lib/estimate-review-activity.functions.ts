@@ -177,7 +177,7 @@ export const recordEstimateReviewActivity = createServerFn({ method: "POST" })
       p_note: data.note,
     });
     if (isEstimateReviewSchemaPending(result.error)) {
-      throw new Error("Estimator sign-off is waiting for its Lovable database migration.");
+      throw new Error("Estimator sign-off isn't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     const rows = Array.isArray(result.data) ? result.data : [];

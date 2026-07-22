@@ -366,7 +366,7 @@ export function TakeoffAssemblyWorkbench({
           </p>
         ) : !ready ? (
           <p className="rounded-md border border-dashed border-hairline px-3 py-2 text-xs text-muted-foreground">
-            Assembly Workbench is waiting for its Lovable database migration.
+            Assembly Workbench isn't available yet.
           </p>
         ) : (
           <>
@@ -602,7 +602,7 @@ export function TakeoffAssemblyWorkbench({
                 </div>
                 {!outputHandoffReady ? (
                   <p className="rounded-md border border-dashed border-hairline px-3 py-2 text-xs text-muted-foreground">
-                    Estimate handoff is waiting for its Lovable database migration.
+                    Estimate handoff isn't available yet.
                   </p>
                 ) : (
                   assembly.derived_outputs.map((output) => {

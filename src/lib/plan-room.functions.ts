@@ -708,7 +708,7 @@ export const getPlanRoom = createServerFn({ method: "GET" })
     const schemaReadyForDemo = await ensureHarborPlanRoomDemo(context, estimate);
     if (!schemaReadyForDemo) {
       return planRoomSchemaPending(
-        "Plan Room tables are not available yet. Lovable may still be applying the backend migration or refreshing the Supabase schema cache.",
+        "Plan Room isn't available yet. This workspace is still being set up.",
       );
     }
 
@@ -729,7 +729,7 @@ export const getPlanRoom = createServerFn({ method: "GET" })
     const schemaError = setsResult.error ?? sheetsResult.error ?? measurementsResult.error;
     if (isMissingPlanRoomSchemaError(schemaError)) {
       return planRoomSchemaPending(
-        "Plan Room tables are not available yet. Lovable may still be applying the backend migration or refreshing the Supabase schema cache.",
+        "Plan Room isn't available yet. This workspace is still being set up.",
       );
     }
     if (setsResult.error) throw new Error(setsResult.error.message);
@@ -781,7 +781,7 @@ export const recordScaleAssessment = createServerFn({ method: "POST" })
       },
     );
     if (isMissingScaleAssuranceSchemaError(result.error)) {
-      throw new Error("Scale Assurance is waiting for its Lovable database migration.");
+      throw new Error("Scale Assurance isn't available yet.");
     }
     if (result.error) throw new Error(result.error.message);
     const raw = (Array.isArray(result.data) ? result.data[0] : (result.data ?? {})) as Record<
@@ -1193,9 +1193,7 @@ export const createTakeoffMeasurement = createServerFn({ method: "POST" })
     // takeoffs keep saving exactly as they always have.
     if (error && isMissingScopeBriefTakeoffProvenanceColumn(error)) {
       if (data.scope_brief_review_id) {
-        throw new Error(
-          "Scope Brief takeoff status is waiting for its Lovable database migration.",
-        );
+        throw new Error("Scope Brief takeoff status isn't available yet.");
       }
       const legacyPayload = { ...insertPayload };
       delete legacyPayload.scope_brief_review_id;
@@ -1446,7 +1444,7 @@ async function syncTakeoffQuantityToLine(
   if (lineResult.error || !lineResult.data) {
     if (/schema cache|column|does not exist/i.test(lineResult.error?.message ?? "")) {
       throw new Error(
-        "Takeoff quantity authority is still being enabled. No estimate quantity changed; try again after Lovable finishes the migration.",
+        "Takeoff quantity authority is still being enabled. No estimate quantity changed; try again in a few minutes.",
       );
     }
     throw new Error(lineResult.error?.message ?? "Estimate line was not found.");
@@ -1564,7 +1562,7 @@ async function syncTakeoffQuantityToLine(
   if (syncError) {
     if (/schema cache|could not find the function|does not exist/i.test(syncError.message)) {
       throw new Error(
-        "Takeoff quantity authority is still being enabled. No estimate quantity changed; try again after Lovable finishes the migration.",
+        "Takeoff quantity authority is still being enabled. No estimate quantity changed; try again in a few minutes.",
       );
     }
     throw new Error(syncError.message);

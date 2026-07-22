@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -47,6 +48,7 @@ import {
 import { fmtUSD } from "@/lib/format";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import { cn } from "@/lib/utils";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 
 export const Route = createFileRoute("/_authenticated/estimates")({
   ssr: false,
@@ -66,7 +68,7 @@ export const Route = createFileRoute("/_authenticated/estimates")({
 // House mono label (v2): 8.5px, .12em tracking, muted. Reused for KPI labels and
 // table headers so the two read as one system.
 const MONO_LABEL =
-  "font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground";
+  "font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground";
 
 function shortDate(value: string) {
   if (!value) return "";
@@ -331,7 +333,7 @@ function EstimatesPage() {
 
   const createWorkingCopyMutation = useMutation({
     mutationFn: () => {
-      if (!canonicalDemo) throw new Error("The canonical sample is not available yet.");
+      if (!canonicalDemo) throw new Error("The sample estimate is not available yet.");
       return duplicateEstimateFn({
         data: {
           id: canonicalDemo.id,
@@ -342,7 +344,7 @@ function EstimatesPage() {
     },
     onSuccess: (result) => {
       workingCopyOperationKeyRef.current = crypto.randomUUID();
-      toast.success("Your isolated working copy is ready.");
+      toast.success("Your practice copy is ready.");
       navigate({ to: "/estimates/$estimateId", params: { estimateId: result.id } });
     },
     onError: (error) =>
@@ -388,14 +390,27 @@ function EstimatesPage() {
         </div>
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard label="Estimates" value={String(kpis.count)} />
-          <StatCard label="Bid value out" value={fmtCompactUSD(kpis.bidValueOutCents)} />
-          <StatCard
-            label="Won this year"
-            value={fmtCompactUSD(kpis.wonThisYearCents)}
-            tone="good"
-          />
-          <StatCard label="Win rate" value={kpis.winRate === null ? "—" : `${kpis.winRate}%`} />
+          {estimatesQuery.isLoading ? (
+            // Gate the KPI figures on the data landing — a computed "0" / "—"
+            // must never flash as the real answer while the estimates load.
+            Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="rounded-xl border border-hairline bg-surface p-3.5">
+                <Skeleton className="h-2.5 w-20" />
+                <Skeleton className="mt-2.5 h-6 w-16" />
+              </div>
+            ))
+          ) : (
+            <>
+              <StatCard label="Estimates" value={String(kpis.count)} />
+              <StatCard label="Bid value out" value={fmtCompactUSD(kpis.bidValueOutCents)} />
+              <StatCard
+                label="Won this year"
+                value={fmtCompactUSD(kpis.wonThisYearCents)}
+                tone="good"
+              />
+              <StatCard label="Win rate" value={kpis.winRate === null ? "—" : `${kpis.winRate}%`} />
+            </>
+          )}
         </div>
 
         {canonicalDemo && (
@@ -406,10 +421,10 @@ function EstimatesPage() {
               </p>
               <h2 className="mt-1 font-serif text-xl">{canonicalDemo.name}</h2>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                This product-owned sample is locked at{" "}
+                This is a locked example, priced at{" "}
                 {fmtUSD(canonicalDemo.total_with_markups_cents / 100)} so every estimator starts
-                from the same trusted baseline. Open it read-only or create an isolated copy for
-                practice.
+                from the same trusted baseline. Open it read-only, or duplicate it to your own
+                practice copy to edit.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -436,6 +451,7 @@ function EstimatesPage() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search estimates, folders, projects, opportunities, status, or region"
+            aria-label="Search estimates"
             className="bg-surface pl-9"
           />
         </div>
@@ -458,7 +474,10 @@ function EstimatesPage() {
           ))}
         </div>
 
-        <div className="overflow-hidden rounded-xl border border-hairline bg-surface">
+        {/* Wide ledger table for tablet/desktop (>=sm). On phones it is replaced
+            by the stacked-card list below — a 1180px table only shows its first
+            column on a 375px screen. */}
+        <div className="hidden overflow-hidden rounded-xl border border-hairline bg-surface sm:block">
           <Table className="min-w-[1180px]">
             <TableHeader>
               <TableRow className="bg-muted [&>th]:whitespace-nowrap">
@@ -475,20 +494,47 @@ function EstimatesPage() {
             </TableHeader>
             <TableBody>
               {estimatesQuery.isLoading ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={9}
-                    className="py-10 text-center text-sm text-muted-foreground"
-                  >
-                    Loading...
-                  </TableCell>
-                </TableRow>
+                // Reserve the ledger rows so the table holds its height instead of
+                // collapsing to a single "Loading…" line.
+                Array.from({ length: 6 }).map((_, index) => (
+                  <TableRow key={index} className="[&>td]:py-4">
+                    <TableCell>
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="mt-1.5 h-3 w-24" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-3 w-28" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-9 w-[160px]" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-4 w-16" />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Skeleton className="ml-auto h-4 w-8" />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Skeleton className="ml-auto h-4 w-20" />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Skeleton className="ml-auto h-4 w-24" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="h-3 w-20" />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Skeleton className="ml-auto h-8 w-8 rounded-md" />
+                    </TableCell>
+                  </TableRow>
+                ))
               ) : estimatesQuery.isError ? (
                 <TableRow>
                   <TableCell colSpan={9} className="py-10 text-center text-sm text-danger">
-                    {estimatesQuery.error instanceof Error
-                      ? estimatesQuery.error.message
-                      : "Estimates did not load"}
+                    {friendlyErrorMessage(
+                      estimatesQuery.error,
+                      "Estimates did not load. Try again.",
+                    )}
                   </TableCell>
                 </TableRow>
               ) : visibleEstimates.length === 0 ? (
@@ -576,7 +622,7 @@ function EstimatesPage() {
                       <TableCell>
                         <span
                           className={cn(
-                            "inline-flex items-center rounded-md border border-current px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.05em]",
+                            "inline-flex items-center rounded-md border border-current px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.05em]",
                             status.className,
                           )}
                         >
@@ -630,6 +676,146 @@ function EstimatesPage() {
             </TableBody>
           </Table>
         </div>
+
+        {/* Phone layout (<sm): each estimate is a stacked card so name, status,
+            total, and actions are all reachable without a 1180px table. */}
+        <div className="space-y-3 sm:hidden">
+          {estimatesQuery.isLoading ? (
+            Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="rounded-xl border border-hairline bg-surface p-4">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="mt-2 h-3 w-28" />
+                <Skeleton className="mt-3 h-7 w-24" />
+                <Skeleton className="mt-3 h-9 w-full" />
+              </div>
+            ))
+          ) : estimatesQuery.isError ? (
+            <div className="rounded-xl border border-hairline bg-surface p-6 text-center text-sm text-danger">
+              {friendlyErrorMessage(estimatesQuery.error, "Estimates did not load. Try again.")}
+            </div>
+          ) : visibleEstimates.length === 0 ? (
+            <div className="rounded-xl border border-hairline bg-surface p-6 text-center text-sm text-muted-foreground">
+              {folderFilter === "all"
+                ? "No project estimates found. Create a new estimate, or start from a master sheet."
+                : "No estimates in this folder yet. Move an estimate here when it belongs in this bucket."}
+            </div>
+          ) : (
+            visibleEstimates.map((estimate) => {
+              const status = statusDisplay(estimate.status);
+              const client = estimate.description?.trim();
+              const region = estimate.region || "National";
+              return (
+                <div
+                  key={estimate.id}
+                  role="link"
+                  tabIndex={0}
+                  className="cursor-pointer rounded-xl border border-hairline bg-surface p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() =>
+                    navigate({
+                      to: "/estimates/$estimateId",
+                      params: { estimateId: estimate.id },
+                    })
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      navigate({
+                        to: "/estimates/$estimateId",
+                        params: { estimateId: estimate.id },
+                      });
+                    }
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-serif text-lg leading-tight">{estimate.name}</div>
+                      <div className="mt-0.5 text-[12px] text-muted-foreground">
+                        {client ? `${client} · ${region}` : region}
+                      </div>
+                    </div>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-md border border-current px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.05em]",
+                        status.className,
+                      )}
+                    >
+                      {status.label}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex items-end justify-between gap-3">
+                    <div>
+                      <div className={MONO_LABEL}>Total</div>
+                      <div className="mt-0.5 font-serif text-xl font-semibold tabular">
+                        {fmtUSD(estimate.total_with_markups_cents / 100)}
+                      </div>
+                    </div>
+                    <div className="text-right text-[12px] text-muted-foreground">
+                      <div>{estimate.line_item_count ?? 0} line items</div>
+                      <div className="mt-0.5">Updated {shortDate(estimate.updated_at)}</div>
+                    </div>
+                  </div>
+
+                  <div
+                    className="mt-3 flex items-center gap-2"
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  >
+                    <Select
+                      value={estimate.folder}
+                      onValueChange={(folder) => {
+                        const fingerprint = `${estimate.id}:${folder}`;
+                        let operationKey = folderOperationKeysRef.current.get(fingerprint);
+                        if (!operationKey) {
+                          operationKey = crypto.randomUUID();
+                          folderOperationKeysRef.current.set(fingerprint, operationKey);
+                        }
+                        folderMutation.mutate({
+                          id: estimate.id,
+                          folder: folder as EstimateFolder,
+                          operation_key: operationKey,
+                        });
+                      }}
+                      disabled={folderMutation.isPending}
+                    >
+                      <SelectTrigger className="h-9 flex-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ESTIMATE_FOLDERS.map((folder) => (
+                          <SelectItem key={folder.value} value={folder.value}>
+                            {folder.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="shrink-0 text-muted-foreground"
+                          aria-label={`More actions for ${estimate.name}`}
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          className="text-danger focus:text-danger"
+                          disabled={deleteMutation.isPending}
+                          onSelect={() => setDeleteTarget(estimate)}
+                        >
+                          <Archive className="mr-2 h-4 w-4" /> Archive estimate
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
       </main>
 
       <AppFooter
@@ -647,20 +833,25 @@ function EstimatesPage() {
               master sheet first.
             </p>
             <div className="space-y-1.5">
-              <Label>Name</Label>
-              <Input value={newName} onChange={(event) => setNewName(event.target.value)} />
+              <Label htmlFor="new-estimate-name">Name</Label>
+              <Input
+                id="new-estimate-name"
+                value={newName}
+                onChange={(event) => setNewName(event.target.value)}
+              />
             </div>
             <div className="space-y-1.5">
-              <Label>Client / Description</Label>
+              <Label htmlFor="new-estimate-description">Client / Description</Label>
               <Input
+                id="new-estimate-description"
                 value={newDescription}
                 onChange={(event) => setNewDescription(event.target.value)}
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Region</Label>
+              <Label htmlFor="new-estimate-region">Region</Label>
               <Select value={newRegion} onValueChange={setNewRegion}>
-                <SelectTrigger>
+                <SelectTrigger id="new-estimate-region">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

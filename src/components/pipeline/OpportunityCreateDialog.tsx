@@ -88,7 +88,12 @@ export function OpportunityCreateDialog({
           description="Capture the relationship, bid details, and first follow-up before this becomes a job."
         />
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Opportunity name" className="sm:col-span-2">
+          <Field
+            label="Opportunity name"
+            required
+            hint="Required — the Create button turns on once you name it."
+            className="sm:col-span-2"
+          >
             <Input value={draft.name} onChange={(event) => update("name", event.target.value)} />
           </Field>
           <Field label="Client">
@@ -238,16 +243,28 @@ export function QuickAddOpportunity({
 function Field({
   label,
   className,
+  required,
+  hint,
   children,
 }: {
   label: string;
   className?: string;
+  required?: boolean;
+  hint?: string;
   children: ReactNode;
 }) {
   return (
     <div className={className}>
-      <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</Label>
+      <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+        {label}
+        {required ? (
+          <span className="ml-0.5 text-clay" aria-hidden="true">
+            *
+          </span>
+        ) : null}
+      </Label>
       {children}
+      {hint ? <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }

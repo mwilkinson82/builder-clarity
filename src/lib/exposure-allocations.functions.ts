@@ -103,7 +103,7 @@ function commandError(error: DynamicSupabaseError, action: string): Error {
     /exposure_allocation_atomic|schema cache|could not find the function/i.test(error.message)
   ) {
     return new Error(
-      `Exposure allocation integrity is still being enabled. No ${action} was recorded; refresh after Lovable finishes the migration.`,
+      `Exposure allocation integrity is still being enabled. No ${action} was recorded; refresh in a few minutes.`,
     );
   }
   return new Error(error.message);

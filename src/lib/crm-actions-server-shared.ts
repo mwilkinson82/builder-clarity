@@ -115,9 +115,7 @@ export async function runCrmAiOperation<T>(input: {
   const { isOpenAiConfigured, resolveOpenAiModel, callOpenAiVision } =
     await import("@/lib/ai-takeoff/openai.server");
   if (!isOpenAiConfigured()) {
-    throw new Error(
-      "CRM AI is not configured. The existing OpenAI key must be available in Lovable.",
-    );
+    throw new Error("CRM AI isn't set up for this workspace yet.");
   }
   const superAdmin = await isSuperAdmin(input.context.supabase);
   const chargedCredits = superAdmin ? 0 : CRM_ASSIST_CREDITS;
@@ -158,7 +156,7 @@ export async function runCrmAiOperation<T>(input: {
   if (operation.error || !operation.data) {
     throw new Error(
       missingCrmActionSchema(operation.error)
-        ? "CRM AI is waiting for its Lovable database migration."
+        ? "CRM AI isn't available yet."
         : (operation.error?.message ?? "CRM AI could not start."),
     );
   }

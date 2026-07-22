@@ -97,9 +97,7 @@ export function OnboardingPanel({
         description="OverWatch creates the handoff, scope, schedule, billing, risk, and client-kickoff work the moment the contract is won."
       />
       {!suiteQuery.data?.enabled && (
-        <SurfaceMessage>
-          Onboarding plans will activate with the CRM action-suite migration.
-        </SurfaceMessage>
+        <SurfaceMessage>Onboarding plans aren't available yet.</SurfaceMessage>
       )}
       <div className="rounded-xl border border-hairline bg-surface p-5 shadow-card">
         <div className="grid gap-3 xl:grid-cols-[1fr_0.8fr_0.65fr_1.3fr_auto] xl:items-end">

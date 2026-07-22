@@ -38,6 +38,15 @@ interface AiaPdfInput {
   generatedAt?: Date;
 }
 
+// A freshly-provisioned workspace is literally named "Company" until the owner
+// sets a real name. Never print that placeholder as the contractor brand on a
+// client-facing pay application — resolve it to blank so the document doesn't
+// present "Company" as if it were a real business name.
+function brandName(name?: string | null): string {
+  const trimmed = (name ?? "").trim();
+  return trimmed && trimmed !== "Company" ? trimmed : "";
+}
+
 const PORTRAIT_W = 612;
 const PORTRAIT_H = 792;
 const LANDSCAPE_W = 792;
@@ -306,7 +315,7 @@ function drawCoverSheet(
   drawPdfBrand({
     page,
     logo: companyLogo,
-    companyName: project.organization_name,
+    companyName: brandName(project.organization_name),
     font: ctx.sansBold,
     x: PORTRAIT_W - M - 170,
     y: ctx.y - 4,
@@ -333,7 +342,7 @@ function drawCoverSheet(
   drawField(
     ctx,
     "From (Contractor)",
-    project.organization_name || "-",
+    brandName(project.organization_name) || "-",
     M + fieldW * 2 + 12,
     ctx.y,
     fieldW * 2 + 6,
@@ -684,7 +693,7 @@ function drawContinuationHeader(
   drawPdfBrand({
     page: ctx.page,
     logo: companyLogo,
-    companyName: project.organization_name,
+    companyName: brandName(project.organization_name),
     font: ctx.sansBold,
     x: LANDSCAPE_W - M - 185,
     y: LANDSCAPE_H - M + 2,

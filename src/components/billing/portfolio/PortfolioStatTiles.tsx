@@ -30,6 +30,19 @@ export function StatTile({
   );
 }
 
+// A subtle "Sample" marker for seeded Harbor demo rows, so a fresh account never
+// mistakes the demo's real-looking money for its own. Accent-toned, tokenized.
+export function SamplePill() {
+  return (
+    <span
+      title="Seeded Harbor Residence demo — sample data. Safe to explore, or archive it from the project."
+      className="inline-flex shrink-0 items-center rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-accent"
+    >
+      Sample
+    </span>
+  );
+}
+
 // A mono microlabel over a serif figure — the money cell in the mock's tables.
 export function MoneyCell({
   label,

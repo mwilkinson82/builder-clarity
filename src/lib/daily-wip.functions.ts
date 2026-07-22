@@ -312,9 +312,7 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
         isMissingUnmatchedVendorColumn(saveRes.error.message) &&
         fields.unmatched_vendor_name.trim()
       ) {
-        throw new Error(
-          "Unlisted vendor names aren't enabled yet — apply the latest Daily WIP database migration before saving this vendor.",
-        );
+        throw new Error("Unlisted vendor names aren't available yet. Try again in a few minutes.");
       }
       const {
         percent_basis: _pb,

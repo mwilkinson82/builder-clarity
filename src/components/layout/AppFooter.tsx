@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
 
 /**
  * v2 house footer — one of the structural signatures (docs/THEMING.md):
  * "OverWatch ▪ — an ALP product" wordmark left, a context summary right,
- * 70px tall on the wash ground, on every app page.
+ * 70px tall on the wash ground, on every app page. The Help link makes support
+ * reachable from every page that renders the footer.
  */
 export function AppFooter({ context }: { context?: ReactNode }) {
   return (
@@ -15,9 +17,14 @@ export function AppFooter({ context }: { context?: ReactNode }) {
         </span>
         <span>— an ALP product</span>
       </span>
-      {context ? (
-        <span className="hidden min-w-0 truncate text-right sm:block">{context}</span>
-      ) : null}
+      <div className="flex min-w-0 items-center gap-4">
+        <Link to="/support" className="shrink-0 transition-colors hover:text-foreground">
+          Help &amp; support
+        </Link>
+        {context ? (
+          <span className="hidden min-w-0 truncate text-right sm:block">{context}</span>
+        ) : null}
+      </div>
     </footer>
   );
 }

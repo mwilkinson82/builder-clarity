@@ -141,7 +141,7 @@ export function EstimateCommercialControls({
         <p className="font-semibold">Commercial controls are awaiting the database release.</p>
         <p className="mt-1 text-sm text-muted-foreground">
           The worksheet remains available; versions, alternates, assumptions, bid packages, and
-          quote leveling will appear after migration.
+          quote leveling will appear once it's available.
         </p>
       </div>
     );

@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { createEstimate } from "@/lib/estimates.functions";
+import { friendlyActionError } from "@/lib/friendly-error";
 import {
   addOpportunityNote,
   archiveOpportunity,
@@ -117,7 +118,16 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
   const archiveFn = useServerFn(archiveOpportunity);
   const completeActionFn = useServerFn(completeNextAction);
 
-  const [viewMode, setViewMode] = useState<PipelineViewMode>("kanban");
+  // The Kanban board changes stage only via HTML5 drag, which is unusable on a
+  // touchscreen. On phones we open to the List view instead — its per-row stage
+  // <Select> works with a tap. Desktop is unchanged (opens to the board); either
+  // view stays reachable from the toggle. (This route is ssr:false, so `window`
+  // is always available here; the guard is belt-and-suspenders.)
+  const [viewMode, setViewMode] = useState<PipelineViewMode>(() =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
+      ? "list"
+      : "kanban",
+  );
   const [workspaceMode, setWorkspaceMode] = useState<"pipeline" | "followup">("pipeline");
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState<PipelineStage | "all">("all");
@@ -653,6 +663,30 @@ export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineW
         <div className="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
           {errorMessage(opportunitiesQuery.error)}
         </div>
+      ) : opportunities.length === 0 ? (
+        // First run: the pipeline is genuinely empty. Don't claim a filter hid
+        // rows (the board/list say "no match for the current filters"); invite
+        // the first pursuit instead.
+        <div className="rounded-lg border border-hairline bg-card p-10 text-center shadow-card">
+          <h3 className="font-serif text-2xl text-foreground">No pursuits in your pipeline yet</h3>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            Track every lead from first call to signed contract. Add your first opportunity to start
+            building the pipeline.
+          </p>
+          <div className="mt-5 flex justify-center">
+            <OpportunityCreateDialog
+              members={members}
+              accounts={accountNames}
+              isCreating={createMutation.isPending}
+              onCreate={(input) => createMutation.mutateAsync(input).then(() => undefined)}
+              trigger={
+                <Button type="button" className="gap-1.5">
+                  <Plus className="h-4 w-4" /> New opportunity
+                </Button>
+              }
+            />
+          </div>
+        </div>
       ) : viewMode === "kanban" ? (
         <PipelineKanban
           opportunities={filtered}
@@ -747,7 +781,7 @@ function sortOpportunities(
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Unknown error";
+  return friendlyActionError(error, "Something went wrong. Try again.");
 }
 
 function applyDemoOpportunityOverride(

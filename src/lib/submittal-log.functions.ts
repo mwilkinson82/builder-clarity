@@ -43,14 +43,13 @@ function isMissingLogTable(error: DynamicSupabaseError | null) {
     /submittal_log|schema cache|does not exist|relation|column/i.test(message)
   );
 }
-const NOT_ENABLED =
-  "The RFI / submittal log isn't enabled on this workspace yet — the migration hasn't been applied.";
+const NOT_ENABLED = "The RFI / submittal log isn't available on this workspace yet.";
 
 // The pending stage + due dates ship in the submittal-pipeline migration.
 const isMissingPipeline = (error: DynamicSupabaseError | null) =>
   /submittal_log_entries_status_check|due_date/i.test(error?.message ?? "");
 const PIPELINE_NOT_ENABLED =
-  "The pending stage and due dates aren't enabled yet (database update pending) — dates and reviewer actions still save.";
+  "The pending stage and due dates aren't available yet — dates and reviewer actions still save.";
 
 export type SubmittalLogKind = "rfi" | "submittal";
 // 'pending' = planned at job start, not sent yet (field request 2026-07-10).

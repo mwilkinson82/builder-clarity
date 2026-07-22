@@ -152,7 +152,7 @@ export function CashForecastTab({
               );
             })}
           </div>
-          <div className="mt-2.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-dark-panel-foreground/50">
+          <div className="mt-2.5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-dark-panel-foreground/50">
             Open invoices by due date + scheduled billings · outflows not yet tracked
           </div>
         </section>

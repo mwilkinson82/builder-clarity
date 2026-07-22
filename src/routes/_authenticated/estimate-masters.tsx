@@ -53,7 +53,7 @@ export const Route = createFileRoute("/_authenticated/estimate-masters")({
 // House mono label (v2): 8.5px, .12em tracking, muted. Shared with the estimates
 // list so the two tables read as one system.
 const MONO_LABEL =
-  "font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground";
+  "font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground";
 
 const segmentClass = (active: boolean) =>
   cn(

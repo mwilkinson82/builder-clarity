@@ -180,7 +180,7 @@ export const generatePlanScopeBrief = createServerFn({ method: "POST" })
     const { isOpenAiConfigured, resolveOpenAiModel } =
       await import("@/lib/ai-takeoff/openai.server");
     if (!isOpenAiConfigured()) {
-      throw new Error("The Scope Brief is not configured. Add the existing AI key in Lovable.");
+      throw new Error("The Scope Brief isn't set up for this workspace yet.");
     }
 
     const { data: estimate, error: estimateError } = await dynamicTable(
@@ -288,7 +288,7 @@ export const generatePlanScopeBrief = createServerFn({ method: "POST" })
       if (isMissingCreditsSchema(operationError)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
       throw new Error(
         isMissingScopeBriefSchema(operationError)
-          ? "The Scope Brief is waiting for its Lovable database migration."
+          ? "The Scope Brief isn't available yet."
           : (operationError?.message ?? "The Scope Brief could not start."),
       );
     }

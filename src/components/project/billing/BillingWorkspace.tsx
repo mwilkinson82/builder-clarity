@@ -642,8 +642,7 @@ export function BillingWorkspace({
     if (!billingWorkspace?.schemaReady) {
       return (
         <div className="rounded-md border border-warning/30 bg-warning/10 p-5 text-sm text-warning">
-          Enhanced billing tables are not available yet. Apply the Billing and WIP foundation
-          migration, then refresh this project.
+          Enhanced billing tables aren't available yet. This workspace is still being set up.
         </div>
       );
     }
@@ -1259,7 +1258,7 @@ export function BillingWorkspace({
                             {fmtUSDCents(app.amount_billed)}
                           </span>
                           <span
-                            className={`shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.08em] ${pillClass}`}
+                            className={`shrink-0 rounded-full border border-current px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] ${pillClass}`}
                           >
                             {pillLabel}
                           </span>
