@@ -42,7 +42,7 @@ Everything here serves four goals:
    it and say so** rather than fabricate it (the WIPHONESTY1 principle).
 
 3. **Intuitive, sequential, and it remembers.** Billing is a guided path
-   (Format → SOV → this-period → generate), not a maze. Each new pay
+   (Format → SOV → this-period → bill the owner), not a maze. Each new pay
    application **carries forward** the previous one's to-date so the biller
    never re-keys history. Reports read the **same engine** as the screen they
    summarize, so they can never contradict the app.

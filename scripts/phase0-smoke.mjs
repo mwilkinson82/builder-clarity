@@ -1000,17 +1000,18 @@ await expectContains(
   [/aiaGenerateGate/, /blockingStep/, /Import your schedule of values first/],
   "AIA builder gate is a pure module shared by the stepper and the tests",
 );
-// The generate step completes into a controlled invoice-draft action. Sending
-// and client visibility remain an explicit recipient-confirmed command.
+// The pay application IS the owner's bill: one terminal "Bill the owner"
+// action, no separate generate/certify step. Sending stays an explicit
+// recipient-confirmed command from Receivables.
 await expectContains(
   "src/lib/aia-builder-steps.ts",
-  [/"bill"/, /Create invoice/, /review and send it from Invoices/, /hasInvoice/],
-  "pay-app stepper closes into an invoice draft with an explicit send step",
+  [/"bill"/, /Bill the owner/, /Owner billed/, /Receivables/, /hasInvoice/],
+  "pay-app stepper closes into one Bill-the-owner action with an explicit send step",
 );
 await expectContains(
   "src/components/billing/AiaApplicationStepper.tsx",
-  [/onBillOwner/, /Create invoice draft/, /Review and send it from Invoices/],
-  "stepper renders a one-click controlled invoice-draft action after generate",
+  [/onBillOwner/, /Bill the owner/, /Receivables/],
+  "stepper renders one Bill-the-owner action; the G702/G703 is its printed copy",
 );
 // Creating from the pay-app step must stay draft-only; the separate Send
 // command owns client visibility, recipient evidence, and A/R aging.

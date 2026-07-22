@@ -7,7 +7,7 @@
 // the Download AIA action only appeared after Import-from-SOV, with nothing
 // to explain the invisible prerequisite.)
 
-export type AiaStepKey = "format" | "sov" | "entries" | "generate" | "bill";
+export type AiaStepKey = "format" | "sov" | "entries" | "bill";
 export type AiaStepStatus = "done" | "active" | "todo";
 
 export interface AiaBuilderSnapshot {
@@ -15,8 +15,9 @@ export interface AiaBuilderSnapshot {
   lineCount: number; // SOV lines imported onto the application
   linesWithActivity: number; // lines carrying this-period work or stored material
   overbilledCount: number; // lines over 100% (soft warning, not a gate)
-  // The package was generated (downloaded/emailed) this session — ephemeral, so
-  // it drives "generate done → now bill" without a persisted flag/migration.
+  // The G702/G703 was downloaded/emailed this session — ephemeral. It no longer
+  // gates billing (the owner's bill and its printed copy are one step now); it
+  // only lets the download affordance read "downloaded" once the biller has one.
   hasGenerated?: boolean;
   // An active invoice already exists for this application (persisted via
   // billing_invoices.billing_application_id). It may still require review and
@@ -32,16 +33,17 @@ export interface AiaGenerateGate {
   reason: string;
 }
 
-// Generation requires AIA output and at least one imported line. A
+// Billing the owner requires AIA output and at least one imported line. A
 // zero-period application is explicitly valid (a $0 this-period certificate
-// is a real filing), so this-period entries are NOT a prerequisite.
+// is a real filing), so this-period entries are NOT a prerequisite. The gate
+// is shared by the "Bill the owner" action and its G702/G703 download.
 export function aiaGenerateGate(snapshot: AiaBuilderSnapshot): AiaGenerateGate {
   if (snapshot.outputFormat !== "aia_g702") {
     return {
       ready: false,
       blockingStep: "format",
       reason:
-        "Set this application's output to AIA G702/G703 to generate the formal package. Invoices are sent from Invoices & Payments.",
+        "Set this application's output to AIA G702/G703 to bill from the formal package. Plain invoices are sent from Invoices & Payments.",
     };
   }
   if (snapshot.lineCount <= 0) {
@@ -52,7 +54,7 @@ export function aiaGenerateGate(snapshot: AiaBuilderSnapshot): AiaGenerateGate {
         "Import your schedule of values first — the G703 continuation sheet is built from these lines.",
     };
   }
-  return { ready: true, blockingStep: "generate", reason: "" };
+  return { ready: true, blockingStep: "bill", reason: "" };
 }
 
 export interface AiaStepView {
@@ -95,40 +97,28 @@ export function aiaBuilderSteps(snapshot: AiaBuilderSnapshot): AiaStepView[] {
           } with activity this period`
         : "No activity yet — a zero-period application is allowed",
   };
-  // Generated once the package has been produced this session OR an invoice
-  // already exists (which could only follow a generation). Either way the step
-  // reads "done" so the workflow visibly advances instead of parking on the
-  // download button.
-  const generated = Boolean(snapshot.hasGenerated) || Boolean(snapshot.hasInvoice);
-  const generateStep: AiaStepView = {
-    key: "generate",
-    title: "Generate package",
-    status: generated ? "done" : gate.ready ? "active" : "todo",
-    detail: generated
-      ? "Package generated — download it again any time"
-      : gate.ready
-        ? snapshot.overbilledCount > 0
-          ? `Ready — ${snapshot.overbilledCount} line${
-              snapshot.overbilledCount === 1 ? "" : "s"
-            } over 100%, confirm on generate`
-          : "Ready to download the G702/G703 package"
-        : gate.reason,
-  };
-
-  // The step that closes the loop: turn the generated application into an
-  // invoice draft. "done" once an invoice exists (persisted), "active" once
-  // the package is generated. Send remains an explicit audited step.
+  // The one terminal step: bill the owner. The pay application IS the owner's
+  // bill (the G702 is literally the "Application and Certificate for Payment"),
+  // so there is no separate "certify" or "create invoice" step — you bill from
+  // the application in one action, and download/email the G702/G703 as its
+  // printed copy before or after. "done" once the invoice exists (persisted),
+  // "active" as soon as the application is ready to bill. Sending the invoice to
+  // the client stays a separate, recipient-confirmed step in Receivables.
   const invoiced = Boolean(snapshot.hasInvoice);
   const billStep: AiaStepView = {
     key: "bill",
-    title: "Create invoice",
-    status: invoiced ? "done" : generated ? "active" : "todo",
+    title: "Bill the owner",
+    status: invoiced ? "done" : gate.ready ? "active" : "todo",
     detail: invoiced
-      ? "Invoice created — review and send it from Invoices"
-      : generated
-        ? "Create the invoice draft for review and delivery"
-        : "Generate the package first, then create the invoice",
+      ? "Owner billed — the invoice is in Receivables to review and send"
+      : gate.ready
+        ? snapshot.overbilledCount > 0
+          ? `Ready to bill — ${snapshot.overbilledCount} line${
+              snapshot.overbilledCount === 1 ? "" : "s"
+            } over 100%, confirm on billing`
+          : "Bill the owner from this application; the G702/G703 is its printed copy"
+        : gate.reason,
   };
 
-  return [formatStep, sovStep, entriesStep, generateStep, billStep];
+  return [formatStep, sovStep, entriesStep, billStep];
 }

@@ -120,8 +120,8 @@ export function BillingStageRail({
                 <span
                   className={cn(
                     // Wrap the state line instead of truncating it — the rail is
-                    // only ~186px wide, so chips like "Application 2 ready to
-                    // certify" or "Underbilled $128,312" were getting cut mid-word
+                    // only ~186px wide, so chips like "Application 2 — draft, not
+                    // billed" or "Underbilled $128,312" were getting cut mid-word
                     // and left unreadable (field feedback 2026-07-13).
                     "min-w-0 text-[11px] leading-snug",
                     blocked

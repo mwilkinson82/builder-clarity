@@ -91,7 +91,14 @@ export function AiaApplicationStepper({
   const hasLines = snapshot.lineCount > 0;
   const stepRefs = useRef<Partial<Record<AiaStepKey, HTMLLIElement | null>>>({});
   const [routedStep, setRoutedStep] = useState<AiaStepKey | null>(null);
-  const [confirmOverbilled, setConfirmOverbilled] = useState(false);
+  // Download and Bill each carry their OWN overbilled acknowledgment. They are
+  // co-located in the one bill step, so a single shared flag would let arming
+  // one action (e.g. clicking Download) silently pre-confirm the other and
+  // commit an overbilled receivable on a single Bill click. Keep them separate,
+  // and the parent remounts this stepper per pay-app so neither flag bleeds
+  // across applications.
+  const [confirmDownloadOverbilled, setConfirmDownloadOverbilled] = useState(false);
+  const [confirmBillOverbilled, setConfirmBillOverbilled] = useState(false);
 
   // An out-of-sequence generate click routes to the blocking step instead of
   // silently doing nothing.
@@ -107,12 +114,29 @@ export function AiaApplicationStepper({
       routeToBlockingStep();
       return;
     }
-    if (overbilled.length > 0 && !confirmOverbilled) {
-      setConfirmOverbilled(true);
+    if (overbilled.length > 0 && !confirmDownloadOverbilled) {
+      setConfirmDownloadOverbilled(true);
       return;
     }
-    setConfirmOverbilled(false);
+    setConfirmDownloadOverbilled(false);
     onGenerate();
+  };
+
+  // Billing the owner is the one terminal action. It carries its own overbilled
+  // guard (one explicit confirm on the bill button itself), since billing
+  // commits the numbers to a client receivable.
+  const handleBill = () => {
+    if (!onBillOwner) return;
+    if (!gate.ready) {
+      routeToBlockingStep();
+      return;
+    }
+    if (overbilled.length > 0 && !confirmBillOverbilled) {
+      setConfirmBillOverbilled(true);
+      return;
+    }
+    setConfirmBillOverbilled(false);
+    onBillOwner();
   };
 
   const stepAction = (key: AiaStepKey) => {
@@ -178,25 +202,30 @@ export function AiaApplicationStepper({
             Enter percent complete or stored materials on the lines below.
           </span>
         );
-      case "generate":
-        return (
-          <div className="flex flex-col items-start gap-1">
-            <div className="flex flex-wrap items-center gap-2">
+      case "bill": {
+        // The G702/G703 is the printed face of the owner's bill — download or
+        // email it before or after billing. It no longer gates billing.
+        const downloadLabel = generating
+          ? "Preparing..."
+          : confirmDownloadOverbilled
+            ? "Confirm & download anyway"
+            : snapshot.hasGenerated
+              ? "Download G702/G703 again"
+              : "Download AIA G702/G703";
+        const printedCopy = (
+          <div className="flex flex-col items-start gap-1 sm:items-end">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Button
                 type="button"
                 size="sm"
-                variant={gate.ready ? "default" : "outline"}
+                variant="outline"
                 className={`gap-1.5 ${gate.ready ? "" : "opacity-70"}`}
                 aria-disabled={!gate.ready}
                 disabled={generating}
                 onClick={handleGenerate}
               >
                 <Download className="h-3.5 w-3.5" />
-                {generating
-                  ? "Generating..."
-                  : confirmOverbilled
-                    ? "Confirm & download anyway"
-                    : "Download AIA G702/G703"}
+                {downloadLabel}
               </Button>
               {onEmail ? (
                 <Button
@@ -213,34 +242,24 @@ export function AiaApplicationStepper({
                 </Button>
               ) : null}
             </div>
-            {!gate.ready ? (
-              <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                {gate.reason}
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-0.5 font-medium text-accent-foreground underline"
-                  onClick={routeToBlockingStep}
-                >
-                  Go to step <ArrowRight className="h-3 w-3" />
-                </button>
-              </span>
-            ) : confirmOverbilled ? (
+            {confirmDownloadOverbilled ? (
               <span className="text-[11px] text-warning">
-                {overbilled.length} line{overbilled.length === 1 ? "" : "s"} over 100% — click again
-                to generate the package as-is.
+                {overbilled.length} line{overbilled.length === 1 ? "" : "s"} over 100% — click
+                Download again to download as-is.
               </span>
             ) : null}
           </div>
         );
-      case "bill": {
-        // An invoice exists → show the done state. It may still be a draft;
-        // sending remains an explicit, recipient-confirmed command.
+
+        // An invoice exists → the owner has been billed. It may still be a
+        // draft; sending it stays an explicit, recipient-confirmed command.
         if (invoiceExists) {
           return (
-            <div className="flex flex-col items-start gap-1 sm:items-end">
+            <div className="flex flex-col items-start gap-1.5 sm:items-end">
               <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
-                <Check className="h-3.5 w-3.5" /> Invoice created
+                <Check className="h-3.5 w-3.5" /> Owner billed
               </span>
+              {printedCopy}
               {onViewReceivables ? (
                 <button
                   type="button"
@@ -253,10 +272,13 @@ export function AiaApplicationStepper({
             </div>
           );
         }
-        // Generated but not yet invoiced → the one-click bill action.
-        const canBill = Boolean(onBillOwner) && gate.ready && Boolean(snapshot.hasGenerated);
+
+        // Not yet billed → one primary action turns this application into the
+        // owner's bill. Available as soon as it's ready (AIA + lines); no
+        // download-first dance. The printed G702/G703 sits right beside it.
+        const canBill = Boolean(onBillOwner) && gate.ready;
         return (
-          <div className="flex flex-col items-start gap-1">
+          <div className="flex flex-col items-start gap-1.5 sm:items-end">
             <Button
               type="button"
               size="sm"
@@ -264,18 +286,37 @@ export function AiaApplicationStepper({
               className={`gap-1.5 ${canBill ? "" : "opacity-70"}`}
               aria-disabled={!canBill}
               disabled={!canBill || savingInvoice}
-              onClick={onBillOwner}
+              onClick={handleBill}
             >
               <ReceiptText className="h-3.5 w-3.5" />
               {savingInvoice
-                ? "Creating invoice..."
-                : `Create invoice draft${billableAmountLabel ? ` — ${billableAmountLabel}` : ""}`}
+                ? "Billing..."
+                : confirmBillOverbilled
+                  ? `Confirm & bill anyway${billableAmountLabel ? ` — ${billableAmountLabel}` : ""}`
+                  : `Bill the owner${billableAmountLabel ? ` — ${billableAmountLabel}` : ""}`}
             </Button>
-            <span className="text-[11px] text-muted-foreground">
-              {snapshot.hasGenerated
-                ? "Review and send it from Invoices to start A/R aging."
-                : "Generate the package above first."}
-            </span>
+            {printedCopy}
+            {!gate.ready ? (
+              <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                {gate.reason}
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-0.5 font-medium text-accent-foreground underline"
+                  onClick={routeToBlockingStep}
+                >
+                  Go to step <ArrowRight className="h-3 w-3" />
+                </button>
+              </span>
+            ) : confirmBillOverbilled ? (
+              <span className="text-[11px] text-warning">
+                {overbilled.length} line{overbilled.length === 1 ? "" : "s"} over 100% — click Bill
+                the owner again to bill as-is.
+              </span>
+            ) : (
+              <span className="text-[11px] text-muted-foreground">
+                Review and send the invoice from Receivables to start A/R aging.
+              </span>
+            )}
           </div>
         );
       }

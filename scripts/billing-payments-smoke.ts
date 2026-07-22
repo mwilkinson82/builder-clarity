@@ -1034,15 +1034,19 @@ const zeroPeriodGate = aiaGenerateGate({
   overbilledCount: 0,
 });
 assert.equal(zeroPeriodGate.ready, true);
-assert.equal(zeroPeriodGate.blockingStep, "generate");
+assert.equal(zeroPeriodGate.blockingStep, "bill");
 assert.equal(zeroPeriodGate.reason, "");
 
-// Step statuses: format always done; sov active until imported; generate
-// active once ready.
+// Step statuses: format always done; sov active until imported; bill (the one
+// terminal action) active once ready — no separate generate step.
 const noLinesSteps = aiaBuilderSteps({ ...invoiceSnap, outputFormat: "aia_g702", lineCount: 0 });
 assert.equal(noLinesSteps.find((s) => s.key === "format")?.status, "done");
 assert.equal(noLinesSteps.find((s) => s.key === "sov")?.status, "active");
-assert.equal(noLinesSteps.find((s) => s.key === "generate")?.status, "todo");
+assert.equal(noLinesSteps.find((s) => s.key === "bill")?.status, "todo");
+assert.equal(
+  noLinesSteps.some((s) => s.key === "generate"),
+  false,
+);
 const readySteps = aiaBuilderSteps(
   zeroPeriodGate.ready
     ? {
@@ -1054,7 +1058,8 @@ const readySteps = aiaBuilderSteps(
     : invoiceSnap,
 );
 assert.equal(readySteps.find((s) => s.key === "sov")?.status, "done");
-assert.equal(readySteps.find((s) => s.key === "generate")?.status, "active");
+assert.equal(readySteps.find((s) => s.key === "bill")?.status, "active");
+assert.match(readySteps.find((s) => s.key === "bill")?.title ?? "", /Bill the owner/);
 assert.match(readySteps.find((s) => s.key === "entries")?.detail ?? "", /3 of 12 lines/);
 
 // --- CO reaches G702 line 2 (GETTINGPAID3 Task 2 integration) -----------------

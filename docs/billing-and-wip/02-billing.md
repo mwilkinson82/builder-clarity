@@ -14,15 +14,23 @@ A billing period produces a **pay application** (a.k.a. requisition), stored in
 1. Format      → Client invoice  OR  AIA G702/G703
 2. SOV         → import the schedule of values (the contract lines you bill)
 3. This period → enter percent-complete / stored materials per line
-4. Generate    → finalize, then download AND email the package
+4. Bill owner  → the pay app IS the owner's bill: one action creates the
+                 invoice; download/email the G702/G703 as its printed copy
 ```
 
+The pay application **is** the owner's bill — the G702 is literally the
+"Application and Certificate for Payment" — so the terminal step is a single
+**"Bill the owner"** action, not a separate generate-then-create-invoice pair.
+Billing no longer requires downloading the package first; the G702/G703 sits
+beside the bill action as its printed copy (download or email, before or after).
 Code: [`AiaApplicationStepper.tsx`](../../src/components/billing/AiaApplicationStepper.tsx)
 (the stepper UI, gating, and out-of-sequence routing) and
 [`aia-builder-steps.ts`](../../src/lib/aia-builder-steps.ts) (the step/gate
-logic). An out-of-sequence "Generate" click routes the biller to the blocking
-step instead of silently doing nothing. Generating with overbilled lines
-requires one explicit confirm (the overbilling guard-rail).
+logic). An out-of-sequence bill/download click routes the biller to the blocking
+step instead of silently doing nothing. Billing (or downloading) with overbilled
+lines requires one explicit confirm — each action carries its own overbilling
+guard-rail. Sending the resulting invoice to the client stays a separate,
+recipient-confirmed step in Receivables.
 
 ## The carry-forward memory (this is real, and it's the trust anchor)
 
@@ -57,8 +65,9 @@ real package to a file (`npm run test:billing:aia`, see
 Companies that never choose AIA never see AIA affordances beyond the format
 toggle.
 
-The package can be **downloaded** or **emailed** to the client from the generate
-step. Email goes to **all** billing contacts with `can_view_billing` (deduped),
+The package can be **downloaded** or **emailed** to the client from the bill
+step (its printed copy, available before or after billing). Email goes to
+**all** billing contacts with `can_view_billing` (deduped),
 via the transactional email pipeline (below).
 
 **Downloading goes through the one safe path,
