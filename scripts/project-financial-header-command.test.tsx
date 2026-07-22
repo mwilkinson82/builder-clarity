@@ -104,7 +104,7 @@ describe("project financial-header SQL command", () => {
   });
 
   test("passes a stable expected version and operation key from every ordinary caller", () => {
-    expect(functionsSource).toContain("expectedUpdatedAt: z.string().datetime()");
+    expect(functionsSource).toContain("expectedUpdatedAt: z.string().datetime({ offset: true })");
     expect(functionsSource).toContain("p_expected_updated_at: data.expectedUpdatedAt");
     expect(functionsSource).toContain('.select("project_manager,updated_at")');
     expect(functionsSource).toMatch(

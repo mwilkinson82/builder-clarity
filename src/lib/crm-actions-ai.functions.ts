@@ -136,7 +136,7 @@ export const generateCrmFollowupDraft = createServerFn({ method: "POST" })
 const meetingInput = z.object({
   opportunity_id: z.string().uuid(),
   meeting_type: z.enum(["sales", "handoff", "kickoff", "client_onboarding"]),
-  meeting_at: z.string().datetime().nullable().optional(),
+  meeting_at: z.string().datetime({ offset: true }).nullable().optional(),
   attendee_names: z.array(z.string().trim().min(1).max(200)).max(20).default([]),
   meeting_goal: z.string().trim().max(2_000).default(""),
 });

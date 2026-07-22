@@ -2601,7 +2601,7 @@ export const createProject = createServerFn({ method: "POST" })
 
 const updateFinancialsInput = z.object({
   projectId: z.string().uuid(),
-  expectedUpdatedAt: z.string().datetime(),
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
   operationKey: z.string().uuid(),
   overrideReason: z.string().max(500).optional(),
   patch: z.object({
@@ -3019,7 +3019,7 @@ export const updateChangeOrder = createServerFn({ method: "POST" })
         .object({
           id: z.string().uuid(),
           projectId: z.string().uuid(),
-          expectedUpdatedAt: z.string().datetime(),
+          expectedUpdatedAt: z.string().datetime({ offset: true }),
           operationKey: changeOrderOperationKey,
         })
         .merge(coInputFields.partial())
@@ -3076,7 +3076,7 @@ export const updateChangeOrder = createServerFn({ method: "POST" })
 const deleteChangeOrderInput = z.object({
   id: z.string().uuid(),
   projectId: z.string().uuid(),
-  expectedUpdatedAt: z.string().datetime(),
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
   operationKey: changeOrderOperationKey,
 });
 
@@ -4779,7 +4779,7 @@ const updateReviewInput = z.object({
     pdf_style: z.enum(["executive", "structured"]).optional(),
     // PDF-delivery stamp (Option A). Best-effort — tolerated if columns are absent (pre-migration).
     pdf_path: z.string().max(1024).optional(),
-    last_sent_at: z.string().datetime().optional(),
+    last_sent_at: z.string().datetime({ offset: true }).optional(),
   }),
 });
 

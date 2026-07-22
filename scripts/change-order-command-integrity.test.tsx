@@ -97,7 +97,7 @@ describe("change-order database authority", () => {
     expect(functionsSource).toMatch(/dynamicRpc\([\s\S]*create_change_order_atomic/i);
     expect(functionsSource).toMatch(/dynamicRpc\([\s\S]*update_change_order_atomic/i);
     expect(functionsSource).toMatch(/dynamicRpc\([\s\S]*delete_change_order_atomic/i);
-    expect(functionsSource).toContain("expectedUpdatedAt: z.string().datetime()");
+    expect(functionsSource).toContain("expectedUpdatedAt: z.string().datetime({ offset: true })");
     expect(functionsSource).toContain("Change-order direction and signed amounts disagree.");
     expect(functionsSource).not.toContain("Math.abs(dollarsToCents(row.contract_amount))");
     expect(functionsSource).toContain("harborDemoOperationGeneration");
