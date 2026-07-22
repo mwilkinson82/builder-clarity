@@ -32,7 +32,7 @@ import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
+import { COMPANY_ASSET_BUCKET, versionAssetUrl } from "@/lib/company-assets";
 import {
   Select,
   SelectContent,
@@ -1026,12 +1026,11 @@ function TeamPage() {
   });
 
   const storageLogoUrl = useMemo(() => {
-    if (!team?.organization.id) return "";
-    const { data } = supabase.storage
-      .from(COMPANY_ASSET_BUCKET)
-      .getPublicUrl(companyLogoPath(team.organization.id));
+    const logoPath = team?.organization.logo_path;
+    if (!logoPath) return "";
+    const { data } = supabase.storage.from(COMPANY_ASSET_BUCKET).getPublicUrl(logoPath);
     return versionAssetUrl(data.publicUrl, team.organization.updated_at);
-  }, [team?.organization.id, team?.organization.updated_at]);
+  }, [team?.organization.logo_path, team?.organization.updated_at]);
   const logoPreviewUrl = orgForm.logo_url || team?.organization.logo_url || storageLogoUrl;
   const visibleLogoPreviewUrl =
     logoPreviewUrl && logoImageFailedUrl !== logoPreviewUrl ? logoPreviewUrl : "";

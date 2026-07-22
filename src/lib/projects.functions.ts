@@ -4,7 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import { centsToDollars, dollarsToCents, quantizeDollars } from "@/lib/payments-domain";
-import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
+import { COMPANY_ASSET_BUCKET, versionAssetUrl } from "@/lib/company-assets";
 import {
   HARBOR_DEMO_CLIENT,
   HARBOR_DEMO_COMMERCIAL_WORKFLOW,
@@ -641,17 +641,23 @@ type SupabaseWithStorage = {
 
 function organizationLogoUrl(
   supabase: unknown,
-  organization: { id?: unknown; logo_url?: unknown; updated_at?: unknown },
+  organization: {
+    id?: unknown;
+    logo_url?: unknown;
+    logo_path?: unknown;
+    updated_at?: unknown;
+  },
 ) {
   const storedLogoUrl = str(organization.logo_url);
   if (storedLogoUrl) return storedLogoUrl;
 
   const organizationId = str(organization.id);
-  if (!organizationId) return "";
+  const logoPath = str(organization.logo_path);
+  if (!organizationId || !logoPath) return "";
 
   const { data } = (supabase as SupabaseWithStorage).storage
     .from(COMPANY_ASSET_BUCKET)
-    .getPublicUrl(companyLogoPath(organizationId));
+    .getPublicUrl(logoPath);
   return versionAssetUrl(data.publicUrl, str(organization.updated_at));
 }
 
@@ -1580,7 +1586,7 @@ export const listProjects = createServerFn({ method: "GET" })
       organizationIds.length === 0
         ? { data: [], error: null }
         : dynamicTable(context.supabase, "organizations")
-            .select("id,name,logo_url,updated_at")
+            .select("id,name,logo_url,logo_path,updated_at")
             .in("id", organizationIds),
       // Subcontractor layer so the portfolio GP matches each project's own
       // dashboard (a buyout that pops a code pulls GP down here too). These are
@@ -1609,7 +1615,10 @@ export const listProjects = createServerFn({ method: "GET" })
     if (decisionsRes.error) throw new Error(decisionsRes.error.message);
     let organizationRows = (organizationsRes.data ?? []) as Record<string, unknown>[];
     if (organizationsRes.error) {
-      if (!isMissingRestColumn(organizationsRes.error, "logo_url")) {
+      if (
+        !isMissingRestColumn(organizationsRes.error, "logo_url") &&
+        !isMissingRestColumn(organizationsRes.error, "logo_path")
+      ) {
         throw new Error(organizationsRes.error.message);
       }
       const fallbackOrganizationsRes =
@@ -2107,11 +2116,14 @@ export const getProject = createServerFn({ method: "GET" })
       } else if (directoryOrganization === undefined) {
         // Pre-migration window: the old member-read policy still applies.
         const organizationRes = await dynamicTable(context.supabase, "organizations")
-          .select("id,name,logo_url,updated_at")
+          .select("id,name,logo_url,logo_path,updated_at")
           .eq("id", project.organization_id)
           .maybeSingle();
         if (organizationRes.error) {
-          if (!isMissingRestColumn(organizationRes.error, "logo_url")) {
+          if (
+            !isMissingRestColumn(organizationRes.error, "logo_url") &&
+            !isMissingRestColumn(organizationRes.error, "logo_path")
+          ) {
             throw new Error(organizationRes.error.message);
           }
           const fallbackOrganizationRes = await dynamicTable(context.supabase, "organizations")

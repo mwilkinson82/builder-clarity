@@ -359,8 +359,84 @@ await expectContains(
     /getCompanyWorkspaceContext/,
     /name: organization\.name \|\| "Company"/,
     /logo_url: organizationLogoUrl\(context\.supabase, organization\)/,
+    /logo_path: str\(row\.logo_path\)/,
+    /const logoPath = organization\.logo_path;[\s\S]*if \(!logoPath\) return "";/,
   ],
-  "company workspace context exposes the user's company name and logo for app headers",
+  "company workspace context exposes configured branding without probing a missing logo object",
+);
+
+await expectNotContains(
+  "src/lib/team.functions.ts",
+  [/companyLogoPath\(/],
+  "company workspace branding never synthesizes an unconfigured logo path",
+);
+
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /const logoPath = str\(organization\.logo_path\)/,
+    /if \(!organizationId \|\| !logoPath\) return "";/,
+    /getPublicUrl\(logoPath\)/,
+    /select\("id,name,logo_url,logo_path,updated_at"\)/,
+  ],
+  "project list and detail branding require and preserve configured logo metadata",
+);
+
+await expectNotContains(
+  "src/lib/projects.functions.ts",
+  [/companyLogoPath\(/],
+  "project branding never synthesizes an unconfigured logo path",
+);
+
+await expectContains(
+  "src/lib/submittal-log.functions.ts",
+  [
+    /const logoPath = str\(o\.logo_path\)/,
+    /if \(!logoUrl && logoPath\)/,
+    /getPublicUrl\(logoPath\)/,
+  ],
+  "project letterheads only resolve a stored logo path",
+);
+
+await expectNotContains(
+  "src/lib/submittal-log.functions.ts",
+  [/companyLogoPath\(/],
+  "project letterheads never synthesize an unconfigured logo path",
+);
+
+await expectContains(
+  "src/routes/_authenticated/team.tsx",
+  [
+    /const logoPath = team\?\.organization\.logo_path;/,
+    /if \(!logoPath\) return "";/,
+    /getPublicUrl\(logoPath\)/,
+  ],
+  "team logo preview stays empty until logo metadata exists",
+);
+
+await expectNotContains(
+  "src/routes/_authenticated/team.tsx",
+  [/companyLogoPath\(/],
+  "team logo preview never synthesizes an unconfigured logo path",
+);
+
+await expectContains(
+  "src/components/layout/AppFooter.tsx",
+  [/className="hidden sm:inline">— an ALP product<\/span>/],
+  "shared app footer keeps its mobile wordmark inside the viewport",
+);
+
+await expectContains(
+  "supabase/migrations/20260722235000_backfill_company_logo_paths.sql",
+  [
+    /UPDATE public\.organizations AS organization/,
+    /storage\.objects AS object/,
+    /object\.bucket_id = 'company-assets'/,
+    /object\.name = organization\.id::text \|\| '\/logo'/,
+    /coalesce\(nullif\(btrim\(organization\.logo_path\), ''\), ''\) = ''/,
+    /RAISE EXCEPTION 'canonical company logo path backfill did not converge'/,
+  ],
+  "company logo metadata is backfilled only where a canonical stored object exists",
 );
 
 await expectContains(

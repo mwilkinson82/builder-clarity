@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
+import { COMPANY_ASSET_BUCKET, versionAssetUrl } from "@/lib/company-assets";
 import {
   ALL_CAPABILITY_KEYS,
   ROLE_PRESETS,
@@ -280,7 +280,7 @@ function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
     license_number: str(row.license_number),
     tax_identifier: str(row.tax_identifier),
     logo_url: str(row.logo_url),
-    logo_path: str(row.logo_path) || companyLogoPath(organizationId),
+    logo_path: str(row.logo_path),
     plan_code: str(row.plan_code),
     billing_status: str(row.billing_status),
     billing_email: str(row.billing_email),
@@ -359,12 +359,12 @@ function redactOrganizationForMember(org: TeamOrganization): TeamOrganization {
 
 function organizationLogoUrl(
   supabase: SupabaseClient,
-  organization: Pick<TeamOrganization, "id" | "logo_url" | "updated_at">,
+  organization: Pick<TeamOrganization, "id" | "logo_url" | "logo_path" | "updated_at">,
 ) {
   if (organization.logo_url) return organization.logo_url;
-  const { data } = supabase.storage
-    .from(COMPANY_ASSET_BUCKET)
-    .getPublicUrl(companyLogoPath(organization.id));
+  const logoPath = organization.logo_path;
+  if (!logoPath) return "";
+  const { data } = supabase.storage.from(COMPANY_ASSET_BUCKET).getPublicUrl(logoPath);
   return versionAssetUrl(data.publicUrl, organization.updated_at);
 }
 
