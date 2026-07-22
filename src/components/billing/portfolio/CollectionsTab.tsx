@@ -11,7 +11,7 @@ import { Link } from "@tanstack/react-router";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import { daysOverdue, daysUntilDue, invoiceOpenBalanceCents } from "@/lib/receivables";
-import { isHarborDemoProject } from "@/lib/demo-seed";
+import { HARBOR_DEMO_JOB_NUMBER } from "@/lib/demo-seed";
 import type { ReceivableInvoiceRow } from "@/lib/receivables.functions";
 import type { PortfolioBillingProject } from "@/lib/billing.functions";
 import { ReceivablesCockpit } from "@/components/billing/ReceivablesCockpit";
@@ -76,14 +76,7 @@ export function CollectionsTab({
   const worklistOverflow = openInvoices.length - worklist.length;
   // For the first-run CTA, prefer a real project over the seeded demo.
   const firstProject =
-    projects.find(
-      (project) =>
-        !isHarborDemoProject({
-          name: project.project_name,
-          job_number: project.job_number,
-          client: project.client,
-        }),
-    ) ??
+    projects.find((project) => project.job_number !== HARBOR_DEMO_JOB_NUMBER) ??
     projects[0] ??
     null;
 
@@ -274,7 +267,7 @@ function WorklistRow({ invoice, today }: { invoice: ReceivableInvoiceRow; today:
           <span className="truncate text-[13px] font-semibold text-foreground">
             {invoice.project_name}
           </span>
-          {isHarborDemoProject({ name: invoice.project_name }) ? <SamplePill /> : null}
+          {invoice.job_number === HARBOR_DEMO_JOB_NUMBER ? <SamplePill /> : null}
         </div>
         <div className="text-[11px] text-muted-foreground">
           {billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice")}

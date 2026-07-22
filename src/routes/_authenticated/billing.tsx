@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { listPortfolioBilling } from "@/lib/billing.functions";
 import { getReceivablesCockpit } from "@/lib/receivables.functions";
 import { daysOverdue } from "@/lib/receivables";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 import { StripeConnectNudge } from "@/components/billing/StripeConnectNudge";
 import { CollectionsTab } from "@/components/billing/portfolio/CollectionsTab";
 import { BillingPositionTab } from "@/components/billing/portfolio/BillingPositionTab";
@@ -117,7 +118,7 @@ function BillingPortfolioPage() {
           <div className="rounded-lg border border-danger/30 bg-danger/10 p-5">
             <div className="text-sm font-medium text-danger">Billing did not load</div>
             <p className="mt-1 text-sm text-muted-foreground">
-              {error instanceof Error ? error.message : "Check the billing schema and try again."}
+              {friendlyErrorMessage(error, "We couldn't load billing. Try again.")}
             </p>
             <Button size="sm" variant="outline" className="mt-4" onClick={() => refetch()}>
               Retry
@@ -164,11 +165,9 @@ function BillingPortfolioPage() {
                     openInvoices={openInvoices}
                     cockpitLoading={cockpitQuery.isLoading}
                     cockpitError={
-                      cockpitQuery.error instanceof Error
-                        ? cockpitQuery.error.message
-                        : cockpitQuery.error
-                          ? "Open invoices did not load."
-                          : null
+                      cockpitQuery.error
+                        ? friendlyErrorMessage(cockpitQuery.error, "Open invoices did not load.")
+                        : null
                     }
                     onCockpitRetry={() => void cockpitQuery.refetch()}
                     today={today}

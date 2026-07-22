@@ -48,6 +48,7 @@ import {
 import { fmtUSD } from "@/lib/format";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import { cn } from "@/lib/utils";
+import { friendlyErrorMessage } from "@/lib/friendly-error";
 
 export const Route = createFileRoute("/_authenticated/estimates")({
   ssr: false,
@@ -530,9 +531,10 @@ function EstimatesPage() {
               ) : estimatesQuery.isError ? (
                 <TableRow>
                   <TableCell colSpan={9} className="py-10 text-center text-sm text-danger">
-                    {estimatesQuery.error instanceof Error
-                      ? estimatesQuery.error.message
-                      : "Estimates did not load"}
+                    {friendlyErrorMessage(
+                      estimatesQuery.error,
+                      "Estimates did not load. Try again.",
+                    )}
                   </TableCell>
                 </TableRow>
               ) : visibleEstimates.length === 0 ? (
@@ -689,9 +691,7 @@ function EstimatesPage() {
             ))
           ) : estimatesQuery.isError ? (
             <div className="rounded-xl border border-hairline bg-surface p-6 text-center text-sm text-danger">
-              {estimatesQuery.error instanceof Error
-                ? estimatesQuery.error.message
-                : "Estimates did not load"}
+              {friendlyErrorMessage(estimatesQuery.error, "Estimates did not load. Try again.")}
             </div>
           ) : visibleEstimates.length === 0 ? (
             <div className="rounded-xl border border-hairline bg-surface p-6 text-center text-sm text-muted-foreground">

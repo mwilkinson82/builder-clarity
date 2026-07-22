@@ -7,6 +7,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { listProjects } from "@/lib/projects.functions";
 import { listCrmSnapshot, listOpportunities } from "@/lib/pipeline.functions";
 import { buildHomeMetrics, type HomeMetrics } from "./portfolio-home-metrics";
+import { friendlyErrorMessage, GENERIC_LOAD_FALLBACK } from "@/lib/friendly-error";
 
 export function useHomeMetrics(): {
   metrics: HomeMetrics;
@@ -43,17 +44,16 @@ export function useHomeMetrics(): {
 
   // A failed portfolio read must NOT fall through to metrics built from empty
   // arrays (which paint a false "$0 / all caught up"). Surface the error so the
-  // home renders a retry card instead. The CRM snapshot is a secondary rail —
-  // only the two portfolio/pipeline reads gate the whole view.
-  // Gate the error card on the two PRIMARY reads only: a secondary CRM-snapshot
-  // failure must not hide an otherwise-working portfolio behind a full-page error.
-  const firstError = projectsQuery.error ?? opportunitiesQuery.error;
+  // home renders a retry card instead. Gate ONLY on the primary projects read:
+  // opportunities (the pipeline rail) and the CRM snapshot are secondary rails —
+  // a failure of either degrades that section and must never hide an otherwise-
+  // working project portfolio behind a full-page "did not load" error.
+  const firstError = projectsQuery.error;
   return {
     metrics,
     loading: projectsQuery.isLoading || opportunitiesQuery.isLoading || snapshotQuery.isLoading,
-    isError: projectsQuery.isError || opportunitiesQuery.isError,
-    errorMessage:
-      firstError instanceof Error ? firstError.message : firstError ? String(firstError) : null,
+    isError: projectsQuery.isError,
+    errorMessage: firstError ? friendlyErrorMessage(firstError, GENERIC_LOAD_FALLBACK) : null,
     refetch: () => {
       void projectsQuery.refetch();
       void opportunitiesQuery.refetch();

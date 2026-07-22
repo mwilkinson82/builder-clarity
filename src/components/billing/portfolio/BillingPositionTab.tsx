@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { daysUntilDue } from "@/lib/receivables";
-import { isHarborDemoProject } from "@/lib/demo-seed";
+import { HARBOR_DEMO_JOB_NUMBER } from "@/lib/demo-seed";
 import type { PortfolioBillingProject } from "@/lib/billing.functions";
 import {
   MONO_LABEL,
@@ -131,13 +131,7 @@ function PositionRow({ project }: { project: PortfolioBillingProject }) {
           <span className="truncate text-[13.5px] font-semibold text-foreground">
             {project.project_name}
           </span>
-          {isHarborDemoProject({
-            name: project.project_name,
-            job_number: project.job_number,
-            client: project.client,
-          }) ? (
-            <SamplePill />
-          ) : null}
+          {project.job_number === HARBOR_DEMO_JOB_NUMBER ? <SamplePill /> : null}
         </div>
         <div className="truncate text-[11px] text-muted-foreground">
           {[project.job_number ? `Job ${project.job_number}` : "", project.client]
