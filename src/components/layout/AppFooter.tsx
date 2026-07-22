@@ -15,7 +15,7 @@ export function AppFooter({ context }: { context?: ReactNode }) {
           OverWatch
           <span aria-hidden="true" className="ml-1.5 inline-block h-[9px] w-[9px] bg-accent" />
         </span>
-        <span>— an ALP product</span>
+        <span className="hidden sm:inline">— an ALP product</span>
       </span>
       <div className="flex min-w-0 items-center gap-4">
         <Link to="/support" className="shrink-0 transition-colors hover:text-foreground">

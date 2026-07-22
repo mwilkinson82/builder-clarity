@@ -6,7 +6,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
+import { COMPANY_ASSET_BUCKET, versionAssetUrl } from "@/lib/company-assets";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -315,10 +315,11 @@ export const getProjectLetterhead = createServerFn({ method: "GET" })
 
     // Resolve a fetchable logo URL (stored URL, else the public asset URL).
     let logoUrl = str(o.logo_url);
-    if (!logoUrl && str(o.id)) {
+    const logoPath = str(o.logo_path);
+    if (!logoUrl && logoPath) {
       const { data: pub } = (context.supabase as unknown as DynamicSupabaseClient).storage
         .from(COMPANY_ASSET_BUCKET)
-        .getPublicUrl(companyLogoPath(str(o.id)));
+        .getPublicUrl(logoPath);
       logoUrl = versionAssetUrl(pub.publicUrl, str(o.updated_at));
     }
     return {
