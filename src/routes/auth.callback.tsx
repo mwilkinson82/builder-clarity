@@ -1,8 +1,12 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import type { EmailOtpType } from "@supabase/supabase-js";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { sendTransactionalEmail } from "@/lib/email/send";
+import {
+  emailOtpTypeFromUrl,
+  requiresExplicitMagicLinkConfirmation,
+  safeAuthNext,
+} from "@/lib/auth/magic-link-url";
 
 async function notifyLogin(session: { user: { id: string; email?: string | null } }) {
   try {
@@ -32,12 +36,6 @@ export const Route = createFileRoute("/auth/callback")({
   component: AuthCallbackPage,
 });
 
-function safeNextFromUrl(url: URL) {
-  const next = url.searchParams.get("next") ?? "/";
-  if (!next.startsWith("/") || next.startsWith("//")) return "/";
-  return next;
-}
-
 function callbackHref(next: string) {
   return `/auth/callback?next=${encodeURIComponent(next)}`;
 }
@@ -50,30 +48,12 @@ function cleanCallbackUrl(url: URL) {
   if (url.hash) window.history.replaceState(null, "", `${url.pathname}${url.search}`);
 }
 
-function goAfterSignIn(next: string) {
-  window.location.replace(next);
-}
-
 function callbackFailureMessage(err: unknown) {
   const message = err instanceof Error ? err.message : "Could not complete sign-in.";
   if (/already|expired|invalid|jwt|refresh|token|link/i.test(message)) {
     return "This sign-in link was already used or expired. Request a fresh magic link and open it once.";
   }
   return message;
-}
-
-const EMAIL_OTP_TYPES = new Set<EmailOtpType>([
-  "signup",
-  "invite",
-  "magiclink",
-  "recovery",
-  "email_change",
-  "email",
-]);
-
-function emailOtpTypeFromUrl(type: string | null): EmailOtpType {
-  if (type && EMAIL_OTP_TYPES.has(type as EmailOtpType)) return type as EmailOtpType;
-  return "magiclink";
 }
 
 async function establishSessionFromUrl(url: URL) {
@@ -118,78 +98,98 @@ async function establishSessionFromUrl(url: URL) {
 }
 
 function AuthCallbackPage() {
+  const navigate = useNavigate();
   const [message, setMessage] = useState("Completing sign-in...");
   const [nextPath, setNextPath] = useState("/");
   const [showRecovery, setShowRecovery] = useState(false);
+  const [confirmationRequired, setConfirmationRequired] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function finishSignIn() {
+  const finishSignIn = useCallback(
+    async (allowTokenConsumption: boolean, isCancelled: () => boolean) => {
       try {
         const url = new URL(window.location.href);
-        const next = safeNextFromUrl(url);
+        const next = safeAuthNext(url);
         setNextPath(next);
+
+        if (requiresExplicitMagicLinkConfirmation(url) && !allowTokenConsumption) {
+          setConfirmationRequired(true);
+          setMessage("Your secure link is ready. Continue to finish signing in.");
+          return;
+        }
+
+        setConfirmationRequired(false);
         const sessionFromUrl = await establishSessionFromUrl(url);
         if (sessionFromUrl) {
           void notifyLogin(sessionFromUrl);
-          goAfterSignIn(next);
+          navigate({ to: next as never, replace: true });
           return;
         }
 
         const started = Date.now();
-        while (!cancelled && Date.now() - started < 3000) {
+        while (!isCancelled() && Date.now() - started < 3000) {
           const { data, error } = await supabase.auth.getSession();
           if (error) throw error;
           if (data.session) {
             void notifyLogin(data.session);
-            goAfterSignIn(next);
+            navigate({ to: next as never, replace: true });
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
-        if (!cancelled) {
+        if (!isCancelled()) {
           setShowRecovery(true);
           setMessage("No active session was found. Request a fresh magic link and open it once.");
         }
       } catch (err) {
         console.error(err);
-        if (!cancelled) {
+        // If another callback path completed before an error surfaced, trust the
+        // established session instead of showing a false expired-link loop.
+        const { data } = await supabase.auth
+          .getSession()
+          .catch(() => ({ data: { session: null } }));
+        if (data.session && !isCancelled()) {
+          void notifyLogin(data.session);
+          navigate({ to: safeAuthNext(new URL(window.location.href)) as never, replace: true });
+          return;
+        }
+        if (!isCancelled()) {
           setShowRecovery(true);
           setMessage(callbackFailureMessage(err));
         }
       }
-    }
+    },
+    [navigate],
+  );
 
-    void finishSignIn();
-
-    let subscription: { unsubscribe: () => void } | undefined;
-    try {
-      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (session && !cancelled) {
-          goAfterSignIn(safeNextFromUrl(new URL(window.location.href)));
-        }
-      });
-      subscription = data.subscription;
-    } catch (err) {
-      console.error(err);
-      setMessage(err instanceof Error ? err.message : "Could not start sign-in listener.");
-    }
+  useEffect(() => {
+    let cancelled = false;
+    void finishSignIn(false, () => cancelled);
 
     return () => {
       cancelled = true;
-      subscription?.unsubscribe();
     };
-  }, []);
+  }, [finishSignIn]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-6 text-foreground">
       <div className="max-w-sm text-center">
         <div className="mx-auto h-2 w-12 rounded-full bg-primary/70" />
-        <h1 className="mt-6 font-serif text-3xl">Opening IOR</h1>
+        <h1 className="mt-6 font-serif text-3xl">Opening OverWatch</h1>
         <p className="mt-2 text-sm text-muted-foreground">{message}</p>
-        {showRecovery && (
+        {confirmationRequired && (
+          <button
+            type="button"
+            onClick={() => {
+              setMessage("Completing sign-in...");
+              void finishSignIn(true, () => false);
+            }}
+            className="mt-6 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+          >
+            Continue to Overwatch
+          </button>
+        )}
+        {showRecovery && !confirmationRequired && (
           <div className="mt-6 flex flex-col gap-3">
             <a
               href={authHref(nextPath)}
