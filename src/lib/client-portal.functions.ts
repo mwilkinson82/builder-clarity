@@ -168,7 +168,7 @@ const accessPatchInput = z.object({
   can_view_daily_reports: z.boolean().optional(),
   can_view_billing: z.boolean().optional(),
   can_view_selections: z.boolean().optional(),
-  last_sent_at: z.string().datetime().nullable().optional(),
+  last_sent_at: z.string().datetime({ offset: true }).nullable().optional(),
 });
 
 type ServerContext = {
