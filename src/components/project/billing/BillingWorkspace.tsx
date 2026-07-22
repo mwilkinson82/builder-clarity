@@ -683,11 +683,19 @@ export function BillingWorkspace({
       ? billingApplications[billingApplications.length - 1]
       : undefined;
   const priorApps = billingApplications.slice(0, -1);
+  // Only flag the latest application when it genuinely still needs the user's
+  // action: a DRAFT that has not been billed yet. Once it's been invoiced (or the
+  // user marked it submitted), it's done — a stale certify-prompt on an app the
+  // builder already billed is what confused users. Also plain-English, not the
+  // AIA jargon. (`status` in live data is draft/submitted/partial/paid;
+  // an active invoice is the reliable "this app is billed" signal.)
+  const currentAppNeedsBilling =
+    !!currentApp && currentApp.status === "draft" && !getActiveInvoiceForPayApp(currentApp.id);
   const payAppRailChip =
     railPayAppCount === 0
       ? "No applications yet"
-      : currentApp && (currentApp.status === "draft" || currentApp.status === "submitted")
-        ? `${normalizeBillingNumberLabel(currentApp.application_number)} ready to certify`
+      : currentAppNeedsBilling
+        ? `${normalizeBillingNumberLabel(currentApp!.application_number)} — draft, not billed`
         : `${railPayAppCount} ${railPayAppCount === 1 ? "application" : "applications"}`;
   // G702 face figures, all integer-cents, bound to the existing pay-app fields
   // (never the mock's dollars, never a fresh float rollup): line 3 = this
@@ -788,7 +796,7 @@ export function BillingWorkspace({
         ? `Build a requisition from the schedule of values. ${normalizeBillingNumberLabel(
             currentApp.application_number,
           )} — ${fmtUSDCents(centsToDollars(g702CurrentPaymentDueCents))} due this cycle.`
-        : "Build a requisition from the schedule of values, then certify it for payment.",
+        : "Build a requisition from the schedule of values, then bill it to the owner.",
     },
     "invoice-ledger": {
       title: "Invoices & A/R",
