@@ -18,11 +18,7 @@
 // will re-target these writes); these guards give the app an early,
 // plain-English refusal instead of a silent RLS bounce.
 
-import {
-  ALL_CAPABILITY_KEYS,
-  type AccountRole,
-  type CapabilitySet,
-} from "@/lib/capabilities";
+import { ALL_CAPABILITY_KEYS, type AccountRole, type CapabilitySet } from "@/lib/capabilities";
 
 export interface CallerAuthority {
   isSuperAdmin: boolean;
@@ -46,9 +42,7 @@ export function assertCanAssignRole(
 ): void {
   if (role !== "owner") return;
   if (isElevatedAuthority(authority)) return;
-  throw new Error(
-    "Only a current company Owner or Overwatch admin can assign the Owner role.",
-  );
+  throw new Error("Only a current company Owner or Overwatch admin can assign the Owner role.");
 }
 
 /**
@@ -84,9 +78,7 @@ export function assertCanGrantCapabilities(
     if (nextCaps[key] !== true) continue;
     if (currentCaps?.[key] === true) continue;
     if (authority.capabilities[key] !== true) {
-      throw new Error(
-        "You can't grant a capability you don't hold yourself.",
-      );
+      throw new Error("You can't grant a capability you don't hold yourself.");
     }
   }
 }

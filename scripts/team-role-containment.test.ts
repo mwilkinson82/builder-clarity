@@ -128,9 +128,7 @@ describe("team role-containment guards", () => {
     const richTarget: CapabilitySet = { ...ROLE_PRESETS.owner };
     expect(() => assertCanTargetMember(owner(), richTarget)).not.toThrow();
     expect(() => assertCanTargetMember(superAdmin(), richTarget)).not.toThrow();
-    expect(() =>
-      assertCanGrantCapabilities(owner(), { ...ROLE_PRESETS.owner }, {}),
-    ).not.toThrow();
+    expect(() => assertCanGrantCapabilities(owner(), { ...ROLE_PRESETS.owner }, {})).not.toThrow();
   });
 });
 
@@ -161,7 +159,9 @@ describe("team.functions.ts source wiring", () => {
     expect(body).toContain("assertCanAssignRole(authority, data.role)");
     expect(body).toContain("assertCannotSelfElevate(");
     expect(body).toContain("assertCanTargetMember(authority, targetCurrentCaps)");
-    expect(body).toContain("assertCanGrantCapabilities(authority, nextCapsForGuard, targetCurrentCaps)");
+    expect(body).toContain(
+      "assertCanGrantCapabilities(authority, nextCapsForGuard, targetCurrentCaps)",
+    );
     // Guards must precede the membership update.
     const guardIdx = body.indexOf("assertCanTargetMember");
     const updateIdx = body.indexOf('.from("organization_memberships")\n      .update(');

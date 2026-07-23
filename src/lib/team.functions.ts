@@ -490,9 +490,11 @@ async function loadCallerAuthority(
     context.supabase.rpc("is_super_admin"),
   ]);
   const isSuperAdmin = !superAdminRes.error && Boolean(superAdminRes.data);
-  const row = (membershipRes.data ?? null) as
-    | { role?: string | null; status?: string | null; capabilities?: unknown }
-    | null;
+  const row = (membershipRes.data ?? null) as {
+    role?: string | null;
+    status?: string | null;
+    capabilities?: unknown;
+  } | null;
   if (!row || row.status !== "active") {
     return { isSuperAdmin, isOwner: false, role: null, capabilities: {} };
   }

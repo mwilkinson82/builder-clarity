@@ -305,7 +305,13 @@ function usageStatus(used: number, limit: number): UsageStatus {
 }
 
 type ConsoleSection =
-  "people" | "clients" | "plan" | "paid" | "assignments" | "company" | "profile";
+  | "people"
+  | "clients"
+  | "plan"
+  | "paid"
+  | "assignments"
+  | "company"
+  | "profile";
 
 const CONSOLE_SECTIONS = new Set<ConsoleSection>([
   "people",
@@ -595,7 +601,8 @@ function TeamPage() {
       }),
     });
     const payload = (await response.json().catch(() => ({}))) as
-      (StripeConnectPayload & { ok?: boolean; error?: string }) | { ok?: boolean; error?: string };
+      | (StripeConnectPayload & { ok?: boolean; error?: string })
+      | { ok?: boolean; error?: string };
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || "Stripe setup did not open.");
     }

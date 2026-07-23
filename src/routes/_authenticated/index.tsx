@@ -1473,68 +1473,68 @@ function InviteByMagicLinkButton() {
                   const canEditRow =
                     team.canManageTeam && !isOwnerRow && (canAssignOwner || !isSelf);
                   return (
-                  <div
-                    key={member.id}
-                    className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_190px_150px] md:items-center"
-                  >
-                    <div>
-                      <div className="font-medium">{member.full_name || member.email}</div>
-                      <div className="text-xs text-muted-foreground">{member.email}</div>
+                    <div
+                      key={member.id}
+                      className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_190px_150px] md:items-center"
+                    >
+                      <div>
+                        <div className="font-medium">{member.full_name || member.email}</div>
+                        <div className="text-xs text-muted-foreground">{member.email}</div>
+                      </div>
+                      {canEditRow ? (
+                        <>
+                          <Select
+                            value={member.role}
+                            onValueChange={(v) =>
+                              memberMutation.mutate({
+                                membershipId: member.id,
+                                role: v as AccountRole,
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {visibleRoleOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            value={member.status === "pending" ? "active" : member.status}
+                            onValueChange={(v) =>
+                              memberMutation.mutate({
+                                membershipId: member.id,
+                                status: v as MemberStatus,
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {memberStatusOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-sm text-muted-foreground">
+                            {roleLabel(member.role)}
+                          </div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            {member.status}
+                          </div>
+                        </>
+                      )}
                     </div>
-                    {canEditRow ? (
-                      <>
-                        <Select
-                          value={member.role}
-                          onValueChange={(v) =>
-                            memberMutation.mutate({
-                              membershipId: member.id,
-                              role: v as AccountRole,
-                            })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {visibleRoleOptions.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={member.status === "pending" ? "active" : member.status}
-                          onValueChange={(v) =>
-                            memberMutation.mutate({
-                              membershipId: member.id,
-                              status: v as MemberStatus,
-                            })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {memberStatusOptions.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </>
-                    ) : (
-                      <>
-                        <div className="text-sm text-muted-foreground">
-                          {roleLabel(member.role)}
-                        </div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                          {member.status}
-                        </div>
-                      </>
-                    )}
-                  </div>
                   );
                 })
               )}
