@@ -154,9 +154,34 @@ function AuthCallbackPage() {
 
   const originalUrlRef = useRef<URL | null>(null);
   const inviteIdRef = useRef<string | null>(null);
+  const clientAccessIdRef = useRef<string | null>(null);
   const consumptionInFlightRef = useRef(false);
   const consumedRef = useRef(false);
   const mountedRef = useRef(false);
+
+  const clearCaptured = useCallback(() => {
+    originalUrlRef.current = null;
+    inviteIdRef.current = null;
+    clientAccessIdRef.current = null;
+  }, []);
+
+  const failToRecovery = useCallback(async (reason: string) => {
+    // Any failure past this point MUST NOT leave a stale prior session
+    // masquerading as success. Sign out locally first, then show the
+    // stable recovery UI. If sign-out itself throws we still surface
+    // recovery — we never fall through to internal chrome.
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      /* recovery is authoritative */
+    }
+    if (!mountedRef.current) return;
+    consumedRef.current = true;
+    clearCaptured();
+    setConfirmationRequired(false);
+    setShowRecovery(true);
+    setMessage(reason);
+  }, [clearCaptured]);
 
   const finishSignIn = useCallback(
     async (allowTokenConsumption: boolean) => {
@@ -183,98 +208,57 @@ function AuthCallbackPage() {
       setExchangeInFlight(true);
 
       try {
+        // establishSessionFromUrl throws on any exchange/verify
+        // failure. We MUST NOT catch that and fall back to a prior
+        // session — the user clicked a bad/used link and any old
+        // session cached in localStorage is unrelated. A rescue would
+        // silently authorize the wrong identity.
         const sessionFromUrl = await establishSessionFromUrl(url);
-        const finalize = async (
-          session: { user: { id: string; email?: string | null } },
-        ) => {
-          // Exact-invite finalization is atomic with sign-in: if the
-          // invite RPC rejects (revoked / expired / different email /
-          // mismatched caller) we must NOT navigate into internal
-          // chrome. Fail closed to the recovery UI.
-          if (inviteIdRef.current) {
-            const res = await finalizeExactInvite(inviteIdRef.current);
-            if (!res.ok) {
-              consumedRef.current = true;
-              originalUrlRef.current = null;
-              inviteIdRef.current = null;
-              setConfirmationRequired(false);
-              setShowRecovery(true);
-              setMessage(res.reason);
-              return;
-            }
-          }
-          consumedRef.current = true;
-          originalUrlRef.current = null;
-          inviteIdRef.current = null;
-          void notifyLogin(session);
-          navigate({ to: next as never, replace: true });
-        };
-
-        if (sessionFromUrl) {
-          await finalize(sessionFromUrl);
+        if (!sessionFromUrl) {
+          await failToRecovery(
+            "No active session was found. Request a fresh magic link and open it once.",
+          );
           return;
         }
 
-        const started = Date.now();
-        while (mountedRef.current && Date.now() - started < 3000) {
-          const { data, error } = await supabase.auth.getSession();
-          if (error) throw error;
-          if (data.session) {
-            await finalize(data.session);
+        // Exact-invite finalization is atomic with sign-in: if the
+        // invite RPC rejects (revoked / expired / different email /
+        // mismatched caller) we sign out and fail closed to recovery.
+        if (inviteIdRef.current) {
+          const res = await finalizeExactInvite(inviteIdRef.current);
+          if (!res.ok) {
+            await failToRecovery(res.reason);
             return;
           }
-          await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
-        if (mountedRef.current) {
-          consumedRef.current = true;
-          originalUrlRef.current = null;
-          inviteIdRef.current = null;
-          setConfirmationRequired(false);
-          setShowRecovery(true);
-          setMessage("No active session was found. Request a fresh magic link and open it once.");
+        // Exact client-access finalization: identical guarantees for
+        // /n/:projectId path. On success, route to the exact project.
+        let clientTarget: string | null = null;
+        if (clientAccessIdRef.current) {
+          const res = await finalizeExactClientAccess(clientAccessIdRef.current);
+          if (!res.ok) {
+            await failToRecovery(res.reason);
+            return;
+          }
+          clientTarget = `/n/${res.projectId}`;
         }
+
+        consumedRef.current = true;
+        clearCaptured();
+        void notifyLogin(sessionFromUrl);
+        navigate({ to: (clientTarget ?? next) as never, replace: true });
       } catch (err) {
         console.error(err);
-        const { data } = await supabase.auth
-          .getSession()
-          .catch(() => ({ data: { session: null } }));
-        if (data.session && mountedRef.current) {
-          // Even on establish-failure, if a session exists we still
-          // must finalize the exact invite before navigating.
-          if (inviteIdRef.current) {
-            const res = await finalizeExactInvite(inviteIdRef.current);
-            if (!res.ok) {
-              consumedRef.current = true;
-              originalUrlRef.current = null;
-              inviteIdRef.current = null;
-              setConfirmationRequired(false);
-              setShowRecovery(true);
-              setMessage(res.reason);
-              return;
-            }
-          }
-          consumedRef.current = true;
-          originalUrlRef.current = null;
-          inviteIdRef.current = null;
-          void notifyLogin(data.session);
-          navigate({ to: next as never, replace: true });
-          return;
-        }
-        if (mountedRef.current) {
-          consumedRef.current = true;
-          originalUrlRef.current = null;
-          inviteIdRef.current = null;
-          setConfirmationRequired(false);
-          setShowRecovery(true);
-          setMessage(callbackFailureMessage(err));
-        }
+        // Fail closed. No getSession() rescue: a stale prior session
+        // must NEVER convert a bad/used link into a successful sign-in.
+        await failToRecovery(callbackFailureMessage(err));
       } finally {
         consumptionInFlightRef.current = false;
         if (mountedRef.current) setExchangeInFlight(false);
       }
     },
-    [navigate],
+    [navigate, failToRecovery, clearCaptured],
   );
 
   useEffect(() => {
@@ -282,9 +266,11 @@ function AuthCallbackPage() {
     if (!originalUrlRef.current && !consumedRef.current) {
       const captured = new URL(window.location.href);
       originalUrlRef.current = captured;
-      // Capture exact invite id BEFORE scrub so callback finalization
-      // can run against the invite the user actually clicked.
+      // Capture exact invite id AND client-access id BEFORE scrub so
+      // callback finalization can run against the exact resource the
+      // user clicked.
       inviteIdRef.current = readInviteId(captured);
+      clientAccessIdRef.current = readClientAccessId(captured);
       setNextPath(safeAuthNext(captured));
       try {
         const scrubbed = scrubbedCallbackUrl(window.location.href);
