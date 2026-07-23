@@ -555,7 +555,7 @@ export async function handleMagicLinkRequest(args: {
       if (inviteId || parsed.data.context === "client_portal") {
         const url = new URL(redirectTo);
         if (inviteId) url.searchParams.set("invite_id", inviteId);
-        if (parsed.data.context === "client_portal") {
+        if (parsed.data.context === "client_portal" && parsed.data.clientAccessId) {
           url.searchParams.set("client_access_id", parsed.data.clientAccessId);
         }
         redirectTo = url.toString();
