@@ -740,7 +740,7 @@ await expectContains(
     // P0 sign-in correction: navigate to the resolved exact
     // destination (invite / client-portal / login) so users always
     // land on their exact resource, never a stale default.
-    /navigate\(\{ to: destination as never, replace: true \}\)/,
+    /await navigate\(\{ to: destination as never, replace: true \}\)/,
     // Fail-closed on any callback failure: local signOut then
     // recovery UI, no getSession() rescue that could keep a stale
     // session alive.
