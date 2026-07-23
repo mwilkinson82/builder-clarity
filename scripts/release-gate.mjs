@@ -484,6 +484,9 @@ try {
   const routeManifestBeforeBuild = routeManifestSnapshot();
   completed.push(run("Production build", npm, ["run", "build"]));
   proveGeneratedSourcesCurrent(routeManifestBeforeBuild);
+  completed.push(
+    run("Built Daily WIP deployment coherence", npm, ["run", "verify:daily-wip:build"]),
+  );
   completed.push(run("Phase 0 contracts", npm, ["run", "smoke:phase0"]));
   completed.push(run("Complete Vitest regression suite", npm, ["run", "test:unit"]));
 
@@ -511,6 +514,15 @@ try {
 
   if (profile === "live") {
     await proveLovablePublication();
+    completed.push(
+      run("Published Daily WIP deployment coherence", npm, ["run", "verify:daily-wip:live"], {
+        env: {
+          OVERWATCH_DEPLOY_BASE_URL:
+            process.env.OVERWATCH_CUSTOM_DOMAIN ?? "https://overwatch.alpcontractorcircle.com",
+          OVERWATCH_EXPECTED_COMMIT: currentGitCommit(),
+        },
+      }),
+    );
     completed.push(
       run("Published custom-domain Phase 0", npm, ["run", "smoke:phase0:live"], {
         env: {
