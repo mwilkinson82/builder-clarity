@@ -20,7 +20,12 @@
 //     organization. All four are AND-ed. Any failure returns a safe
 //     JSON error with ZERO side effects. Provisioning uses
 //     generateLink with type:"invite" as the auth-user creation
-//     boundary — no separate `createUser` call.
+//     boundary — no separate `createUser` call. On the documented
+//     duplicate-user code race (`email_exists` / `user_already_exists`)
+//     the handler re-resolves the exact user via exhaustive paginated
+//     case-insensitive lookup and retries as type:"magiclink"; if the
+//     user cannot be re-resolved, the request aborts (no side effects
+//     past the pending log row, which is marked failed).
 //
 //   * `client_portal` (authenticated). REQUIRES clientAccessId, a
 //     valid Bearer, an exact `project_client_access` row that
@@ -28,8 +33,10 @@
 //     {'active','pending'} — a `revoked` row returns 409 with zero
 //     side effects, AND (c) the caller currently holds
 //     `client_portal.manage` on the access row's project organization.
-//     Provisioning uses generateLink with type:"invite" as the
-//     auth-user creation boundary.
+//     Client portal is NEVER a user-creation boundary — the handler
+//     first re-resolves the exact existing auth user; if none exists
+//     it returns 409 with no side effects. Provisioning then uses
+//     generateLink with type:"magiclink".
 //
 //   * Every Supabase adapter that returns `.error` MUST throw at the
 //     adapter layer — the handler treats absence of error as truth and
