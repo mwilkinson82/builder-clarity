@@ -304,14 +304,8 @@ function usageStatus(used: number, limit: number): UsageStatus {
   };
 }
 
-type ConsoleSection =
-  | "people"
-  | "clients"
-  | "plan"
-  | "paid"
-  | "assignments"
-  | "company"
-  | "profile";
+type ConsoleSection = "people" | "clients" | "plan" | "paid" | "assignments" | "company" | "profile";
+
 
 const CONSOLE_SECTIONS = new Set<ConsoleSection>([
   "people",
