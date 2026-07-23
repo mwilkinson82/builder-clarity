@@ -532,6 +532,7 @@ export async function handleMagicLinkRequest(args: {
   const idempotencyKey = `auth-magic-link:${dedupeKey}:${messageId}`;
 
   // ---------------- Provisioning + send (post-authorization) ----------------
+  let failureRowRecorded = false;
   try {
     const recentSince = new Date(deps.now() - RECENT_SEND_WINDOW_MS).toISOString();
     const recentSend = await deps.findRecentSend({
@@ -648,6 +649,7 @@ export async function handleMagicLinkRequest(args: {
           sendMessage.slice(0, 1000),
           failureMeta,
         );
+        failureRowRecorded = true;
       } catch (updateErr) {
         deps.logError?.("magic-link failure log update failed", {
           recipient_redacted: redactEmail(email),
@@ -689,22 +691,23 @@ export async function handleMagicLinkRequest(args: {
     // If insertEmailSendLog never ran (early throw before pending
     // insert), we still want an audit trail for failure — but only
     // when we're past authorization. The updateEmailSendLogFailed
-    // path in sendEmail already handled the pending-row case.
-    // For "pre-insert" failures (generateLink error), record a
-    // standalone failed row that carries the same audit + dedupe key.
-    try {
-      const failureMeta: Record<string, unknown> = { ...audit, dedupe_key: dedupeKey };
-      if (code) failureMeta.error_code = code;
-      await deps.insertEmailSendLog({
-        message_id: deps.randomUUID(),
-        template_name: label,
-        recipient_email: email,
-        status: "failed",
-        error_message: message.slice(0, 1000),
-        metadata: failureMeta,
-      });
-    } catch {
-      // Never mask the original failure.
+    // path in sendEmail already handled the pending-row case; skip
+    // when it did to avoid a duplicate failure row.
+    if (!failureRowRecorded) {
+      try {
+        const failureMeta: Record<string, unknown> = { ...audit, dedupe_key: dedupeKey };
+        if (code) failureMeta.error_code = code;
+        await deps.insertEmailSendLog({
+          message_id: deps.randomUUID(),
+          template_name: label,
+          recipient_email: email,
+          status: "failed",
+          error_message: message.slice(0, 1000),
+          metadata: failureMeta,
+        });
+      } catch {
+        // Never mask the original failure.
+      }
     }
     // Never leak provider message/code to the client — the audit
     // trail carries the provider detail; the response is generic.
