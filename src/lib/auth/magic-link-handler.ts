@@ -587,20 +587,56 @@ export async function handleMagicLinkRequest(args: {
       // redirectTo already validated URL by zod; ignore if malformed
     }
 
-    const linkResult = await deps.generateMagicLink({
+    let linkResult = await deps.generateMagicLink({
       email,
       redirectTo,
       kind: linkKind,
     });
     if (linkResult.error) {
       const code = linkResult.error.code ?? "";
-      // For invite/client_portal, generateLink type:"invite" is the
-      // auth-user creation boundary. Documented duplicate codes are
-      // benign — Supabase found the user already exists and returned
-      // that instead of creating. Continue only when we ALSO got a
-      // usable link back (Supabase returns a link on duplicate too).
       const isDup = DUPLICATE_USER_CODES.has(code);
-      if (!isDup) {
+      // Documented duplicate-user race: generateLink type:"invite"
+      // returned a duplicate code because the user already exists.
+      // Do NOT trust any link the provider may have returned in that
+      // response (creation was rejected). Re-resolve the exact user by
+      // exhaustive paginated case-insensitive lookup and retry with
+      // type:"magiclink". If the user cannot be re-resolved, or if the
+      // retry does not yield a usable token+userId, abort.
+      if (isDup && linkKind === "invite") {
+        let raced: { id: string } | null = null;
+        try {
+          raced = await deps.lookupExistingAuthUser(email);
+        } catch (lookupErr) {
+          const err = new Error(
+            lookupErr instanceof Error
+              ? lookupErr.message
+              : "duplicate-race lookup failed",
+          );
+          (err as Error & { code?: string }).code = "duplicate_race_lookup_failed";
+          throw err;
+        }
+        if (!raced) {
+          const err = new Error(
+            "Provider reported duplicate user but exact lookup found none",
+          );
+          (err as Error & { code?: string }).code = "duplicate_race_unresolved";
+          throw err;
+        }
+        linkResult = await deps.generateMagicLink({
+          email,
+          redirectTo,
+          kind: "magiclink",
+        });
+        if (linkResult.error) {
+          const retryCode = linkResult.error.code ?? "";
+          const err = new Error(
+            linkResult.error.message ?? "duplicate-race magiclink retry failed",
+          );
+          (err as Error & { code?: string }).code =
+            retryCode || "duplicate_race_retry_failed";
+          throw err;
+        }
+      } else if (!isDup) {
         const err = new Error(linkResult.error.message ?? "generateLink failed");
         (err as Error & { code?: string }).code = code || undefined;
         throw err;
