@@ -1047,6 +1047,33 @@ function TeamPage() {
   // on every client-access mutation (crm.manage only reads client data), so
   // the Clients controls follow the same flag.
   const canManageClients = Boolean(team?.canManageClientPortal || team?.isSuperAdmin);
+  // P0 team-role containment: only current Owners or Overwatch super
+  // admins may pick "Owner" as an invite/preset choice. Non-owner team
+  // managers see a role list without "Owner", and capabilities they don't
+  // hold themselves are locked in the pickers below (server re-checks).
+  const canAssignOwner = Boolean(team?.isSuperAdmin) || team?.currentUserRole === "owner";
+  const visibleRoleOptions = canAssignOwner
+    ? roleOptions
+    : roleOptions.filter((option) => option.value !== "owner");
+  const managerCapabilityLocks: Partial<Record<CapabilityKey, string>> = canAssignOwner
+    ? {}
+    : Object.fromEntries(
+        (Object.keys((team?.currentUserCapabilities ?? {}) as CapabilitySet) as CapabilityKey[])
+          .concat(
+            // Include every capability the caller does NOT hold, marked
+            // locked with a plain-language reason. Using ALL_CAPABILITY_KEYS
+            // avoids listing them here.
+            [] as CapabilityKey[],
+          ) && [],
+      );
+  // Actual lock map: every capability the caller does not currently hold.
+  const ceilingLocks: Partial<Record<CapabilityKey, string>> = canAssignOwner
+    ? {}
+    : Object.fromEntries(
+        ALL_CAPABILITY_KEYS.filter(
+          (key) => (team?.currentUserCapabilities as CapabilitySet | undefined)?.[key] !== true,
+        ).map((key) => [key, "You don't hold this capability yourself."]),
+      );
   // Phase 3: the commercial block (plan limits, subscription, Stripe state)
   // is only in the payload for settings/billing holders — everyone else gets
   // zero values from the projection, which must read as "restricted", never
