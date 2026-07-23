@@ -161,6 +161,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
         email: access.email,
         next: buildClientPath(projectId),
         context: "client_portal",
+        clientAccessId: access.id,
       });
       await updateAccess({
         data: {

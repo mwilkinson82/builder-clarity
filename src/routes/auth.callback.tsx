@@ -49,6 +49,15 @@ function callbackFailureMessage(err: unknown) {
   return message;
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readInviteId(url: URL): string | null {
+  const raw = url.searchParams.get("invite_id");
+  if (!raw) return null;
+  return UUID_RE.test(raw) ? raw : null;
+}
+
 async function establishSessionFromUrl(url: URL) {
   const code = url.searchParams.get("code");
   if (code) {
@@ -83,6 +92,28 @@ async function establishSessionFromUrl(url: URL) {
   return data.session ?? null;
 }
 
+/**
+ * After verifyOtp succeeds, finalize the EXACT invite the user
+ * clicked. Fail closed to recovery if the RPC rejects — do not
+ * navigate into internal chrome with a stale default.
+ */
+async function finalizeExactInvite(inviteId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  // Cast: finalize_invite_acceptance is created by
+  // supabase/migrations/20260724000000_account_provisioning_history_containment.sql
+  // which is intentionally UNAPPLIED until the maintenance window,
+  // so the generated types file does not yet know the RPC.
+  const rpc = supabase.rpc as unknown as (
+    fn: "finalize_invite_acceptance",
+    params: { p_invite_id: string },
+  ) => Promise<{ data: string | null; error: { message: string } | null }>;
+  const { data, error } = await rpc("finalize_invite_acceptance", {
+    p_invite_id: inviteId,
+  });
+  if (error) return { ok: false, reason: error.message };
+  if (!data) return { ok: false, reason: "This invitation is no longer valid for your account." };
+  return { ok: true };
+}
+
 function AuthCallbackPage() {
   const navigate = useNavigate();
   const [message, setMessage] = useState("Completing sign-in...");
@@ -91,22 +122,10 @@ function AuthCallbackPage() {
   const [confirmationRequired, setConfirmationRequired] = useState(false);
   const [exchangeInFlight, setExchangeInFlight] = useState(false);
 
-  // Original callback URL (with token_hash / code / hash tokens) is captured
-  // exactly once in memory and NEVER re-read from window.location, which is
-  // scrubbed immediately below. Cleared after success or definitive failure.
   const originalUrlRef = useRef<URL | null>(null);
-  // Synchronous single-flight / credential-consumption guard. Set BEFORE any
-  // await that consumes the one-time token. A second call while consumption
-  // is in flight — from React <StrictMode> double-invoked effects, rapid
-  // Continue clicks, or any parallel invocation — is a no-op. Once the
-  // credential has been consumed (success or definitive failure), the guard
-  // remains latched so the token can never be replayed.
+  const inviteIdRef = useRef<string | null>(null);
   const consumptionInFlightRef = useRef(false);
   const consumedRef = useRef(false);
-  // React StrictMode intentionally runs an effect setup/cleanup/setup cycle.
-  // The first setup may own the single-flight exchange while the second setup
-  // remains mounted. Track component lifetime independently from either
-  // effect instance so that exchange result can still finish the visible UI.
   const mountedRef = useRef(false);
 
   const finishSignIn = useCallback(
@@ -129,25 +148,40 @@ function AuthCallbackPage() {
         return;
       }
 
-      // Synchronous single-flight: any second entry (StrictMode re-invoke,
-      // double click, race) short-circuits BEFORE hitting Supabase, so the
-      // one-time credential is consumed exactly once.
       if (consumedRef.current || consumptionInFlightRef.current) return;
       consumptionInFlightRef.current = true;
       setExchangeInFlight(true);
 
       try {
-        // NOTE: do NOT clear confirmationRequired here — keep the Continue
-        // button rendered but disabled while the exchange is in flight so
-        // rapid double-clicks hit both the synchronous ref guard AND a
-        // disabled DOM element. Confirmation state is cleared only when the
-        // flow transitions to recovery.
         const sessionFromUrl = await establishSessionFromUrl(url);
-        if (sessionFromUrl) {
+        const finalize = async (
+          session: { user: { id: string; email?: string | null } },
+        ) => {
+          // Exact-invite finalization is atomic with sign-in: if the
+          // invite RPC rejects (revoked / expired / different email /
+          // mismatched caller) we must NOT navigate into internal
+          // chrome. Fail closed to the recovery UI.
+          if (inviteIdRef.current) {
+            const res = await finalizeExactInvite(inviteIdRef.current);
+            if (!res.ok) {
+              consumedRef.current = true;
+              originalUrlRef.current = null;
+              inviteIdRef.current = null;
+              setConfirmationRequired(false);
+              setShowRecovery(true);
+              setMessage(res.reason);
+              return;
+            }
+          }
           consumedRef.current = true;
           originalUrlRef.current = null;
-          void notifyLogin(sessionFromUrl);
+          inviteIdRef.current = null;
+          void notifyLogin(session);
           navigate({ to: next as never, replace: true });
+        };
+
+        if (sessionFromUrl) {
+          await finalize(sessionFromUrl);
           return;
         }
 
@@ -156,10 +190,7 @@ function AuthCallbackPage() {
           const { data, error } = await supabase.auth.getSession();
           if (error) throw error;
           if (data.session) {
-            consumedRef.current = true;
-            originalUrlRef.current = null;
-            void notifyLogin(data.session);
-            navigate({ to: next as never, replace: true });
+            await finalize(data.session);
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 250));
@@ -168,6 +199,7 @@ function AuthCallbackPage() {
         if (mountedRef.current) {
           consumedRef.current = true;
           originalUrlRef.current = null;
+          inviteIdRef.current = null;
           setConfirmationRequired(false);
           setShowRecovery(true);
           setMessage("No active session was found. Request a fresh magic link and open it once.");
@@ -178,18 +210,31 @@ function AuthCallbackPage() {
           .getSession()
           .catch(() => ({ data: { session: null } }));
         if (data.session && mountedRef.current) {
+          // Even on establish-failure, if a session exists we still
+          // must finalize the exact invite before navigating.
+          if (inviteIdRef.current) {
+            const res = await finalizeExactInvite(inviteIdRef.current);
+            if (!res.ok) {
+              consumedRef.current = true;
+              originalUrlRef.current = null;
+              inviteIdRef.current = null;
+              setConfirmationRequired(false);
+              setShowRecovery(true);
+              setMessage(res.reason);
+              return;
+            }
+          }
           consumedRef.current = true;
           originalUrlRef.current = null;
+          inviteIdRef.current = null;
           void notifyLogin(data.session);
           navigate({ to: next as never, replace: true });
           return;
         }
         if (mountedRef.current) {
-          // Definitive exchange failure: latch consumed so the token cannot
-          // be retried automatically, transition to recovery UI. Fresh link
-          // required — no reconstruction of a URL carrying secrets.
           consumedRef.current = true;
           originalUrlRef.current = null;
+          inviteIdRef.current = null;
           setConfirmationRequired(false);
           setShowRecovery(true);
           setMessage(callbackFailureMessage(err));
@@ -204,12 +249,12 @@ function AuthCallbackPage() {
 
   useEffect(() => {
     mountedRef.current = true;
-    // Capture the full original URL (credentials + hash) in a ref, then
-    // immediately scrub the address bar / history so no secret is visible
-    // during the human confirmation screen or the network exchange.
     if (!originalUrlRef.current && !consumedRef.current) {
       const captured = new URL(window.location.href);
       originalUrlRef.current = captured;
+      // Capture exact invite id BEFORE scrub so callback finalization
+      // can run against the invite the user actually clicked.
+      inviteIdRef.current = readInviteId(captured);
       setNextPath(safeAuthNext(captured));
       try {
         const scrubbed = scrubbedCallbackUrl(window.location.href);
@@ -240,8 +285,6 @@ function AuthCallbackPage() {
             disabled={exchangeInFlight}
             aria-busy={exchangeInFlight}
             onClick={() => {
-              // Synchronous guard mirrors the one in finishSignIn so rapid
-              // double-clicks before the first await schedules a no-op.
               if (consumedRef.current || consumptionInFlightRef.current) return;
               setMessage("Completing sign-in...");
               void finishSignIn(true);

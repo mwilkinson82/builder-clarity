@@ -1,47 +1,64 @@
-// P0 invite-context containment (finding 1) — injectable magic-link handler.
+// P0 sign-in containment — injectable magic-link handler.
 //
-// The TanStack file-route wrapper (src/routes/api/auth/magic-link.ts) only
-// binds the transport (Request/Response, env, Supabase admin client,
-// Lovable email sender). All authorization + provisioning logic lives here
-// behind a dependency boundary so behavioral Vitest tests invoke the same
-// function with spies/mocks and assert exact call counts / call order.
+// Contract summary (behavioral tests pin every branch):
 //
-// Contract invariants proven by tests:
+//   * `login` (public). MUST NOT provision an unknown auth user.
+//     The handler first calls `lookupExistingAuthUser`. If the email
+//     is unknown, the handler returns the generic success response
+//     with ZERO side effects: no createUser, no generateLink, no
+//     insertEmailSendLog, no sendEmail, no audit rows, no leaked
+//     information about existence.
+//     For an existing user, generateLink runs with type:"magiclink"
+//     (no user creation because the user already exists).
 //
-//   * login and client_portal never reach createAuthUser / generateLink /
-//     insertEmailSendLog / sendEmail through this path unless the redirect
-//     is allowlisted; they never accept inviteId (rejected at both the
-//     Zod schema layer and the discriminated-union TS type).
+//   * `company_invite` / `portfolio_invite` (authenticated).
+//     REQUIRES inviteId, a valid Bearer, an exact organization_invites
+//     row that (a) matches the requested normalized email, (b) is
+//     `pending` with `expires_at > now()` strictly, (c) was originally
+//     issued by the caller (`invited_by === auth.uid()`), AND (d) the
+//     caller currently holds `company.manage_team` on the invite's
+//     organization. All four are AND-ed. Any failure returns a safe
+//     JSON error with ZERO side effects. Provisioning uses
+//     generateLink with type:"invite" as the auth-user creation
+//     boundary — no separate `createUser` call.
 //
-//   * company_invite and portfolio_invite MUST prove, BEFORE any side
-//     effect (recent-send lookup INCLUDED):
-//       - inviteId is present and passes the runtime Zod schema
-//         (non-invite contexts with an inviteId are rejected 400);
-//       - the caller has a valid Bearer token;
-//       - the invite row exists;
-//       - the invite email matches the requested email (normalized);
-//       - the invite is pending and not expired (expiry == now() counts
-//         as expired — strictly > now());
-//       - BOTH invited_by === caller AND the caller currently holds
-//         company.manage_team for the invite's organization. A demoted
-//         or disabled original inviter therefore fails; a current
-//         manager must reissue the invite so invited_by is refreshed
-//         before it can be re-sent.
+//   * `client_portal` (authenticated). REQUIRES clientAccessId, a
+//     valid Bearer, an exact `project_client_access` row that
+//     (a) matches the requested normalized email, (b) has status in
+//     {'active','pending'} — a `revoked` row returns 409 with zero
+//     side effects, AND (c) the caller currently holds
+//     `client_portal.manage` on the access row's project organization.
+//     Provisioning uses generateLink with type:"invite" as the
+//     auth-user creation boundary.
 //
-//     Any failure returns a safe JSON error and performs ZERO admin
-//     calls and ZERO email_send_log inserts. The response and every
-//     log line REDACT the bearer token.
+//   * Every Supabase adapter that returns `.error` MUST throw at the
+//     adapter layer — the handler treats absence of error as truth and
+//     will not silently continue on a broken persistence layer.
 //
-//   * createAuthUser is invoked for invite contexts only. Only the
-//     documented Supabase duplicate codes ("email_exists",
-//     "user_already_exists") are treated as nonfatal. Any other error
-//     stops the flow before generateLink / sendEmail with the original
-//     error code preserved in logs and email_send_log metadata.
+//   * generateLink MUST return a nonempty `hashedToken` AND a nonempty
+//     `userId`. Missing either fails BEFORE insertEmailSendLog /
+//     sendEmail, and BEFORE audit.
 //
-//   * Validated invite audit metadata (invite_id, organization_id,
-//     inviter ID) is persisted on both success and failure email_send_log
-//     rows. Bearer tokens never appear in metadata, response body, or
-//     logs.
+//   * `sendLovableEmail` returning `{success:false}` MUST be thrown at
+//     the adapter layer.
+//
+//   * Dedupe identity = (normalizedEmail, context, inviteId|clientAccessId|"login").
+//     A different org invite / different client access can never be
+//     suppressed by a recent send for another row.
+//
+//   * Failure path: the ORIGINAL pending email_send_log row (created
+//     before the send attempt) is UPDATEd to `failed`; the handler
+//     never inserts a second row that could leave the retry-suppressor
+//     pending.
+//
+//   * Audit metadata carries safe provenance only (context, invite_id,
+//     organization_id, inviter_id, client_access_id, project_id).
+//     Bearer tokens, provider messages, and provider codes are NEVER
+//     returned to the client — provider codes go to logs/audit only.
+//
+//   * Redirect and hashed-token confirmation URL construction is
+//     unchanged; the hashed token is scanner-safe and requires an
+//     explicit human confirmation click.
 
 import { z } from "zod";
 import { buildMagicLinkConfirmationUrl } from "@/lib/auth/magic-link-url";
@@ -56,15 +73,9 @@ export const FROM_DOMAIN = "overwatch.alpcontractorcircle.com";
 export const RECENT_SEND_WINDOW_MS = 30_000;
 
 /**
- * Documented Supabase auth-admin error codes that mean "user already
- * exists" and are safe to swallow when provisioning an invitee.
- *
- * Ref: https://supabase.com/docs/reference/javascript/auth-admin-createuser
- *      https://supabase.com/docs/guides/auth/debugging/error-codes
- *
- * Message-based matching (/already|registered|exist/i) is explicitly
- * REJECTED because it false-positives on unrelated failures like
- * "database instance does not exist" or "sms provider not registered".
+ * Documented Supabase auth-admin duplicate codes. Message-based
+ * matching is explicitly rejected — it false-positives on
+ * "database instance does not exist" and similar unrelated errors.
  */
 export const DUPLICATE_USER_CODES = new Set(["email_exists", "user_already_exists"]);
 
@@ -77,9 +88,11 @@ export const magicLinkInput = z
       .enum(["login", "company_invite", "portfolio_invite", "client_portal"])
       .optional(),
     inviteId: z.string().uuid().optional(),
+    clientAccessId: z.string().uuid().optional(),
   })
   .superRefine((val, ctx) => {
     const isInvite = val.context === "company_invite" || val.context === "portfolio_invite";
+    const isClient = val.context === "client_portal";
     if (!isInvite && val.inviteId !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -94,6 +107,20 @@ export const magicLinkInput = z
         message: "inviteId is required for invite contexts.",
       });
     }
+    if (!isClient && val.clientAccessId !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["clientAccessId"],
+        message: "clientAccessId is only valid for the client_portal context.",
+      });
+    }
+    if (isClient && !val.clientAccessId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["clientAccessId"],
+        message: "clientAccessId is required for the client_portal context.",
+      });
+    }
   });
 
 export type MagicLinkRequestBody = z.infer<typeof magicLinkInput>;
@@ -103,7 +130,7 @@ export type MagicLinkResult =
   | {
       ok: false;
       status: number;
-      body: { success: false; error: string; code?: string };
+      body: { success: false; error: string };
     };
 
 export type EmailSendLogRow = {
@@ -130,8 +157,6 @@ export type SendLovableEmailPayload = {
   unsubscribe_token: string;
 };
 
-export type AuthUserCreateError = { message?: string; code?: string } | null;
-
 export type MagicLinkDeps = {
   now: () => number;
   randomUUID: () => string;
@@ -147,10 +172,13 @@ export type MagicLinkDeps = {
     isProd: boolean;
   }) => ResolveRedirectResult;
 
+  // Auth
   getAuthUserFromBearer: (bearer: string) => Promise<{
     user: { id: string } | null;
     error: unknown;
   }>;
+
+  // Invite path
   fetchInviteById: (inviteId: string) => Promise<
     | {
         id: string;
@@ -168,22 +196,59 @@ export type MagicLinkDeps = {
     organizationId: string;
   }) => Promise<boolean>;
 
-  findRecentSend: (
-    email: string,
-    label: string,
-    sinceIso: string,
-  ) => Promise<{ id: string; status: string } | null>;
+  // Client portal path
+  fetchClientAccessById: (accessId: string) => Promise<
+    | {
+        id: string;
+        project_id: string;
+        organization_id: string;
+        email: string;
+        status: string;
+      }
+    | null
+  >;
+  callerHasClientAccessManagement: (args: {
+    bearer: string;
+    organizationId: string;
+  }) => Promise<boolean>;
 
-  createAuthUser: (email: string) => Promise<{ error?: AuthUserCreateError }>;
+  // Login path (fail-closed existing-user lookup)
+  lookupExistingAuthUser: (email: string) => Promise<{ id: string } | null>;
+
+  // Dedupe includes context + exact target id.
+  findRecentSend: (args: {
+    email: string;
+    label: string;
+    dedupeKey: string;
+    sinceIso: string;
+  }) => Promise<{ id: string; status: string } | null>;
+
+  // generateLink is the sole auth-user creation boundary for invite /
+  // client_portal (type:"invite"). For login the caller has already
+  // been proven to exist, so type:"magiclink" is safe.
   generateMagicLink: (args: {
     email: string;
     redirectTo: string;
-  }) => Promise<{ hashedToken: string | null; error?: { message?: string } | null }>;
+    kind: "invite" | "magiclink";
+  }) => Promise<{
+    hashedToken: string | null;
+    userId: string | null;
+    error?: { message?: string; code?: string } | null;
+  }>;
 
   insertEmailSendLog: (row: EmailSendLogRow) => Promise<void>;
   updateEmailSendLogStatus: (
     messageId: string,
-    status: "sent" | "failed",
+    status: "sent",
+    metadata: Record<string, unknown>,
+  ) => Promise<void>;
+  // Failure path updates the ORIGINAL pending row (matched by
+  // messageId) to `failed`, folding error_message + error_code into
+  // metadata so no second row is inserted.
+  updateEmailSendLogFailed: (
+    messageId: string,
+    errorMessage: string,
+    metadata: Record<string, unknown>,
   ) => Promise<void>;
   sendEmail: (payload: SendLovableEmailPayload) => Promise<void>;
   logInfo?: (msg: string, meta?: Record<string, unknown>) => void;
@@ -191,6 +256,7 @@ export type MagicLinkDeps = {
 };
 
 const INVITE_CONTEXTS = new Set(["company_invite", "portfolio_invite"] as const);
+const REVOKED_STATUSES = new Set(["revoked", "disabled", "expired"]);
 
 export function redactEmail(email: string) {
   const [local, domain] = email.split("@");
@@ -202,13 +268,8 @@ export function normalizeEmail(input: string) {
   return input.trim().toLowerCase();
 }
 
-function jsonError(message: string, status = 400, code?: string): MagicLinkResult {
-  const body: { success: false; error: string; code?: string } = {
-    success: false,
-    error: message,
-  };
-  if (code) body.code = code;
-  return { ok: false, status, body };
+function jsonError(message: string, status = 400): MagicLinkResult {
+  return { ok: false, status, body: { success: false, error: message } };
 }
 
 function ok(body: { success: true; recentlySent?: boolean }, status = 200): MagicLinkResult {
@@ -231,11 +292,9 @@ function loginText(actionLink: string, context: string | undefined) {
   return `Overwatch\n\n${intro}\n\n${actionLink}\n\nThis link can only be used once. If you did not request it, you can ignore this email.`;
 }
 
-type InviteAuditMeta = {
-  invite_id: string;
-  organization_id: string;
-  inviter_id: string | null;
-};
+type Audit = Record<string, unknown>;
+
+const GENERIC_PROVISIONING_ERROR = "Could not send magic link.";
 
 export async function handleMagicLinkRequest(args: {
   requestUrl: string;
@@ -247,13 +306,10 @@ export async function handleMagicLinkRequest(args: {
 
   const parsed = magicLinkInput.safeParse(body);
   if (!parsed.success) {
-    // Explicit invite/id cross-field errors get their message returned;
-    // everything else returns the generic email hint (never echoes the
-    // input).
-    const inviteIssue = parsed.error.issues.find(
-      (i) => i.path[0] === "inviteId",
+    const idIssue = parsed.error.issues.find(
+      (i) => i.path[0] === "inviteId" || i.path[0] === "clientAccessId",
     );
-    if (inviteIssue) return jsonError(inviteIssue.message, 400);
+    if (idIssue) return jsonError(idIssue.message, 400);
     return jsonError("Enter a valid email address.");
   }
 
@@ -270,25 +326,24 @@ export async function handleMagicLinkRequest(args: {
     isProd: deps.isProd,
   });
   if (!resolved.ok) return jsonError(resolved.reason, 400);
-  const redirectTo = resolved.redirectTo;
+  let redirectTo = resolved.redirectTo;
 
-  const messageId = deps.randomUUID();
-  const label = "auth-magic-link";
-  const idempotencyKey = `auth-magic-link:${email}:${messageId}`;
   const contextValue = parsed.data.context ?? "login";
   const isInviteContext = INVITE_CONTEXTS.has(
     contextValue as "company_invite" | "portfolio_invite",
   );
+  const isClientPortal = contextValue === "client_portal";
 
-  let inviteAudit: InviteAuditMeta | null = null;
+  let audit: Audit = { context: contextValue, redirect_to: redirectTo, provider: "lovable-email" };
   let bearer: string | null = null;
+  let dedupeKey = `login:${email}`;
+  let linkKind: "invite" | "magiclink" = "magiclink";
 
-  // ---------------- Invite-context authorization gate ----------------
+  // ---------------- Invite gate ----------------
   if (isInviteContext) {
     if (!parsed.data.inviteId) {
       return jsonError("This invite request is missing its invite id.", 400);
     }
-
     if (!authorizationHeader?.startsWith("Bearer ")) {
       return jsonError("You must be signed in to send an invite.", 401);
     }
@@ -334,16 +389,10 @@ export async function handleMagicLinkRequest(args: {
       return jsonError("This invitation is no longer pending.", 409);
     }
     const expiresAt = inviteRow.expires_at ? Date.parse(inviteRow.expires_at) : NaN;
-    // Strictly > now(): an invite that expires at exactly now() is
-    // treated as expired.
     if (!Number.isFinite(expiresAt) || expiresAt <= deps.now()) {
       return jsonError("This invitation has expired.", 409);
     }
 
-    // P0 AND-gate: caller must BOTH be the original inviter AND
-    // currently hold company.manage_team for the invite's org. A
-    // demoted/disabled original inviter therefore cannot resend; a
-    // current manager must reissue so invited_by is refreshed.
     if (inviteRow.invited_by !== callerId) {
       return jsonError(
         "Only the original inviter can resend this invitation. A current company manager can reissue it.",
@@ -364,56 +413,188 @@ export async function handleMagicLinkRequest(args: {
       return jsonError("Invite authorization check failed.", 500);
     }
     if (!hasManageTeam) {
-      return jsonError(
-        "You no longer have permission to send this invitation.",
-        403,
-      );
+      return jsonError("You no longer have permission to send this invitation.", 403);
     }
 
-    inviteAudit = {
+    audit = {
+      ...audit,
       invite_id: inviteRow.id,
       organization_id: inviteRow.organization_id,
       inviter_id: inviteRow.invited_by,
     };
+    dedupeKey = `company_invite:${inviteRow.id}:${email}`;
+    linkKind = "invite";
   }
 
-  const baseMetadata = (): Record<string, unknown> => {
-    const meta: Record<string, unknown> = {
-      context: contextValue,
-      redirect_to: redirectTo,
-      provider: "lovable-email",
-    };
-    if (inviteAudit) {
-      meta.invite_id = inviteAudit.invite_id;
-      meta.organization_id = inviteAudit.organization_id;
-      meta.inviter_id = inviteAudit.inviter_id;
+  // ---------------- Client portal gate ----------------
+  if (isClientPortal) {
+    if (!parsed.data.clientAccessId) {
+      return jsonError("This client portal request is missing its access id.", 400);
     }
-    return meta;
-  };
+    if (!authorizationHeader?.startsWith("Bearer ")) {
+      return jsonError("You must be signed in to send a client portal link.", 401);
+    }
+    bearer = authorizationHeader.slice("Bearer ".length).trim();
+    if (!bearer) {
+      return jsonError("You must be signed in to send a client portal link.", 401);
+    }
 
-  // -------------- Provisioning + send (post-authorization) ------------
+    try {
+      const authResult = await deps.getAuthUserFromBearer(bearer);
+      if (authResult.error || !authResult.user) {
+        return jsonError("Your session expired. Sign in again.", 401);
+      }
+    } catch (error) {
+      deps.logError?.("magic-link auth verify failed", {
+        recipient_redacted: redactEmail(email),
+        error: error instanceof Error ? error.message : "auth failed",
+      });
+      return jsonError("Your session could not be verified.", 401);
+    }
+
+    let accessRow: Awaited<ReturnType<typeof deps.fetchClientAccessById>>;
+    try {
+      accessRow = await deps.fetchClientAccessById(parsed.data.clientAccessId);
+    } catch (error) {
+      deps.logError?.("magic-link client access lookup failed", {
+        recipient_redacted: redactEmail(email),
+        error: error instanceof Error ? error.message : "access lookup failed",
+      });
+      return jsonError("Client access validation failed.", 500);
+    }
+    if (!accessRow) return jsonError("That client access could not be found.", 409);
+    if (normalizeEmail(accessRow.email) !== email) {
+      return jsonError("This client access belongs to a different email address.", 409);
+    }
+    if (REVOKED_STATUSES.has(accessRow.status)) {
+      return jsonError("This client access is no longer active.", 409);
+    }
+
+    let hasClientMgmt: boolean;
+    try {
+      hasClientMgmt = await deps.callerHasClientAccessManagement({
+        bearer,
+        organizationId: accessRow.organization_id,
+      });
+    } catch (error) {
+      deps.logError?.("magic-link client capability lookup failed", {
+        recipient_redacted: redactEmail(email),
+        error: error instanceof Error ? error.message : "capability lookup failed",
+      });
+      return jsonError("Client access authorization check failed.", 500);
+    }
+    if (!hasClientMgmt) {
+      return jsonError(
+        "You no longer have permission to send this client portal link.",
+        403,
+      );
+    }
+
+    audit = {
+      ...audit,
+      client_access_id: accessRow.id,
+      project_id: accessRow.project_id,
+      organization_id: accessRow.organization_id,
+    };
+    dedupeKey = `client_portal:${accessRow.id}:${email}`;
+    linkKind = "invite";
+  }
+
+  // ---------------- Login: fail-closed existing-user lookup ----------------
+  // MUST run BEFORE any generateLink/sendEmail/audit — generateLink
+  // with type:"magiclink" can create a new user via the auth-admin
+  // API, and an unknown email must never trigger provisioning or
+  // reveal existence via response text.
+  if (!isInviteContext && !isClientPortal) {
+    try {
+      const existing = await deps.lookupExistingAuthUser(email);
+      if (!existing) {
+        deps.logInfo?.("magic-link login for unknown email — generic OK, zero side effects", {
+          recipient_redacted: redactEmail(email),
+        });
+        return ok({ success: true });
+      }
+    } catch (error) {
+      // Fail closed. Existence lookup is a service-role admin call
+      // and MUST NOT allow a caller to trigger provisioning by
+      // knocking the lookup offline.
+      deps.logError?.("magic-link login lookup failed", {
+        recipient_redacted: redactEmail(email),
+        error: error instanceof Error ? error.message : "lookup failed",
+      });
+      return jsonError(GENERIC_PROVISIONING_ERROR, 503);
+    }
+    linkKind = "magiclink";
+  }
+
+  const messageId = deps.randomUUID();
+  const label = "auth-magic-link";
+  const idempotencyKey = `auth-magic-link:${dedupeKey}:${messageId}`;
+
+  // ---------------- Provisioning + send (post-authorization) ----------------
+  let failureRowRecorded = false;
   try {
     const recentSince = new Date(deps.now() - RECENT_SEND_WINDOW_MS).toISOString();
-    const recentSend = await deps.findRecentSend(email, label, recentSince);
+    const recentSend = await deps.findRecentSend({
+      email,
+      label,
+      dedupeKey,
+      sinceIso: recentSince,
+    });
     if (recentSend) return ok({ success: true, recentlySent: true });
 
-    if (isInviteContext) {
-      const { error: createError } = await deps.createAuthUser(email);
-      if (createError) {
-        const code = createError.code ?? "";
-        if (!DUPLICATE_USER_CODES.has(code)) {
-          const err = new Error(createError.message ?? "Could not create invited user.");
-          (err as Error & { code?: string }).code = code || undefined;
-          throw err;
+    // Carry the exact clicked invite/client-access id through the
+    // callback URL so the auth callback can call
+    // finalize_invite_acceptance with the invite the user actually
+    // clicked (not the oldest pending row for the same email).
+    try {
+      const inviteId =
+        parsed.data.context === "company_invite" ||
+        parsed.data.context === "portfolio_invite"
+          ? parsed.data.inviteId
+          : null;
+      if (inviteId || parsed.data.context === "client_portal") {
+        const url = new URL(redirectTo);
+        if (inviteId) url.searchParams.set("invite_id", inviteId);
+        if (parsed.data.context === "client_portal" && parsed.data.clientAccessId) {
+          url.searchParams.set("client_access_id", parsed.data.clientAccessId);
         }
+        redirectTo = url.toString();
       }
+    } catch {
+      // redirectTo already validated URL by zod; ignore if malformed
     }
 
-    const linkResult = await deps.generateMagicLink({ email, redirectTo });
-    if (linkResult.error) throw new Error(linkResult.error.message ?? "generateLink failed");
+    const linkResult = await deps.generateMagicLink({
+      email,
+      redirectTo,
+      kind: linkKind,
+    });
+    if (linkResult.error) {
+      const code = linkResult.error.code ?? "";
+      // For invite/client_portal, generateLink type:"invite" is the
+      // auth-user creation boundary. Documented duplicate codes are
+      // benign — Supabase found the user already exists and returned
+      // that instead of creating. Continue only when we ALSO got a
+      // usable link back (Supabase returns a link on duplicate too).
+      const isDup = DUPLICATE_USER_CODES.has(code);
+      if (!isDup) {
+        const err = new Error(linkResult.error.message ?? "generateLink failed");
+        (err as Error & { code?: string }).code = code || undefined;
+        throw err;
+      }
+    }
+    if (!linkResult.hashedToken || !linkResult.userId) {
+      const err = new Error(
+        "Provider did not return a usable magic-link token or user id",
+      );
+      (err as Error & { code?: string }).code = "provider_incomplete";
+      throw err;
+    }
+
     const confirmationLink = buildMagicLinkConfirmationUrl(
       redirectTo,
-      linkResult.hashedToken ?? "",
+      linkResult.hashedToken,
     );
 
     await deps.insertEmailSendLog({
@@ -421,34 +602,79 @@ export async function handleMagicLinkRequest(args: {
       template_name: label,
       recipient_email: email,
       status: "pending",
-      metadata: baseMetadata(),
+      metadata: {
+        ...audit,
+        dedupe_key: dedupeKey,
+        auth_user_id: linkResult.userId,
+      },
     });
 
-    await deps.sendEmail({
-      to: email,
-      from: `${SITE_NAME} <noreply@${FROM_DOMAIN}>`,
-      sender_domain: SENDER_DOMAIN,
-      subject: isInviteContext
-        ? "You've been invited to Overwatch"
-        : "Sign in to Overwatch",
-      html: loginHtml(confirmationLink, contextValue),
-      text: loginText(confirmationLink, contextValue),
-      purpose: "transactional",
-      label,
-      idempotency_key: idempotencyKey,
-      message_id: messageId,
-      unsubscribe_token: deps.randomUUID(),
+    try {
+      await deps.sendEmail({
+        to: email,
+        from: `${SITE_NAME} <noreply@${FROM_DOMAIN}>`,
+        sender_domain: SENDER_DOMAIN,
+        subject:
+          isInviteContext
+            ? "You've been invited to Overwatch"
+            : isClientPortal
+              ? "Open your Overwatch client portal"
+              : "Sign in to Overwatch",
+        html: loginHtml(confirmationLink, contextValue),
+        text: loginText(confirmationLink, contextValue),
+        purpose: "transactional",
+        label,
+        idempotency_key: idempotencyKey,
+        message_id: messageId,
+        unsubscribe_token: deps.randomUUID(),
+      });
+    } catch (sendErr) {
+      // Update the ORIGINAL pending row to failed; never insert a
+      // second row that would leave a retry-suppressor pending.
+      const sendMessage =
+        sendErr instanceof Error ? sendErr.message : "Email provider send failed";
+      const sendCode =
+        sendErr instanceof Error
+          ? ((sendErr as Error & { code?: string }).code ?? undefined)
+          : undefined;
+      const failureMeta: Record<string, unknown> = {
+        ...audit,
+        dedupe_key: dedupeKey,
+        auth_user_id: linkResult.userId,
+      };
+      if (sendCode) failureMeta.error_code = sendCode;
+      try {
+        await deps.updateEmailSendLogFailed(
+          messageId,
+          sendMessage.slice(0, 1000),
+          failureMeta,
+        );
+        failureRowRecorded = true;
+      } catch (updateErr) {
+        deps.logError?.("magic-link failure log update failed", {
+          recipient_redacted: redactEmail(email),
+          error: updateErr instanceof Error ? updateErr.message : "update failed",
+        });
+      }
+      throw sendErr;
+    }
+
+    await deps.updateEmailSendLogStatus(messageId, "sent", {
+      ...audit,
+      dedupe_key: dedupeKey,
     });
 
-    await deps.updateEmailSendLogStatus(messageId, "sent");
     deps.logInfo?.("Overwatch magic link sent", {
       recipient_redacted: redactEmail(email),
       context: contextValue,
-      ...(inviteAudit ? { invite_id: inviteAudit.invite_id } : {}),
+      ...(audit.invite_id ? { invite_id: audit.invite_id as string } : {}),
+      ...(audit.client_access_id
+        ? { client_access_id: audit.client_access_id as string }
+        : {}),
     });
     return ok({ success: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not send magic link.";
+    const message = error instanceof Error ? error.message : GENERIC_PROVISIONING_ERROR;
     const code =
       error instanceof Error
         ? ((error as Error & { code?: string }).code ?? undefined)
@@ -457,22 +683,34 @@ export async function handleMagicLinkRequest(args: {
       recipient_redacted: redactEmail(email),
       error: message,
       ...(code ? { code } : {}),
-      ...(inviteAudit ? { invite_id: inviteAudit.invite_id } : {}),
+      ...(audit.invite_id ? { invite_id: audit.invite_id as string } : {}),
+      ...(audit.client_access_id
+        ? { client_access_id: audit.client_access_id as string }
+        : {}),
     });
-    try {
-      const failureMeta = baseMetadata();
-      if (code) failureMeta.error_code = code;
-      await deps.insertEmailSendLog({
-        message_id: messageId,
-        template_name: label,
-        recipient_email: email,
-        status: "failed",
-        error_message: message.slice(0, 1000),
-        metadata: failureMeta,
-      });
-    } catch {
-      // Never mask original failure.
+    // If insertEmailSendLog never ran (early throw before pending
+    // insert), we still want an audit trail for failure — but only
+    // when we're past authorization. The updateEmailSendLogFailed
+    // path in sendEmail already handled the pending-row case; skip
+    // when it did to avoid a duplicate failure row.
+    if (!failureRowRecorded) {
+      try {
+        const failureMeta: Record<string, unknown> = { ...audit, dedupe_key: dedupeKey };
+        if (code) failureMeta.error_code = code;
+        await deps.insertEmailSendLog({
+          message_id: deps.randomUUID(),
+          template_name: label,
+          recipient_email: email,
+          status: "failed",
+          error_message: message.slice(0, 1000),
+          metadata: failureMeta,
+        });
+      } catch {
+        // Never mask the original failure.
+      }
     }
-    return jsonError(message, 500, code);
+    // Never leak provider message/code to the client — the audit
+    // trail carries the provider detail; the response is generic.
+    return jsonError(GENERIC_PROVISIONING_ERROR, 500);
   }
 }
