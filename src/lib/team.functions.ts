@@ -1492,6 +1492,36 @@ export const updateTeamMember = createServerFn({ method: "POST" })
     }
 
     const currentRole = str(membership.role, "member") as AccountRole;
+    const targetCurrentCaps = effectiveCapabilities({
+      role: currentRole,
+      capabilities: (membership as Record<string, unknown>).capabilities,
+    });
+    const nextCapsForGuard = data.capabilities
+      ? normalizeCapabilities(data.capabilities)
+      : data.role
+        ? { ...ROLE_PRESETS[data.role] }
+        : undefined;
+
+    // P0 team-role containment: gate promotion-to-Owner, self-elevation,
+    // target-exceeds-caller, and grants-above-caller-ceiling BEFORE the
+    // Owner-immutability and self-manage_team checks below, so the guard
+    // messages surface even when the same edit would also violate those
+    // downstream rules.
+    const authority = await loadCallerAuthority(context, organizationId);
+    assertCanAssignRole(authority, data.role);
+    const isSelf = membership.user_id === context.userId;
+    assertCannotSelfElevate(
+      authority,
+      isSelf,
+      data.role,
+      currentRole,
+      nextCapsForGuard,
+      targetCurrentCaps,
+    );
+    assertCanTargetMember(authority, targetCurrentCaps);
+    if (nextCapsForGuard) {
+      assertCanGrantCapabilities(authority, nextCapsForGuard, targetCurrentCaps);
+    }
 
     // Nobody edits an owner's access. Owners hold the full capability set by
     // definition; changing that means changing who the owner is, which is not
@@ -1502,20 +1532,11 @@ export const updateTeamMember = createServerFn({ method: "POST" })
 
     // Nobody removes their own team-management access — that path strands a
     // company with no one able to manage it from the screen they just used.
-    if (membership.user_id === context.userId) {
-      const currentCaps = effectiveCapabilities({
-        role: currentRole,
-        capabilities: (membership as Record<string, unknown>).capabilities,
-      });
-      const nextCaps = data.capabilities
-        ? normalizeCapabilities(data.capabilities)
-        : data.role
-          ? ROLE_PRESETS[data.role]
-          : undefined;
+    if (isSelf) {
       if (
-        hasCapability(currentCaps, "company.manage_team") &&
-        nextCaps &&
-        !hasCapability(nextCaps, "company.manage_team")
+        hasCapability(targetCurrentCaps, "company.manage_team") &&
+        nextCapsForGuard &&
+        !hasCapability(nextCapsForGuard, "company.manage_team")
       ) {
         throw new Error("You can't remove your own people-management access.");
       }
