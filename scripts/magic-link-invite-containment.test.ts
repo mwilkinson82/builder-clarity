@@ -6,6 +6,13 @@ const apiRoute = readFileSync(
   resolve(process.cwd(), "src/routes/api/auth/magic-link.ts"),
   "utf8",
 );
+// P0 refactor: the authorization gate + provisioning body now lives in the
+// injectable handler so behavioral vitests can invoke it with spies. Source
+// assertions inspect the handler alongside the thin transport route.
+const handler = readFileSync(
+  resolve(process.cwd(), "src/lib/auth/magic-link-handler.ts"),
+  "utf8",
+);
 const clientHelper = readFileSync(
   resolve(process.cwd(), "src/lib/auth/magic-link.ts"),
   "utf8",
