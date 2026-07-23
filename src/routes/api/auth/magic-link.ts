@@ -1,5 +1,6 @@
 import { sendLovableEmail } from "@lovable.dev/email-js";
 import { createFileRoute } from "@tanstack/react-router";
+import { findExistingAuthUserByEmail } from "@/lib/auth/find-existing-auth-user";
 import { handleMagicLinkRequest, type MagicLinkDeps } from "@/lib/auth/magic-link-handler";
 
 export const Route = createFileRoute("/api/auth/magic-link")({
