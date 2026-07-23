@@ -101,12 +101,20 @@ function setHref(href: string) {
 let container: HTMLDivElement;
 let root: Root;
 
-async function mount(Component: () => JSX.Element) {
+async function mount(Component: () => JSX.Element, opts: { strict?: boolean } = {}) {
   container = document.createElement("div");
   document.body.appendChild(container);
   await act(async () => {
     root = createRoot(container);
-    root.render(<Component />);
+    root.render(
+      opts.strict ? (
+        <StrictMode>
+          <Component />
+        </StrictMode>
+      ) : (
+        <Component />
+      ),
+    );
   });
   // Let queued microtasks (finishSignIn) run.
   await act(async () => {
