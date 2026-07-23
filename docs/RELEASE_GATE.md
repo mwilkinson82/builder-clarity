@@ -22,6 +22,10 @@ versions used by the gate.
 - TypeScript, the production build, Phase 0 contracts, and the complete Vitest
   suite;
 - a post-build check that fails if the generated route manifest is stale;
+- a post-build deployment-coherence check that requires the built server worker
+  to invoke both audited Daily WIP RPCs, rejects a direct-DML worker, and requires
+  the project client asset to send `expected_version` plus `operation_key` for
+  both save and void;
 - the estimating, AI takeoff, CPM, demo, CRM, billing, budget, subcontract,
   compliance, submittal, Daily WIP, AIA, role, and schedule domain smokes.
 
@@ -70,7 +74,9 @@ live gate rejects Vercel hostnames and requires:
 2. a fresh `git ls-remote` proving that SHA is still GitHub `origin/main`;
 3. the `data-commit-sha` marker on `builder-clarity.lovable.app`;
 4. the same marker on `overwatch.alpcontractorcircle.com`;
-5. the custom-domain Phase 0 routes.
+5. the hashed, one-year immutable project client asset referenced by the public
+   project route contains the versioned Daily WIP save and void contract;
+6. the custom-domain Phase 0 routes.
 
 Override the defaults only when the controlling Lovable project changes:
 

@@ -31,6 +31,8 @@
     "test:schedule:import": "node --experimental-strip-types scripts/schedule-import-smoke.ts",
     "test:cpm:layout": "node --experimental-strip-types scripts/constructline-cpm-layout-smoke.ts",
     "test:cpm:print": "node --experimental-strip-types scripts/constructline-cpm-print-smoke.ts",
+    "verify:daily-wip:build": "node scripts/daily-wip-deployment-coherence.mjs --profile build",
+    "verify:daily-wip:live": "node scripts/daily-wip-deployment-coherence.mjs --profile public",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
     "gate:pr": "node scripts/release-gate.mjs --profile pr",
