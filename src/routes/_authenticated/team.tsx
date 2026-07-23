@@ -1481,6 +1481,7 @@ function TeamPage() {
                         value={inviteCapabilities}
                         onChange={setInviteCapabilities}
                         disabled={!team.canManageTeam}
+                        lockedKeys={ceilingLocks}
                       />
                     </div>
 
