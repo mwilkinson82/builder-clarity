@@ -223,17 +223,7 @@ type TeamUsageSnapshot = {
   storageLimitLabel: string;
 };
 
-type StripeConnectPayload = {
-  accountId?: string;
-  accountLinkUrl?: string;
-  dashboardUrl?: string;
-  activated?: boolean;
-  connectStatus?: string;
-  mode?: "test" | "live";
-  organizationId: string;
-  paymentProcessorReady?: boolean;
-  connectDetails?: StripeConnectDetails;
-};
+type StripeConnectPayload = { accountId?: string; accountLinkUrl?: string; dashboardUrl?: string; activated?: boolean; connectStatus?: string; mode?: "test" | "live"; organizationId: string; paymentProcessorReady?: boolean; connectDetails?: StripeConnectDetails; };
 
 type StripeConnectAction = {
   action: "onboard" | "activate" | "dashboard" | "status";
