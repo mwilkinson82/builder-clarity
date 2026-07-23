@@ -68,7 +68,18 @@ export const Route = createFileRoute("/api/auth/magic-link")({
         }
 
         const email = parsed.data.email.toLowerCase();
-        const redirectTo = normalizeRedirectTo(request, parsed.data.next, parsed.data.redirectTo);
+        const isProd = process.env.NODE_ENV === "production";
+        const resolved = resolveMagicLinkRedirect({
+          requestUrl: request.url,
+          redirectTo: parsed.data.redirectTo,
+          next: parsed.data.next,
+          isProd,
+        });
+        if (!resolved.ok) {
+          // Do not mint or send anything for an untrusted redirect target.
+          return jsonError(resolved.reason, 400);
+        }
+        const redirectTo = resolved.redirectTo;
         const messageId = crypto.randomUUID();
         const label = "auth-magic-link";
         const idempotencyKey = `auth-magic-link:${email}:${messageId}`;
