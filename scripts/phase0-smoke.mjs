@@ -709,8 +709,24 @@ await expectContains(
 
 await expectContains(
   "src/routes/auth.tsx",
-  [/Outlet/, /AuthForm/, /checkExistingSession/, /Your saved sign-in could not be verified/, /setError/],
-  "auth page handles session-check failures without blanking",
+  [
+    /Outlet/,
+    /AuthForm/,
+    /checkExistingSession/,
+    /getSession/,
+    /getUser/,
+    /INVALID_SAVED_SESSION_MESSAGE/,
+    /Your saved sign-in could not be verified/,
+    /signOut\(\{ scope: "local" \}\)/,
+    /setError/,
+  ],
+  "auth page authoritatively verifies saved sessions and fails closed without blanking",
+);
+
+await expectNotContains(
+  "src/routes/auth.tsx",
+  [/Could not check current session/, /err instanceof Error \? err\.message/],
+  "auth page does not expose raw session-check failures",
 );
 
 await expectContains(
@@ -724,7 +740,7 @@ await expectContains(
     // P0 sign-in correction: navigate to the resolved exact
     // destination (invite / client-portal / login) so users always
     // land on their exact resource, never a stale default.
-    /navigate\(\{ to: destination as never, replace: true \}\)/,
+    /await navigate\(\{ to: destination as never, replace: true \}\)/,
     // Fail-closed on any callback failure: local signOut then
     // recovery UI, no getSession() rescue that could keep a stale
     // session alive.
@@ -762,7 +778,10 @@ await expectContains(
     // P0 sign-in correction: fail-closed gate on getUser() — no
     // getSession() restore path that would resurrect a stale session
     // for a disabled/revoked user.
+    /getSession/,
+    /getUser/,
     /supabase\.auth\.getUser\(\)/,
+    /signOut\(\{ scope: "local" \}\)/,
     /supabase\.auth\.signOut\(\{ scope: "local" \}\)/,
     /throw redirect/,
     /recordUserActivity/,
@@ -775,7 +794,13 @@ await expectContains(
     /setReloadKey/,
     /onAuthStateChange/,
   ],
-  "authenticated route fails closed on gate rejection and re-resolves access mid-session",
+  "authenticated route verifies restored sessions, fails closed, and records live activity heartbeats",
+);
+
+await expectNotContains(
+  "src/routes/_authenticated/route.tsx",
+  [/continuing with restored session/, /return \{ user: sessionData\.session\.user \}/],
+  "authenticated route never trusts an unverified restored browser session",
 );
 
 await expectContains(
