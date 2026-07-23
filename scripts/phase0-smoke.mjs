@@ -709,7 +709,7 @@ await expectContains(
 
 await expectContains(
   "src/routes/auth.tsx",
-  [/Outlet/, /AuthForm/, /checkExistingSession/, /Could not check current session/, /setError/],
+  [/Outlet/, /AuthForm/, /checkExistingSession/, /Your saved sign-in could not be verified/, /setError/],
   "auth page handles session-check failures without blanking",
 );
 
