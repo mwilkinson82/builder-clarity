@@ -121,8 +121,9 @@ function AuthForm() {
     try {
       await sendOverwatchMagicLink({ email, next, context: "login" });
       setNotice("Check your email. Your secure sign-in link is on the way.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send magic link");
+    } catch {
+      // Fail-closed generic copy — never surface provider text.
+      setError("We couldn't send your sign-in link. Please try again in a moment.");
     } finally {
       setMagicLoading(false);
     }
