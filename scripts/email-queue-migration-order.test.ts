@@ -49,12 +49,7 @@ describe("email queue containment migrations — chronological clean replay", ()
 
   it("20530 keeps unconditional strict containment for the four always-present RPCs", () => {
     const sql = readMigration(CONTAINMENT_MIGRATION);
-    for (const fn of [
-      "enqueue_email",
-      "read_email_batch",
-      "delete_email",
-      "move_to_dlq",
-    ]) {
+    for (const fn of ["enqueue_email", "read_email_batch", "delete_email", "move_to_dlq"]) {
       expect(sql).toContain(`public.${fn}`);
     }
     // The strict block must NOT be gated by to_regprocedure — assertions
@@ -69,7 +64,9 @@ describe("email queue containment migrations — chronological clean replay", ()
           !b.includes("email_queue_dispatch"),
       );
     expect(strictBlock, "strict RPC block not found").toBeDefined();
-    expect(strictBlock!).not.toMatch(/to_regprocedure\s*\(\s*sig\s*\)\s+IS\s+NULL[\s\S]{0,40}CONTINUE/i);
+    expect(strictBlock!).not.toMatch(
+      /to_regprocedure\s*\(\s*sig\s*\)\s+IS\s+NULL[\s\S]{0,40}CONTINUE/i,
+    );
   });
 
   it("23551 owns creation of dispatch/wake and both statement triggers", () => {
@@ -96,7 +93,9 @@ describe("email queue containment migrations — chronological clean replay", ()
 
   it("23551 comment no longer claims it lets 20530 reach assertions", () => {
     const sql = readMigration(RUNTIME_MIGRATION);
-    expect(sql).not.toMatch(/so the 20260723020530 containment migration\s*\n--\s*reaches its ACL assertions/);
+    expect(sql).not.toMatch(
+      /so the 20260723020530 containment migration\s*\n--\s*reaches its ACL assertions/,
+    );
     expect(sql).toMatch(/runs AFTER 20260723020530/);
   });
 });

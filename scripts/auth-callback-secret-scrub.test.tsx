@@ -344,6 +344,43 @@ describe("AuthCallbackPage single-flight (StrictMode + rapid clicks)", () => {
     expect(window.location.hash).toBe("");
   });
 
+  it("StrictMode auto code failure exits the spinner and shows recovery", async () => {
+    setHref("https://app.test/auth/callback?code=BAD_CODE&next=%2Fteam");
+    const Component = await loadComponent();
+    exchangeCodeForSession.mockResolvedValue({
+      data: { session: null },
+      error: new Error("Code verifier expired"),
+    });
+    getSession.mockResolvedValue({ data: { session: null }, error: null });
+
+    await mount(Component, { strict: true });
+
+    expect(exchangeCodeForSession).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Completing sign-in...");
+    expect(container.querySelector('a[href^="/auth"]')).not.toBeNull();
+    expect(container.querySelector("button")).toBeNull();
+  });
+
+  it("StrictMode auto hash failure exits the spinner and shows recovery", async () => {
+    setHref("https://app.test/auth/callback#access_token=BAD_AT&refresh_token=BAD_RT");
+    const Component = await loadComponent();
+    setSession.mockResolvedValue({
+      data: { session: null },
+      error: new Error("Refresh token is invalid"),
+    });
+    getSession.mockResolvedValue({ data: { session: null }, error: null });
+
+    await mount(Component, { strict: true });
+
+    expect(setSession).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Completing sign-in...");
+    expect(container.querySelector('a[href^="/auth"]')).not.toBeNull();
+    expect(container.querySelector("button")).toBeNull();
+    expect(window.location.hash).toBe("");
+  });
+
   it("token_hash confirmation: two rapid Continue clicks before verifyOtp resolves = one verifyOtp call", async () => {
     setHref(
       "https://app.test/auth/callback?token_hash=SECRET_HASH&type=email&confirm=1&next=%2Fteam",
