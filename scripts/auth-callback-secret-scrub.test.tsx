@@ -312,3 +312,162 @@ describe("source wiring: recovery link never reconstructs the secret", () => {
     expect(source).toMatch(/originalUrlRef\.current/);
   });
 });
+
+describe("AuthCallbackPage single-flight (StrictMode + rapid clicks)", () => {
+  it("StrictMode double-invoke: code flow exchanges exactly once", async () => {
+    setHref("https://app.test/auth/callback?code=SECRET_CODE&next=%2F");
+    const Component = await loadComponent();
+    exchangeCodeForSession.mockResolvedValue({
+      data: { session: { user: { id: "u1", email: "a@b.co" } } },
+      error: null,
+    });
+
+    await mount(Component, { strict: true });
+
+    expect(exchangeCodeForSession).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith({ to: "/", replace: true });
+  });
+
+  it("StrictMode double-invoke: hash flow setSession exactly once", async () => {
+    setHref("https://app.test/auth/callback#access_token=AT&refresh_token=RT&expires_in=3600");
+    const Component = await loadComponent();
+    setSession.mockResolvedValue({
+      data: { session: { user: { id: "u1", email: "a@b.co" } } },
+      error: null,
+    });
+
+    await mount(Component, { strict: true });
+
+    expect(setSession).toHaveBeenCalledTimes(1);
+    expect(setSession).toHaveBeenCalledWith({ access_token: "AT", refresh_token: "RT" });
+    expect(window.location.hash).toBe("");
+  });
+
+  it("token_hash confirmation: two rapid Continue clicks before verifyOtp resolves = one verifyOtp call", async () => {
+    setHref(
+      "https://app.test/auth/callback?token_hash=SECRET_HASH&type=email&confirm=1&next=%2Fteam",
+    );
+    const Component = await loadComponent();
+
+    // Unresolved promise so both clicks happen while consumption is in flight.
+    let resolveOtp: (v: unknown) => void = () => {};
+    verifyOtp.mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolveOtp = res;
+        }),
+    );
+
+    await mount(Component);
+    expect(verifyOtp).not.toHaveBeenCalled();
+
+    const button = container.querySelector("button")!;
+
+    // Two clicks fired synchronously — second must be a no-op.
+    await act(async () => {
+      button.click();
+      button.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
+    // Button disabled while in flight.
+    expect(button.hasAttribute("disabled")).toBe(true);
+
+    // Now resolve; still exactly one call, navigation happens.
+    await act(async () => {
+      resolveOtp({
+        data: { session: { user: { id: "u1", email: "a@b.co" } } },
+        error: null,
+      });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("failed exchange: one verifyOtp call, recovery UI shown, no automatic retry loop", async () => {
+    setHref(
+      "https://app.test/auth/callback?token_hash=BAD_HASH&type=email&confirm=1&next=%2F",
+    );
+    const Component = await loadComponent();
+    verifyOtp.mockResolvedValue({
+      data: { session: null },
+      error: new Error("Token has expired or is invalid"),
+    });
+    getSession.mockResolvedValue({ data: { session: null }, error: null });
+
+    await mount(Component);
+
+    const button = container.querySelector("button")!;
+    await act(async () => {
+      button.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // Give any potential (bug: automatic) retry a window to occur.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
+
+    // Recovery UI: fresh-magic-link anchor rendered; confirm button gone.
+    const recoveryLink = container.querySelector('a[href^="/auth"]');
+    expect(recoveryLink).not.toBeNull();
+    expect(recoveryLink?.textContent).toMatch(/fresh magic link/i);
+    expect(container.querySelector("button")).toBeNull();
+
+    // Address bar still scrubbed — no reconstruction of a URL carrying secrets.
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
+  });
+
+  it("StrictMode + failed exchange: still exactly one verifyOtp call", async () => {
+    setHref(
+      "https://app.test/auth/callback?token_hash=BAD&type=email&confirm=1&next=%2F",
+    );
+    const Component = await loadComponent();
+    verifyOtp.mockResolvedValue({
+      data: { session: null },
+      error: new Error("Token has expired or is invalid"),
+    });
+
+    await mount(Component, { strict: true });
+
+    const button = container.querySelector("button");
+    if (button) {
+      await act(async () => {
+        button.click();
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
+
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("source wiring: synchronous single-flight guard", () => {
+  const source = readFileSync(resolve(process.cwd(), "src/routes/auth.callback.tsx"), "utf8");
+
+  it("uses a ref-based in-flight guard set before any await", () => {
+    expect(source).toMatch(/consumptionInFlightRef/);
+    expect(source).toMatch(/consumedRef/);
+    // Guard checked before establishSessionFromUrl.
+    expect(source).toMatch(/consumptionInFlightRef\.current[\s\S]{0,200}establishSessionFromUrl/);
+  });
+
+  it("Continue button disabled while exchange is in flight", () => {
+    expect(source).toMatch(/disabled=\{exchangeInFlight\}/);
+    expect(source).toMatch(/aria-busy=\{exchangeInFlight\}/);
+  });
+
+  it("status paragraph keeps accessible live region", () => {
+    expect(source).toMatch(/role="status"/);
+    expect(source).toMatch(/aria-live="polite"/);
+  });
+});
