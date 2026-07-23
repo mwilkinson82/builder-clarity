@@ -2,8 +2,8 @@ import { sendLovableEmail } from "@lovable.dev/email-js";
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { buildMagicLinkConfirmationUrl } from "@/lib/auth/magic-link-url";
+import { resolveMagicLinkRedirect } from "@/lib/auth/magic-link-origins";
 
-const LIVE_AUTH_ORIGIN = "https://overwatch.alpcontractorcircle.com";
 const SITE_NAME = "Overwatch";
 const SENDER_DOMAIN = "notify.overwatch.alpcontractorcircle.com";
 const FROM_DOMAIN = "overwatch.alpcontractorcircle.com";
@@ -24,45 +24,6 @@ function redactEmail(email: string) {
   const [local, domain] = email.split("@");
   if (!local || !domain) return "***";
   return `${local[0]}***@${domain}`;
-}
-
-function normalizeNext(next: string | undefined) {
-  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/";
-  return next;
-}
-
-function requestOrigin(request: Request) {
-  const origin = request.headers.get("origin");
-  if (origin) return origin;
-  return new URL(request.url).origin;
-}
-
-function appOrigin(request: Request) {
-  const origin = requestOrigin(request);
-  const hostname = new URL(origin).hostname;
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".lovable.app")) {
-    return origin;
-  }
-  return LIVE_AUTH_ORIGIN;
-}
-
-function normalizeRedirectTo(
-  request: Request,
-  next: string | undefined,
-  redirectTo: string | undefined,
-) {
-  const origin = appOrigin(request);
-  if (redirectTo) {
-    const url = new URL(redirectTo);
-    const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-    const isLovablePreview = url.hostname.endsWith(".lovable.app");
-    if (url.origin === LIVE_AUTH_ORIGIN || isLocal || isLovablePreview) return url.toString();
-  }
-
-  return new URL(
-    `/auth/callback?next=${encodeURIComponent(normalizeNext(next))}`,
-    origin,
-  ).toString();
 }
 
 function loginHtml(actionLink: string, context: string | undefined) {
@@ -107,7 +68,18 @@ export const Route = createFileRoute("/api/auth/magic-link")({
         }
 
         const email = parsed.data.email.toLowerCase();
-        const redirectTo = normalizeRedirectTo(request, parsed.data.next, parsed.data.redirectTo);
+        const isProd = process.env.NODE_ENV === "production";
+        const resolved = resolveMagicLinkRedirect({
+          requestUrl: request.url,
+          redirectTo: parsed.data.redirectTo,
+          next: parsed.data.next,
+          isProd,
+        });
+        if (!resolved.ok) {
+          // Do not mint or send anything for an untrusted redirect target.
+          return jsonError(resolved.reason, 400);
+        }
+        const redirectTo = resolved.redirectTo;
         const messageId = crypto.randomUUID();
         const label = "auth-magic-link";
         const idempotencyKey = `auth-magic-link:${email}:${messageId}`;
