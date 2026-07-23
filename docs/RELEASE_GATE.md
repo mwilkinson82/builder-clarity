@@ -114,42 +114,102 @@ customer gesture against the exact production DOM target.
 
 ## 6. Sign-In P0 maintenance window checklist
 
-The forward migration that closes the disabled-seat, demo-trigger,
-auto-accept-oldest-invite, and org-null-project findings is tracked at
-`supabase/migrations/20260724000000_account_provisioning_history_containment.sql`.
-It is checked in but **UNAPPLIED** until Marshall opens a scheduled
-maintenance window. Apply only during that window:
+This cutover is **UNAPPLIED** until Marshall opens the overnight maintenance
+window. Database application, source merge, and production publication must all
+run through the Lovable Interconnector. Do not use local `psql`, Supabase CLI,
+Vercel, or a direct GitHub merge as a substitute.
 
-1. **Announce** the window in the ops channel and pause any bulk
-   user-provisioning automation.
-2. **Snapshot** the current `public.organizations`,
-   `public.organization_memberships`, `public.organization_invites`,
-   `public.project_client_access`, `public.projects`, and
-   `public.profiles` tables (or take a full DB snapshot per platform
-   policy).
-3. **Confirm** the file is at
-   `supabase/migrations/20260724000000_account_provisioning_history_containment.sql`
-   and is the newest migration timestamp on the branch being applied.
-4. **Apply** with the standard migration path (Lovable Cloud pickup or
-   `psql` by an operator with DB credentials). Re-run is safe (CREATE
-   OR REPLACE / DROP IF EXISTS only).
-5. **Verify** immediately after apply:
-   - `on_auth_user_created` no longer exists on `auth.users`.
-   - `on_auth_user_account_created` no longer exists on `auth.users`.
-   - `projects_owner_all` policy no longer exists on `public.projects`.
-   - `has_function_privilege('authenticated','public.ensure_user_account(uuid,text,text)','EXECUTE')` returns `false`.
-   - `has_function_privilege('authenticated','public.ensure_current_user_account()','EXECUTE')` returns `true`.
-   - `has_function_privilege('authenticated','public.finalize_invite_acceptance(uuid)','EXECUTE')` returns `true`.
-   - `has_function_privilege('anon','public.finalize_invite_acceptance(uuid)','EXECUTE')` returns `false`.
-6. **Behavioral sanity**: sign in as a disabled-only-seat account. The
-   user must land on the "No active company access" screen — NOT a
-   new personal company — and no fresh `organizations` row for that
-   user should appear. Then, with two pending invites for the same
-   email (A older, B newer), click the invite B link end-to-end and
-   verify the user lands in organization B with B as the default.
-7. **Rollback plan**: if verification fails, re-apply `20260722233000`
-   to restore the prior `ensure_user_account`. The trigger drops and
-   RPC create are idempotent; if demo-seeding is required, re-enable
-   the org-scoped `seedDemoIfEmpty` bootstrap in code before rolling
-   back.
+The code release depends on the new finalizer, authority, lookup, and reservation
+RPCs. Apply and verify the database first; publish the code only after the
+schema gate is green. Never run the new code against the old schema.
 
+1. **Freeze and announce.** Announce the window, pause invitations/client-link
+   sends and bulk provisioning, identify the previous production SHA, and
+   prevent a second release from entering Lovable.
+2. **Snapshot and inventory through Lovable.** Take the platform-approved
+   database snapshot and export the migration ledger plus the relevant rows from
+   `organizations`, `organization_memberships`, `organization_invites`,
+   `project_client_access`, `projects`, `project_members`, and `profiles`.
+3. **Prove the exact candidate.** Record the candidate GitHub `main` SHA and
+   confirm Lovable contains these migrations in this exact order:
+   - `20260724000000_account_provisioning_history_containment.sql`
+   - `20260724000900_auth_p0_owner_seat_preflight.sql`
+   - `20260724001000_auth_p0_provisioning_authorization_lockdown.sql`
+   - `20260724001100_auth_p0_client_active_binding_lockdown.sql`
+   - `20260724001200_auth_p0_authority_mutation_guards.sql`
+   - `20260724001300_auth_magic_link_send_reservation.sql`
+4. **Run the read-only Owner-seat preflight before any write.** Through the
+   Lovable maintenance connection, run
+   `supabase/verification/20260724000900_auth_p0_owner_seat_preflight.sql`.
+   Capture its migration-ledger, exact-candidate, unmatched-review, and
+   creator-Owner control result sets. Record a disposition for every active
+   non-creator Owner row: approved legitimate co-owner with provenance, or an
+   exact-row repair through Lovable with before/after rows and reviewer/reason.
+   If any row is unresolved, **stop**. Rerun until the exact non-Owner-invite
+   candidate result is zero and every unmatched-review row has an approved
+   disposition. Never bulk-demote or infer ownership by email.
+5. **Apply database migrations one at a time through Lovable.** Apply the six
+   files in the order above and capture each Lovable migration result and ledger
+   entry. Stop on the first error. Do not publish code while any migration is
+   missing, partially reported, or unverifiable.
+6. **Run the rollback-only proof harness.** Through the same maintenance
+   connection, run
+   `supabase/verification/20260724001000_auth_p0_transaction_rollback_harness.sql`.
+   Require every assertion to pass and the final transaction to `ROLLBACK`.
+   Record the output; the harness must never leave canary state behind.
+7. **Verify database contracts before publication.** At minimum, prove:
+   - both Auth-user provisioning triggers are absent;
+   - ordinary login cannot create an organization, Owner seat, or accept an
+     invite;
+   - exact invite and client-access finalizers are executable by
+     `authenticated` but not `anon`;
+   - active client access requires `client_user_id = accepted_by = auth.uid()`;
+   - legacy active client rows with a non-null binding and null `accepted_by`
+     were repaired to that same user; unbound/conflicting rows caused an abort;
+   - authenticated raw membership INSERT/UPDATE/DELETE is denied and the
+     bounded authority RPC remains available;
+   - MagicLink Auth lookup and atomic send reservation are executable only by
+     `service_role`;
+   - project `owner_id` is attribution, not authorization, and project creation
+     grants only the scoped project-manager role.
+8. **Merge and publish the exact code SHA through Lovable.** Only after steps
+   1–7 are green, let Lovable merge the reviewed code and publish it. Record the
+   Lovable commit, build result, published SHA, and migration state separately.
+9. **Run production sign-in canaries against both Lovable domains.** Use
+   resettable accounts and prove:
+   - a known existing but unconfirmed Auth identity receives a MagicLink rather
+     than being recreated or reinvited;
+   - a genuinely new exact invite lands in the intended organization, role, and
+     default organization; a second pending invite for the same email is
+     untouched;
+   - repeat login, refresh, expired link, and already-used link show a stable
+     recovery path without a redirect/query loop or stale-session rescue;
+   - a disabled-only seat reaches "No active company access" and creates no
+     organization or Owner seat;
+   - resending an existing invite still works at the seat ceiling, while a new
+     invite is refused;
+   - resending/regranting an active bound client preserves active status,
+     binding, acceptance, and module permissions;
+   - pending client access is unreadable until the exact callback binds it;
+   - company-seat disable and client-access revoke take effect on the next
+     server-authorized operation in an already-open session.
+10. **Close only with production proof.** Run `bun run gate:live`, require the
+    candidate SHA on both `builder-clarity.lovable.app` and
+    `overwatch.alpcontractorcircle.com`, and attach canary results plus relevant
+    4xx/5xx/auth-log review. Resume invitations only after this evidence is
+    complete.
+
+### Stop and recovery conditions
+
+- A failed migration must roll back its own transaction. Stop the cutover and
+  leave the prior production code published.
+- Do **not** reapply `20260722233000`; it restores the privilege-minting account
+  resolver this cutover removes.
+- Do not operate a mixed state (new code/old schema or old code/partially
+  restored schema). If a failure occurs after schema application, keep the
+  maintenance window closed and either correct forward through Lovable or
+  coordinate a full database-snapshot restore and previous-code publication as
+  one recovery operation.
+- Any unexpected Owner seat, wrong organization/default, active-client
+  demotion, invitation loop, raw membership write, missing RPC/grant, or
+  production-SHA mismatch is a release blocker.
