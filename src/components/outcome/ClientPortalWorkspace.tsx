@@ -166,7 +166,6 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
       await updateAccess({
         data: {
           accessId: access.id,
-          status: "pending",
           last_sent_at: new Date().toISOString(),
         },
       });

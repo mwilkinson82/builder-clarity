@@ -19,6 +19,10 @@ import {
   assertCannotSelfElevate,
   type CallerAuthority,
 } from "@/lib/team/role-containment";
+import {
+  assertInviteSeatAvailable,
+  findExactPendingInvite,
+} from "@/lib/team/invite-seat-containment";
 import { stripeConnectionForMode, type StripeMode } from "@/lib/stripe-mode";
 
 const ACCOUNT_ROLES = [
@@ -393,6 +397,36 @@ type DynamicSupabaseClient = {
 
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
+
+type MembershipAuthorityRpcResult = {
+  data: {
+    id: string;
+    organization_id: string;
+    user_id: string;
+    role: AccountRole;
+    status: MemberStatus;
+    capabilities: CapabilitySet;
+    invited_by: string | null;
+    invited_email: string | null;
+    created_at: string;
+    updated_at: string;
+  } | null;
+  error: { message?: string } | null;
+};
+
+type MembershipAuthorityRpc = {
+  rpc: (
+    fn: "update_organization_membership_authority",
+    args: {
+      p_membership_id: string;
+      p_role: AccountRole | null;
+      p_status: MemberStatus | null;
+      p_capabilities: CapabilitySet | null;
+    },
+  ) => {
+    single: () => Promise<MembershipAuthorityRpcResult>;
+  };
+};
 
 async function ensureCurrentOrganization(context: TeamServerContext) {
   const { data: organizationId, error } = await context.supabase.rpc("ensure_current_user_account");
@@ -1366,6 +1400,21 @@ export const createTeamInvite = createServerFn({ method: "POST" })
       .single();
     if (orgError) throw new Error(orgError.message);
 
+    // Resolve the exact pending invite before enforcing the seat ceiling.
+    // Reissuing this row consumes no additional seat and must remain possible
+    // when the company is otherwise full.
+    const { data: pendingInviteRows, error: existingError } = await context.supabase
+      .from("organization_invites")
+      .select("id, email")
+      .eq("organization_id", organizationId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: true });
+    if (existingError) throw new Error(existingError.message);
+    const existing = findExactPendingInvite(
+      (pendingInviteRows ?? []) as Array<{ id: string; email: string }>,
+      inviteEmail,
+    );
+
     const [
       { count: activeSeats, error: seatsError },
       { count: pendingInvites, error: invitesError },
@@ -1384,21 +1433,12 @@ export const createTeamInvite = createServerFn({ method: "POST" })
     if (seatsError) throw new Error(seatsError.message);
     if (invitesError) throw new Error(invitesError.message);
 
-    const claimedSeats = (activeSeats ?? 0) + (pendingInvites ?? 0);
-    if (organization.seat_limit !== null && claimedSeats >= organization.seat_limit) {
-      throw new Error(
-        `This Overwatch company is at its ${organization.seat_limit}-seat limit. Revoke an invite or upgrade before adding another person.`,
-      );
-    }
-
-    const { data: existing, error: existingError } = await context.supabase
-      .from("organization_invites")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .eq("email", inviteEmail)
-      .eq("status", "pending")
-      .maybeSingle();
-    if (existingError) throw new Error(existingError.message);
+    assertInviteSeatAvailable({
+      seatLimit: organization.seat_limit,
+      activeSeats,
+      pendingInvites,
+      existingPendingInviteId: existing?.id ?? null,
+    });
 
     if (existing?.id) {
       const updatePayload: Record<string, unknown> = {
@@ -1557,24 +1597,21 @@ export const updateTeamMember = createServerFn({ method: "POST" })
       changes.capabilities = { ...ROLE_PRESETS[data.role] };
     }
 
-    let updateRes = await dynamicTable(context.supabase, "organization_memberships")
-      .update(changes)
-      .eq("id", data.membershipId)
-      .select("id,organization_id,user_id,role,status,created_at")
+    // Membership authority is never a raw table mutation. The maintenance-
+    // window migration revokes browser INSERT/UPDATE/DELETE and exposes this
+    // bounded SECURITY DEFINER command, which rechecks the active caller,
+    // company boundary, Owner invariants, self-edit prohibition, and
+    // capability ceiling in the same transaction as the update.
+    const updateRes = await (context.supabase as unknown as MembershipAuthorityRpc)
+      .rpc("update_organization_membership_authority", {
+        p_membership_id: data.membershipId,
+        p_role: data.role ?? null,
+        p_status: data.status ?? null,
+        p_capabilities: changes.capabilities ?? null,
+      })
       .single();
-    if (updateRes.error && isMissingRestColumn(updateRes.error, "capabilities")) {
-      // Deploy landed before the Phase 2 migration: apply the role/status
-      // part so the screen keeps working; capabilities arrive with the
-      // migration.
-      delete changes.capabilities;
-      if (!data.role && !data.status) throw new Error(updateRes.error.message);
-      updateRes = await dynamicTable(context.supabase, "organization_memberships")
-        .update(changes)
-        .eq("id", data.membershipId)
-        .select("id,organization_id,user_id,role,status,created_at")
-        .single();
-    }
     if (updateRes.error) throw new Error(updateRes.error.message);
+    if (!updateRes.data) throw new Error("The company access change did not complete.");
 
     return { member: updateRes.data };
   });
