@@ -78,13 +78,19 @@ describe("magic-link invite-context containment — API route + handler", () => 
     expect(handler).toContain("That invitation could not be found.");
   });
 
-  it("verifies the caller is invited_by OR holds company.manage_team", () => {
-    expect(handler).toContain("inviteRow.invited_by === callerId");
+  it("AND-gates: caller must be BOTH invited_by AND currently hold company.manage_team", () => {
+    // AND, not OR — a demoted original inviter fails; a current manager
+    // who is not the original inviter must reissue so invited_by is
+    // refreshed before the send can proceed.
+    expect(handler).toContain("inviteRow.invited_by !== callerId");
     expect(handler).toContain("callerHasManageTeam");
     expect(apiRoute).toContain('"has_org_capability"');
     expect(apiRoute).toContain('p_capability: "company.manage_team"');
     expect(handler).toContain(
-      "You do not have permission to send this invitation.",
+      "Only the original inviter can resend this invitation.",
+    );
+    expect(handler).toContain(
+      "You no longer have permission to send this invitation.",
     );
   });
 

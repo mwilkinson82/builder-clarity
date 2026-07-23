@@ -85,7 +85,17 @@ export const Route = createFileRoute("/api/auth/magic-link")({
               email,
               email_confirm: true,
             });
-            return { error };
+            // Preserve Supabase's documented .code alongside the message
+            // so the handler can allowlist duplicate-user codes without
+            // relying on message-shape heuristics.
+            return {
+              error: error
+                ? {
+                    message: error.message,
+                    code: (error as { code?: string }).code,
+                  }
+                : null,
+            };
           },
 
           generateMagicLink: async ({ email, redirectTo }) => {
@@ -95,7 +105,7 @@ export const Route = createFileRoute("/api/auth/magic-link")({
               options: { redirectTo },
             });
             return {
-              hashedToken: (data?.properties?.hashed_token as string | undefined) ?? null,
+              hashedToken: (data.properties?.hashed_token as string | undefined) ?? null,
               error,
             };
           },
