@@ -1,7 +1,7 @@
 // Source-level guard for the _authenticated layout access-mode UX (P0
 // finding 2). Ensures the four documented modes and the heartbeat gate
 // stay wired to the layout, the client-portal path helper stays
-// available so /n/:projectId bypasses the internal-only gate, and
+// available so /client/projects/:projectId bypasses the internal gate, and
 // the fail-closed session gate + mid-session re-resolution stay wired.
 
 import { readFileSync } from "node:fs";
