@@ -542,6 +542,28 @@ export async function handleMagicLinkRequest(args: {
     });
     if (recentSend) return ok({ success: true, recentlySent: true });
 
+    // Carry the exact clicked invite/client-access id through the
+    // callback URL so the auth callback can call
+    // finalize_invite_acceptance with the invite the user actually
+    // clicked (not the oldest pending row for the same email).
+    try {
+      const inviteId =
+        parsed.data.context === "company_invite" ||
+        parsed.data.context === "portfolio_invite"
+          ? parsed.data.inviteId
+          : null;
+      if (inviteId || parsed.data.context === "client_portal") {
+        const url = new URL(redirectTo);
+        if (inviteId) url.searchParams.set("invite_id", inviteId);
+        if (parsed.data.context === "client_portal") {
+          url.searchParams.set("client_access_id", parsed.data.clientAccessId);
+        }
+        redirectTo = url.toString();
+      }
+    } catch {
+      // redirectTo already validated URL by zod; ignore if malformed
+    }
+
     const linkResult = await deps.generateMagicLink({
       email,
       redirectTo,
