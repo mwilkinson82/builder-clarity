@@ -101,7 +101,7 @@ export const Route = createFileRoute("/api/auth/magic-link")({
           },
 
           insertEmailSendLog: async (row) => {
-            await supabaseAdmin.from("email_send_log").insert(row);
+            await supabaseAdmin.from("email_send_log").insert(row as never);
           },
 
           updateEmailSendLogStatus: async (messageId, status) => {
