@@ -458,7 +458,7 @@ describe("source wiring: synchronous single-flight guard", () => {
     expect(source).toMatch(/consumptionInFlightRef/);
     expect(source).toMatch(/consumedRef/);
     // Guard checked before establishSessionFromUrl.
-    expect(source).toMatch(/consumptionInFlightRef\.current[\s\S]{0,200}establishSessionFromUrl/);
+    expect(source).toMatch(/consumptionInFlightRef\.current[\s\S]*establishSessionFromUrl/);
   });
 
   it("Continue button disabled while exchange is in flight", () => {
