@@ -48,7 +48,13 @@ import { GettingPaidSection } from "@/components/billing/GettingPaidSection";
 import { StripeConnectingScreen } from "@/components/billing/StripeConnectingScreen";
 import { getCreditSummary } from "@/lib/credits/credits.functions";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ROLE_PRESETS, accessLabelForMember, type CapabilitySet } from "@/lib/capabilities";
+import {
+  ALL_CAPABILITY_KEYS,
+  ROLE_PRESETS,
+  accessLabelForMember,
+  type CapabilityKey,
+  type CapabilitySet,
+} from "@/lib/capabilities";
 import {
   grantClientProjectAccess,
   revokeClientProjectAccess,
