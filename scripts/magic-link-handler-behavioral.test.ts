@@ -183,9 +183,7 @@ describe("magic-link handler — invite authorization gate", () => {
 
   it("E. mismatched invite email returns 409 (case + whitespace normalized) and performs no side effects", async () => {
     const deps = buildDeps({
-      fetchInviteById: vi.fn(async () =>
-        goodInvite({ email: "  DIFFERENT@example.com " }),
-      ),
+      fetchInviteById: vi.fn(async () => goodInvite({ email: "  DIFFERENT@example.com " })),
     });
     const result = await handleMagicLinkRequest({
       requestUrl: REQ_URL,
@@ -245,9 +243,7 @@ describe("magic-link handler — invite authorization gate", () => {
     const nowMs = 1_700_000_000_000;
     const deps = buildDeps({
       now: () => nowMs,
-      fetchInviteById: vi.fn(async () =>
-        goodInvite({ expires_at: new Date(nowMs).toISOString() }),
-      ),
+      fetchInviteById: vi.fn(async () => goodInvite({ expires_at: new Date(nowMs).toISOString() })),
     });
     const result = await handleMagicLinkRequest({
       requestUrl: REQ_URL,
@@ -364,9 +360,8 @@ describe("magic-link handler — invite authorization gate", () => {
     );
     // The exact clicked invite_id is baked into redirectTo so the
     // auth callback can finalize the correct invite.
-    const linkArgs = (
-      deps.generateMagicLink as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][0] as { redirectTo: string };
+    const linkArgs = (deps.generateMagicLink as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][0] as { redirectTo: string };
     expect(linkArgs.redirectTo).toContain(`invite_id=${INVITE_ID}`);
     expect(deps.insertEmailSendLog).toHaveBeenCalledTimes(1);
     expect(deps.sendEmail).toHaveBeenCalledTimes(1);
@@ -377,9 +372,8 @@ describe("magic-link handler — invite authorization gate", () => {
     );
 
     // Audit metadata on the success email_send_log row; bearer never appears.
-    const logCall = (
-      deps.insertEmailSendLog as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][0] as { metadata?: Record<string, unknown> };
+    const logCall = (deps.insertEmailSendLog as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][0] as { metadata?: Record<string, unknown> };
     expect(logCall.metadata).toMatchObject({
       invite_id: INVITE_ID,
       organization_id: ORG_ID,
@@ -508,9 +502,8 @@ describe("magic-link handler — invite authorization gate", () => {
     expect(bodyJson).not.toContain("internal_server_error");
     expect(bodyJson).not.toContain("database instance does not exist");
     // Failure row IS inserted and carries the provider code + invite audit.
-    const failureRow = (
-      deps.insertEmailSendLog as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][0] as { metadata?: Record<string, unknown>; status: string };
+    const failureRow = (deps.insertEmailSendLog as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][0] as { metadata?: Record<string, unknown>; status: string };
     expect(failureRow.status).toBe("failed");
     expect(failureRow.metadata).toMatchObject({
       error_code: "internal_server_error",
@@ -582,9 +575,7 @@ describe("magic-link handler — invite authorization gate", () => {
 
   it("J2. client_portal with revoked access row returns 409 and performs no side effects", async () => {
     const deps = buildDeps({
-      fetchClientAccessById: vi.fn(async () =>
-        goodClientAccess({ status: "revoked" }),
-      ),
+      fetchClientAccessById: vi.fn(async () => goodClientAccess({ status: "revoked" })),
     });
     const result = await handleMagicLinkRequest({
       requestUrl: REQ_URL,
@@ -627,9 +618,8 @@ describe("magic-link handler — invite authorization gate", () => {
     expect(deps.generateMagicLink).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "magiclink" }),
     );
-    const linkArgs = (
-      deps.generateMagicLink as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][0] as { redirectTo: string };
+    const linkArgs = (deps.generateMagicLink as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][0] as { redirectTo: string };
     expect(linkArgs.redirectTo).toContain(`client_access_id=${CLIENT_ACCESS_ID}`);
     expect(deps.sendEmail).toHaveBeenCalledTimes(1);
   });
@@ -706,9 +696,8 @@ describe("magic-link handler — invite authorization gate", () => {
     expect(result.ok).toBe(false);
     // Exactly one pending row inserted, then flipped to failed via update.
     expect(deps.insertEmailSendLog).toHaveBeenCalledTimes(1);
-    const pendingRow = (
-      deps.insertEmailSendLog as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][0] as { status: string };
+    const pendingRow = (deps.insertEmailSendLog as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][0] as { status: string };
     expect(pendingRow.status).toBe("pending");
     expect(deps.updateEmailSendLogFailed).toHaveBeenCalledTimes(1);
     // Provider message must NOT leak to the client body.

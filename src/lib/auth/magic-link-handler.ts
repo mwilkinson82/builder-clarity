@@ -91,9 +91,7 @@ export const magicLinkInput = z
     email: z.string().trim().email(),
     next: z.string().max(500).optional(),
     redirectTo: z.string().url().max(1000).optional(),
-    context: z
-      .enum(["login", "company_invite", "portfolio_invite", "client_portal"])
-      .optional(),
+    context: z.enum(["login", "company_invite", "portfolio_invite", "client_portal"]).optional(),
     inviteId: z.string().uuid().optional(),
     clientAccessId: z.string().uuid().optional(),
   })
@@ -186,34 +184,25 @@ export type MagicLinkDeps = {
   }>;
 
   // Invite path
-  fetchInviteById: (inviteId: string) => Promise<
-    | {
-        id: string;
-        organization_id: string;
-        email: string;
-        status: string;
-        expires_at: string | null;
-        invited_by: string | null;
-        role: string;
-      }
-    | null
-  >;
-  callerHasManageTeam: (args: {
-    bearer: string;
-    organizationId: string;
-  }) => Promise<boolean>;
+  fetchInviteById: (inviteId: string) => Promise<{
+    id: string;
+    organization_id: string;
+    email: string;
+    status: string;
+    expires_at: string | null;
+    invited_by: string | null;
+    role: string;
+  } | null>;
+  callerHasManageTeam: (args: { bearer: string; organizationId: string }) => Promise<boolean>;
 
   // Client portal path
-  fetchClientAccessById: (accessId: string) => Promise<
-    | {
-        id: string;
-        project_id: string;
-        organization_id: string;
-        email: string;
-        status: string;
-      }
-    | null
-  >;
+  fetchClientAccessById: (accessId: string) => Promise<{
+    id: string;
+    project_id: string;
+    organization_id: string;
+    email: string;
+    status: string;
+  } | null>;
   callerHasClientAccessManagement: (args: {
     bearer: string;
     organizationId: string;
@@ -491,10 +480,7 @@ export async function handleMagicLinkRequest(args: {
       return jsonError("Client access authorization check failed.", 500);
     }
     if (!hasClientMgmt) {
-      return jsonError(
-        "You no longer have permission to send this client portal link.",
-        403,
-      );
+      return jsonError("You no longer have permission to send this client portal link.", 403);
     }
 
     // Client portal is NEVER a user-creation boundary. If the target
@@ -578,8 +564,7 @@ export async function handleMagicLinkRequest(args: {
     // clicked (not the oldest pending row for the same email).
     try {
       const inviteId =
-        parsed.data.context === "company_invite" ||
-        parsed.data.context === "portfolio_invite"
+        parsed.data.context === "company_invite" || parsed.data.context === "portfolio_invite"
           ? parsed.data.inviteId
           : null;
       if (inviteId || parsed.data.context === "client_portal") {
@@ -615,17 +600,13 @@ export async function handleMagicLinkRequest(args: {
           raced = await deps.lookupExistingAuthUser(email);
         } catch (lookupErr) {
           const err = new Error(
-            lookupErr instanceof Error
-              ? lookupErr.message
-              : "duplicate-race lookup failed",
+            lookupErr instanceof Error ? lookupErr.message : "duplicate-race lookup failed",
           );
           (err as Error & { code?: string }).code = "duplicate_race_lookup_failed";
           throw err;
         }
         if (!raced) {
-          const err = new Error(
-            "Provider reported duplicate user but exact lookup found none",
-          );
+          const err = new Error("Provider reported duplicate user but exact lookup found none");
           (err as Error & { code?: string }).code = "duplicate_race_unresolved";
           throw err;
         }
@@ -639,8 +620,7 @@ export async function handleMagicLinkRequest(args: {
           const err = new Error(
             linkResult.error.message ?? "duplicate-race magiclink retry failed",
           );
-          (err as Error & { code?: string }).code =
-            retryCode || "duplicate_race_retry_failed";
+          (err as Error & { code?: string }).code = retryCode || "duplicate_race_retry_failed";
           throw err;
         }
       } else if (!isDup) {
@@ -650,17 +630,12 @@ export async function handleMagicLinkRequest(args: {
       }
     }
     if (!linkResult.hashedToken || !linkResult.userId) {
-      const err = new Error(
-        "Provider did not return a usable magic-link token or user id",
-      );
+      const err = new Error("Provider did not return a usable magic-link token or user id");
       (err as Error & { code?: string }).code = "provider_incomplete";
       throw err;
     }
 
-    const confirmationLink = buildMagicLinkConfirmationUrl(
-      redirectTo,
-      linkResult.hashedToken,
-    );
+    const confirmationLink = buildMagicLinkConfirmationUrl(redirectTo, linkResult.hashedToken);
 
     await deps.insertEmailSendLog({
       message_id: messageId,
@@ -679,12 +654,11 @@ export async function handleMagicLinkRequest(args: {
         to: email,
         from: `${SITE_NAME} <noreply@${FROM_DOMAIN}>`,
         sender_domain: SENDER_DOMAIN,
-        subject:
-          isInviteContext
-            ? "You've been invited to Overwatch"
-            : isClientPortal
-              ? "Open your Overwatch client portal"
-              : "Sign in to Overwatch",
+        subject: isInviteContext
+          ? "You've been invited to Overwatch"
+          : isClientPortal
+            ? "Open your Overwatch client portal"
+            : "Sign in to Overwatch",
         html: loginHtml(confirmationLink, contextValue),
         text: loginText(confirmationLink, contextValue),
         purpose: "transactional",
@@ -696,8 +670,7 @@ export async function handleMagicLinkRequest(args: {
     } catch (sendErr) {
       // Update the ORIGINAL pending row to failed; never insert a
       // second row that would leave a retry-suppressor pending.
-      const sendMessage =
-        sendErr instanceof Error ? sendErr.message : "Email provider send failed";
+      const sendMessage = sendErr instanceof Error ? sendErr.message : "Email provider send failed";
       const sendCode =
         sendErr instanceof Error
           ? ((sendErr as Error & { code?: string }).code ?? undefined)
@@ -709,11 +682,7 @@ export async function handleMagicLinkRequest(args: {
       };
       if (sendCode) failureMeta.error_code = sendCode;
       try {
-        await deps.updateEmailSendLogFailed(
-          messageId,
-          sendMessage.slice(0, 1000),
-          failureMeta,
-        );
+        await deps.updateEmailSendLogFailed(messageId, sendMessage.slice(0, 1000), failureMeta);
         failureRowRecorded = true;
       } catch (updateErr) {
         deps.logError?.("magic-link failure log update failed", {
@@ -733,25 +702,19 @@ export async function handleMagicLinkRequest(args: {
       recipient_redacted: redactEmail(email),
       context: contextValue,
       ...(audit.invite_id ? { invite_id: audit.invite_id as string } : {}),
-      ...(audit.client_access_id
-        ? { client_access_id: audit.client_access_id as string }
-        : {}),
+      ...(audit.client_access_id ? { client_access_id: audit.client_access_id as string } : {}),
     });
     return ok({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : GENERIC_PROVISIONING_ERROR;
     const code =
-      error instanceof Error
-        ? ((error as Error & { code?: string }).code ?? undefined)
-        : undefined;
+      error instanceof Error ? ((error as Error & { code?: string }).code ?? undefined) : undefined;
     deps.logError?.("Overwatch magic link failed", {
       recipient_redacted: redactEmail(email),
       error: message,
       ...(code ? { code } : {}),
       ...(audit.invite_id ? { invite_id: audit.invite_id as string } : {}),
-      ...(audit.client_access_id
-        ? { client_access_id: audit.client_access_id as string }
-        : {}),
+      ...(audit.client_access_id ? { client_access_id: audit.client_access_id as string } : {}),
     });
     // If insertEmailSendLog never ran (early throw before pending
     // insert), we still want an audit trail for failure — but only
