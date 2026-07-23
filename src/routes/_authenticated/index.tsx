@@ -1465,7 +1465,14 @@ function InviteByMagicLinkButton() {
                   No company members yet.
                 </div>
               ) : (
-                team.members.map((member) => (
+                team.members.map((member) => {
+                  const isOwnerRow = member.role === "owner";
+                  const isSelf = member.user_id === team.currentProfile.id;
+                  // P0 team-role containment: Owner rows are immutable in
+                  // the UI; a non-owner manager cannot edit their own row.
+                  const canEditRow =
+                    team.canManageTeam && !isOwnerRow && (canAssignOwner || !isSelf);
+                  return (
                   <div
                     key={member.id}
                     className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_190px_150px] md:items-center"
@@ -1474,7 +1481,7 @@ function InviteByMagicLinkButton() {
                       <div className="font-medium">{member.full_name || member.email}</div>
                       <div className="text-xs text-muted-foreground">{member.email}</div>
                     </div>
-                    {team.canManageTeam ? (
+                    {canEditRow ? (
                       <>
                         <Select
                           value={member.role}
@@ -1489,7 +1496,7 @@ function InviteByMagicLinkButton() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {roleOptions.map((option) => (
+                            {visibleRoleOptions.map((option) => (
                               <SelectItem key={option.value} value={option.value}>
                                 {option.label}
                               </SelectItem>
@@ -1528,7 +1535,8 @@ function InviteByMagicLinkButton() {
                       </>
                     )}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
