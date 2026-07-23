@@ -44,7 +44,7 @@ describe("authenticated access-mode layout", () => {
   it("uses the client-portal path helper to bypass the internal gate", () => {
     expect(layout).toContain("isClientPortalPath");
     expect(layout).toContain("clientPortalPathForProject");
-    expect(accessMode).toContain('CLIENT_PORTAL_PREFIX = "/n/"');
+    expect(accessMode).toContain('CLIENT_PORTAL_PREFIX = "/client/projects/"');
   });
 
   it("offers a Sign out affordance on every disabled/error branch", () => {
