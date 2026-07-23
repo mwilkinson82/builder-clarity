@@ -1558,7 +1558,34 @@ function TeamPage() {
                       {team.members.map((member) => {
                         const isOwnerRow = member.role === "owner";
                         const isSelf = member.user_id === team.currentProfile.id;
-                        const canEditRow = team.canManageTeam && !isOwnerRow;
+                        // P0 team-role containment: a non-owner team manager
+                        // cannot edit their own row (no self-elevation) and
+                        // cannot edit a member whose effective capabilities
+                        // exceed theirs. Owners and super admins retain full
+                        // authority. Server re-checks on every write.
+                        const targetExceedsCaller =
+                          !canAssignOwner &&
+                          ALL_CAPABILITY_KEYS.some(
+                            (key) =>
+                              (member.capabilities as CapabilitySet)[key] === true &&
+                              (team.currentUserCapabilities as CapabilitySet | undefined)?.[key] !==
+                                true,
+                          );
+                        const selfLockedForCaller = isSelf && !canAssignOwner;
+                        const canEditRow =
+                          team.canManageTeam &&
+                          !isOwnerRow &&
+                          !targetExceedsCaller &&
+                          !selfLockedForCaller;
+                        const memberLockedKeys: Partial<Record<CapabilityKey, string>> = {
+                          ...ceilingLocks,
+                          ...(isSelf
+                            ? {
+                                "company.manage_team":
+                                  "You can't remove your own people-management access.",
+                              }
+                            : {}),
+                        };
                         const accessLabel = accessLabelForMember(member.role, member.capabilities);
                         return (
                           <div key={member.id} className="space-y-3 px-3 py-3">
