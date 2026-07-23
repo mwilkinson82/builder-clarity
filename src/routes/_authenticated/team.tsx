@@ -822,10 +822,18 @@ function TeamPage() {
     mutationFn: async () => {
       const email = inviteEmail.trim().toLowerCase();
       if (!email) throw new Error("Enter an email address.");
-      await createInvite({
+      // P0 invite containment: capture the exact invite id from
+      // createTeamInvite and pass it to the magic-link API so it can
+      // re-verify the invitation before provisioning or emailing.
+      const created = await createInvite({
         data: { email, role: inviteRole, capabilities: inviteCapabilities },
       });
-      await sendOverwatchMagicLink({ email, next: "/", context: "company_invite" });
+      await sendOverwatchMagicLink({
+        email,
+        next: "/",
+        context: "company_invite",
+        inviteId: created.invite.id,
+      });
       return email;
     },
     onSuccess: async (email) => {
