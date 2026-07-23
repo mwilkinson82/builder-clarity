@@ -12,6 +12,13 @@ import {
   type CapabilityKey,
   type CapabilitySet,
 } from "@/lib/capabilities";
+import {
+  assertCanAssignRole,
+  assertCanGrantCapabilities,
+  assertCanTargetMember,
+  assertCannotSelfElevate,
+  type CallerAuthority,
+} from "@/lib/team/role-containment";
 import { stripeConnectionForMode, type StripeMode } from "@/lib/stripe-mode";
 
 const ACCOUNT_ROLES = [
