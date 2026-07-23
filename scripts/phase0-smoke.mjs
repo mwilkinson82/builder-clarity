@@ -472,6 +472,16 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/billing/ReceivablesCockpit.tsx",
+  [
+    /function ChangeOrderSection[\s\S]*?className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card"/,
+    /grid min-w-0 gap-4 xl:grid-cols-\[1\.2fr_0\.8fr\]/,
+    /<section className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card">[\s\S]*?Payment activity/,
+  ],
+  "receivables cards cannot force their implicit grid track beyond the mobile billing panel",
+);
+
+await expectContains(
   "src/routes/_authenticated/reports.tsx",
   [/<PortfolioTopBar active="reports" \/>/, /<div data-print-hide>/],
   "reports workspace uses the shared portfolio navigation and hides it when printing",

@@ -204,7 +204,7 @@ function CollectionsLog({
 function ChangeOrderSection({ changeOrders }: { changeOrders: CockpitChangeOrder[] }) {
   if (changeOrders.length === 0) return null;
   return (
-    <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+    <div className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card">
       <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
         Approved change orders in billing
       </div>
@@ -528,9 +528,9 @@ export function ReceivablesCockpit({
         ) : null}
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <ChangeOrderSection changeOrders={data.changeOrders} />
-        <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+        <section className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card">
           <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             <Banknote className="h-4 w-4" />
             Payment activity
