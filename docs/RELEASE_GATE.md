@@ -25,7 +25,8 @@ versions used by the gate.
 - a post-build deployment-coherence check that requires the built server worker
   to invoke both audited Daily WIP RPCs, rejects a direct-DML worker, and requires
   the project client asset to send `expected_version` plus `operation_key` for
-  both save and void;
+  both save and void across the GitHub/local `.output` and Lovable `dist`
+  production layouts;
 - the estimating, AI takeoff, CPM, demo, CRM, billing, budget, subcontract,
   compliance, submittal, Daily WIP, AIA, role, and schedule domain smokes.
 

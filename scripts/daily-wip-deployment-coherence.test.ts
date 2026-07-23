@@ -30,13 +30,15 @@ const projectContract = `
 function buildFixture({
   server = serverContract,
   client = projectContract,
+  clientDirectory = "public",
 }: {
   server?: string;
   client?: string;
+  clientDirectory?: "public" | "client";
 } = {}) {
   const output = mkdtempSync(join(tmpdir(), "overwatch-deployment-contract-"));
   const serverDirectory = join(output, "server", "_ssr");
-  const assetsDirectory = join(output, "public", "assets");
+  const assetsDirectory = join(output, clientDirectory, "assets");
   mkdirSync(serverDirectory, { recursive: true });
   mkdirSync(assetsDirectory, { recursive: true });
   writeFileSync(join(serverDirectory, "daily-wip.functions-ABC123.mjs"), server);
@@ -71,6 +73,12 @@ function response({
 describe("Daily WIP built deployment coherence", () => {
   it("proves the audited server commands and versioned client payloads", () => {
     const result = verifyBuiltDeploymentContract(buildFixture());
+    expect(result.serverArtifact).toContain("daily-wip.functions-ABC123.mjs");
+    expect(result.projectAsset).toContain("projects._projectId-ABC123.js");
+  });
+
+  it("supports the Lovable dist/server plus dist/client build layout", () => {
+    const result = verifyBuiltDeploymentContract(buildFixture({ clientDirectory: "client" }));
     expect(result.serverArtifact).toContain("daily-wip.functions-ABC123.mjs");
     expect(result.projectAsset).toContain("projects._projectId-ABC123.js");
   });
