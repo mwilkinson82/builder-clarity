@@ -462,6 +462,10 @@ async function requireOrgCapability(
     if (isMissingRestFunction(error, "has_org_capability")) {
       await requireCanManageOrganization(context, organizationId);
       return;
+    }
+    throw new Error(error.message);
+  }
+  if (!allowed) throw new Error(message);
 }
 
 /**
@@ -495,9 +499,6 @@ async function loadCallerAuthority(
   const role = (row.role as AccountRole) ?? "member";
   const capabilities = effectiveCapabilities({ role, capabilities: row.capabilities });
   return { isSuperAdmin, isOwner: role === "owner", role, capabilities };
-    throw new Error(error.message);
-  }
-  if (!allowed) throw new Error(message);
 }
 
 async function requireCanManageProject(context: TeamServerContext, projectId: string) {
