@@ -1061,25 +1061,16 @@ function TeamPage() {
   const visibleRoleOptions = canAssignOwner
     ? roleOptions
     : roleOptions.filter((option) => option.value !== "owner");
-  const managerCapabilityLocks: Partial<Record<CapabilityKey, string>> = canAssignOwner
-    ? {}
-    : Object.fromEntries(
-        (Object.keys((team?.currentUserCapabilities ?? {}) as CapabilitySet) as CapabilityKey[])
-          .concat(
-            // Include every capability the caller does NOT hold, marked
-            // locked with a plain-language reason. Using ALL_CAPABILITY_KEYS
-            // avoids listing them here.
-            [] as CapabilityKey[],
-          ) && [],
-      );
-  // Actual lock map: every capability the caller does not currently hold.
+  // Every capability the caller does NOT currently hold is locked (with a
+  // plain-language reason) — non-owner managers can only grant what they
+  // already have. Empty when the caller is Owner or super admin.
   const ceilingLocks: Partial<Record<CapabilityKey, string>> = canAssignOwner
     ? {}
-    : Object.fromEntries(
+    : (Object.fromEntries(
         ALL_CAPABILITY_KEYS.filter(
           (key) => (team?.currentUserCapabilities as CapabilitySet | undefined)?.[key] !== true,
         ).map((key) => [key, "You don't hold this capability yourself."]),
-      );
+      ) as Partial<Record<CapabilityKey, string>>);
   // Phase 3: the commercial block (plan limits, subscription, Stripe state)
   // is only in the payload for settings/billing holders — everyone else gets
   // zero values from the projection, which must read as "restricted", never
