@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
+import { safeAuthNext } from "@/lib/auth/magic-link-url";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -21,9 +22,7 @@ export const Route = createFileRoute("/auth")({
 
 function safeNextFromLocation() {
   if (typeof window === "undefined") return "/";
-  const next = new URLSearchParams(window.location.search).get("next") ?? "/";
-  if (!next.startsWith("/") || next.startsWith("//")) return "/";
-  return next;
+  return safeAuthNext(new URL(window.location.href));
 }
 
 function goAfterAuth(next: string, navigate: ReturnType<typeof useNavigate>) {
@@ -31,6 +30,17 @@ function goAfterAuth(next: string, navigate: ReturnType<typeof useNavigate>) {
   // Supabase client is using its in-memory fallback, a hard reload destroys the
   // newly established session and sends the user back to /auth.
   navigate({ to: next as never, replace: true });
+}
+
+const INVALID_SAVED_SESSION_MESSAGE =
+  "Your saved sign-in could not be verified. Request a fresh magic link to continue.";
+
+async function clearLocalAuthSession() {
+  try {
+    await supabase.auth.signOut({ scope: "local" });
+  } catch {
+    console.warn("Could not clear local authentication state");
+  }
 }
 
 function AuthPage() {
@@ -58,55 +68,28 @@ function AuthForm() {
 
     async function checkExistingSession() {
       try {
-        // Use getUser() (revalidates identity with Supabase Auth) rather
-        // than getSession() (returns any local session). If getUser()
-        // fails or returns no user, treat as signed-out — do NOT rescue
-        // with getSession, and locally clear any stale session so the
-        // form stays fail-closed.
-        const { data, error } = await supabase.auth.getUser();
-        if (cancelled) return;
-        if (error || !data.user) {
-          if (error) {
-            // Best-effort local cleanup; ignore signOut errors.
-            try {
-              await supabase.auth.signOut({ scope: "local" });
-            } catch {
-              /* noop */
-            }
-          }
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+        if (!sessionData.session || cancelled) return;
+
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData.user) {
+          await clearLocalAuthSession();
+          if (!cancelled) setError(INVALID_SAVED_SESSION_MESSAGE);
           return;
         }
-        goAfterAuth(next, navigate);
+
+        if (!cancelled) goAfterAuth(next, navigate);
       } catch {
-        if (!cancelled) {
-          setError("Could not check current session.");
-        }
+        await clearLocalAuthSession();
+        if (!cancelled) setError(INVALID_SAVED_SESSION_MESSAGE);
       }
     }
 
     void checkExistingSession();
 
-    // Re-check on tab focus / visibility so a session revoked in another
-    // tab is caught immediately, and on Supabase auth-state changes.
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void checkExistingSession();
-    };
-    const onFocus = () => {
-      void checkExistingSession();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onFocus);
-    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_IN" || event === "USER_UPDATED") {
-        void checkExistingSession();
-      }
-    });
-
     return () => {
       cancelled = true;
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onFocus);
-      sub.subscription.unsubscribe();
     };
   }, [navigate, next]);
 
@@ -122,8 +105,7 @@ function AuthForm() {
       await sendOverwatchMagicLink({ email, next, context: "login" });
       setNotice("Check your email. Your secure sign-in link is on the way.");
     } catch {
-      // Fail-closed generic copy — never surface provider text.
-      setError("We couldn't send your sign-in link. Please try again in a moment.");
+      setError("We could not send a sign-in link. Try again or contact support.");
     } finally {
       setMagicLoading(false);
     }

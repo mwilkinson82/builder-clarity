@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ALLOWED_ORIGINS,
+  NON_PRODUCTION_ORIGINS,
   PRODUCTION_ORIGIN,
   isAllowedOrigin,
   resolveMagicLinkRedirect,
@@ -26,6 +27,13 @@ describe("magic-link redirect containment", () => {
       }
     });
 
+    it("rejects the Lovable ID preview in production and allows it only in non-production", () => {
+      for (const origin of NON_PRODUCTION_ORIGINS) {
+        expect(isAllowedOrigin(origin, PROD), origin).toBe(false);
+        expect(isAllowedOrigin(origin, DEV), origin).toBe(true);
+      }
+    });
+
     it("rejects evil.lovable.app and any arbitrary *.lovable.app suffix", () => {
       expect(isAllowedOrigin("https://evil.lovable.app", PROD)).toBe(false);
       expect(isAllowedOrigin("https://attacker-preview.lovable.app", PROD)).toBe(false);
@@ -33,7 +41,9 @@ describe("magic-link redirect containment", () => {
     });
 
     it("rejects suffix tricks that append onto a trusted host", () => {
-      expect(isAllowedOrigin("https://overwatch.alpcontractorcircle.com.evil.com", PROD)).toBe(false);
+      expect(isAllowedOrigin("https://overwatch.alpcontractorcircle.com.evil.com", PROD)).toBe(
+        false,
+      );
       expect(isAllowedOrigin("https://builder-clarity.lovable.app.evil.com", PROD)).toBe(false);
       // Same host, different port is NOT the same origin.
       expect(isAllowedOrigin("https://overwatch.alpcontractorcircle.com:8443", PROD)).toBe(false);
@@ -104,25 +114,34 @@ describe("magic-link redirect containment", () => {
       expect(r.ok).toBe(false);
     });
 
-    it("accepts an exact production redirectTo unchanged", () => {
-      const url = "https://overwatch.alpcontractorcircle.com/auth/callback?next=%2F";
+    it("uses only an exact production origin and rebuilds the app-owned callback", () => {
+      const url =
+        "https://overwatch.alpcontractorcircle.com/projects?invite_id=attacker&token_hash=secret";
       const r = resolveMagicLinkRedirect({
         requestUrl: "https://overwatch.alpcontractorcircle.com/api/auth/magic-link",
         redirectTo: url,
+        next: "/team",
         isProd: true,
       });
-      expect(r).toEqual({ ok: true, redirectTo: url });
+      expect(r).toEqual({
+        ok: true,
+        redirectTo: "https://overwatch.alpcontractorcircle.com/auth/callback?next=%2Fteam",
+      });
     });
 
-    it("accepts each exact known origin as redirectTo", () => {
+    it("accepts each exact known origin but always owns the callback path and query", () => {
       for (const origin of ALLOWED_ORIGINS) {
-        const url = `${origin}/auth/callback?next=%2F`;
+        const url = `${origin}/not-auth?client_access_id=attacker#access_token=secret`;
         const r = resolveMagicLinkRedirect({
           requestUrl: "https://overwatch.alpcontractorcircle.com/api/auth/magic-link",
           redirectTo: url,
+          next: "/client/projects/project-a",
           isProd: true,
         });
-        expect(r.ok, origin).toBe(true);
+        expect(r, origin).toEqual({
+          ok: true,
+          redirectTo: `${origin}/auth/callback?next=%2Fclient%2Fprojects%2Fproject-a`,
+        });
       }
     });
   });
@@ -150,6 +169,19 @@ describe("magic-link redirect containment", () => {
       expect(r).toEqual({
         ok: true,
         redirectTo: `${PRODUCTION_ORIGIN}/auth/callback?next=%2Fdashboard`,
+      });
+    });
+
+    it("does not establish a production session on the Lovable ID preview", () => {
+      const r = resolveMagicLinkRedirect({
+        requestUrl:
+          "https://id-preview--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app/api/auth/magic-link",
+        next: "/team",
+        isProd: true,
+      });
+      expect(r).toEqual({
+        ok: true,
+        redirectTo: `${PRODUCTION_ORIGIN}/auth/callback?next=%2Fteam`,
       });
     });
 

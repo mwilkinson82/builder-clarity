@@ -1,16 +1,17 @@
 import {
   createFileRoute,
-  Link,
   Outlet,
   redirect,
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
+import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { recordUserActivity } from "@/lib/team.functions";
 import {
+  clientProjectIdFromPath,
   clientPortalPathForProject,
   isClientPortalPath,
   resolveAccessMode,
@@ -19,6 +20,8 @@ import {
 
 const ACTIVITY_SESSION_STORAGE_KEY = "overwatch_activity_session_id";
 const ACTIVITY_HEARTBEAT_MS = 45_000;
+const ACCESS_RECHECK_MS = 60_000;
+const HEARTBEAT_FAILURE_RECHECK_COOLDOWN_MS = 10_000;
 
 function createActivitySessionId() {
   const randomId =
@@ -41,19 +44,19 @@ function getActivitySessionId() {
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
   beforeLoad: async ({ location }) => {
-    // Fail-closed: getUser() is authoritative. It re-validates the
-    // access token against Supabase Auth, so a stale localStorage
-    // session cannot mask a revoked/disabled user. If it fails for
-    // ANY reason, sign out locally and redirect to /auth. We must
-    // NOT render Outlet from a "restored session" fallback — that
-    // is exactly how a disabled seat kept seeing internal chrome.
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError || !sessionData.session) {
+      throw redirect({
+        to: "/auth",
+        search: { next: location.href },
+        replace: true,
+      });
+    }
+
     const { data, error } = await supabase.auth.getUser();
     if (error || !data.user) {
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        /* redirect is authoritative */
-      }
+      await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
       throw redirect({
         to: "/auth",
         search: { next: location.href },
@@ -75,66 +78,94 @@ function AuthenticatedLayout() {
 
   const [mode, setMode] = useState<AccessMode | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const lastHeartbeatFailureRecheckRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
-    setMode(null);
-    resolveMode({ data: undefined })
-      .then((next: AccessMode) => {
+    const resolveVerifiedMode = async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (error || !data.user) {
+        await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+        if (!cancelled) window.location.replace("/auth");
+        return;
+      }
+
+      try {
+        const next = await resolveMode({ data: undefined });
         if (!cancelled) setMode(next);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setMode({
-          kind: "lookup_error",
-          message: error instanceof Error ? error.message : "Access lookup failed.",
-        });
-      });
+      } catch {
+        if (!cancelled) {
+          setMode({
+            kind: "lookup_error",
+            message: "We couldn't verify your access.",
+          });
+        }
+      }
+    };
+
+    void resolveVerifiedMode();
     return () => {
       cancelled = true;
     };
   }, [resolveMode, reloadKey]);
 
-  // Re-resolve access on visibility return AND on auth-state changes.
-  // A seat disabled mid-session (owner revoked, membership deactivated,
-  // capability removed) must lose access without a hard refresh. This
-  // also covers the case where the same tab was left open across a
-  // sign-out from another tab.
   useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState !== "visible") return;
-      setReloadKey((k) => k + 1);
+    const refreshAccess = () => setReloadKey((key) => key + 1);
+    const handleFocus = () => refreshAccess();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshAccess();
     };
-    const handleFocus = () => setReloadKey((k) => k + 1);
-    document.addEventListener("visibilitychange", handleVisibility);
+
     window.addEventListener("focus", handleFocus);
-    const { data: authSub } = supabase.auth.onAuthStateChange((event) => {
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT") {
         window.location.replace("/auth");
         return;
       }
-      if (event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED") {
-        setReloadKey((k) => k + 1);
-      }
+      refreshAccess();
     });
+
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("focus", handleFocus);
-      authSub.subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      subscription.unsubscribe();
     };
   }, []);
 
+  // A disabled company seat or revoked client-project grant must leave the
+  // protected screen even when the browser remains focused and Supabase emits
+  // no auth event. Re-check active access in the background; keep the current
+  // screen mounted until the answer arrives so the interval does not create a
+  // once-per-minute loading flash.
+  useEffect(() => {
+    if (mode?.kind !== "internal_active" && mode?.kind !== "client_only") return;
+    const interval = window.setInterval(() => setReloadKey((key) => key + 1), ACCESS_RECHECK_MS);
+    return () => window.clearInterval(interval);
+  }, [mode?.kind]);
+
+  const clientPortalProjectId = useMemo(
+    () => clientProjectIdFromPath(routePathname),
+    [routePathname],
+  );
   const onClientPortalRoute = useMemo(() => isClientPortalPath(routePathname), [routePathname]);
+  const onAuthorizedClientPortalRoute =
+    mode?.kind === "client_only" &&
+    onClientPortalRoute &&
+    clientPortalProjectId !== null &&
+    mode.clientProjectIds.includes(clientPortalProjectId);
 
   // Redirect client-only identity from root/internal chrome to their
-  // client-portal project once; never loop.
+  // first exact authorized client-portal project once; never loop.
   useEffect(() => {
     if (!mode || mode.kind !== "client_only") return;
-    if (onClientPortalRoute) return;
+    if (onAuthorizedClientPortalRoute) return;
     const first = mode.clientProjectIds[0];
     if (!first) return;
     navigate({ to: clientPortalPathForProject(first), replace: true });
-  }, [mode, onClientPortalRoute, navigate]);
+  }, [mode, onAuthorizedClientPortalRoute, navigate]);
 
   // Heartbeat runs only for internal_active — never for client_only,
   // no_active_company, or lookup_error, since it calls
@@ -156,8 +187,13 @@ function AuthenticatedLayout() {
           pageTitle: document.title,
           userAgent: navigator.userAgent,
         },
-      }).catch((error) => {
-        console.warn("Overwatch activity heartbeat failed", error);
+      }).catch(() => {
+        console.warn("Overwatch activity heartbeat failed");
+        const now = Date.now();
+        if (now - lastHeartbeatFailureRecheckRef.current >= HEARTBEAT_FAILURE_RECHECK_COOLDOWN_MS) {
+          lastHeartbeatFailureRecheckRef.current = now;
+          setReloadKey((key) => key + 1);
+        }
       });
     };
 
@@ -177,7 +213,7 @@ function AuthenticatedLayout() {
 
   const handleSignOut = useCallback(async () => {
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
     } finally {
       window.location.replace("/auth");
     }
@@ -187,7 +223,10 @@ function AuthenticatedLayout() {
   // internal chrome renders yet.
   if (!mode) {
     return (
-      <div data-testid="access-mode-loading" style={{ padding: 32, fontFamily: "sans-serif" }}>
+      <div
+        data-testid="access-mode-loading"
+        className="flex min-h-screen items-center justify-center bg-background p-8 text-sm text-muted-foreground"
+      >
         Checking your access…
       </div>
     );
@@ -199,7 +238,7 @@ function AuthenticatedLayout() {
     return <Outlet />;
   }
 
-  if (mode.kind === "client_only" && onClientPortalRoute) {
+  if (mode.kind === "client_only" && onAuthorizedClientPortalRoute) {
     return <Outlet />;
   }
 
@@ -207,7 +246,10 @@ function AuthenticatedLayout() {
     // Redirect effect above will fire; render a small stable placeholder
     // meanwhile — never internal chrome.
     return (
-      <div data-testid="access-mode-client-redirecting" style={{ padding: 32 }}>
+      <div
+        data-testid="access-mode-client-redirecting"
+        className="flex min-h-screen items-center justify-center bg-background p-8 text-sm text-muted-foreground"
+      >
         Opening your project…
       </div>
     );
@@ -222,6 +264,7 @@ function AuthenticatedLayout() {
         detail={mode.message}
         primary={{ label: "Retry", onClick: () => setReloadKey((k) => k + 1) }}
         onSignOut={handleSignOut}
+        support
       />
     );
   }
@@ -232,6 +275,7 @@ function AuthenticatedLayout() {
       testId="access-mode-no-active-company"
       title="No active company access"
       body="Your Overwatch account isn't attached to an active company right now. Contact your company owner to restore access, or reach out to Overwatch support."
+      primary={{ label: "Check access again", onClick: () => setReloadKey((k) => k + 1) }}
       onSignOut={handleSignOut}
       support
     />
@@ -260,99 +304,32 @@ function AccessMessage({
   return (
     <main
       data-testid={testId}
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-        background: "#f7f4ee",
-        fontFamily: "Inter, system-ui, sans-serif",
-        color: "#211a16",
-      }}
+      className="flex min-h-screen w-full min-w-0 items-center justify-center overflow-x-hidden bg-background p-4 text-foreground sm:p-6"
     >
-      <div
-        style={{
-          maxWidth: 480,
-          background: "#fff",
-          border: "1px solid #e7e0d5",
-          borderRadius: 12,
-          padding: 32,
-        }}
-      >
-        <p
-          style={{
-            margin: 0,
-            textTransform: "uppercase",
-            letterSpacing: "0.16em",
-            fontSize: 11,
-            color: "#776e66",
-          }}
-        >
-          Overwatch
-        </p>
-        <h1
-          style={{
-            margin: "8px 0 12px",
-            fontFamily: "Georgia, serif",
-            fontWeight: 400,
-            fontSize: 26,
-          }}
-        >
-          {title}
-        </h1>
-        <p style={{ margin: "0 0 20px", color: "#5f5750", lineHeight: 1.55 }}>{body}</p>
-        {detail ? (
-          <p style={{ margin: "0 0 20px", fontSize: 12, color: "#8a7f74" }}>{detail}</p>
-        ) : null}
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <section className="hairline w-full min-w-0 max-w-lg rounded-xl border bg-surface p-6 shadow-sm sm:p-8">
+        <p className="eyebrow">Overwatch</p>
+        <h1 className="mb-3 mt-2 break-words font-serif text-3xl font-normal">{title}</h1>
+        <p className="mb-5 break-words text-sm leading-relaxed text-muted-foreground">{body}</p>
+        {detail ? <p className="mb-5 break-words text-xs text-muted-foreground">{detail}</p> : null}
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           {primary ? (
-            <button
-              type="button"
-              onClick={primary.onClick}
-              style={{
-                background: "#211a16",
-                color: "#fff",
-                border: 0,
-                borderRadius: 6,
-                padding: "10px 18px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
+            <Button type="button" onClick={primary.onClick}>
               {primary.label}
-            </button>
+            </Button>
           ) : null}
-          <button
-            type="button"
-            onClick={onSignOut}
-            style={{
-              background: "#fff",
-              color: "#211a16",
-              border: "1px solid #211a16",
-              borderRadius: 6,
-              padding: "10px 18px",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
+          <Button type="button" variant="outline" onClick={onSignOut}>
             Sign out
-          </button>
-          {support ? (
-            <Link to="/support" style={{ alignSelf: "center", color: "#5f5750", fontSize: 14 }}>
-              Support
-            </Link>
-          ) : null}
+          </Button>
           {support ? (
             <a
               href="mailto:support@alpcontractorcircle.com"
-              style={{ alignSelf: "center", color: "#5f5750", fontSize: 14 }}
+              className="min-w-0 break-all text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             >
               support@alpcontractorcircle.com
             </a>
           ) : null}
         </div>
-      </div>
+      </section>
     </main>
   );
 }

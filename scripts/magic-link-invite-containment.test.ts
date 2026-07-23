@@ -2,21 +2,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const apiRoute = readFileSync(
-  resolve(process.cwd(), "src/routes/api/auth/magic-link.ts"),
-  "utf8",
-);
+const apiRoute = readFileSync(resolve(process.cwd(), "src/routes/api/auth/magic-link.ts"), "utf8");
 // P0 refactor: the authorization gate + provisioning body now lives in the
 // injectable handler so behavioral vitests can invoke it with spies. Source
 // assertions inspect the handler alongside the thin transport route.
-const handler = readFileSync(
-  resolve(process.cwd(), "src/lib/auth/magic-link-handler.ts"),
-  "utf8",
-);
-const clientHelper = readFileSync(
-  resolve(process.cwd(), "src/lib/auth/magic-link.ts"),
-  "utf8",
-);
+const handler = readFileSync(resolve(process.cwd(), "src/lib/auth/magic-link-handler.ts"), "utf8");
+const clientHelper = readFileSync(resolve(process.cwd(), "src/lib/auth/magic-link.ts"), "utf8");
 const teamCaller = readFileSync(
   resolve(process.cwd(), "src/routes/_authenticated/team.tsx"),
   "utf8",
@@ -37,11 +28,11 @@ describe("magic-link invite-context containment — client helper", () => {
     // Discriminated union: invite contexts REQUIRE inviteId at the type
     // layer, non-invite contexts never accept it.
     expect(clientHelper).toContain("InviteMagicLinkInput");
-    expect(clientHelper).toMatch(/context:\s*"company_invite"\s*\|\s*"portfolio_invite";\s*\n\s*inviteId:\s*string;/);
-    expect(clientHelper).toMatch(/INVITE_CONTEXTS[\s\S]*company_invite[\s\S]*portfolio_invite/);
-    expect(clientHelper).toContain(
-      "An invite id is required to send an invite magic link.",
+    expect(clientHelper).toMatch(
+      /context:\s*"company_invite"\s*\|\s*"portfolio_invite";\s*\n\s*inviteId:\s*string;/,
     );
+    expect(clientHelper).toMatch(/INVITE_CONTEXTS[\s\S]*company_invite[\s\S]*portfolio_invite/);
+    expect(clientHelper).toContain("An invite id is required to send an invite magic link.");
   });
 
   it("attaches the caller's bearer token only for invite contexts", () => {
@@ -59,11 +50,11 @@ describe("magic-link invite-context containment — API route + handler", () => 
     // contract; assert it and every downstream side effect appear
     // AFTER the invite authorization gate.
     const gateIdx = handler.indexOf("Invite gate");
+    const reservationIdx = handler.indexOf("reserveSend({");
     const generateLinkIdx = handler.indexOf("generateMagicLink(");
-    const emailLogIdx = handler.indexOf("insertEmailSendLog(");
     const sendEmailIdx = handler.indexOf("sendEmail(");
     expect(gateIdx).toBeGreaterThan(0);
-    for (const idx of [generateLinkIdx, emailLogIdx, sendEmailIdx]) {
+    for (const idx of [reservationIdx, generateLinkIdx, sendEmailIdx]) {
       expect(idx).toBeGreaterThan(gateIdx);
     }
     // The handler must not carry a separate createAuthUser seam —
@@ -90,12 +81,8 @@ describe("magic-link invite-context containment — API route + handler", () => 
     expect(handler).toContain("callerHasManageTeam");
     expect(apiRoute).toContain('"has_org_capability"');
     expect(apiRoute).toContain('p_capability: "company.manage_team"');
-    expect(handler).toContain(
-      "Only the original inviter can resend this invitation.",
-    );
-    expect(handler).toContain(
-      "You no longer have permission to send this invitation.",
-    );
+    expect(handler).toContain("Only the original inviter can resend this invitation.");
+    expect(handler).toContain("You no longer have permission to send this invitation.");
   });
 
   it("does not derive provisioning from context alone", () => {
@@ -103,7 +90,9 @@ describe("magic-link invite-context containment — API route + handler", () => 
     // authorization check fails; the string checks below prove the gate is
     // wired to fail-closed jsonError() returns.
     expect(handler).toMatch(/if \(!parsed\.data\.inviteId\) \{[\s\S]*?jsonError\(/);
-    expect(handler).toMatch(/if \(!authorizationHeader\?\.startsWith\("Bearer "\)\) \{[\s\S]*?jsonError\(/);
+    expect(handler).toMatch(
+      /if \(!authorizationHeader\?\.startsWith\("Bearer "\)\) \{[\s\S]*?jsonError\(/,
+    );
   });
 
   it("keeps redirect allowlist and hashed-token confirmation intact", () => {
