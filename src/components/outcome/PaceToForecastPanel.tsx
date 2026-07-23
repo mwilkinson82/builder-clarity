@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { CalendarClock, CheckCircle2, CircleAlert, Gauge, ShieldCheck } from "lucide-react";
@@ -130,6 +130,9 @@ export function PaceToForecastPanel({
     useState<SovCompletionRecommendation | null>(null);
   const [certifiedPercent, setCertifiedPercent] = useState(0);
   const [certificationNote, setCertificationNote] = useState("");
+  const certificationOperationKeyRef = useRef(
+    `production-sov-certification:${globalThis.crypto.randomUUID()}`,
+  );
 
   const targetDate = contextQuery.data?.nextBillingDate ?? null;
   const forecasts = useMemo(
@@ -151,7 +154,7 @@ export function PaceToForecastPanel({
   const latestCertificationByBucket = useMemo(() => {
     const map = new Map<string, ProductionSovCertificationRow>();
     for (const certification of certifications ?? []) {
-      if (!map.has(certification.cost_bucket_id)) {
+      if (!certification.invalidated_at && !map.has(certification.cost_bucket_id)) {
         map.set(certification.cost_bucket_id, certification);
       }
     }
@@ -183,6 +186,9 @@ export function PaceToForecastPanel({
         data: {
           projectId,
           costBucketId: recommendation.costBucketId,
+          sourceWipEntryId: recommendation.sourceEntryId,
+          sourceReviewVersion: recommendation.sourceReviewVersion,
+          expectedCurrentSovPercent: recommendation.currentSovPercent,
           sourcePeriodStart: periodFrom,
           sourcePeriodEnd: periodTo,
           certifiedPercent,
@@ -193,6 +199,7 @@ export function PaceToForecastPanel({
           recentDailyPace: forecast?.recentDailyPace ?? null,
           requiredDailyPace: forecast?.requiredDailyPace ?? null,
           note: certificationNote,
+          operationKey: certificationOperationKeyRef.current,
         },
       });
     },
@@ -211,6 +218,7 @@ export function PaceToForecastPanel({
   });
 
   const openCertification = (recommendation: SovCompletionRecommendation) => {
+    certificationOperationKeyRef.current = `production-sov-certification:${globalThis.crypto.randomUUID()}`;
     setSelectedRecommendation(recommendation);
     setCertifiedPercent(recommendation.recommendedPercent);
     setCertificationNote("");

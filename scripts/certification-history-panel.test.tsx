@@ -9,6 +9,9 @@ const certification: ProductionSovCertificationRow = {
   project_id: "project-1",
   cost_bucket_id: "bucket-1",
   source_wip_entry_id: "wip-1",
+  source_wip_review_version: 3,
+  source_wip_updated_at: "2026-07-15T14:00:00.000Z",
+  source_wip_reviewed_at: "2026-07-15T14:15:00.000Z",
   source_period_start: "2026-07-13",
   source_period_end: "2026-07-15",
   current_sov_percent: 60,
@@ -25,6 +28,9 @@ const certification: ProductionSovCertificationRow = {
   certified_by: "user-1",
   certified_by_name: "Marshall Wilkinson",
   certified_at: "2026-07-15T14:30:00.000Z",
+  invalidated_at: null,
+  invalidation_reason_code: null,
+  invalidation_reason_detail: null,
 };
 
 describe("CertificationHistoryPanel", () => {
@@ -58,5 +64,27 @@ describe("CertificationHistoryPanel", () => {
 
     expect(markup).toContain("No SOV positions certified yet");
     expect(markup).toContain("complete decision record will appear here newest first");
+  });
+
+  it("labels preserved invalid certifications as ineligible for Billing", () => {
+    const markup = renderToStaticMarkup(
+      <CertificationHistoryPanel
+        certifications={[
+          {
+            ...certification,
+            invalidated_at: "2026-07-16T10:00:00.000Z",
+            invalidation_reason_code: "source_not_latest_at_certification",
+            invalidation_reason_detail:
+              "A newer reviewed SOV Daily WIP row already existed when this certification was created.",
+          },
+        ]}
+        buckets={[{ id: "bucket-1", cost_code: "1500", bucket: "MEP" }]}
+      />,
+    );
+
+    expect(markup).toContain("Invalidated");
+    expect(markup).toContain("Not eligible for Billing");
+    expect(markup).toContain("newer reviewed SOV Daily WIP row");
+    expect(markup).not.toContain("Latest");
   });
 });

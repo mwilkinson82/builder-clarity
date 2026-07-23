@@ -15,6 +15,12 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   single(): Promise<DynamicSupabaseResult>;
 };
 type DynamicSupabaseClient = { from(relation: string): DynamicSupabaseQuery };
+type RpcSupabaseClient = {
+  rpc(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<DynamicSupabaseResult<Record<string, unknown>>>;
+};
 
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
@@ -28,7 +34,7 @@ const str = (value: unknown): string => (typeof value === "string" ? value : "")
 function isMissingForecastSchema(error: DynamicSupabaseError | null): boolean {
   return (
     error?.code === "PGRST205" ||
-    /production_sov_certifications|wip_reviewed_at|schema cache|does not exist|relation/i.test(
+    /production_sov_certifications|production_sov_certification_invalidations|certify_production_sov_position_atomic|wip_reviewed_at|schema cache|does not exist|relation/i.test(
       error?.message ?? "",
     )
   );
@@ -39,6 +45,9 @@ export interface ProductionSovCertificationRow {
   project_id: string;
   cost_bucket_id: string;
   source_wip_entry_id: string | null;
+  source_wip_review_version: number | null;
+  source_wip_updated_at: string | null;
+  source_wip_reviewed_at: string | null;
   source_period_start: string;
   source_period_end: string;
   current_sov_percent: number;
@@ -55,6 +64,9 @@ export interface ProductionSovCertificationRow {
   certified_by: string;
   certified_by_name: string | null;
   certified_at: string;
+  invalidated_at: string | null;
+  invalidation_reason_code: string | null;
+  invalidation_reason_detail: string | null;
 }
 
 export interface ProductionForecastContext {
@@ -71,6 +83,10 @@ export function normalizeProductionSovCertification(
     project_id: str(row.project_id),
     cost_bucket_id: str(row.cost_bucket_id),
     source_wip_entry_id: row.source_wip_entry_id == null ? null : str(row.source_wip_entry_id),
+    source_wip_review_version:
+      row.source_wip_review_version == null ? null : num(row.source_wip_review_version),
+    source_wip_updated_at: (row.source_wip_updated_at as string | null) ?? null,
+    source_wip_reviewed_at: (row.source_wip_reviewed_at as string | null) ?? null,
     source_period_start: str(row.source_period_start),
     source_period_end: str(row.source_period_end),
     current_sov_percent: num(row.current_sov_percent),
@@ -87,6 +103,11 @@ export function normalizeProductionSovCertification(
     certified_by: str(row.certified_by),
     certified_by_name: row.certified_by_name == null ? null : str(row.certified_by_name),
     certified_at: str(row.certified_at),
+    invalidated_at: (row.invalidated_at as string | null) ?? null,
+    invalidation_reason_code:
+      row.invalidation_reason_code == null ? null : str(row.invalidation_reason_code),
+    invalidation_reason_detail:
+      row.invalidation_reason_detail == null ? null : str(row.invalidation_reason_detail),
   };
 }
 
@@ -114,7 +135,8 @@ export const loadProductionForecastContext = createServerFn({ method: "GET" })
         return {
           nextBillingDate:
             ((projectResult.data as Record<string, unknown> | null)?.next_billing_date as
-              string | null) ?? null,
+              | string
+              | null) ?? null,
           certifications: [],
           certificationEnabled: false,
         };
@@ -122,8 +144,44 @@ export const loadProductionForecastContext = createServerFn({ method: "GET" })
       throw new Error(certificationResult.error.message);
     }
 
+    const invalidationResult = await dynamicTable(
+      context.supabase,
+      "production_sov_certification_invalidations",
+    )
+      .select("production_sov_certification_id,invalidated_at,reason_code,reason_detail")
+      .eq("project_id", data.projectId);
+    if (invalidationResult.error) {
+      if (isMissingForecastSchema(invalidationResult.error)) {
+        return {
+          nextBillingDate:
+            ((projectResult.data as Record<string, unknown> | null)?.next_billing_date as
+              | string
+              | null) ?? null,
+          certifications: [],
+          certificationEnabled: false,
+        };
+      }
+      throw new Error(invalidationResult.error.message);
+    }
+
+    const invalidationByCertificationId = new Map<string, Record<string, unknown>>();
+    for (const invalidation of (invalidationResult.data ?? []) as Record<string, unknown>[]) {
+      invalidationByCertificationId.set(
+        str(invalidation.production_sov_certification_id),
+        invalidation,
+      );
+    }
+
     const certifications = ((certificationResult.data ?? []) as Record<string, unknown>[]).map(
-      normalizeProductionSovCertification,
+      (row) => {
+        const invalidation = invalidationByCertificationId.get(str(row.id));
+        return normalizeProductionSovCertification({
+          ...row,
+          invalidated_at: invalidation?.invalidated_at ?? null,
+          invalidation_reason_code: invalidation?.reason_code ?? null,
+          invalidation_reason_detail: invalidation?.reason_detail ?? null,
+        });
+      },
     );
     const certifierIds = Array.from(
       new Set(certifications.map((certification) => certification.certified_by).filter(Boolean)),
@@ -144,7 +202,8 @@ export const loadProductionForecastContext = createServerFn({ method: "GET" })
     return {
       nextBillingDate:
         ((projectResult.data as Record<string, unknown> | null)?.next_billing_date as
-          string | null) ?? null,
+          | string
+          | null) ?? null,
       certifications: certifications.map((certification) => ({
         ...certification,
         certified_by_name: certifierNameById.get(certification.certified_by) ?? null,
@@ -177,6 +236,9 @@ export const setProductionTargetBillingDate = createServerFn({ method: "POST" })
 const certificationInput = z.object({
   projectId: z.string().uuid(),
   costBucketId: z.string().uuid(),
+  sourceWipEntryId: z.string().uuid(),
+  sourceReviewVersion: z.number().int().nonnegative(),
+  expectedCurrentSovPercent: z.number().min(0).max(100),
   sourcePeriodStart: z.string().date(),
   sourcePeriodEnd: z.string().date(),
   certifiedPercent: z.number().min(0).max(100),
@@ -187,56 +249,16 @@ const certificationInput = z.object({
   recentDailyPace: z.number().min(0).nullable(),
   requiredDailyPace: z.number().min(0).nullable(),
   note: z.string().max(2000),
+  operationKey: z.string().trim().min(1).max(200),
 });
 
 export const certifyProductionSovPosition = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => certificationInput.parse(input))
   .handler(async ({ data, context }): Promise<ProductionSovCertificationRow> => {
-    const reviewResult = await dynamicTable(context.supabase, "daily_wip_entries")
-      .select("id,entry_date,updated_at,percent_basis,percent_complete,wip_reviewed_at")
-      .eq("project_id", data.projectId)
-      .eq("cost_bucket_id", data.costBucketId)
-      .order("entry_date", { ascending: false })
-      .order("updated_at", { ascending: false });
-    if (reviewResult.error) {
-      if (isMissingForecastSchema(reviewResult.error)) {
-        throw new Error("SOV certification isn't available yet.");
-      }
-      throw new Error(reviewResult.error.message);
-    }
-
-    const latestReview = ((reviewResult.data ?? []) as Record<string, unknown>[]).find(
-      (row) =>
-        row.percent_basis === "sov" &&
-        Boolean(row.wip_reviewed_at) &&
-        str(row.entry_date) <= data.sourcePeriodEnd,
-    );
-    if (!latestReview) {
-      throw new Error(
-        "Review this cost code in Daily WIP first. Field-only progress cannot be certified for billing.",
-      );
-    }
-
-    const bucketResult = await dynamicTable(context.supabase, "cost_buckets")
-      .select("id,earned_percent_complete")
-      .eq("id", data.costBucketId)
-      .eq("project_id", data.projectId)
-      .single();
-    if (bucketResult.error) throw new Error(bucketResult.error.message);
-    const currentSovPercent = Math.min(
-      100,
-      Math.max(0, num((bucketResult.data as Record<string, unknown>).earned_percent_complete)),
-    );
-
     const payload = {
-      project_id: data.projectId,
-      cost_bucket_id: data.costBucketId,
-      source_wip_entry_id: str(latestReview.id),
       source_period_start: data.sourcePeriodStart,
       source_period_end: data.sourcePeriodEnd,
-      current_sov_percent: currentSovPercent,
-      recommended_percent: Math.min(100, Math.max(0, num(latestReview.percent_complete))),
       certified_percent: data.certifiedPercent,
       target_date: data.targetDate,
       planned_quantity: data.plannedQuantity,
@@ -244,19 +266,29 @@ export const certifyProductionSovPosition = createServerFn({ method: "POST" })
       unit: data.unit,
       recent_daily_pace: data.recentDailyPace,
       required_daily_pace: data.requiredDailyPace,
-      calculation_version: "production-pace-v1",
-      certification_note: data.note.trim(),
-      certified_by: context.userId,
+      note: data.note.trim(),
     };
-    const result = await dynamicTable(context.supabase, "production_sov_certifications")
-      .insert(payload)
-      .select("*")
-      .single();
-    if (result.error) {
-      if (isMissingForecastSchema(result.error)) {
+    const { data: result, error } = await (context.supabase as unknown as RpcSupabaseClient).rpc(
+      "certify_production_sov_position_atomic",
+      {
+        p_project_id: data.projectId,
+        p_cost_bucket_id: data.costBucketId,
+        p_expected_source_wip_entry_id: data.sourceWipEntryId,
+        p_expected_source_review_version: data.sourceReviewVersion,
+        p_expected_current_sov_percent: data.expectedCurrentSovPercent,
+        p_payload: payload,
+        p_operation_key: data.operationKey,
+      },
+    );
+    if (error) {
+      if (isMissingForecastSchema(error)) {
         throw new Error("SOV certification isn't available yet.");
       }
-      throw new Error(result.error.message);
+      throw new Error(error.message);
     }
-    return normalizeProductionSovCertification(result.data as Record<string, unknown>);
+    const certification = result?.certification;
+    if (!certification || typeof certification !== "object") {
+      throw new Error("The SOV certification saved without returning its authoritative record.");
+    }
+    return normalizeProductionSovCertification(certification as Record<string, unknown>);
   });
