@@ -30,7 +30,7 @@ import { z } from "zod";
 import { buildMagicLinkConfirmationUrl } from "@/lib/auth/magic-link-url";
 import {
   resolveMagicLinkRedirect,
-  type ResolveMagicLinkRedirectResult,
+  type ResolveRedirectResult,
 } from "@/lib/auth/magic-link-origins";
 
 export const SITE_NAME = "Overwatch";
