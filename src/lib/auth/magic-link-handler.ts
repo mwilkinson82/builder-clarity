@@ -326,7 +326,7 @@ export async function handleMagicLinkRequest(args: {
     isProd: deps.isProd,
   });
   if (!resolved.ok) return jsonError(resolved.reason, 400);
-  const redirectTo = resolved.redirectTo;
+  let redirectTo = resolved.redirectTo;
 
   const contextValue = parsed.data.context ?? "login";
   const isInviteContext = INVITE_CONTEXTS.has(
