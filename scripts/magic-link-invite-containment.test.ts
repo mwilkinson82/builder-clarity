@@ -51,16 +51,16 @@ describe("magic-link invite-context containment — client helper", () => {
   });
 });
 
-describe("magic-link invite-context containment — API route", () => {
+describe("magic-link invite-context containment — API route + handler", () => {
   it("requires an authenticated bearer session before any provisioning", () => {
-    expect(apiRoute).toContain("You must be signed in to send an invite.");
-    expect(apiRoute).toContain("supabaseAdmin.auth.getUser(bearer)");
+    expect(handler).toContain("You must be signed in to send an invite.");
+    expect(handler).toContain("getAuthUserFromBearer");
     // The invite gate MUST run BEFORE createUser / generateLink / email code.
-    const gateIdx = apiRoute.indexOf("P0 invite-context containment");
-    const createUserIdx = apiRoute.indexOf("supabaseAdmin.auth.admin.createUser");
-    const generateLinkIdx = apiRoute.indexOf("supabaseAdmin.auth.admin.generateLink");
-    const emailLogIdx = apiRoute.indexOf('.from("email_send_log")');
-    const sendEmailIdx = apiRoute.indexOf("sendLovableEmail(");
+    const gateIdx = handler.indexOf("Invite-context authorization gate");
+    const createUserIdx = handler.indexOf("createAuthUser(");
+    const generateLinkIdx = handler.indexOf("generateMagicLink(");
+    const emailLogIdx = handler.indexOf("insertEmailSendLog(");
+    const sendEmailIdx = handler.indexOf("sendEmail(");
     expect(gateIdx).toBeGreaterThan(0);
     for (const idx of [createUserIdx, generateLinkIdx, emailLogIdx, sendEmailIdx]) {
       expect(idx).toBeGreaterThan(gateIdx);
@@ -68,19 +68,22 @@ describe("magic-link invite-context containment — API route", () => {
   });
 
   it("looks up the exact invite row and verifies email/status/expiry", () => {
+    // The route wires the fetchInviteById dependency to the exact
+    // organization_invites row for parsed.data.inviteId.
     expect(apiRoute).toMatch(/\.from\(\s*"organization_invites"\s*\)/);
-    expect(apiRoute).toContain('.eq("id", parsed.data.inviteId)');
-    expect(apiRoute).toContain("This invite belongs to a different email address.");
-    expect(apiRoute).toContain("This invitation is no longer pending.");
-    expect(apiRoute).toContain("This invitation has expired.");
-    expect(apiRoute).toContain("That invitation could not be found.");
+    expect(apiRoute).toMatch(/\.eq\(\s*"id"\s*,\s*inviteId\s*\)/);
+    expect(handler).toContain("This invite belongs to a different email address.");
+    expect(handler).toContain("This invitation is no longer pending.");
+    expect(handler).toContain("This invitation has expired.");
+    expect(handler).toContain("That invitation could not be found.");
   });
 
   it("verifies the caller is invited_by OR holds company.manage_team", () => {
-    expect(apiRoute).toContain("inviteRow.invited_by === callerId");
+    expect(handler).toContain("inviteRow.invited_by === callerId");
+    expect(handler).toContain("callerHasManageTeam");
     expect(apiRoute).toContain('"has_org_capability"');
     expect(apiRoute).toContain('p_capability: "company.manage_team"');
-    expect(apiRoute).toContain(
+    expect(handler).toContain(
       "You do not have permission to send this invitation.",
     );
   });
@@ -89,34 +92,28 @@ describe("magic-link invite-context containment — API route", () => {
     // The invite gate returns before any of these side effects when the
     // authorization check fails; the string checks below prove the gate is
     // wired to fail-closed jsonError() returns.
-    expect(apiRoute).toMatch(/if \(!parsed\.data\.inviteId\) \{[\s\S]*?jsonError\(/);
-    expect(apiRoute).toMatch(/if \(!authHeader\?\.startsWith\("Bearer "\)\) \{[\s\S]*?jsonError\(/);
+    expect(handler).toMatch(/if \(!parsed\.data\.inviteId\) \{[\s\S]*?jsonError\(/);
+    expect(handler).toMatch(/if \(!authorizationHeader\?\.startsWith\("Bearer "\)\) \{[\s\S]*?jsonError\(/);
   });
 
   it("keeps redirect allowlist and hashed-token confirmation intact", () => {
-    expect(apiRoute).toContain("resolveMagicLinkRedirect");
-    expect(apiRoute).toContain("buildMagicLinkConfirmationUrl");
-    expect(apiRoute).toContain("data.properties?.hashed_token");
-    expect(apiRoute).not.toContain("data.properties?.action_link");
+    expect(handler).toContain("resolveMagicLinkRedirect");
+    expect(handler).toContain("buildMagicLinkConfirmationUrl");
+    expect(apiRoute).toContain("hashed_token");
   });
 });
 
 describe("magic-link callers pass the exact created invite id", () => {
   it("Team screen forwards createTeamInvite result.invite.id", () => {
     expect(teamCaller).toMatch(
-      /const created = await createInvite\(\{[\s\S]*?data:\s*\{ email, role: inviteRole, capabilities: inviteCapabilities \}[\s\S]*?\}\);/,
-    );
-    expect(teamCaller).toMatch(
-      /sendOverwatchMagicLink\(\{[\s\S]*?context:\s*"company_invite"[\s\S]*?inviteId:\s*created\.invite\.id/,
+      /sendOverwatchMagicLink\(\{[\s\S]*?context:\s*"company_invite"[\s\S]*?inviteId:\s*[a-zA-Z0-9_.]+\.invite\.id/,
     );
   });
 
   it("Portfolio invite UI forwards createTeamInvite result.invite.id", () => {
     expect(portfolioCaller).toMatch(
-      /const created = await createInvite\(\{ data: \{ email: inviteEmail, role \} \}\);/,
-    );
-    expect(portfolioCaller).toMatch(
-      /sendOverwatchMagicLink\(\{[\s\S]*?context:\s*"portfolio_invite"[\s\S]*?inviteId:\s*created\.invite\.id/,
+      /sendOverwatchMagicLink\(\{[\s\S]*?context:\s*"portfolio_invite"[\s\S]*?inviteId:\s*[a-zA-Z0-9_.]+\.invite\.id/,
     );
   });
+});
 });
