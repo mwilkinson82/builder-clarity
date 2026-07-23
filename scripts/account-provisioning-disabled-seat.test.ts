@@ -2,16 +2,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// P0 finding 2: disabled-seat containment. This test locks the DRAFT
-// migration under supabase/verification/ (unapplied) that will replace
-// ensure_user_account(). It asserts the containment structure so a future
-// edit cannot silently re-open the self-bootstrap-Owner path when a
-// disabled/history identity refreshes.
+// P0 finding 2: disabled-seat + client-only containment. Locks the
+// FORWARD migration currently staged unapplied under supabase/verification/;
+// see docs/RELEASE_GATE.md §6 for the maintenance-window apply path.
 
 const migration = readFileSync(
   resolve(
     process.cwd(),
-    "supabase/verification/20260723200000_account_provisioning_disabled_seat_containment.sql",
+    "supabase/verification/20260723210000_account_provisioning_history_containment.sql",
   ),
   "utf8",
 );
