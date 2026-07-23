@@ -18,6 +18,8 @@ import {
   scrubbedCallbackUrl,
 } from "@/lib/auth/magic-link-url";
 
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 const verifyOtp = vi.fn();
 const exchangeCodeForSession = vi.fn();
 const setSession = vi.fn();
