@@ -709,8 +709,24 @@ await expectContains(
 
 await expectContains(
   "src/routes/auth.tsx",
-  [/Outlet/, /AuthForm/, /checkExistingSession/, /Your saved sign-in could not be verified/, /setError/],
-  "auth page handles session-check failures without blanking",
+  [
+    /Outlet/,
+    /AuthForm/,
+    /checkExistingSession/,
+    /getSession/,
+    /getUser/,
+    /INVALID_SAVED_SESSION_MESSAGE/,
+    /Your saved sign-in could not be verified/,
+    /signOut\(\{ scope: "local" \}\)/,
+    /setError/,
+  ],
+  "auth page authoritatively verifies saved sessions and fails closed without blanking",
+);
+
+await expectNotContains(
+  "src/routes/auth.tsx",
+  [/Could not check current session/, /err instanceof Error \? err\.message/],
+  "auth page does not expose raw session-check failures",
 );
 
 await expectContains(
