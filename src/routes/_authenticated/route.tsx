@@ -95,6 +95,32 @@ function AuthenticatedLayout() {
     };
   }, [resolveMode, reloadKey]);
 
+  // Re-resolve access on visibility return AND on auth-state changes.
+  // A seat disabled mid-session (owner revoked, membership deactivated,
+  // capability removed) must lose access without a hard refresh. This
+  // also covers the case where the same tab was left open across a
+  // sign-out from another tab.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      setReloadKey((k) => k + 1);
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    const { data: authSub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        window.location.replace("/auth");
+        return;
+      }
+      if (event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED") {
+        setReloadKey((k) => k + 1);
+      }
+    });
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      authSub.subscription.unsubscribe();
+    };
+  }, []);
+
   const onClientPortalRoute = useMemo(
     () => isClientPortalPath(routePathname),
     [routePathname],
