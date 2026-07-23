@@ -1669,15 +1669,13 @@ function TeamPage() {
                                   <CapabilityPicker
                                     idPrefix={`member-${member.id}`}
                                     value={member.capabilities}
-                                    disabled={!team.canManageTeam || memberMutation.isPending}
-                                    lockedKeys={
-                                      isSelf
-                                        ? {
-                                            "company.manage_team":
-                                              "You can't remove your own people-management access.",
-                                          }
-                                        : undefined
+                                    disabled={
+                                      !team.canManageTeam ||
+                                      memberMutation.isPending ||
+                                      targetExceedsCaller ||
+                                      selfLockedForCaller
                                     }
+                                    lockedKeys={memberLockedKeys}
                                     onChange={(next) =>
                                       memberMutation.mutate({
                                         membershipId: member.id,
