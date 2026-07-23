@@ -313,7 +313,6 @@ type ConsoleSection =
   | "company"
   | "profile";
 
-
 const CONSOLE_SECTIONS = new Set<ConsoleSection>([
   "people",
   "clients",
