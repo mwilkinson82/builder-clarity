@@ -9,7 +9,7 @@ const originalBoundary = read(
   "supabase/migrations/20260723115340_ceb0a640-4b93-4d97-b6d2-d765d1013e64.sql",
 );
 const guardFix = read(
-  "supabase/migrations/20260723133206_daily_wip_command_guard_execution_context.sql",
+  "supabase/migrations/20260723134530_ae46663b-04c4-44ba-8598-8742d94bc480.sql",
 );
 
 describe("Daily WIP command guard execution context", () => {
