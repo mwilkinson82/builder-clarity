@@ -1369,9 +1369,9 @@ function TeamPage() {
               {section === "people" && (
                 <section
                   data-testid="company-users-access"
-                  className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]"
+                  className="grid min-w-0 gap-6 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]"
                 >
-                  <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                  <div className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card">
                     <SectionHeader
                       icon={<MailPlus className="h-4 w-4" />}
                       eyebrow="Seats"
@@ -1505,7 +1505,7 @@ function TeamPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                  <div className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card">
                     <SectionHeader
                       icon={<Users className="h-4 w-4" />}
                       eyebrow="Members"
@@ -1537,12 +1537,14 @@ function TeamPage() {
                         const accessLabel = accessLabelForMember(member.role, member.capabilities);
                         return (
                           <div key={member.id} className="space-y-3 px-3 py-3">
-                            <div className="grid gap-3 lg:grid-cols-[1fr_190px_150px] lg:items-center">
-                              <div>
-                                <div className="font-medium">
+                            <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_190px_150px] lg:items-center">
+                              <div className="min-w-0">
+                                <div className="break-words font-medium">
                                   {member.full_name || member.email}
                                 </div>
-                                <div className="text-xs text-muted-foreground">{member.email}</div>
+                                <div className="break-words text-xs text-muted-foreground">
+                                  {member.email}
+                                </div>
                               </div>
                               {canEditRow ? (
                                 <>

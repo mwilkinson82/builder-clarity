@@ -1490,6 +1490,17 @@ await expectContains(
   "company workspace prioritizes access, team seats, client portal access, plan readiness, and profile controls",
 );
 
+await expectContains(
+  "src/routes/_authenticated/team.tsx",
+  [
+    /data-testid="company-users-access"[\s\S]*?className="grid min-w-0 gap-6 2xl:grid-cols-\[minmax\(0,0\.9fr\)_minmax\(0,1\.1fr\)\]"/,
+    /className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card"[\s\S]*?Invite company users[\s\S]*?className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card"[\s\S]*?Company users and roles/,
+    /grid min-w-0 gap-3 lg:grid-cols-\[minmax\(0,1fr\)_190px_150px\]/,
+    /break-words text-xs text-muted-foreground/,
+  ],
+  "company users and role controls stay inside the Team workspace from mobile through desktop",
+);
+
 await expectNotContains(
   "src/routes/_authenticated/team.tsx",
   [/data-testid="company-live-activity"/, /CompanyActivityPanel/, /TeamActivitySession/],
