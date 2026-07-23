@@ -79,7 +79,8 @@ export const Route = createFileRoute("/api/auth/magic-link")({
               .maybeSingle();
             if (error) throw new Error(error.message);
             if (!data) return null;
-            const projectsRel = (data as { projects?: { organization_id?: string } | null }).projects;
+            const projectsRel = (data as { projects?: { organization_id?: string } | null })
+              .projects;
             const organizationId = projectsRel?.organization_id ?? null;
             if (!organizationId) return null;
             return {
@@ -117,10 +118,7 @@ export const Route = createFileRoute("/api/auth/magic-link")({
             // src/lib/auth/find-existing-auth-user.ts. The pinned
             // @supabase/auth-js has no email filter on listUsers, so
             // this is the only correct existence check.
-            findExistingAuthUserByEmail(
-              (args) => supabaseAdmin.auth.admin.listUsers(args),
-              email,
-            ),
+            findExistingAuthUserByEmail((args) => supabaseAdmin.auth.admin.listUsers(args), email),
 
           findRecentSend: async ({ email, label, dedupeKey, sinceIso }) => {
             // Dedupe identity includes exact context+id via the metadata
@@ -140,9 +138,7 @@ export const Route = createFileRoute("/api/auth/magic-link")({
               const md = (row as { metadata?: { dedupe_key?: string } | null }).metadata;
               return md?.dedupe_key === dedupeKey;
             });
-            return match
-              ? { id: match.id as string, status: match.status as string }
-              : null;
+            return match ? { id: match.id as string, status: match.status as string } : null;
           },
 
           generateMagicLink: async ({ email, redirectTo, kind }) => {
@@ -158,16 +154,13 @@ export const Route = createFileRoute("/api/auth/magic-link")({
                 error: { message: error.message, code: (error as { code?: string }).code },
               };
             }
-            const hashedToken =
-              (data?.properties?.hashed_token as string | undefined) ?? null;
+            const hashedToken = (data?.properties?.hashed_token as string | undefined) ?? null;
             const userId = (data?.user?.id as string | undefined) ?? null;
             return { hashedToken, userId, error: null };
           },
 
           insertEmailSendLog: async (row) => {
-            const { error } = await supabaseAdmin
-              .from("email_send_log")
-              .insert(row as never);
+            const { error } = await supabaseAdmin.from("email_send_log").insert(row as never);
             if (error) throw new Error(error.message);
           },
 

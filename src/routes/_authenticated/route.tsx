@@ -105,7 +105,9 @@ function AuthenticatedLayout() {
       if (document.visibilityState !== "visible") return;
       setReloadKey((k) => k + 1);
     };
+    const handleFocus = () => setReloadKey((k) => k + 1);
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleFocus);
     const { data: authSub } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT") {
         window.location.replace("/auth");
@@ -117,14 +119,12 @@ function AuthenticatedLayout() {
     });
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleFocus);
       authSub.subscription.unsubscribe();
     };
   }, []);
 
-  const onClientPortalRoute = useMemo(
-    () => isClientPortalPath(routePathname),
-    [routePathname],
-  );
+  const onClientPortalRoute = useMemo(() => isClientPortalPath(routePathname), [routePathname]);
 
   // Redirect client-only identity from root/internal chrome to their
   // client-portal project once; never loop.
@@ -187,10 +187,7 @@ function AuthenticatedLayout() {
   // internal chrome renders yet.
   if (!mode) {
     return (
-      <div
-        data-testid="access-mode-loading"
-        style={{ padding: 32, fontFamily: "sans-serif" }}
-      >
+      <div data-testid="access-mode-loading" style={{ padding: 32, fontFamily: "sans-serif" }}>
         Checking your access…
       </div>
     );
@@ -342,10 +339,7 @@ function AccessMessage({
             Sign out
           </button>
           {support ? (
-            <Link
-              to="/support"
-              style={{ alignSelf: "center", color: "#5f5750", fontSize: 14 }}
-            >
+            <Link to="/support" style={{ alignSelf: "center", color: "#5f5750", fontSize: 14 }}>
               Support
             </Link>
           ) : null}

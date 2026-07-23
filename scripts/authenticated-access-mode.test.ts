@@ -1,21 +1,15 @@
 // Source-level guard for the _authenticated layout access-mode UX (P0
 // finding 2). Ensures the four documented modes and the heartbeat gate
 // stay wired to the layout, the client-portal path helper stays
-// available so /n/:projectId bypasses the internal-only gate, and
+// available so /client/projects/:projectId bypasses the internal gate, and
 // the fail-closed session gate + mid-session re-resolution stay wired.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const layout = readFileSync(
-  resolve(process.cwd(), "src/routes/_authenticated/route.tsx"),
-  "utf8",
-);
-const accessMode = readFileSync(
-  resolve(process.cwd(), "src/lib/auth/access-mode.ts"),
-  "utf8",
-);
+const layout = readFileSync(resolve(process.cwd(), "src/routes/_authenticated/route.tsx"), "utf8");
+const accessMode = readFileSync(resolve(process.cwd(), "src/lib/auth/access-mode.ts"), "utf8");
 
 describe("authenticated access-mode layout", () => {
   it("wires resolveAccessMode into the layout", () => {
@@ -44,7 +38,7 @@ describe("authenticated access-mode layout", () => {
   it("uses the client-portal path helper to bypass the internal gate", () => {
     expect(layout).toContain("isClientPortalPath");
     expect(layout).toContain("clientPortalPathForProject");
-    expect(accessMode).toContain('CLIENT_PORTAL_PREFIX = "/n/"');
+    expect(accessMode).toContain('CLIENT_PORTAL_PREFIX = "/client/projects/"');
   });
 
   it("offers a Sign out affordance on every disabled/error branch", () => {
@@ -69,7 +63,7 @@ describe("authenticated access-mode layout", () => {
     expect(gateEnd).toBeGreaterThan(gateStart);
     const gate = layout.slice(gateStart, gateEnd);
     expect(gate).toContain("await supabase.auth.signOut()");
-    expect(gate).toContain('throw redirect');
+    expect(gate).toContain("throw redirect");
     // The stale-session restore path must be removed.
     expect(gate).not.toMatch(/continuing with restored session/);
     expect(gate).not.toMatch(/return \{ user: sessionData\.session\.user \}/);
@@ -113,10 +107,7 @@ describe("resolveAccessMode helper", () => {
 });
 
 describe("auth callback — fail-closed on establish failure", () => {
-  const callback = readFileSync(
-    resolve(process.cwd(), "src/routes/auth.callback.tsx"),
-    "utf8",
-  );
+  const callback = readFileSync(resolve(process.cwd(), "src/routes/auth.callback.tsx"), "utf8");
 
   it("does not rescue a bad/used link with a prior getSession() session", () => {
     // The prior implementation caught establishSessionFromUrl errors
@@ -147,9 +138,9 @@ describe("auth callback — fail-closed on establish failure", () => {
     // no stale session survives a bad-link click.
     const helperStart = callback.indexOf("const failToRecovery");
     expect(helperStart).toBeGreaterThan(-1);
-    const helperEnd = callback.indexOf("}, [clearCaptured]);", helperStart);
-    expect(helperEnd).toBeGreaterThan(helperStart);
-    const helper = callback.slice(helperStart, helperEnd);
+    // Slice a generous window forward — prettier may split the
+    // useCallback deps across lines.
+    const helper = callback.slice(helperStart, helperStart + 1200);
     expect(helper).toContain("supabase.auth.signOut()");
     expect(helper).toContain("setShowRecovery(true)");
   });
@@ -160,6 +151,6 @@ describe("auth callback — fail-closed on establish failure", () => {
     expect(callback).toContain('rpc("finalize_client_access"');
     // Exact-project navigation after finalization; never a stale
     // default landing that could show the wrong project.
-    expect(callback).toMatch(/`\/n\/\$\{res\.projectId\}`/);
+    expect(callback).toMatch(/`\/client\/projects\/\$\{res\.projectId\}`/);
   });
 });

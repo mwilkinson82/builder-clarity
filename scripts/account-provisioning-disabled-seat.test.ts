@@ -34,12 +34,8 @@ describe("account provisioning — disabled-seat containment (tracked, unapplied
   });
 
   it("ensure_user_account keeps the per-caller and per-email advisory locks (bootstrap serialization)", () => {
-    expect(migration).toContain(
-      "pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0))",
-    );
-    expect(migration).toContain(
-      "pg_advisory_xact_lock(hashtextextended(v_email_key, 1))",
-    );
+    expect(migration).toContain("pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0))");
+    expect(migration).toContain("pg_advisory_xact_lock(hashtextextended(v_email_key, 1))");
   });
 
   it("preserves the valid-active-default fallback and active-membership fallback", () => {
@@ -67,9 +63,7 @@ describe("account provisioning — disabled-seat containment (tracked, unapplied
     expect(migration).toContain("FROM public.project_client_access pca");
     expect(migration).toContain("pca.client_user_id IN (SELECT id FROM alias_users)");
     expect(migration).toContain("pca.accepted_by IN (SELECT id FROM alias_users)");
-    expect(migration).toContain(
-      "public.overwatch_access_email_key(pca.email) = v_email_key",
-    );
+    expect(migration).toContain("public.overwatch_access_email_key(pca.email) = v_email_key");
     expect(migration).toContain("FROM public.projects pr");
     expect(migration).toContain("pr.owner_id IN (SELECT id FROM alias_users)");
     expect(migration).toContain("FROM public.project_memberships pm");
@@ -103,9 +97,7 @@ describe("account provisioning — disabled-seat containment (tracked, unapplied
   it("does not sweep organizations/memberships or rewrite arbitrary defaults", () => {
     expect(migration).not.toMatch(/DELETE FROM public\.organizations/);
     expect(migration).not.toMatch(/DELETE FROM public\.organization_memberships/);
-    expect(migration).not.toMatch(
-      /UPDATE public\.profiles[\s\S]{0,200}WHERE id <> p_user_id/,
-    );
+    expect(migration).not.toMatch(/UPDATE public\.profiles[\s\S]{0,200}WHERE id <> p_user_id/);
   });
 
   it("does not mutate commercial entitlement", () => {
@@ -158,12 +150,8 @@ describe("account provisioning — disabled-seat containment (tracked, unapplied
     expect(migration).toContain(
       "GRANT EXECUTE ON FUNCTION public.finalize_invite_acceptance(uuid) TO service_role;",
     );
-    expect(migration).toContain(
-      "finalize_invite_acceptance remains executable by anon",
-    );
-    expect(migration).toContain(
-      "finalize_invite_acceptance remains executable by sandbox_exec",
-    );
+    expect(migration).toContain("finalize_invite_acceptance remains executable by anon");
+    expect(migration).toContain("finalize_invite_acceptance remains executable by sandbox_exec");
 
     // The RPC must re-validate email match, pending status, and use
     // clock_timestamp() for expiry AFTER the lock wait so a row that
@@ -175,9 +163,7 @@ describe("account provisioning — disabled-seat containment (tracked, unapplied
     );
     expect(migration).toMatch(/v_invite\.status <> 'pending'/);
     expect(migration).toContain("v_now := clock_timestamp();");
-    expect(migration).toMatch(
-      /v_invite\.expires_at IS NULL OR v_invite\.expires_at <= v_now/,
-    );
+    expect(migration).toMatch(/v_invite\.expires_at IS NULL OR v_invite\.expires_at <= v_now/);
 
     // Exactly-one-row assertion: GET DIAGNOSTICS on the pending ->
     // accepted UPDATE, RAISE if the count isn't 1 (guarantees zero
@@ -196,17 +182,11 @@ describe("account provisioning — disabled-seat containment (tracked, unapplied
     expect(migration).toContain("FROM public.project_client_access");
     expect(migration).toContain("FOR UPDATE");
     // Same fail-closed guarantees.
-    expect(migration).toMatch(
-      /public\.overwatch_access_email_key\(v_row\.email\) <> v_email_key/,
-    );
+    expect(migration).toMatch(/public\.overwatch_access_email_key\(v_row\.email\) <> v_email_key/);
     expect(migration).toMatch(/v_row\.status NOT IN \('pending', 'active'\)/);
     expect(migration).toContain("v_now := clock_timestamp();");
-    expect(migration).toMatch(
-      /v_row\.expires_at IS NOT NULL AND v_row\.expires_at <= v_now/,
-    );
-    expect(migration).toContain(
-      "finalize_client_access: expected exactly 1 access update, got %",
-    );
+    expect(migration).toMatch(/v_row\.expires_at IS NOT NULL AND v_row\.expires_at <= v_now/);
+    expect(migration).toContain("finalize_client_access: expected exactly 1 access update, got %");
 
     // Privilege matrix.
     expect(migration).toContain(
@@ -218,12 +198,8 @@ describe("account provisioning — disabled-seat containment (tracked, unapplied
     expect(migration).toContain(
       "GRANT EXECUTE ON FUNCTION public.finalize_client_access(uuid) TO service_role;",
     );
-    expect(migration).toContain(
-      "finalize_client_access remains executable by anon",
-    );
-    expect(migration).toContain(
-      "finalize_client_access remains executable by sandbox_exec",
-    );
+    expect(migration).toContain("finalize_client_access remains executable by anon");
+    expect(migration).toContain("finalize_client_access remains executable by sandbox_exec");
   });
 
   it("closes the org-null project bypass and drops the legacy owner_all policy", () => {
@@ -234,9 +210,7 @@ describe("account provisioning — disabled-seat containment (tracked, unapplied
     expect(migration).toContain(
       "No active company access for this user; project cannot be created.",
     );
-    expect(migration).toContain(
-      "legacy policy projects_owner_all remains on public.projects",
-    );
+    expect(migration).toContain("legacy policy projects_owner_all remains on public.projects");
   });
 
   it("does not run a live structural probe that inserts against random org ids", () => {

@@ -58,20 +58,55 @@ function AuthForm() {
 
     async function checkExistingSession() {
       try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (!cancelled && data.session) goAfterAuth(next, navigate);
-      } catch (err) {
+        // Use getUser() (revalidates identity with Supabase Auth) rather
+        // than getSession() (returns any local session). If getUser()
+        // fails or returns no user, treat as signed-out — do NOT rescue
+        // with getSession, and locally clear any stale session so the
+        // form stays fail-closed.
+        const { data, error } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (error || !data.user) {
+          if (error) {
+            // Best-effort local cleanup; ignore signOut errors.
+            try {
+              await supabase.auth.signOut({ scope: "local" });
+            } catch {
+              /* noop */
+            }
+          }
+          return;
+        }
+        goAfterAuth(next, navigate);
+      } catch {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Could not check current session.");
+          setError("Could not check current session.");
         }
       }
     }
 
     void checkExistingSession();
 
+    // Re-check on tab focus / visibility so a session revoked in another
+    // tab is caught immediately, and on Supabase auth-state changes.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void checkExistingSession();
+    };
+    const onFocus = () => {
+      void checkExistingSession();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "USER_UPDATED") {
+        void checkExistingSession();
+      }
+    });
+
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+      sub.subscription.unsubscribe();
     };
   }, [navigate, next]);
 
@@ -86,8 +121,9 @@ function AuthForm() {
     try {
       await sendOverwatchMagicLink({ email, next, context: "login" });
       setNotice("Check your email. Your secure sign-in link is on the way.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send magic link");
+    } catch {
+      // Fail-closed generic copy — never surface provider text.
+      setError("We couldn't send your sign-in link. Please try again in a moment.");
     } finally {
       setMagicLoading(false);
     }
