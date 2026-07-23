@@ -160,6 +160,6 @@ describe("auth callback — fail-closed on establish failure", () => {
     expect(callback).toContain('rpc("finalize_client_access"');
     // Exact-project navigation after finalization; never a stale
     // default landing that could show the wrong project.
-    expect(callback).toMatch(/`\/n\/\$\{res\.projectId\}`/);
+    expect(callback).toMatch(/`\/client\/projects\/\$\{res\.projectId\}`/);
   });
 });
