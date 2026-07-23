@@ -95,7 +95,11 @@ assert.match(
   "Current Harbor module versions must not rerun their write-heavy adapters on every visit.",
 );
 assert.match(projectsSource, /harborDemoSeedAction\(existingDemo\) === "skip"/);
-assert.match(projectsSource, /\.in\("project_manager", \["", "Overwatch Demo PM"\]\)/);
+assert.match(
+  projectsSource,
+  /\["", "Overwatch Demo PM"\]\.includes\(str\(\(project as Record<string, unknown>\)\.project_manager\)\)/,
+  "Harbor may repair only the empty or legacy project-manager placeholders; real onboarding edits must be preserved.",
+);
 assert.doesNotMatch(
   projectsSource,
   /const alreadySeeded = existingActivityIds\.has\(HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID\)/,
