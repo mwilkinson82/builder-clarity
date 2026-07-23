@@ -1447,7 +1447,7 @@ function TeamPage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {roleOptions.map((option) => (
+                            {visibleRoleOptions.map((option) => (
                               <SelectItem key={option.value} value={option.value}>
                                 {option.label}
                               </SelectItem>
