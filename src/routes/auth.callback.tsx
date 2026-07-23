@@ -98,7 +98,15 @@ async function establishSessionFromUrl(url: URL) {
  * navigate into internal chrome with a stale default.
  */
 async function finalizeExactInvite(inviteId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const { data, error } = await supabase.rpc("finalize_invite_acceptance", {
+  // Cast: finalize_invite_acceptance is created by
+  // supabase/migrations/20260724000000_account_provisioning_history_containment.sql
+  // which is intentionally UNAPPLIED until the maintenance window,
+  // so the generated types file does not yet know the RPC.
+  const rpc = supabase.rpc as unknown as (
+    fn: "finalize_invite_acceptance",
+    params: { p_invite_id: string },
+  ) => Promise<{ data: string | null; error: { message: string } | null }>;
+  const { data, error } = await rpc("finalize_invite_acceptance", {
     p_invite_id: inviteId,
   });
   if (error) return { ok: false, reason: error.message };
