@@ -763,7 +763,7 @@ await expectContains(
     // getSession() restore path that would resurrect a stale session
     // for a disabled/revoked user.
     /supabase\.auth\.getUser\(\)/,
-    /await supabase\.auth\.signOut\(\)/,
+    /supabase\.auth\.signOut\(\{ scope: "local" \}\)/,
     /throw redirect/,
     /recordUserActivity/,
     /ACTIVITY_HEARTBEAT_MS/,
