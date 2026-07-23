@@ -1234,8 +1234,16 @@ function InviteByMagicLinkButton() {
       const inviteEmail = email.trim().toLowerCase();
       if (!inviteEmail) throw new Error("Enter an email address.");
 
-      await createInvite({ data: { email: inviteEmail, role } });
-      await sendOverwatchMagicLink({ email: inviteEmail, next: "/", context: "portfolio_invite" });
+      // P0 invite containment: capture the exact invite id and forward it
+      // to the magic-link API so it can re-verify the invitation server-side
+      // before any admin.createUser or email send.
+      const created = await createInvite({ data: { email: inviteEmail, role } });
+      await sendOverwatchMagicLink({
+        email: inviteEmail,
+        next: "/",
+        context: "portfolio_invite",
+        inviteId: created.invite.id,
+      });
 
       return inviteEmail;
     },
