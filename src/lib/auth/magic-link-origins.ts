@@ -51,7 +51,8 @@ export function normalizeNext(next: string | undefined): string {
 }
 
 export type ResolveRedirectResult =
-  { ok: true; redirectTo: string } | { ok: false; reason: string };
+  | { ok: true; redirectTo: string }
+  | { ok: false; reason: string };
 
 /**
  * Resolve the redirect URL that will be baked into the magic link.
