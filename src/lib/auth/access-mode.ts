@@ -26,8 +26,7 @@ export type AccessMode =
   | { kind: "no_active_company" }
   | { kind: "lookup_error"; message: string };
 
-const GENERIC_LOOKUP_ERROR =
-  "We couldn't verify your account access. Please try again.";
+const GENERIC_LOOKUP_ERROR = "We couldn't verify your account access. Please try again.";
 
 export const resolveAccessMode = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -38,9 +37,7 @@ export const resolveAccessMode = createServerFn({ method: "POST" })
       // ensure_current_user_account is now history-safe: it returns NULL
       // instead of self-bootstrapping when a disabled-seat identity has
       // prior association history. Treat NULL as "no internal org".
-      const { data: orgId, error: orgErr } = await supabase.rpc(
-        "ensure_current_user_account",
-      );
+      const { data: orgId, error: orgErr } = await supabase.rpc("ensure_current_user_account");
       if (orgErr) {
         // Do NOT surface orgErr.message — Postgres error text can leak
         // schema, RLS predicate details, or role names.
@@ -90,4 +87,3 @@ export function isClientPortalPath(pathname: string): boolean {
 export function clientPortalPathForProject(projectId: string): string {
   return `${CLIENT_PORTAL_PREFIX}${projectId}`;
 }
-

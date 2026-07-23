@@ -49,8 +49,7 @@ function callbackFailureMessage(err: unknown) {
   return message;
 }
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function readInviteId(url: URL): string | null {
   const raw = url.searchParams.get("invite_id");
@@ -103,7 +102,9 @@ async function establishSessionFromUrl(url: URL) {
  * clicked. Fail closed to recovery if the RPC rejects — do not
  * navigate into internal chrome with a stale default.
  */
-async function finalizeExactInvite(inviteId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+async function finalizeExactInvite(
+  inviteId: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   // Cast: finalize_invite_acceptance is created by
   // supabase/migrations/20260724000000_account_provisioning_history_containment.sql
   // which is intentionally UNAPPLIED until the maintenance window,
@@ -128,10 +129,7 @@ async function finalizeExactInvite(inviteId: string): Promise<{ ok: true } | { o
  */
 async function finalizeExactClientAccess(
   accessId: string,
-): Promise<
-  | { ok: true; projectId: string }
-  | { ok: false; reason: string }
-> {
+): Promise<{ ok: true; projectId: string } | { ok: false; reason: string }> {
   const rpc = supabase.rpc as unknown as (
     fn: "finalize_client_access",
     params: { p_access_id: string },
@@ -140,7 +138,8 @@ async function finalizeExactClientAccess(
     p_access_id: accessId,
   });
   if (error) return { ok: false, reason: error.message };
-  if (!data) return { ok: false, reason: "This client-portal link is no longer valid for your account." };
+  if (!data)
+    return { ok: false, reason: "This client-portal link is no longer valid for your account." };
   return { ok: true, projectId: data };
 }
 
@@ -165,23 +164,26 @@ function AuthCallbackPage() {
     clientAccessIdRef.current = null;
   }, []);
 
-  const failToRecovery = useCallback(async (reason: string) => {
-    // Any failure past this point MUST NOT leave a stale prior session
-    // masquerading as success. Sign out locally first, then show the
-    // stable recovery UI. If sign-out itself throws we still surface
-    // recovery — we never fall through to internal chrome.
-    try {
-      await supabase.auth.signOut();
-    } catch {
-      /* recovery is authoritative */
-    }
-    if (!mountedRef.current) return;
-    consumedRef.current = true;
-    clearCaptured();
-    setConfirmationRequired(false);
-    setShowRecovery(true);
-    setMessage(reason);
-  }, [clearCaptured]);
+  const failToRecovery = useCallback(
+    async (reason: string) => {
+      // Any failure past this point MUST NOT leave a stale prior session
+      // masquerading as success. Sign out locally first, then show the
+      // stable recovery UI. If sign-out itself throws we still surface
+      // recovery — we never fall through to internal chrome.
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        /* recovery is authoritative */
+      }
+      if (!mountedRef.current) return;
+      consumedRef.current = true;
+      clearCaptured();
+      setConfirmationRequired(false);
+      setShowRecovery(true);
+      setMessage(reason);
+    },
+    [clearCaptured],
+  );
 
   const finishSignIn = useCallback(
     async (allowTokenConsumption: boolean) => {

@@ -88,9 +88,9 @@ describe("findExistingAuthUserByEmail — real listUsers semantics", () => {
       data: null,
       error: { message: "auth admin unavailable" },
     }));
-    await expect(
-      findExistingAuthUserByEmail(listUsers, "user@example.com"),
-    ).rejects.toThrow(/auth admin unavailable/);
+    await expect(findExistingAuthUserByEmail(listUsers, "user@example.com")).rejects.toThrow(
+      /auth admin unavailable/,
+    );
   });
 
   it("matches case- and whitespace-insensitively", async () => {

@@ -35,9 +35,7 @@ export async function findExistingAuthUserByEmail(
     const { data, error } = await listUsers({ page, perPage: LOOKUP_PER_PAGE });
     if (error) throw new Error(error.message);
     const users = data?.users ?? [];
-    const found = users.find(
-      (u) => (u.email ?? "").trim().toLowerCase() === target,
-    );
+    const found = users.find((u) => (u.email ?? "").trim().toLowerCase() === target);
     if (found) return { id: found.id };
     // Short-circuit: a partial page means we've reached the end.
     if (users.length < LOOKUP_PER_PAGE) return null;

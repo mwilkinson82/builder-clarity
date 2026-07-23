@@ -8,14 +8,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const layout = readFileSync(
-  resolve(process.cwd(), "src/routes/_authenticated/route.tsx"),
-  "utf8",
-);
-const accessMode = readFileSync(
-  resolve(process.cwd(), "src/lib/auth/access-mode.ts"),
-  "utf8",
-);
+const layout = readFileSync(resolve(process.cwd(), "src/routes/_authenticated/route.tsx"), "utf8");
+const accessMode = readFileSync(resolve(process.cwd(), "src/lib/auth/access-mode.ts"), "utf8");
 
 describe("authenticated access-mode layout", () => {
   it("wires resolveAccessMode into the layout", () => {
@@ -69,7 +63,7 @@ describe("authenticated access-mode layout", () => {
     expect(gateEnd).toBeGreaterThan(gateStart);
     const gate = layout.slice(gateStart, gateEnd);
     expect(gate).toContain("await supabase.auth.signOut()");
-    expect(gate).toContain('throw redirect');
+    expect(gate).toContain("throw redirect");
     // The stale-session restore path must be removed.
     expect(gate).not.toMatch(/continuing with restored session/);
     expect(gate).not.toMatch(/return \{ user: sessionData\.session\.user \}/);
@@ -113,10 +107,7 @@ describe("resolveAccessMode helper", () => {
 });
 
 describe("auth callback — fail-closed on establish failure", () => {
-  const callback = readFileSync(
-    resolve(process.cwd(), "src/routes/auth.callback.tsx"),
-    "utf8",
-  );
+  const callback = readFileSync(resolve(process.cwd(), "src/routes/auth.callback.tsx"), "utf8");
 
   it("does not rescue a bad/used link with a prior getSession() session", () => {
     // The prior implementation caught establishSessionFromUrl errors
