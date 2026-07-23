@@ -490,6 +490,27 @@ export async function handleMagicLinkRequest(args: {
       );
     }
 
+    // Client portal is NEVER a user-creation boundary. If the target
+    // email has no existing auth user, the recipient must be onboarded
+    // via company/portfolio invite first — the portal link cannot mint
+    // the account. Fail closed on lookup failure.
+    let clientPortalExisting: { id: string } | null;
+    try {
+      clientPortalExisting = await deps.lookupExistingAuthUser(email);
+    } catch (error) {
+      deps.logError?.("magic-link client portal lookup failed", {
+        recipient_redacted: redactEmail(email),
+        error: error instanceof Error ? error.message : "lookup failed",
+      });
+      return jsonError(GENERIC_PROVISIONING_ERROR, 503);
+    }
+    if (!clientPortalExisting) {
+      return jsonError(
+        "This recipient does not have an Overwatch account yet. Send them a company invite first.",
+        409,
+      );
+    }
+
     audit = {
       ...audit,
       client_access_id: accessRow.id,
@@ -497,7 +518,8 @@ export async function handleMagicLinkRequest(args: {
       organization_id: accessRow.organization_id,
     };
     dedupeKey = `client_portal:${accessRow.id}:${email}`;
-    linkKind = "invite";
+    // Existing user proven — magiclink, never invite.
+    linkKind = "magiclink";
   }
 
   // ---------------- Login: fail-closed existing-user lookup ----------------
