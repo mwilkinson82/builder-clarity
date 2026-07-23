@@ -6,22 +6,34 @@ export type MagicLinkContext =
   | "portfolio_invite"
   | "client_portal";
 
-export type SendMagicLinkInput = {
+type BaseMagicLinkInput = {
   email: string;
   next?: string;
   redirectTo?: string;
-  context?: MagicLinkContext;
-  /**
-   * P0 invite containment: company_invite and portfolio_invite MUST supply
-   * the id of the organization_invites row that was just created by
-   * createTeamInvite. The API route rejects the request if this is missing
-   * or does not match a pending, unexpired invite for the same email that
-   * the authenticated caller is authorized to send.
-   *
-   * login and client_portal do NOT provision accounts and do not require it.
-   */
-  inviteId?: string;
 };
+
+/**
+ * Non-provisioning contexts. Never accept an inviteId and never require a
+ * bearer token; the API route does not run any admin.createUser path for
+ * these.
+ */
+export type NonInviteMagicLinkInput = BaseMagicLinkInput & {
+  context?: "login" | "client_portal";
+};
+
+/**
+ * P0 invite containment: company_invite and portfolio_invite are the only
+ * contexts that can provision an auth user, and both are gated by the API
+ * route on an exact organization_invites row that the authenticated caller
+ * is authorized to send. The discriminated union makes the contract
+ * unforgeable at the type level.
+ */
+export type InviteMagicLinkInput = BaseMagicLinkInput & {
+  context: "company_invite" | "portfolio_invite";
+  inviteId: string;
+};
+
+export type SendMagicLinkInput = NonInviteMagicLinkInput | InviteMagicLinkInput;
 
 type MagicLinkResponse = {
   success?: boolean;
@@ -33,19 +45,23 @@ const INVITE_CONTEXTS: ReadonlySet<MagicLinkContext> = new Set([
   "portfolio_invite",
 ]);
 
-export async function sendOverwatchMagicLink(input: SendMagicLinkInput) {
-  const isInvite = input.context ? INVITE_CONTEXTS.has(input.context) : false;
+function isInviteInput(input: SendMagicLinkInput): input is InviteMagicLinkInput {
+  return input.context ? INVITE_CONTEXTS.has(input.context) : false;
+}
 
-  if (isInvite && !input.inviteId) {
-    // Fail loud client-side rather than firing an ambiguous invite context at
-    // the server. The server also rejects this case; this check keeps the
-    // contract honest for every caller.
+export async function sendOverwatchMagicLink(input: SendMagicLinkInput) {
+  const invite = isInviteInput(input);
+
+  // Runtime guard: the discriminated union already enforces this at the type
+  // layer, but a runtime check keeps JS callers and any dynamic construction
+  // honest so an invite context can never reach the server without an id.
+  if (invite && !input.inviteId) {
     throw new Error("An invite id is required to send an invite magic link.");
   }
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
-  if (isInvite) {
+  if (invite) {
     // The API route re-verifies the token against the identity provider and
     // proves the caller is authorized for the specific invite before it does
     // anything else. Without a bearer here, the server returns 401 and no
