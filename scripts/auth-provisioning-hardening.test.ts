@@ -105,8 +105,8 @@ describe("MagicLink hardening", () => {
   });
 
   it("uses a hashed token instead of mailing Supabase's consumable action link", () => {
-    expect(magicLinkApi).toContain("data.properties?.hashed_token");
-    expect(magicLinkApi).not.toContain("data.properties?.action_link");
+    expect(magicLinkApi).toMatch(/data\??\.properties\??\.hashed_token/);
+    expect(magicLinkApi).not.toMatch(/data\??\.properties\??\.action_link/);
     expect(supabaseClient).toContain("detectSessionInUrl: false");
   });
 });
