@@ -61,14 +61,38 @@ export function verifyProjectClientContract(source, label = "project client asse
   }
 }
 
-export function verifyBuiltDeploymentContract(outputRoot = path.resolve(".output")) {
-  const serverDirectory = path.join(outputRoot, "server");
-  const assetsDirectory = path.join(outputRoot, "public", "assets");
-  for (const directory of [serverDirectory, assetsDirectory]) {
-    if (!existsSync(directory)) {
-      throw new Error(`Production build output is missing ${relativeLabel(directory)}.`);
-    }
+function resolveBuildLayout(outputRoot) {
+  const roots = outputRoot
+    ? [path.resolve(outputRoot)]
+    : [path.resolve(".output"), path.resolve("dist")];
+  const layouts = roots.flatMap((root) => {
+    const serverDirectory = path.join(root, "server");
+    const assetsDirectory = [
+      path.join(root, "public", "assets"),
+      path.join(root, "client", "assets"),
+    ].find((directory) => existsSync(directory));
+    return existsSync(serverDirectory) && assetsDirectory
+      ? [{ root, serverDirectory, assetsDirectory }]
+      : [];
+  });
+  if (layouts.length === 0) {
+    throw new Error(
+      `Production build output is missing a supported server/client layout under ` +
+        `${roots.map(relativeLabel).join(" or ")}.`,
+    );
   }
+  if (layouts.length > 1) {
+    throw new Error(
+      `Production build output is ambiguous across ${layouts
+        .map((layout) => relativeLabel(layout.root))
+        .join(" and ")}; run the gate from a clean checkout.`,
+    );
+  }
+  return layouts[0];
+}
+
+export function verifyBuiltDeploymentContract(outputRoot) {
+  const { serverDirectory, assetsDirectory } = resolveBuildLayout(outputRoot);
 
   const serverFiles = listFiles(serverDirectory).filter((file) => SERVER_EXTENSIONS.test(file));
   const commandArtifacts = [];
@@ -245,7 +269,7 @@ async function main() {
   const profile = option("--profile") || "build";
   if (profile === "build") {
     const result = verifyBuiltDeploymentContract(
-      path.resolve(option("--output-dir") || process.env.OVERWATCH_BUILD_OUTPUT || ".output"),
+      option("--output-dir") || process.env.OVERWATCH_BUILD_OUTPUT || undefined,
     );
     console.log("Built Daily WIP deployment contract verified:");
     console.log(`- server artifact: ${result.serverArtifact}`);
