@@ -1,8 +1,12 @@
 -- Clean-replay hardening: capture live email-queue runtime definitions
 -- (functions + statement triggers on pgmq queue tables) that were created
--- outside the migration ledger, so the 20260723020530 containment migration
--- reaches its ACL assertions on a fresh database. Bodies mirror live
--- pg_get_functiondef / pg_get_triggerdef output verbatim.
+-- outside the migration ledger. This migration runs AFTER 20260723020530,
+-- so it does not help that earlier migration find dispatch/wake — that
+-- earlier migration guards those two signatures with to_regprocedure() for
+-- exactly this reason. Here we own the ledgered creation of dispatch/wake
+-- and their statement triggers, then lock EXECUTE to service_role only and
+-- assert the posture so chronological clean replay lands identically to
+-- live. Bodies mirror live pg_get_functiondef / pg_get_triggerdef verbatim.
 
 CREATE OR REPLACE FUNCTION public.email_queue_dispatch()
  RETURNS void
