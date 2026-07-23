@@ -1501,6 +1501,20 @@ await expectContains(
   "company users and role controls stay inside the Team workspace from mobile through desktop",
 );
 
+await expectContains(
+  "src/routes/_authenticated/team.tsx",
+  [
+    /data-testid="plan-readiness-panel" className="grid min-w-0 gap-5"/,
+    /className="min-w-0 rounded-lg border border-hairline bg-card shadow-card"/,
+    /className="grid min-w-0 grid-cols-\[minmax\(0,1fr\)\] gap-0 2xl:grid-cols-\[minmax\(0,0\.85fr\)_minmax\(0,1\.15fr\)\]"/,
+    /className="min-w-0 border-b border-hairline p-5 2xl:border-b-0 2xl:border-r"/,
+    /className="mt-4 h-auto min-h-9 w-full min-w-0 whitespace-normal py-2 text-center leading-tight"/,
+    /grid min-w-0 grid-cols-\[minmax\(0,0\.8fr\)_minmax\(0,1\.2fr\)\] items-start gap-4/,
+    /min-w-0 break-words text-right font-medium text-foreground/,
+  ],
+  "plan readiness cards, facts, and actions stay inside the Team workspace on narrow mobile screens",
+);
+
 await expectNotContains(
   "src/routes/_authenticated/team.tsx",
   [/data-testid="company-live-activity"/, /CompanyActivityPanel/, /TeamActivitySession/],

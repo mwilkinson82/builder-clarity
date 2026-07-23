@@ -2630,8 +2630,8 @@ function PlanReadinessPanel({
   const freeActive = !grantActive && !proActive;
 
   return (
-    <div className="grid gap-5">
-      <section className="rounded-xl border border-hairline bg-card p-5 shadow-card">
+    <div data-testid="plan-readiness-panel" className="grid min-w-0 gap-5">
+      <section className="min-w-0 rounded-xl border border-hairline bg-card p-5 shadow-card">
         <div className="max-w-3xl">
           <div className="eyebrow">OverWatch plans</div>
           <h2 className="mt-2 font-serif text-3xl text-foreground">
@@ -2643,7 +2643,7 @@ function PlanReadinessPanel({
           </p>
         </div>
 
-        <div className="mt-6 grid gap-3 lg:grid-cols-3">
+        <div className="mt-6 grid min-w-0 gap-3 lg:grid-cols-3">
           <PlanOffer
             eyebrow="Free"
             price="$0"
@@ -2707,8 +2707,8 @@ function PlanReadinessPanel({
           />
         </div>
 
-        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-hairline bg-muted/60 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-          <div>
+        <div className="mt-4 flex min-w-0 flex-col gap-3 rounded-lg border border-hairline bg-muted/60 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <span className="font-medium text-foreground">
               {formatNumber(creditBalance)} AI credits available
             </span>
@@ -2725,9 +2725,9 @@ function PlanReadinessPanel({
         </div>
       </section>
 
-      <section className="rounded-lg border border-hairline bg-card shadow-card">
-        <div className="grid gap-0 lg:grid-cols-[0.85fr_1.15fr]">
-          <div className="border-b border-hairline p-5 lg:border-b-0 lg:border-r">
+      <section className="min-w-0 rounded-lg border border-hairline bg-card shadow-card">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0 2xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+          <div className="min-w-0 border-b border-hairline p-5 2xl:border-b-0 2xl:border-r">
             <SectionHeader
               icon={<Gauge className="h-4 w-4" />}
               eyebrow="Plan and payment readiness"
@@ -2779,7 +2779,7 @@ function PlanReadinessPanel({
               <Button
                 type="button"
                 variant="outline"
-                className="mt-4 w-full"
+                className="mt-4 h-auto min-h-9 w-full min-w-0 whitespace-normal py-2 text-center leading-tight"
                 disabled={refreshCirclePending}
                 onClick={onRefreshCircle}
               >
@@ -2818,7 +2818,7 @@ function PlanReadinessPanel({
             </div>
           </div>
 
-          <div className="divide-y divide-hairline">
+          <div className="min-w-0 divide-y divide-hairline">
             {rows.map((row) => (
               <UsageReadinessRow key={row.label} {...row} />
             ))}
@@ -2850,7 +2850,7 @@ function PlanOffer({
 }) {
   return (
     <div
-      className={`flex min-h-80 flex-col rounded-xl border p-4 ${
+      className={`flex min-h-80 min-w-0 flex-col rounded-xl border p-4 ${
         emphasized
           ? "border-foreground/20 bg-dark-panel text-dark-panel-foreground"
           : "border-hairline bg-surface"
@@ -2906,11 +2906,11 @@ function PlanOffer({
 
 function PlanFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-hairline pb-2 last:border-b-0 last:pb-0">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+    <div className="grid min-w-0 grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] items-start gap-4 border-b border-hairline pb-2 last:border-b-0 last:pb-0">
+      <div className="min-w-0 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
-      <div className="text-right font-medium text-foreground">{value}</div>
+      <div className="min-w-0 break-words text-right font-medium text-foreground">{value}</div>
     </div>
   );
 }
@@ -2943,12 +2943,12 @@ function UsageReadinessRow({
   const Icon = status.tone === "default" ? CheckCircle2 : AlertTriangle;
 
   return (
-    <div className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(160px,1fr)_170px_180px] md:items-center">
-      <div>
+    <div className="grid min-w-0 gap-3 px-5 py-4 md:grid-cols-[minmax(160px,1fr)_170px_180px] md:items-center">
+      <div className="min-w-0">
         <div className="font-medium text-foreground">{label}</div>
         <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
       </div>
-      <div>
+      <div className="min-w-0">
         <div className="text-lg font-medium tabular-nums text-foreground">{value}</div>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
           <div
@@ -2982,7 +2982,7 @@ function SectionHeader({
   description?: string;
 }) {
   return (
-    <div>
+    <div className="min-w-0">
       <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
         {icon}
         {eyebrow}
