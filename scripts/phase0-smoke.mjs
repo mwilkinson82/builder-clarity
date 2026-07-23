@@ -458,8 +458,17 @@ await expectContains(
     /company-workspace-context/,
     /\{companyName\}/,
     /<PortfolioTopBar active="billing" \/>/,
+    /flex w-full max-w-full gap-2 overflow-x-auto border-b border-hairline/,
+    /TabsList className="flex h-auto w-full max-w-full items-stretch justify-start gap-2 overflow-x-auto/,
+    /-mb-px shrink-0 flex-col items-start.*focus-visible:ring-inset focus-visible:ring-offset-0/,
   ],
-  "billing workspace header uses the user's company name and shared portfolio navigation",
+  "billing workspace header uses the user's company name, shared portfolio navigation, and contained mobile tab strips",
+);
+
+await expectContains(
+  "src/components/billing/portfolio/CashForecastTab.tsx",
+  [/min-w-0 max-w-full break-all.*text-\[clamp\(1\.5rem,7\.5vw,2\.125rem\)\]/],
+  "cash forecast keeps large financial values inside the mobile panel",
 );
 
 await expectContains(
@@ -1919,6 +1928,18 @@ await expectContains(
   "src/routes/_authenticated/billing.tsx",
   [/StripeConnectNudge/],
   "billing dashboard nudges early Stripe connection while none is connected",
+);
+
+await expectContains(
+  "src/components/billing/StripeConnectNudge.tsx",
+  [
+    /className="relative rounded-lg/,
+    /flex min-w-0 items-start gap-3 pr-10/,
+    /className="min-w-0"/,
+    /h-auto max-w-full justify-start whitespace-normal/,
+    /absolute right-2 top-2 h-8 w-8 p-0/,
+  ],
+  "Stripe connection nudge contains its copy and controls on narrow billing screens",
 );
 
 await expectContains(

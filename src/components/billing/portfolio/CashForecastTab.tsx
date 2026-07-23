@@ -129,7 +129,7 @@ export function CashForecastTab({
             13-week expected cash in
           </div>
           <div className="mt-2 flex flex-wrap items-baseline gap-x-3.5 gap-y-1">
-            <span className="font-serif text-[34px] leading-none tabular text-dark-panel-foreground">
+            <span className="min-w-0 max-w-full break-all font-serif text-[clamp(1.5rem,7.5vw,2.125rem)] leading-none tabular text-dark-panel-foreground">
               ≈ {fmtUSD(totalInflow)}
             </span>
             <span className="text-[12.5px]" style={{ color: DARK_GOOD_TINT }}>
