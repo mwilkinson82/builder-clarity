@@ -112,21 +112,41 @@ export const Route = createFileRoute("/api/auth/magic-link")({
           },
 
           lookupExistingAuthUser: async (email) => {
-            // Fail-closed: this MUST run for the public `login` context
-            // before any generateLink call. auth.admin.listUsers filters
-            // by email server-side; a match returns the user, no match
-            // returns an empty page.
-            const { data, error } = await supabaseAdmin.auth.admin.listUsers({
-              page: 1,
-              perPage: 1,
-              // @ts-expect-error - filter param is supported by GoTrue admin API
-              email,
-            });
-            if (error) throw new Error(error.message);
-            const found = data?.users?.find(
-              (u) => (u.email ?? "").toLowerCase() === email.toLowerCase(),
-            );
-            return found ? { id: found.id } : null;
+            // Fail-closed exact case-insensitive lookup.
+            //
+            // The pinned @supabase/auth-js (2.108.2) `listUsers` accepts
+            // ONLY `{ page, perPage }` — there is no `email` filter and
+            // any extra field is silently dropped. Prior code passed
+            // `perPage: 1` and only ever inspected the first user in the
+            // whole system, so legitimate accounts past position 1 were
+            // treated as unknown and login fell through to fail-closed
+            // "generic OK" with no email sent → user lockout.
+            //
+            // Fix: page through the admin listing with the maximum
+            // documented per-page size, exact-case-insensitive-match the
+            // email, break the moment we find it. Bounded page count
+            // caps worst-case work at 20k users; the auth base is
+            // orders of magnitude smaller today.
+            const target = email.trim().toLowerCase();
+            const perPage = 200;
+            const maxPages = 100;
+            for (let page = 1; page <= maxPages; page += 1) {
+              const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+                page,
+                perPage,
+              });
+              if (error) throw new Error(error.message);
+              const users = data?.users ?? [];
+              const found = users.find(
+                (u) => (u.email ?? "").trim().toLowerCase() === target,
+              );
+              if (found) return { id: found.id };
+              if (users.length < perPage) return null;
+            }
+            // Reached the page cap without a match: treat as absent
+            // rather than provisioning silently. Callers get the same
+            // generic public-login success response.
+            return null;
           },
 
           findRecentSend: async ({ email, label, dedupeKey, sinceIso }) => {
