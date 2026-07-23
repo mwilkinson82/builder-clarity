@@ -778,7 +778,10 @@ await expectContains(
     // P0 sign-in correction: fail-closed gate on getUser() — no
     // getSession() restore path that would resurrect a stale session
     // for a disabled/revoked user.
+    /getSession/,
+    /getUser/,
     /supabase\.auth\.getUser\(\)/,
+    /signOut\(\{ scope: "local" \}\)/,
     /supabase\.auth\.signOut\(\{ scope: "local" \}\)/,
     /throw redirect/,
     /recordUserActivity/,
@@ -791,7 +794,13 @@ await expectContains(
     /setReloadKey/,
     /onAuthStateChange/,
   ],
-  "authenticated route fails closed on gate rejection and re-resolves access mid-session",
+  "authenticated route verifies restored sessions, fails closed, and records live activity heartbeats",
+);
+
+await expectNotContains(
+  "src/routes/_authenticated/route.tsx",
+  [/continuing with restored session/, /return \{ user: sessionData\.session\.user \}/],
+  "authenticated route never trusts an unverified restored browser session",
 );
 
 await expectContains(
