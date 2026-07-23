@@ -6,7 +6,7 @@
 //     The handler first calls `lookupExistingAuthUser`. If the email
 //     is unknown, the handler returns the generic success response
 //     with ZERO side effects: no createUser, no generateLink, no
-//     insertEmailSendLog, no sendEmail, no audit rows, no leaked
+//     send reservation, no sendEmail, no audit rows, no leaked
 //     information about existence.
 //     For an existing user, generateLink runs with type:"magiclink"
 //     (no user creation because the user already exists).
@@ -18,14 +18,9 @@
 //     issued by the caller (`invited_by === auth.uid()`), AND (d) the
 //     caller currently holds `company.manage_team` on the invite's
 //     organization. All four are AND-ed. Any failure returns a safe
-//     JSON error with ZERO side effects. Provisioning uses
-//     generateLink with type:"invite" as the auth-user creation
-//     boundary — no separate `createUser` call. On the documented
-//     duplicate-user code race (`email_exists` / `user_already_exists`)
-//     the handler re-resolves the exact user via exhaustive paginated
-//     case-insensitive lookup and retries as type:"magiclink"; if the
-//     user cannot be re-resolved, the request aborts (no side effects
-//     past the pending log row, which is marked failed).
+//     JSON error with ZERO side effects. An existing Auth user receives
+//     a magiclink; only a genuinely new user reaches generateLink with
+//     type:"invite". A duplicate-user race retries once as magiclink.
 //
 //   * `client_portal` (authenticated). REQUIRES clientAccessId, a
 //     valid Bearer, an exact `project_client_access` row that
@@ -33,18 +28,15 @@
 //     {'active','pending'} — a `revoked` row returns 409 with zero
 //     side effects, AND (c) the caller currently holds
 //     `client_portal.manage` on the access row's project organization.
-//     Client portal is NEVER a user-creation boundary — the handler
-//     first re-resolves the exact existing auth user; if none exists
-//     it returns 409 with no side effects. Provisioning then uses
-//     generateLink with type:"magiclink".
+//     Existing/new/race behavior matches the organization invite path.
 //
 //   * Every Supabase adapter that returns `.error` MUST throw at the
 //     adapter layer — the handler treats absence of error as truth and
 //     will not silently continue on a broken persistence layer.
 //
 //   * generateLink MUST return a nonempty `hashedToken` AND a nonempty
-//     `userId`. Missing either fails BEFORE insertEmailSendLog /
-//     sendEmail, and BEFORE audit.
+//     `userId`. Missing either fails after the atomic reservation but
+//     BEFORE sendEmail; the reserved row is then marked failed.
 //
 //   * `sendLovableEmail` returning `{success:false}` MUST be thrown at
 //     the adapter layer.
@@ -138,16 +130,6 @@ export type MagicLinkResult =
       body: { success: false; error: string };
     };
 
-export type EmailSendLogRow = {
-  id?: string;
-  message_id: string;
-  template_name: string;
-  recipient_email: string;
-  status: "pending" | "sent" | "failed";
-  error_message?: string;
-  metadata?: Record<string, unknown>;
-};
-
 export type SendLovableEmailPayload = {
   to: string;
   from: string;
@@ -202,26 +184,33 @@ export type MagicLinkDeps = {
     organization_id: string;
     email: string;
     status: string;
+    client_user_id: string | null;
   } | null>;
   callerHasClientAccessManagement: (args: {
     bearer: string;
     organizationId: string;
   }) => Promise<boolean>;
 
-  // Login path (fail-closed existing-user lookup)
-  lookupExistingAuthUser: (email: string) => Promise<{ id: string } | null>;
+  // Fail-closed exact Auth lookup. All contexts use this before link
+  // generation so only a genuinely new invitee can reach type:"invite".
+  lookupExistingAuthUser: (
+    email: string,
+  ) => Promise<{ id: string; emailConfirmed: boolean } | null>;
 
-  // Dedupe includes context + exact target id.
-  findRecentSend: (args: {
+  // Atomic dedupe reservation includes context + exact target id. The
+  // database serializes requests for the same key and inserts the original
+  // pending log row before any one-time Auth token is generated.
+  reserveSend: (args: {
+    messageId: string;
     email: string;
     label: string;
     dedupeKey: string;
-    sinceIso: string;
-  }) => Promise<{ id: string; status: string } | null>;
+    metadata: Record<string, unknown>;
+  }) => Promise<{ reserved: boolean; messageId: string }>;
 
-  // generateLink is the sole auth-user creation boundary for invite /
-  // client_portal (type:"invite"). For login the caller has already
-  // been proven to exist, so type:"magiclink" is safe.
+  // generateLink is the sole auth-user creation boundary for a genuinely
+  // new invite/client user (type:"invite"). Existing users and duplicate
+  // creation races use type:"magiclink".
   generateMagicLink: (args: {
     email: string;
     redirectTo: string;
@@ -229,10 +218,10 @@ export type MagicLinkDeps = {
   }) => Promise<{
     hashedToken: string | null;
     userId: string | null;
+    verificationType?: "invite" | "magiclink" | null;
     error?: { message?: string; code?: string } | null;
   }>;
 
-  insertEmailSendLog: (row: EmailSendLogRow) => Promise<void>;
   updateEmailSendLogStatus: (
     messageId: string,
     status: "sent",
@@ -291,6 +280,13 @@ function loginText(actionLink: string, context: string | undefined) {
 type Audit = Record<string, unknown>;
 
 const GENERIC_PROVISIONING_ERROR = "Could not send magic link.";
+const SAFE_ERROR_CODE = /^[a-z0-9_.-]{1,64}$/i;
+
+function operationalErrorCode(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as Error & { code?: string }).code;
+  return code && SAFE_ERROR_CODE.test(code) ? code : undefined;
+}
 
 export async function handleMagicLinkRequest(args: {
   requestUrl: string;
@@ -334,6 +330,8 @@ export async function handleMagicLinkRequest(args: {
   let bearer: string | null = null;
   let dedupeKey = `login:${email}`;
   let linkKind: "invite" | "magiclink" = "magiclink";
+  let clientAccessStatus: string | null = null;
+  let clientAccessUserId: string | null = null;
 
   // ---------------- Invite gate ----------------
   if (isInviteContext) {
@@ -353,10 +351,9 @@ export async function handleMagicLinkRequest(args: {
         return jsonError("Your session expired. Sign in again.", 401);
       }
       callerId = authResult.user.id;
-    } catch (error) {
+    } catch {
       deps.logError?.("magic-link auth verify failed", {
         recipient_redacted: redactEmail(email),
-        error: error instanceof Error ? error.message : "auth failed",
       });
       return jsonError("Your session could not be verified.", 401);
     }
@@ -364,10 +361,9 @@ export async function handleMagicLinkRequest(args: {
     let inviteRow: Awaited<ReturnType<typeof deps.fetchInviteById>>;
     try {
       inviteRow = await deps.fetchInviteById(parsed.data.inviteId);
-    } catch (error) {
+    } catch {
       deps.logError?.("magic-link invite lookup failed", {
         recipient_redacted: redactEmail(email),
-        error: error instanceof Error ? error.message : "invite lookup failed",
       });
       return jsonError("Invite validation failed.", 500);
     }
@@ -401,10 +397,9 @@ export async function handleMagicLinkRequest(args: {
         bearer,
         organizationId: inviteRow.organization_id,
       });
-    } catch (error) {
+    } catch {
       deps.logError?.("magic-link capability lookup failed", {
         recipient_redacted: redactEmail(email),
-        error: error instanceof Error ? error.message : "capability lookup failed",
       });
       return jsonError("Invite authorization check failed.", 500);
     }
@@ -418,8 +413,7 @@ export async function handleMagicLinkRequest(args: {
       organization_id: inviteRow.organization_id,
       inviter_id: inviteRow.invited_by,
     };
-    dedupeKey = `company_invite:${inviteRow.id}:${email}`;
-    linkKind = "invite";
+    dedupeKey = `${contextValue}:${inviteRow.id}:${email}`;
   }
 
   // ---------------- Client portal gate ----------------
@@ -440,10 +434,9 @@ export async function handleMagicLinkRequest(args: {
       if (authResult.error || !authResult.user) {
         return jsonError("Your session expired. Sign in again.", 401);
       }
-    } catch (error) {
+    } catch {
       deps.logError?.("magic-link auth verify failed", {
         recipient_redacted: redactEmail(email),
-        error: error instanceof Error ? error.message : "auth failed",
       });
       return jsonError("Your session could not be verified.", 401);
     }
@@ -451,10 +444,9 @@ export async function handleMagicLinkRequest(args: {
     let accessRow: Awaited<ReturnType<typeof deps.fetchClientAccessById>>;
     try {
       accessRow = await deps.fetchClientAccessById(parsed.data.clientAccessId);
-    } catch (error) {
+    } catch {
       deps.logError?.("magic-link client access lookup failed", {
         recipient_redacted: redactEmail(email),
-        error: error instanceof Error ? error.message : "access lookup failed",
       });
       return jsonError("Client access validation failed.", 500);
     }
@@ -462,9 +454,14 @@ export async function handleMagicLinkRequest(args: {
     if (normalizeEmail(accessRow.email) !== email) {
       return jsonError("This client access belongs to a different email address.", 409);
     }
-    if (REVOKED_STATUSES.has(accessRow.status)) {
+    if (
+      REVOKED_STATUSES.has(accessRow.status) ||
+      !["active", "pending"].includes(accessRow.status)
+    ) {
       return jsonError("This client access is no longer active.", 409);
     }
+    clientAccessStatus = accessRow.status;
+    clientAccessUserId = accessRow.client_user_id;
 
     let hasClientMgmt: boolean;
     try {
@@ -472,36 +469,14 @@ export async function handleMagicLinkRequest(args: {
         bearer,
         organizationId: accessRow.organization_id,
       });
-    } catch (error) {
+    } catch {
       deps.logError?.("magic-link client capability lookup failed", {
         recipient_redacted: redactEmail(email),
-        error: error instanceof Error ? error.message : "capability lookup failed",
       });
       return jsonError("Client access authorization check failed.", 500);
     }
     if (!hasClientMgmt) {
       return jsonError("You no longer have permission to send this client portal link.", 403);
-    }
-
-    // Client portal is NEVER a user-creation boundary. If the target
-    // email has no existing auth user, the recipient must be onboarded
-    // via company/portfolio invite first — the portal link cannot mint
-    // the account. Fail closed on lookup failure.
-    let clientPortalExisting: { id: string } | null;
-    try {
-      clientPortalExisting = await deps.lookupExistingAuthUser(email);
-    } catch (error) {
-      deps.logError?.("magic-link client portal lookup failed", {
-        recipient_redacted: redactEmail(email),
-        error: error instanceof Error ? error.message : "lookup failed",
-      });
-      return jsonError(GENERIC_PROVISIONING_ERROR, 503);
-    }
-    if (!clientPortalExisting) {
-      return jsonError(
-        "This recipient does not have an Overwatch account yet. Send them a company invite first.",
-        409,
-      );
     }
 
     audit = {
@@ -511,123 +486,113 @@ export async function handleMagicLinkRequest(args: {
       organization_id: accessRow.organization_id,
     };
     dedupeKey = `client_portal:${accessRow.id}:${email}`;
-    // Existing user proven — magiclink, never invite.
-    linkKind = "magiclink";
   }
 
-  // ---------------- Login: fail-closed existing-user lookup ----------------
-  // MUST run BEFORE any generateLink/sendEmail/audit — generateLink
-  // with type:"magiclink" can create a new user via the auth-admin
-  // API, and an unknown email must never trigger provisioning or
-  // reveal existence via response text.
-  if (!isInviteContext && !isClientPortal) {
-    try {
-      const existing = await deps.lookupExistingAuthUser(email);
-      if (!existing) {
-        deps.logInfo?.("magic-link login for unknown email — generic OK, zero side effects", {
-          recipient_redacted: redactEmail(email),
-        });
-        return ok({ success: true });
-      }
-    } catch (error) {
-      // Fail closed. Existence lookup is a service-role admin call
-      // and MUST NOT allow a caller to trigger provisioning by
-      // knocking the lookup offline.
-      deps.logError?.("magic-link login lookup failed", {
+  // ---------------- Exact Auth-user classification ----------------
+  // MUST run BEFORE any generateLink/sendEmail/audit. Existing users
+  // always receive type:"magiclink"; only a proven-absent invitee may
+  // reach type:"invite". Public login remains enumeration-safe and
+  // performs no side effects for an unknown email.
+  let existingAuthUser: { id: string; emailConfirmed: boolean } | null;
+  try {
+    existingAuthUser = await deps.lookupExistingAuthUser(email);
+    if (!existingAuthUser && !isInviteContext && !isClientPortal) {
+      deps.logInfo?.("magic-link login for unknown email — generic OK, zero side effects", {
         recipient_redacted: redactEmail(email),
-        error: error instanceof Error ? error.message : "lookup failed",
       });
-      return jsonError(GENERIC_PROVISIONING_ERROR, 503);
+      return ok({ success: true });
     }
-    linkKind = "magiclink";
+    linkKind = existingAuthUser ? "magiclink" : "invite";
+  } catch (error) {
+    deps.logError?.("magic-link Auth user lookup failed", {
+      recipient_redacted: redactEmail(email),
+      context: contextValue,
+      ...(operationalErrorCode(error) ? { code: operationalErrorCode(error) } : {}),
+    });
+    return jsonError(GENERIC_PROVISIONING_ERROR, 503);
   }
 
-  const messageId = deps.randomUUID();
+  // An already-bound client row may only issue a link for that exact Auth
+  // identity. Pending rows with a pre-bound different identity also fail
+  // before token generation rather than emailing a callback that must reject.
+  if (
+    isClientPortal &&
+    ((clientAccessUserId !== null && clientAccessUserId !== existingAuthUser?.id) ||
+      (clientAccessStatus === "active" && !existingAuthUser))
+  ) {
+    return jsonError("This client access is no longer available.", 409);
+  }
+
+  let messageId = deps.randomUUID();
   const label = "auth-magic-link";
-  const idempotencyKey = `auth-magic-link:${dedupeKey}:${messageId}`;
+  const idempotencyWindow = Math.floor(deps.now() / RECENT_SEND_WINDOW_MS);
+  const idempotencyKey = `auth-magic-link:${dedupeKey}:${idempotencyWindow}`;
 
   // ---------------- Provisioning + send (post-authorization) ----------------
+  let reservationRecorded = false;
   let failureRowRecorded = false;
+  let failureMessage = "Magic link generation failed.";
   try {
-    const recentSince = new Date(deps.now() - RECENT_SEND_WINDOW_MS).toISOString();
-    const recentSend = await deps.findRecentSend({
+    // Carry the exact clicked invite/client-access id through the app-owned
+    // callback URL before reserving the send. No caller-supplied callback
+    // pathname/query survives resolveMagicLinkRedirect.
+    const inviteId =
+      parsed.data.context === "company_invite" || parsed.data.context === "portfolio_invite"
+        ? parsed.data.inviteId
+        : null;
+    if (inviteId || parsed.data.context === "client_portal") {
+      const url = new URL(redirectTo);
+      if (inviteId) url.searchParams.set("invite_id", inviteId);
+      if (parsed.data.context === "client_portal" && parsed.data.clientAccessId) {
+        url.searchParams.set("client_access_id", parsed.data.clientAccessId);
+      }
+      redirectTo = url.toString();
+    }
+
+    const reservation = await deps.reserveSend({
+      messageId,
       email,
       label,
       dedupeKey,
-      sinceIso: recentSince,
+      metadata: audit,
     });
-    if (recentSend) return ok({ success: true, recentlySent: true });
+    if (!reservation.reserved) return ok({ success: true, recentlySent: true });
+    reservationRecorded = true;
+    messageId = reservation.messageId;
 
-    // Carry the exact clicked invite/client-access id through the
-    // callback URL so the auth callback can call
-    // finalize_invite_acceptance with the invite the user actually
-    // clicked (not the oldest pending row for the same email).
-    try {
-      const inviteId =
-        parsed.data.context === "company_invite" || parsed.data.context === "portfolio_invite"
-          ? parsed.data.inviteId
-          : null;
-      if (inviteId || parsed.data.context === "client_portal") {
-        const url = new URL(redirectTo);
-        if (inviteId) url.searchParams.set("invite_id", inviteId);
-        if (parsed.data.context === "client_portal" && parsed.data.clientAccessId) {
-          url.searchParams.set("client_access_id", parsed.data.clientAccessId);
-        }
-        redirectTo = url.toString();
-      }
-    } catch {
-      // redirectTo already validated URL by zod; ignore if malformed
-    }
-
+    let issuedLinkKind = linkKind;
     let linkResult = await deps.generateMagicLink({
       email,
       redirectTo,
-      kind: linkKind,
+      kind: issuedLinkKind,
     });
+
+    // Between the exact lookup and type:"invite", another request can
+    // create the same Auth user. Supabase returns a documented duplicate
+    // code without a usable invite token in that race. Retry exactly once
+    // as type:"magiclink"; never swallow the error or send an unusable URL.
+    const firstErrorCode = linkResult.error?.code ?? "";
+    if (linkKind === "invite" && DUPLICATE_USER_CODES.has(firstErrorCode)) {
+      deps.logInfo?.("magic-link duplicate-user race; retrying as existing user", {
+        recipient_redacted: redactEmail(email),
+        context: contextValue,
+      });
+      linkResult = await deps.generateMagicLink({
+        email,
+        redirectTo,
+        kind: "magiclink",
+      });
+      issuedLinkKind = "magiclink";
+    }
+
     if (linkResult.error) {
-      const code = linkResult.error.code ?? "";
-      const isDup = DUPLICATE_USER_CODES.has(code);
-      // Documented duplicate-user race: generateLink type:"invite"
-      // returned a duplicate code because the user already exists.
-      // Do NOT trust any link the provider may have returned in that
-      // response (creation was rejected). Re-resolve the exact user by
-      // exhaustive paginated case-insensitive lookup and retry with
-      // type:"magiclink". If the user cannot be re-resolved, or if the
-      // retry does not yield a usable token+userId, abort.
-      if (isDup && linkKind === "invite") {
-        let raced: { id: string } | null = null;
-        try {
-          raced = await deps.lookupExistingAuthUser(email);
-        } catch (lookupErr) {
-          const err = new Error(
-            lookupErr instanceof Error ? lookupErr.message : "duplicate-race lookup failed",
-          );
-          (err as Error & { code?: string }).code = "duplicate_race_lookup_failed";
-          throw err;
-        }
-        if (!raced) {
-          const err = new Error("Provider reported duplicate user but exact lookup found none");
-          (err as Error & { code?: string }).code = "duplicate_race_unresolved";
-          throw err;
-        }
-        linkResult = await deps.generateMagicLink({
-          email,
-          redirectTo,
-          kind: "magiclink",
-        });
-        if (linkResult.error) {
-          const retryCode = linkResult.error.code ?? "";
-          const err = new Error(
-            linkResult.error.message ?? "duplicate-race magiclink retry failed",
-          );
-          (err as Error & { code?: string }).code = retryCode || "duplicate_race_retry_failed";
-          throw err;
-        }
-      } else if (!isDup) {
-        const err = new Error(linkResult.error.message ?? "generateLink failed");
-        (err as Error & { code?: string }).code = code || undefined;
-        throw err;
-      }
+      const code =
+        linkResult.error.code && SAFE_ERROR_CODE.test(linkResult.error.code)
+          ? linkResult.error.code
+          : undefined;
+      const err = new Error("Authentication link generation failed.");
+      (err as Error & { code?: string }).code = code;
+      throw err;
     }
     if (!linkResult.hashedToken || !linkResult.userId) {
       const err = new Error("Provider did not return a usable magic-link token or user id");
@@ -635,21 +600,14 @@ export async function handleMagicLinkRequest(args: {
       throw err;
     }
 
-    const confirmationLink = buildMagicLinkConfirmationUrl(redirectTo, linkResult.hashedToken);
-
-    await deps.insertEmailSendLog({
-      message_id: messageId,
-      template_name: label,
-      recipient_email: email,
-      status: "pending",
-      metadata: {
-        ...audit,
-        dedupe_key: dedupeKey,
-        auth_user_id: linkResult.userId,
-      },
-    });
+    const confirmationLink = buildMagicLinkConfirmationUrl(
+      redirectTo,
+      linkResult.hashedToken,
+      linkResult.verificationType ?? issuedLinkKind,
+    );
 
     try {
+      failureMessage = "Email delivery failed.";
       await deps.sendEmail({
         to: email,
         from: `${SITE_NAME} <noreply@${FROM_DOMAIN}>`,
@@ -668,13 +626,9 @@ export async function handleMagicLinkRequest(args: {
         unsubscribe_token: deps.randomUUID(),
       });
     } catch (sendErr) {
-      // Update the ORIGINAL pending row to failed; never insert a
-      // second row that would leave a retry-suppressor pending.
-      const sendMessage = sendErr instanceof Error ? sendErr.message : "Email provider send failed";
-      const sendCode =
-        sendErr instanceof Error
-          ? ((sendErr as Error & { code?: string }).code ?? undefined)
-          : undefined;
+      // Update the atomically reserved ORIGINAL pending row to failed; never
+      // persist or log a raw provider diagnostic.
+      const sendCode = operationalErrorCode(sendErr);
       const failureMeta: Record<string, unknown> = {
         ...audit,
         dedupe_key: dedupeKey,
@@ -682,21 +636,30 @@ export async function handleMagicLinkRequest(args: {
       };
       if (sendCode) failureMeta.error_code = sendCode;
       try {
-        await deps.updateEmailSendLogFailed(messageId, sendMessage.slice(0, 1000), failureMeta);
+        await deps.updateEmailSendLogFailed(messageId, failureMessage, failureMeta);
         failureRowRecorded = true;
-      } catch (updateErr) {
+      } catch {
         deps.logError?.("magic-link failure log update failed", {
           recipient_redacted: redactEmail(email),
-          error: updateErr instanceof Error ? updateErr.message : "update failed",
         });
       }
       throw sendErr;
     }
 
-    await deps.updateEmailSendLogStatus(messageId, "sent", {
-      ...audit,
-      dedupe_key: dedupeKey,
-    });
+    try {
+      await deps.updateEmailSendLogStatus(messageId, "sent", {
+        ...audit,
+        dedupe_key: dedupeKey,
+        auth_user_id: linkResult.userId,
+      });
+    } catch {
+      // Delivery already succeeded. Keep the reserved row pending (which
+      // suppresses an immediate duplicate) and return success rather than
+      // telling the user to click again and issuing a competing token.
+      deps.logError?.("magic-link sent-status update failed", {
+        recipient_redacted: redactEmail(email),
+      });
+    }
 
     deps.logInfo?.("Overwatch magic link sent", {
       recipient_redacted: redactEmail(email),
@@ -706,33 +669,21 @@ export async function handleMagicLinkRequest(args: {
     });
     return ok({ success: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : GENERIC_PROVISIONING_ERROR;
-    const code =
-      error instanceof Error ? ((error as Error & { code?: string }).code ?? undefined) : undefined;
+    const code = operationalErrorCode(error);
     deps.logError?.("Overwatch magic link failed", {
       recipient_redacted: redactEmail(email),
-      error: message,
       ...(code ? { code } : {}),
       ...(audit.invite_id ? { invite_id: audit.invite_id as string } : {}),
       ...(audit.client_access_id ? { client_access_id: audit.client_access_id as string } : {}),
     });
-    // If insertEmailSendLog never ran (early throw before pending
-    // insert), we still want an audit trail for failure — but only
-    // when we're past authorization. The updateEmailSendLogFailed
-    // path in sendEmail already handled the pending-row case; skip
-    // when it did to avoid a duplicate failure row.
-    if (!failureRowRecorded) {
+    // The reservation is the only audit-row creation path. If generation or
+    // callback-link construction failed after reservation, mark that exact
+    // row failed. A reservation failure creates no ad hoc row that could race.
+    if (reservationRecorded && !failureRowRecorded) {
       try {
         const failureMeta: Record<string, unknown> = { ...audit, dedupe_key: dedupeKey };
         if (code) failureMeta.error_code = code;
-        await deps.insertEmailSendLog({
-          message_id: deps.randomUUID(),
-          template_name: label,
-          recipient_email: email,
-          status: "failed",
-          error_message: message.slice(0, 1000),
-          metadata: failureMeta,
-        });
+        await deps.updateEmailSendLogFailed(messageId, failureMessage, failureMeta);
       } catch {
         // Never mask the original failure.
       }

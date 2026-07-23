@@ -1,4 +1,5 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
+import { safeInternalPath } from "@/lib/safe-internal-path";
 
 const EMAIL_OTP_TYPES = new Set<EmailOtpType>([
   "signup",
@@ -9,10 +10,36 @@ const EMAIL_OTP_TYPES = new Set<EmailOtpType>([
   "email",
 ]);
 
+const AUTHENTICATED_NEXT_ROOTS = [
+  "/admin",
+  "/billing",
+  "/client/projects",
+  "/cost-library",
+  "/estimate-masters",
+  "/estimates",
+  "/home-preview",
+  "/projects",
+  "/reports",
+  "/support",
+  "/team",
+] as const;
+
 export function safeAuthNext(url: URL) {
-  const next = url.searchParams.get("next") ?? "/";
-  if (!next.startsWith("/") || next.startsWith("//")) return "/";
-  return next;
+  const next = safeInternalPath(url.searchParams.get("next") ?? "/");
+  if (next === "/") return next;
+
+  let pathname: string;
+  try {
+    pathname = new URL(next, "https://overwatch.invalid").pathname;
+  } catch {
+    return "/";
+  }
+
+  return AUTHENTICATED_NEXT_ROOTS.some(
+    (root) => pathname === root || pathname.startsWith(`${root}/`),
+  )
+    ? next
+    : "/";
 }
 
 export function emailOtpTypeFromUrl(type: string | null): EmailOtpType {
@@ -24,13 +51,17 @@ export function requiresExplicitMagicLinkConfirmation(url: URL) {
   return Boolean(url.searchParams.get("token_hash") && url.searchParams.get("confirm") === "1");
 }
 
-export function buildMagicLinkConfirmationUrl(redirectTo: string, tokenHash: string) {
+export function buildMagicLinkConfirmationUrl(
+  redirectTo: string,
+  tokenHash: string,
+  type: Extract<EmailOtpType, "email" | "invite" | "magiclink"> = "email",
+) {
   if (!tokenHash.trim()) throw new Error("Supabase did not return a magic-link token hash.");
 
   const url = new URL(redirectTo);
   url.hash = "";
   url.searchParams.set("token_hash", tokenHash);
-  url.searchParams.set("type", "email");
+  url.searchParams.set("type", type);
   // Email security scanners may open links. The callback renders a button for
   // this marker and consumes the one-time token only after a human click.
   url.searchParams.set("confirm", "1");

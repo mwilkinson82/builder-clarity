@@ -9,13 +9,18 @@
 // (isProd = false). In production, localhost is treated like any other
 // unknown origin.
 
+import { safeInternalPath } from "@/lib/safe-internal-path";
+
 export const PRODUCTION_ORIGIN = "https://overwatch.alpcontractorcircle.com";
 
-// Exact production/known-preview origins. No suffix matching, no protocol
-// downgrades, no ports.
+// Exact published production origins. No suffix matching, protocol downgrades,
+// preview hosts, or ports.
 export const ALLOWED_ORIGINS: readonly string[] = Object.freeze([
   PRODUCTION_ORIGIN,
   "https://builder-clarity.lovable.app",
+]);
+
+export const NON_PRODUCTION_ORIGINS: readonly string[] = Object.freeze([
   "https://id-preview--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app",
 ]);
 
@@ -30,15 +35,19 @@ export function isAllowedOrigin(origin: string, opts: { isProd: boolean }): bool
   }
   // Exact match on scheme + host + port only. `url.origin` normalizes this.
   if (ALLOWED_ORIGINS.includes(url.origin)) return true;
-  if (!opts.isProd && (url.protocol === "http:" || url.protocol === "https:") && DEV_HOSTS.has(url.hostname)) {
+  if (!opts.isProd && NON_PRODUCTION_ORIGINS.includes(url.origin)) return true;
+  if (
+    !opts.isProd &&
+    (url.protocol === "http:" || url.protocol === "https:") &&
+    DEV_HOSTS.has(url.hostname)
+  ) {
     return true;
   }
   return false;
 }
 
 export function normalizeNext(next: string | undefined): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/";
-  return next;
+  return safeInternalPath(next ?? "/");
 }
 
 export type ResolveRedirectResult =
@@ -49,8 +58,10 @@ export type ResolveRedirectResult =
  * Resolve the redirect URL that will be baked into the magic link.
  *
  * Rules:
- *  - If `redirectTo` is provided, it MUST be exact-allowlisted (origin match).
- *    Otherwise reject; never silently rewrite.
+ *  - If `redirectTo` is provided, only its exact-allowlisted ORIGIN is used.
+ *    Its pathname/query/hash are discarded so callers cannot bypass the
+ *    app-owned callback, inject provisioning ids, or strand a token on a
+ *    route that does not scrub credentials.
  *  - If `redirectTo` is absent, derive the origin from the actual request URL
  *    only when that origin is exact-allowlisted; otherwise fall back to the
  *    production origin.
@@ -74,7 +85,13 @@ export function resolveMagicLinkRedirect(input: {
     if (!isAllowedOrigin(target.origin, { isProd: input.isProd })) {
       return { ok: false, reason: "Redirect origin is not allowed." };
     }
-    return { ok: true, redirectTo: target.toString() };
+    return {
+      ok: true,
+      redirectTo: new URL(
+        `/auth/callback?next=${encodeURIComponent(nextPath)}`,
+        target.origin,
+      ).toString(),
+    };
   }
 
   let baseOrigin = PRODUCTION_ORIGIN;

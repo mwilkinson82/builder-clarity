@@ -22,8 +22,8 @@ async function notifyLogin(session: { user: { id: string; email?: string | null 
         userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
       },
     });
-  } catch (err) {
-    console.warn("Login notification failed", err);
+  } catch {
+    console.warn("Login notification failed");
   }
 }
 
@@ -41,26 +41,36 @@ function authHref(next: string) {
   return `/auth?next=${encodeURIComponent(next)}`;
 }
 
-function callbackFailureMessage(err: unknown) {
-  const message = err instanceof Error ? err.message : "Could not complete sign-in.";
-  if (/already|expired|invalid|jwt|refresh|token|link/i.test(message)) {
-    return "This sign-in link was already used or expired. Request a fresh magic link and open it once.";
+const INVALID_LINK_MESSAGE =
+  "This sign-in link was already used or expired. Request a fresh magic link and open it once.";
+const INVALID_INVITE_MESSAGE =
+  "This invitation is no longer available. Ask your company administrator for a fresh invitation.";
+const INVALID_CLIENT_ACCESS_MESSAGE =
+  "This client access link is no longer available. Ask the project team for a fresh link.";
+
+async function clearLocalAuthSession() {
+  try {
+    await supabase.auth.signOut({ scope: "local" });
+  } catch {
+    // Recovery must remain stable even if local storage is unavailable.
+    console.warn("Could not clear local authentication state");
   }
-  return message;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function readInviteId(url: URL): string | null {
-  const raw = url.searchParams.get("invite_id");
+function readScopedId(url: URL, param: "invite_id" | "client_access_id"): string | null {
+  const raw = url.searchParams.get(param);
   if (!raw) return null;
   return UUID_RE.test(raw) ? raw : null;
 }
 
-function readClientAccessId(url: URL): string | null {
-  const raw = url.searchParams.get("client_access_id");
-  if (!raw) return null;
-  return UUID_RE.test(raw) ? raw : null;
+function hasInvalidProvisioningContext(url: URL): boolean {
+  const rawInviteId = url.searchParams.get("invite_id");
+  const rawClientAccessId = url.searchParams.get("client_access_id");
+  if (rawInviteId && !UUID_RE.test(rawInviteId)) return true;
+  if (rawClientAccessId && !UUID_RE.test(rawClientAccessId)) return true;
+  return Boolean(rawInviteId && rawClientAccessId);
 }
 
 async function establishSessionFromUrl(url: URL) {
@@ -102,9 +112,7 @@ async function establishSessionFromUrl(url: URL) {
  * clicked. Fail closed to recovery if the RPC rejects — do not
  * navigate into internal chrome with a stale default.
  */
-async function finalizeExactInvite(
-  inviteId: string,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+async function finalizeExactInvite(inviteId: string): Promise<boolean> {
   // Cast: finalize_invite_acceptance is created by
   // supabase/migrations/20260724000000_account_provisioning_history_containment.sql
   // which is intentionally UNAPPLIED until the maintenance window,
@@ -112,35 +120,32 @@ async function finalizeExactInvite(
   const rpc = supabase.rpc as unknown as (
     fn: "finalize_invite_acceptance",
     params: { p_invite_id: string },
-  ) => Promise<{ data: string | null; error: { message: string } | null }>;
-  const { data, error } = await rpc("finalize_invite_acceptance", {
-    p_invite_id: inviteId,
-  });
-  if (error) return { ok: false, reason: error.message };
-  if (!data) return { ok: false, reason: "This invitation is no longer valid for your account." };
-  return { ok: true };
+  ) => Promise<{ data: string | null; error: unknown | null }>;
+  try {
+    const { data, error } = await rpc("finalize_invite_acceptance", {
+      p_invite_id: inviteId,
+    });
+    return !error && Boolean(data);
+  } catch {
+    return false;
+  }
 }
 
-/**
- * Exact client-access finalizer. Binds one exact pending/active
- * unexpired non-revoked project_client_access row to auth.uid() +
- * caller email. Rejects every other status so revocation/expiry
- * fails closed.
- */
-async function finalizeExactClientAccess(
-  accessId: string,
-): Promise<{ ok: true; projectId: string } | { ok: false; reason: string }> {
+async function finalizeExactClientAccess(clientAccessId: string): Promise<string | null> {
+  // Cast until the maintenance-window migration that creates this
+  // auth.uid/email-bound RPC has been applied and generated types refresh.
   const rpc = supabase.rpc as unknown as (
-    fn: "finalize_client_access",
-    params: { p_access_id: string },
-  ) => Promise<{ data: string | null; error: { message: string } | null }>;
-  const { data, error } = await rpc("finalize_client_access", {
-    p_access_id: accessId,
-  });
-  if (error) return { ok: false, reason: error.message };
-  if (!data)
-    return { ok: false, reason: "This client-portal link is no longer valid for your account." };
-  return { ok: true, projectId: data };
+    fn: "finalize_client_access_acceptance",
+    params: { p_client_access_id: string },
+  ) => Promise<{ data: string | null; error: unknown | null }>;
+  try {
+    const { data, error } = await rpc("finalize_client_access_acceptance", {
+      p_client_access_id: clientAccessId,
+    });
+    return !error && data && UUID_RE.test(data) ? data : null;
+  } catch {
+    return null;
+  }
 }
 
 function AuthCallbackPage() {
@@ -154,50 +159,41 @@ function AuthCallbackPage() {
   const originalUrlRef = useRef<URL | null>(null);
   const inviteIdRef = useRef<string | null>(null);
   const clientAccessIdRef = useRef<string | null>(null);
+  const invalidProvisioningContextRef = useRef(false);
   const consumptionInFlightRef = useRef(false);
   const consumedRef = useRef(false);
   const mountedRef = useRef(false);
 
-  const clearCaptured = useCallback(() => {
+  const failClosed = useCallback(async (recoveryMessage: string) => {
+    consumedRef.current = true;
     originalUrlRef.current = null;
     inviteIdRef.current = null;
     clientAccessIdRef.current = null;
+    invalidProvisioningContextRef.current = false;
+    await clearLocalAuthSession();
+    if (!mountedRef.current) return;
+    setConfirmationRequired(false);
+    setShowRecovery(true);
+    setMessage(recoveryMessage);
   }, []);
-
-  const failToRecovery = useCallback(
-    async (reason: string) => {
-      // Any failure past this point MUST NOT leave a stale prior session
-      // masquerading as success. Sign out locally first, then show the
-      // stable recovery UI. If sign-out itself throws we still surface
-      // recovery — we never fall through to internal chrome.
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        /* recovery is authoritative */
-      }
-      if (!mountedRef.current) return;
-      consumedRef.current = true;
-      clearCaptured();
-      setConfirmationRequired(false);
-      setShowRecovery(true);
-      setMessage(reason);
-    },
-    [clearCaptured],
-  );
 
   const finishSignIn = useCallback(
     async (allowTokenConsumption: boolean) => {
+      if (consumedRef.current) return;
+
       const url = originalUrlRef.current;
       if (!url) {
-        if (mountedRef.current) {
-          setShowRecovery(true);
-          setMessage("No active session was found. Request a fresh magic link and open it once.");
-        }
+        await failClosed(INVALID_LINK_MESSAGE);
         return;
       }
 
       const next = safeAuthNext(url);
       setNextPath(next);
+
+      if (invalidProvisioningContextRef.current) {
+        await failClosed(INVALID_LINK_MESSAGE);
+        return;
+      }
 
       if (requiresExplicitMagicLinkConfirmation(url) && !allowTokenConsumption) {
         setConfirmationRequired(true);
@@ -205,63 +201,67 @@ function AuthCallbackPage() {
         return;
       }
 
-      if (consumedRef.current || consumptionInFlightRef.current) return;
+      if (consumptionInFlightRef.current) return;
       consumptionInFlightRef.current = true;
       setExchangeInFlight(true);
 
       try {
-        // establishSessionFromUrl throws on any exchange/verify
-        // failure. We MUST NOT catch that and fall back to a prior
-        // session — the user clicked a bad/used link and any old
-        // session cached in localStorage is unrelated. A rescue would
-        // silently authorize the wrong identity.
         const sessionFromUrl = await establishSessionFromUrl(url);
-        if (!sessionFromUrl) {
-          await failToRecovery(
-            "No active session was found. Request a fresh magic link and open it once.",
-          );
+        const finalize = async (session: { user: { id: string; email?: string | null } }) => {
+          let destination = next;
+
+          // Exact-invite finalization is atomic with sign-in: if the
+          // invite RPC rejects (revoked / expired / different email /
+          // mismatched caller) we must NOT navigate into internal
+          // chrome. Fail closed to the recovery UI.
+          if (inviteIdRef.current) {
+            const finalized = await finalizeExactInvite(inviteIdRef.current);
+            if (!finalized) {
+              await failClosed(INVALID_INVITE_MESSAGE);
+              return;
+            }
+          }
+
+          // A client link is not access by itself. Bind and activate only
+          // the exact client_access_id after Auth succeeds. The RPC returns
+          // that row's project id; ignore the caller-provided next path and
+          // land only on the exact canonical client project route.
+          if (clientAccessIdRef.current) {
+            const projectId = await finalizeExactClientAccess(clientAccessIdRef.current);
+            if (!projectId) {
+              await failClosed(INVALID_CLIENT_ACCESS_MESSAGE);
+              return;
+            }
+            destination = `/client/projects/${projectId}`;
+          }
+
+          // Router navigation is part of successful completion. Await it
+          // before discarding the captured context; a rejected navigation
+          // falls into failClosed below instead of stranding the callback in
+          // a consumed, non-recoverable state.
+          await navigate({ to: destination as never, replace: true });
+          consumedRef.current = true;
+          originalUrlRef.current = null;
+          inviteIdRef.current = null;
+          clientAccessIdRef.current = null;
+          invalidProvisioningContextRef.current = false;
+          void notifyLogin(session);
+        };
+
+        if (sessionFromUrl) {
+          await finalize(sessionFromUrl);
           return;
         }
 
-        // Exact-invite finalization is atomic with sign-in: if the
-        // invite RPC rejects (revoked / expired / different email /
-        // mismatched caller) we sign out and fail closed to recovery.
-        if (inviteIdRef.current) {
-          const res = await finalizeExactInvite(inviteIdRef.current);
-          if (!res.ok) {
-            await failToRecovery(res.reason);
-            return;
-          }
-        }
-
-        // Exact client-access finalization: identical guarantees for
-        // /client/projects/:projectId path. On success, route to the
-        // exact project.
-        let clientTarget: string | null = null;
-        if (clientAccessIdRef.current) {
-          const res = await finalizeExactClientAccess(clientAccessIdRef.current);
-          if (!res.ok) {
-            await failToRecovery(res.reason);
-            return;
-          }
-          clientTarget = `/client/projects/${res.projectId}`;
-        }
-
-        consumedRef.current = true;
-        clearCaptured();
-        void notifyLogin(sessionFromUrl);
-        navigate({ to: (clientTarget ?? next) as never, replace: true });
-      } catch (err) {
-        // Do not log raw errors (may include tokens / provider text).
-        // Fail closed. No getSession() rescue: a stale prior session
-        // must NEVER convert a bad/used link into a successful sign-in.
-        await failToRecovery(callbackFailureMessage(err));
+        await failClosed(INVALID_LINK_MESSAGE);
+      } catch {
+        await failClosed(INVALID_LINK_MESSAGE);
       } finally {
         consumptionInFlightRef.current = false;
         if (mountedRef.current) setExchangeInFlight(false);
       }
     },
-    [navigate, failToRecovery, clearCaptured],
+    [failClosed, navigate],
   );
 
   useEffect(() => {
@@ -269,11 +269,12 @@ function AuthCallbackPage() {
     if (!originalUrlRef.current && !consumedRef.current) {
       const captured = new URL(window.location.href);
       originalUrlRef.current = captured;
-      // Capture exact invite id AND client-access id BEFORE scrub so
-      // callback finalization can run against the exact resource the
-      // user clicked.
-      inviteIdRef.current = readInviteId(captured);
-      clientAccessIdRef.current = readClientAccessId(captured);
+      // Capture exact provisioning ids BEFORE scrub so callback
+      // finalization runs against the row the user actually clicked.
+      // Malformed or ambiguous contexts fail closed before token use.
+      inviteIdRef.current = readScopedId(captured, "invite_id");
+      clientAccessIdRef.current = readScopedId(captured, "client_access_id");
+      invalidProvisioningContextRef.current = hasInvalidProvisioningContext(captured);
       setNextPath(safeAuthNext(captured));
       try {
         const scrubbed = scrubbedCallbackUrl(window.location.href);
