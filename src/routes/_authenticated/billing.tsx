@@ -38,9 +38,12 @@ const NOTEBOOK_TABS = [
 function BillingSkeleton() {
   return (
     <div className="space-y-5" aria-hidden="true">
-      <div className="flex gap-2 border-b border-hairline">
+      <div className="flex w-full max-w-full gap-2 overflow-x-auto border-b border-hairline">
         {NOTEBOOK_TABS.map((tab) => (
-          <Skeleton key={tab.value} className="h-14 w-40 rounded-b-none rounded-t-[11px]" />
+          <Skeleton
+            key={tab.value}
+            className="h-14 w-40 shrink-0 rounded-b-none rounded-t-[11px]"
+          />
         ))}
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -130,12 +133,12 @@ function BillingPortfolioPage() {
             <Tabs defaultValue="collections">
               {/* Folder-tab notebook per the v2 mock: active tab opens into
                   the bordered panel below it. */}
-              <TabsList className="flex h-auto w-full items-stretch justify-start gap-2 rounded-none border-b border-hairline bg-transparent p-0">
+              <TabsList className="flex h-auto w-full max-w-full items-stretch justify-start gap-2 overflow-x-auto rounded-none border-b border-hairline bg-transparent p-0">
                 {NOTEBOOK_TABS.map((tab) => (
                   <TabsTrigger
                     key={tab.value}
                     value={tab.value}
-                    className="-mb-px flex-col items-start rounded-b-none rounded-t-[11px] border border-hairline bg-secondary px-4 py-3 text-left shadow-none data-[state=inactive]:mt-1.5 data-[state=inactive]:opacity-85 data-[state=active]:border-b-background data-[state=active]:bg-background data-[state=active]:shadow-none sm:px-5"
+                    className="-mb-px shrink-0 flex-col items-start rounded-b-none rounded-t-[11px] border border-hairline bg-secondary px-4 py-3 text-left shadow-none focus-visible:ring-inset focus-visible:ring-offset-0 data-[state=inactive]:mt-1.5 data-[state=inactive]:opacity-85 data-[state=active]:border-b-background data-[state=active]:bg-background data-[state=active]:shadow-none sm:px-5"
                   >
                     <span className="text-[13.5px] font-semibold leading-tight">{tab.title}</span>
                     <span className="mt-0.5 text-[10.5px] font-normal text-muted-foreground">

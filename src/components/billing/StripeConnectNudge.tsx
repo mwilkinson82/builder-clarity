@@ -41,11 +41,11 @@ export function StripeConnectNudge() {
   return (
     <div
       data-testid="stripe-connect-nudge"
-      className="flex items-start justify-between gap-4 rounded-lg border border-hairline bg-card p-4 shadow-card"
+      className="relative rounded-lg border border-hairline bg-card p-4 shadow-card"
     >
-      <div className="flex items-start gap-3">
-        <CreditCard className="mt-0.5 h-4 w-4 text-muted-foreground" />
-        <div>
+      <div className="flex min-w-0 items-start gap-3 pr-10">
+        <CreditCard className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
           <p className="text-sm font-medium">
             {sandboxOnly
               ? "Move Stripe out of sandbox"
@@ -60,7 +60,12 @@ export function StripeConnectNudge() {
                 ? "This company's live connected account still needs information before real invoice payments can be activated."
                 : "Stripe verifies each company before it can receive real card and bank-debit payments. Set it up early; direct bank details keep working either way."}
           </p>
-          <Button asChild size="sm" variant="outline" className="mt-3">
+          <Button
+            asChild
+            size="sm"
+            variant="outline"
+            className="mt-3 h-auto max-w-full justify-start whitespace-normal py-2 text-left leading-snug"
+          >
             <Link to="/team">Open Getting paid settings</Link>
           </Button>
         </div>
@@ -69,6 +74,7 @@ export function StripeConnectNudge() {
         type="button"
         size="sm"
         variant="ghost"
+        className="absolute right-2 top-2 h-8 w-8 p-0"
         aria-label="Dismiss Stripe reminder"
         onClick={() => {
           try {
