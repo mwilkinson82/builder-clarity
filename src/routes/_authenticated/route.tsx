@@ -41,20 +41,24 @@ function getActivitySessionId() {
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
   beforeLoad: async ({ location }) => {
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-
-    if (sessionError || !sessionData.session) {
+    // Fail-closed: getUser() is authoritative. It re-validates the
+    // access token against Supabase Auth, so a stale localStorage
+    // session cannot mask a revoked/disabled user. If it fails for
+    // ANY reason, sign out locally and redirect to /auth. We must
+    // NOT render Outlet from a "restored session" fallback — that
+    // is exactly how a disabled seat kept seeing internal chrome.
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user) {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        /* redirect is authoritative */
+      }
       throw redirect({
         to: "/auth",
         search: { next: location.href },
         replace: true,
       });
-    }
-
-    const { data, error } = await supabase.auth.getUser();
-    if (error || !data.user) {
-      console.warn("Supabase user verification failed; continuing with restored session", error);
-      return { user: sessionData.session.user };
     }
 
     return { user: data.user };
@@ -90,6 +94,32 @@ function AuthenticatedLayout() {
       cancelled = true;
     };
   }, [resolveMode, reloadKey]);
+
+  // Re-resolve access on visibility return AND on auth-state changes.
+  // A seat disabled mid-session (owner revoked, membership deactivated,
+  // capability removed) must lose access without a hard refresh. This
+  // also covers the case where the same tab was left open across a
+  // sign-out from another tab.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      setReloadKey((k) => k + 1);
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    const { data: authSub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        window.location.replace("/auth");
+        return;
+      }
+      if (event === "SIGNED_IN" || event === "USER_UPDATED" || event === "TOKEN_REFRESHED") {
+        setReloadKey((k) => k + 1);
+      }
+    });
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      authSub.subscription.unsubscribe();
+    };
+  }, []);
 
   const onClientPortalRoute = useMemo(
     () => isClientPortalPath(routePathname),

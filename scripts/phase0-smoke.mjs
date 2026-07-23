@@ -721,7 +721,16 @@ await expectContains(
     /setSession/,
     /access_token/,
     /refresh_token/,
-    /navigate\(\{ to: next as never, replace: true \}\)/,
+    // P0 sign-in correction: navigate to (clientTarget ?? next) so
+    // invite / client-portal / login all land on the exact resource,
+    // never a stale default.
+    /navigate\(\{ to: \(clientTarget \?\? next\) as never, replace: true \}\)/,
+    // Fail-closed on any callback failure: signOut then recovery UI,
+    // no getSession() rescue that could keep a stale session alive.
+    /failToRecovery/,
+    /supabase\.auth\.signOut\(\)/,
+    /finalize_client_access/,
+    /finalize_invite_acceptance/,
     /requiresExplicitMagicLinkConfirmation/,
     /Continue to Overwatch/,
     /Request fresh magic link/,
@@ -749,17 +758,23 @@ await expectContains(
 await expectContains(
   "src/routes/_authenticated/route.tsx",
   [
-    /getSession/,
-    /getUser/,
-    /continuing with restored session/,
-    /sessionData\.session\.user/,
+    // P0 sign-in correction: fail-closed gate on getUser() — no
+    // getSession() restore path that would resurrect a stale session
+    // for a disabled/revoked user.
+    /supabase\.auth\.getUser\(\)/,
+    /await supabase\.auth\.signOut\(\)/,
+    /throw redirect/,
     /recordUserActivity/,
     /ACTIVITY_HEARTBEAT_MS/,
     /overwatch_activity_session_id/,
     /useRouterState/,
     /visibilitychange/,
+    // Mid-session re-resolution so a revoked seat loses access on
+    // tab return and on Supabase auth-state changes.
+    /setReloadKey/,
+    /onAuthStateChange/,
   ],
-  "authenticated route lets restored browser sessions survive refresh and records live activity heartbeats",
+  "authenticated route fails closed on gate rejection and re-resolves access mid-session",
 );
 
 await expectContains(

@@ -1,5 +1,6 @@
 import { sendLovableEmail } from "@lovable.dev/email-js";
 import { createFileRoute } from "@tanstack/react-router";
+import { findExistingAuthUserByEmail } from "@/lib/auth/find-existing-auth-user";
 import { handleMagicLinkRequest, type MagicLinkDeps } from "@/lib/auth/magic-link-handler";
 
 export const Route = createFileRoute("/api/auth/magic-link")({
@@ -111,23 +112,15 @@ export const Route = createFileRoute("/api/auth/magic-link")({
             return Boolean(data);
           },
 
-          lookupExistingAuthUser: async (email) => {
-            // Fail-closed: this MUST run for the public `login` context
-            // before any generateLink call. auth.admin.listUsers filters
-            // by email server-side; a match returns the user, no match
-            // returns an empty page.
-            const { data, error } = await supabaseAdmin.auth.admin.listUsers({
-              page: 1,
-              perPage: 1,
-              // @ts-expect-error - filter param is supported by GoTrue admin API
+          lookupExistingAuthUser: (email) =>
+            // Exhaustive paginated exact-case-insensitive lookup — see
+            // src/lib/auth/find-existing-auth-user.ts. The pinned
+            // @supabase/auth-js has no email filter on listUsers, so
+            // this is the only correct existence check.
+            findExistingAuthUserByEmail(
+              (args) => supabaseAdmin.auth.admin.listUsers(args),
               email,
-            });
-            if (error) throw new Error(error.message);
-            const found = data?.users?.find(
-              (u) => (u.email ?? "").toLowerCase() === email.toLowerCase(),
-            );
-            return found ? { id: found.id } : null;
-          },
+            ),
 
           findRecentSend: async ({ email, label, dedupeKey, sinceIso }) => {
             // Dedupe identity includes exact context+id via the metadata
