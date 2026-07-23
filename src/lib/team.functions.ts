@@ -1349,6 +1349,14 @@ export const createTeamInvite = createServerFn({ method: "POST" })
       ? normalizeCapabilities(data.capabilities)
       : { ...ROLE_PRESETS[data.role] };
 
+    // P0 team-role containment: company.manage_team is day-to-day admin,
+    // not Owner authority. Only current Owners / super admins may invite
+    // Owners, and non-owner managers cannot grant capabilities they don't
+    // hold. Server-side, before any invite write.
+    const authority = await loadCallerAuthority(context, organizationId);
+    assertCanAssignRole(authority, data.role);
+    assertCanGrantCapabilities(authority, inviteCapabilities, null);
+
     const { data: organization, error: orgError } = await context.supabase
       .from("organizations")
       .select("id, seat_limit")
