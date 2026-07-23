@@ -2,16 +2,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// P0 finding 2: disabled-seat containment. This test locks the DRAFT
-// migration under supabase/verification/ (unapplied) that will replace
-// ensure_user_account(). It asserts the containment structure so a future
-// edit cannot silently re-open the self-bootstrap-Owner path when a
-// disabled/history identity refreshes.
+// P0 finding 2: disabled-seat + client-only containment. Locks the
+// FORWARD migration currently staged unapplied under supabase/verification/;
+// see docs/RELEASE_GATE.md §6 for the maintenance-window apply path.
 
 const migration = readFileSync(
   resolve(
     process.cwd(),
-    "supabase/verification/20260723200000_account_provisioning_disabled_seat_containment.sql",
+    "supabase/verification/20260723210000_account_provisioning_history_containment.sql",
   ),
   "utf8",
 );
@@ -33,30 +31,36 @@ describe("account provisioning — disabled-seat containment (draft)", () => {
   });
 
   it("detects prior association history BEFORE the bootstrap branch", () => {
-    // Must check memberships (any status), accepted invites, AND created orgs
-    // — in the same guard, before any INSERT INTO public.organizations that
-    // is not inside the invite loop.
+    // Must check memberships (any status), accepted invites, created orgs,
+    // stale profile default, client access, project ownership, and project
+    // memberships — all in the same guard, before any INSERT INTO
+    // public.organizations that is not inside the invite loop.
     expect(migration).toContain(
       "FROM public.organization_memberships m WHERE m.user_id = p_user_id",
     );
-    expect(migration).toContain(
-      "FROM public.organization_invites i\n      WHERE i.accepted_by = p_user_id",
-    );
+    expect(migration).toContain("FROM public.organization_invites i");
+    expect(migration).toContain("i.accepted_by = p_user_id");
     expect(migration).toContain(
       "FROM public.organizations o WHERE o.created_by = p_user_id",
     );
-
-    const historyIdx = migration.indexOf("P0 disabled-seat containment");
-    const bootstrapIdx = migration.indexOf(
-      "A genuinely uninvited, unassociated account",
+    expect(migration).toContain("p.default_organization_id IS NOT NULL");
+    expect(migration).toContain("FROM public.project_client_access pca");
+    expect(migration).toContain("pca.client_user_id = p_user_id");
+    expect(migration).toContain("FROM public.projects pr WHERE pr.owner_id = p_user_id");
+    expect(migration).toContain(
+      "FROM public.project_memberships pm WHERE pm.user_id = p_user_id",
     );
-    // Fallback: locate the bootstrap INSERT itself.
+
+    const historyIdx = migration.indexOf("P0 disabled-seat + client-only containment");
     const bootstrapInsertIdx = migration.indexOf(
       "INSERT INTO public.organizations (name, created_by)",
     );
     expect(historyIdx).toBeGreaterThan(0);
     expect(bootstrapInsertIdx).toBeGreaterThan(historyIdx);
-    if (bootstrapIdx > 0) expect(bootstrapIdx).toBeGreaterThan(historyIdx);
+  });
+
+  it("drops the on_auth_user_created demo trigger in the same migration", () => {
+    expect(migration).toContain("DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users");
   });
 
   it("returns NULL and clears only the caller's stale default when history exists", () => {
