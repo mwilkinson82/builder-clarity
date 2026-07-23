@@ -60,6 +60,7 @@ import {
   createPlanSet,
   createTakeoffMeasurement,
   deleteTakeoffMeasurement,
+  linkTakeoffGroupToEstimateLine,
   planRoomBucket,
   recalculateSheetTakeoffs,
   recordScaleAssessment,
@@ -71,6 +72,11 @@ import {
   type TakeoffMeasurementRow,
   type TakeoffToolType,
 } from "@/lib/plan-room.functions";
+import {
+  planRoomOperationFingerprint,
+  releasePlanRoomOperationKey,
+  retainPlanRoomOperationKey,
+} from "@/lib/plan-room-operation-keys";
 import {
   defaultPlanRoomSheetId,
   distancePx,
@@ -312,6 +318,7 @@ export function PlanRoomWorkspace({
   const autoUploadTriggeredRef = useRef(false);
   const thumbBackfillRef = useRef<Set<string>>(new Set());
   const takeoffSyncOperationKeysRef = useRef<Map<string, string>>(new Map());
+  const takeoffCommandOperationKeysRef = useRef<Map<string, string>>(new Map());
   const pendingPointsRef = useRef<Point[]>([]);
   const mainRef = useRef<HTMLElement | null>(null);
   const cockpitPanelInteractionRef = useRef<CockpitPanelInteraction | null>(null);
@@ -320,6 +327,7 @@ export function PlanRoomWorkspace({
   const updateSheetFn = useServerFn(updatePlanSheet);
   const updateMeasurementFn = useServerFn(updateTakeoffMeasurement);
   const deleteMeasurementFn = useServerFn(deleteTakeoffMeasurement);
+  const linkTakeoffGroupFn = useServerFn(linkTakeoffGroupToEstimateLine);
   const syncLineFn = useServerFn(syncTakeoffToEstimateLine);
   const applyScaleToSheetsFn = useServerFn(applyScaleToSheets);
   const updatePlanSheetsFn = useServerFn(updatePlanSheets);
@@ -1032,6 +1040,21 @@ export function PlanRoomWorkspace({
     qc.invalidateQueries({ queryKey: ["estimates"] });
   };
 
+  const expectedMeasurementVersions = (measurementIds: string[]) =>
+    measurementIds.map((measurementId) => {
+      const measurement = measurements.find((item) => item.id === measurementId);
+      if (!measurement) {
+        throw new Error("A takeoff changed. Refresh Plan Room and try again.");
+      }
+      return measurement.version;
+    });
+
+  const commandOperationKey = (action: string, payload: unknown) =>
+    retainPlanRoomOperationKey(
+      takeoffCommandOperationKeysRef.current,
+      planRoomOperationFingerprint(action, payload),
+    );
+
   const cacheMeasurementScopeItem = (item: MeasurementScopeQueueItem) => {
     qc.setQueryData<{ items: MeasurementScopeQueueItem[]; ready: boolean }>(
       ["measurement-scope-queue", estimate.id],
@@ -1185,30 +1208,34 @@ export function PlanRoomWorkspace({
       // A same-label group with an incompatible unit never auto-joins.
       const match = findTakeoffGroupMatch({ label, unit, measurements });
       const joinedGroup = !line && match.joins ? match.group : null;
+      const command = {
+        estimate_id: estimate.id,
+        plan_sheet_id: currentSheet.id,
+        estimate_line_item_id: line?.id ?? joinedGroup?.linkedLineId ?? null,
+        library_item_id: line?.library_item_id ?? joinedGroup?.libraryItemId ?? null,
+        tool_type: measurementTool,
+        label,
+        unit,
+        quantity,
+        waste_pct: 0,
+        color: joinedGroup ? joinedGroup.color : takeoffColor,
+        geometry: geometryFromPoints(points, viewSize),
+        notes: preparedNote || (line ? "Quantity produced from Plan Room takeoff." : ""),
+        scope_brief_review_id: scopeBriefReviewId,
+      };
+      const operationKey = commandOperationKey("measurement-create", command);
       const result = await createMeasurementFn({
-        data: {
-          estimate_id: estimate.id,
-          plan_sheet_id: currentSheet.id,
-          estimate_line_item_id: line?.id ?? joinedGroup?.linkedLineId ?? null,
-          library_item_id: line?.library_item_id ?? joinedGroup?.libraryItemId ?? null,
-          tool_type: measurementTool,
-          label,
-          unit,
-          quantity,
-          waste_pct: 0,
-          color: joinedGroup ? joinedGroup.color : takeoffColor,
-          geometry: geometryFromPoints(points, viewSize),
-          notes: preparedNote || (line ? "Quantity produced from Plan Room takeoff." : ""),
-          scope_brief_review_id: scopeBriefReviewId,
-        },
+        data: { ...command, operation_key: operationKey },
       });
       return {
         ...result,
+        operation_key: operationKey,
         joinedGroupLinked: Boolean(joinedGroup?.linkedLineId),
         measurementScopeItemId: preparedMeasurementScopeItemId,
       };
     },
     onSuccess: (result, variables) => {
+      releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, result.operation_key);
       qc.setQueryData<PlanRoomMeasurementCache>(["plan-room", estimate.id], (current) =>
         addTakeoffToPlanRoomCache(current, result.measurement),
       );
@@ -1418,7 +1445,7 @@ export function PlanRoomWorkspace({
   });
 
   const updateMeasurementMutation = useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       id,
       patch,
       recalculateFromGeometry = false,
@@ -1426,11 +1453,24 @@ export function PlanRoomWorkspace({
       id: string;
       patch: Parameters<typeof updateMeasurementFn>[0]["data"]["patch"];
       recalculateFromGeometry?: boolean;
-    }) =>
-      updateMeasurementFn({
-        data: { id, patch, recalculate_from_geometry: recalculateFromGeometry },
-      }),
-    onSuccess: (_result, variables) => {
+    }) => {
+      const measurement = measurements.find((item) => item.id === id);
+      if (!measurement) throw new Error("The takeoff changed. Refresh and try again.");
+      const command = {
+        id,
+        estimate_id: estimate.id,
+        expected_version: measurement.version,
+        patch,
+        recalculate_from_geometry: recalculateFromGeometry,
+      };
+      const operationKey = commandOperationKey("measurement-update", command);
+      const result = await updateMeasurementFn({
+        data: { ...command, operation_key: operationKey },
+      });
+      return { ...result, operation_key: operationKey };
+    },
+    onSuccess: (result, variables) => {
+      releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, result.operation_key);
       toast.success("Takeoff updated");
       // `measurements` still holds the pre-update row here — the query only
       // refetches after invalidate below — so the undo `before` is accurate.
@@ -1442,11 +1482,22 @@ export function PlanRoomWorkspace({
   });
 
   const recalculateSheetMutation = useMutation({
-    mutationFn: (sheetId: string) =>
-      recalculateSheetTakeoffsFn({
-        data: { estimate_id: estimate.id, plan_sheet_id: sheetId },
-      }),
+    mutationFn: async (sheetId: string) => {
+      const sheet = sheets.find((item) => item.id === sheetId);
+      if (!sheet) throw new Error("The plan sheet changed. Refresh and try again.");
+      const command = {
+        estimate_id: estimate.id,
+        plan_sheet_id: sheetId,
+        expected_scale_revision: sheet.scale_revision,
+      };
+      const operationKey = commandOperationKey("sheet-recalculate", command);
+      const result = await recalculateSheetTakeoffsFn({
+        data: { ...command, operation_key: operationKey },
+      });
+      return { ...result, operation_key: operationKey };
+    },
     onSuccess: (result) => {
+      releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, result.operation_key);
       const recalculated = result.measurements.length;
       const skipped = result.skipped_manual_overrides.length;
       toast.success(
@@ -1464,10 +1515,19 @@ export function PlanRoomWorkspace({
     mutationFn: async (id: string) => {
       // Capture the row before it is gone; undo recreates it from this.
       const measurement = measurements.find((item) => item.id === id) ?? null;
-      await deleteMeasurementFn({ data: { id } });
-      return measurement;
+      if (!measurement) throw new Error("The takeoff changed. Refresh and try again.");
+      const command = {
+        id,
+        estimate_id: estimate.id,
+        expected_version: measurement.version,
+      };
+      const operationKey = commandOperationKey("measurement-delete", command);
+      await deleteMeasurementFn({ data: { ...command, operation_key: operationKey } });
+      return { measurement, operation_key: operationKey };
     },
-    onSuccess: (measurement, id) => {
+    onSuccess: (result, id) => {
+      releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, result.operation_key);
+      const measurement = result.measurement;
       toast.success("Takeoff deleted");
       if (selectedMeasurementId === id) setSelectedMeasurementId("");
       if (measurement) {
@@ -1486,22 +1546,36 @@ export function PlanRoomWorkspace({
   // Link-or-create classification. The subsequent sync runs through the
   // normal mutation so waste, unit-guard, and anti-clobber dialogs all apply.
   const classifyTakeoffMutation = useMutation({
-    mutationFn: (variables: {
+    mutationFn: async (variables: {
       measurementIds: string[];
       source:
         | { type: "library"; library_item_id: string }
         | { type: "label"; description: string; unit: string };
-    }) =>
-      createLineForTakeoffsFn({
-        data: {
-          estimate_id: estimate.id,
-          measurement_ids: variables.measurementIds,
-          source: variables.source,
-        },
-      }),
+    }) => {
+      const command = {
+        estimate_id: estimate.id,
+        measurement_ids: variables.measurementIds,
+        expected_versions: expectedMeasurementVersions(variables.measurementIds),
+        source: variables.source,
+      };
+      const operationKey = commandOperationKey("line-create-and-link", command);
+      const result = await createLineForTakeoffsFn({
+        data: { ...command, operation_key: operationKey },
+      });
+      return { ...result, operation_key: operationKey };
+    },
     onSuccess: (result) => {
+      releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, result.operation_key);
       invalidate();
-      syncLineMutation.mutate({ lineId: result.line_item_id });
+      if (
+        result.sync?.conflict ||
+        result.sync?.unit_conflict ||
+        result.sync?.calculation_conflict
+      ) {
+        toast.warning("Estimate row created, but its takeoff quantity needs review.");
+      } else {
+        toast.success("Estimate row created and linked to the takeoff.");
+      }
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Estimate row did not save"),
@@ -1514,8 +1588,8 @@ export function PlanRoomWorkspace({
     );
   };
 
-  // Group actions (beta batch 2): one answer links every member; each link is
-  // recorded on the undo stack, then the row syncs once.
+  // Group actions use one versioned database command, so every member and the
+  // driven estimate quantity either commit together or remain unchanged.
   const linkGroupMutation = useMutation({
     mutationFn: async ({
       measurementIds,
@@ -1524,22 +1598,36 @@ export function PlanRoomWorkspace({
       measurementIds: string[];
       lineId: string;
     }) => {
-      for (const id of measurementIds) {
-        await updateMeasurementFn({ data: { id, patch: { estimate_line_item_id: lineId } } });
-      }
-      return { measurementIds, lineId };
+      const command = {
+        estimate_id: estimate.id,
+        measurement_ids: measurementIds,
+        expected_versions: expectedMeasurementVersions(measurementIds),
+        estimate_line_item_id: lineId,
+      };
+      const operationKey = commandOperationKey("group-link", command);
+      const result = await linkTakeoffGroupFn({
+        data: { ...command, operation_key: operationKey },
+      });
+      return { ...result, measurementIds, lineId, operation_key: operationKey };
     },
-    onSuccess: ({ measurementIds, lineId }) => {
+    onSuccess: ({ measurementIds, lineId, operation_key: operationKey, sync }) => {
+      releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, operationKey);
       // `measurements` still holds the pre-update rows here, so the undo
       // snapshots are accurate (same pattern as updateMeasurementMutation).
       measurementIds.forEach((id) =>
         recordMeasurementUpdate(id, { estimate_line_item_id: lineId }),
       );
-      toast.success(
-        `${measurementIds.length} takeoff${measurementIds.length === 1 ? "" : "s"} linked`,
-      );
       invalidate();
-      syncLineMutation.mutate({ lineId });
+      if (sync?.conflict || sync?.unit_conflict || sync?.calculation_conflict) {
+        // The atomic command linked the group but intentionally protected the
+        // estimate quantity. Reuse the existing review dialog/blocked-takeoff
+        // flow instead of presenting a false all-clear.
+        syncLineMutation.mutate({ lineId });
+      } else {
+        toast.success(
+          `${measurementIds.length} takeoff${measurementIds.length === 1 ? "" : "s"} linked`,
+        );
+      }
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "The group did not link"),
@@ -1560,21 +1648,44 @@ export function PlanRoomWorkspace({
   // the recording mutations — an undo must never record itself.
   const runTakeoffInverseOp = async (op: TakeoffInverseOp): Promise<string | null> => {
     if (op.type === "delete") {
-      await deleteMeasurementFn({ data: { id: op.measurementId } });
+      const measurement = measurements.find((item) => item.id === op.measurementId);
+      if (!measurement) throw new Error("The takeoff changed. Refresh and try again.");
+      const command = {
+        id: op.measurementId,
+        estimate_id: estimate.id,
+        expected_version: measurement.version,
+      };
+      const operationKey = commandOperationKey("undo-measurement-delete", command);
+      await deleteMeasurementFn({ data: { ...command, operation_key: operationKey } });
+      releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, operationKey);
       return null;
     }
     if (op.type === "update") {
+      const measurement = measurements.find((item) => item.id === op.measurementId);
+      if (!measurement) throw new Error("The takeoff changed. Refresh and try again.");
+      const command = {
+        id: op.measurementId,
+        estimate_id: estimate.id,
+        expected_version: measurement.version,
+        patch: op.patch as Parameters<typeof updateMeasurementFn>[0]["data"]["patch"],
+        recalculate_from_geometry: false,
+      };
+      const operationKey = commandOperationKey("undo-measurement-update", command);
       await updateMeasurementFn({
-        data: {
-          id: op.measurementId,
-          patch: op.patch as Parameters<typeof updateMeasurementFn>[0]["data"]["patch"],
-        },
+        data: { ...command, operation_key: operationKey },
       });
+      releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, operationKey);
       return null;
     }
+    const command = op.snapshot as Omit<
+      Parameters<typeof createMeasurementFn>[0]["data"],
+      "operation_key"
+    >;
+    const operationKey = commandOperationKey("undo-measurement-create", command);
     const result = await createMeasurementFn({
-      data: op.snapshot as Parameters<typeof createMeasurementFn>[0]["data"],
+      data: { ...command, operation_key: operationKey },
     });
+    releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, operationKey);
     return result.measurement.id;
   };
 
@@ -1734,28 +1845,48 @@ export function PlanRoomWorkspace({
 
   const buildFromTakeoffsMutation = useMutation({
     mutationFn: async (groups: TakeoffGroup[]) => {
-      const createdLineIds: string[] = [];
+      const created: Array<{
+        line_item_id: string;
+        operation_key: string;
+        needs_review: boolean;
+      }> = [];
       for (const group of groups) {
+        const command = {
+          estimate_id: estimate.id,
+          measurement_ids: group.measurement_ids,
+          expected_versions: expectedMeasurementVersions(group.measurement_ids),
+          source: group.library_item_id
+            ? ({ type: "library", library_item_id: group.library_item_id } as const)
+            : ({ type: "label", description: group.label, unit: group.unit } as const),
+        };
+        const operationKey = commandOperationKey("line-create-and-link", command);
         const result = await createLineForTakeoffsFn({
-          data: {
-            estimate_id: estimate.id,
-            measurement_ids: group.measurement_ids,
-            source: group.library_item_id
-              ? { type: "library", library_item_id: group.library_item_id }
-              : { type: "label", description: group.label, unit: group.unit },
-          },
+          data: { ...command, operation_key: operationKey },
         });
-        createdLineIds.push(result.line_item_id);
+        created.push({
+          line_item_id: result.line_item_id,
+          operation_key: operationKey,
+          needs_review: Boolean(
+            result.sync?.conflict ||
+            result.sync?.unit_conflict ||
+            result.sync?.calculation_conflict,
+          ),
+        });
       }
-      return createdLineIds;
+      return created;
     },
-    onSuccess: (createdLineIds) => {
-      toast.success(
-        `${createdLineIds.length} estimate row${createdLineIds.length === 1 ? "" : "s"} created from takeoffs`,
+    onSuccess: (created) => {
+      created.forEach((item) =>
+        releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, item.operation_key),
       );
+      toast.success(
+        `${created.length} estimate row${created.length === 1 ? "" : "s"} created from takeoffs`,
+      );
+      if (created.some((item) => item.needs_review)) {
+        toast.warning("One or more linked quantities need unit or scale review.");
+      }
       setBuildGroups(null);
       invalidate();
-      createdLineIds.forEach((lineId) => syncLineMutation.mutate({ lineId }));
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Estimate rows did not build"),
@@ -1789,22 +1920,52 @@ export function PlanRoomWorkspace({
   const applyMatchesMutation = useMutation({
     mutationFn: async (rows: NonNullable<typeof matchProposals>) => {
       const accepted = rows.filter((row) => row.accepted);
+      const byLine = new Map<string, string[]>();
       for (const row of accepted) {
-        await updateMeasurementFn({
-          data: { id: row.measurementId, patch: { estimate_line_item_id: row.lineId } },
+        byLine.set(row.lineId, [...(byLine.get(row.lineId) ?? []), row.measurementId]);
+      }
+      const applied: Array<{
+        lineId: string;
+        operationKey: string;
+        needsReview: boolean;
+      }> = [];
+      for (const [lineId, measurementIds] of byLine) {
+        const command = {
+          estimate_id: estimate.id,
+          measurement_ids: measurementIds,
+          expected_versions: expectedMeasurementVersions(measurementIds),
+          estimate_line_item_id: lineId,
+        };
+        const operationKey = commandOperationKey("group-link", command);
+        const result = await linkTakeoffGroupFn({
+          data: { ...command, operation_key: operationKey },
+        });
+        applied.push({
+          lineId,
+          operationKey,
+          needsReview: Boolean(
+            result.sync?.conflict ||
+            result.sync?.unit_conflict ||
+            result.sync?.calculation_conflict,
+          ),
         });
       }
-      return Array.from(new Set(accepted.map((row) => row.lineId)));
+      return applied;
     },
-    onSuccess: (lineIds) => {
-      if (lineIds.length > 0) {
+    onSuccess: (applied) => {
+      applied.forEach(({ operationKey }) =>
+        releasePlanRoomOperationKey(takeoffCommandOperationKeysRef.current, operationKey),
+      );
+      if (applied.length > 0) {
         toast.success(
-          `${lineIds.length} estimate row${lineIds.length === 1 ? "" : "s"} matched to takeoffs`,
+          `${applied.length} estimate row${applied.length === 1 ? "" : "s"} matched to takeoffs`,
         );
       }
       setMatchProposals(null);
       invalidate();
-      lineIds.forEach((lineId) => syncLineMutation.mutate({ lineId }));
+      applied
+        .filter((item) => item.needsReview)
+        .forEach(({ lineId }) => syncLineMutation.mutate({ lineId }));
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Matches did not apply"),

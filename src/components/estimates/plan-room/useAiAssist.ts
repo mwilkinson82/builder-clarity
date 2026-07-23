@@ -73,6 +73,11 @@ import {
   type TakeoffMeasurementRow,
 } from "@/lib/plan-room.functions";
 import {
+  planRoomOperationFingerprint,
+  releasePlanRoomOperationKey,
+  retainPlanRoomOperationKey,
+} from "@/lib/plan-room-operation-keys";
+import {
   renderDetectionSheet,
   renderExemplarCrop,
   renderVerifyWindow,
@@ -216,12 +221,14 @@ export function useAiAssist({
   const exemplarImageCacheRef = useRef<{ key: string; image: DetectionExemplarImage } | null>(null);
   const cancelRequestedRef = useRef(false);
   const operationIdRef = useRef<string | null>(null);
+  const measurementOperationKeysRef = useRef(new Map<string, string>());
   // AI measurement created per sheet during this review (id + points so far).
   const aiMeasurementsRef = useRef(
     new Map<
       string,
       {
         id: string;
+        version: number;
         points: SheetPoint[];
         originalPoints: SheetPoint[];
         minimumConfidence: number;
@@ -1234,43 +1241,51 @@ export function useAiAssist({
           }
           const sheet = sheetById.get(sheetId);
           const sheetTag = sheet?.sheet_number || `page ${sheet?.page_number ?? "?"}`;
+          const command = {
+            estimate_id: estimateId,
+            plan_sheet_id: sheetId,
+            // Externally-seeded reviews (a labeled discovery cluster) have
+            // no exemplar; their override supplies the label/color instead.
+            estimate_line_item_id: reviewOverride
+              ? reviewOverride.estimateLineItemId
+              : (exemplar?.estimateLineItemId ?? null),
+            library_item_id: reviewOverride
+              ? reviewOverride.libraryItemId
+              : (exemplar?.libraryItemId ?? null),
+            tool_type: "count" as const,
+            label: reviewOverride?.label || exemplar?.label || "AI-assisted count",
+            unit: reviewOverride?.unit || exemplar?.unit || "EA",
+            quantity: points.length,
+            waste_pct: reviewOverride ? 0 : (exemplar?.wastePct ?? 0),
+            color: reviewOverride?.color || exemplar?.color || "#d97706",
+            geometry: geometryFromPoints(points, viewSize),
+            notes: [
+              `AI-assisted count — sheet ${sheetTag}. Every point was reviewed and accepted by hand.`,
+              scopeBriefSource
+                ? `Started from Scope Brief ${scopeBriefSource.sheetNumber || sheetTag} ${scopeBriefSource.sourceLine}, decision v${scopeBriefSource.version}.`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
+            created_by_ai: true,
+            ai_operation_id: lastOperationId,
+            ai_proposal_source: Array.from(acceptedSources).sort().join("+").slice(0, 32),
+            ai_confidence: minimumConfidence,
+            ai_original_geometry: geometryFromPoints(acceptedOriginalPoints, viewSize),
+            ai_review_action: wasNudged ? ("nudged" as const) : ("accepted" as const),
+          };
+          const fingerprint = planRoomOperationFingerprint("ai-measurement-create", command);
+          const operationKey = retainPlanRoomOperationKey(
+            measurementOperationKeysRef.current,
+            fingerprint,
+          );
           const result = await createMeasurementFn({
-            data: {
-              estimate_id: estimateId,
-              plan_sheet_id: sheetId,
-              // Externally-seeded reviews (a labeled discovery cluster) have
-              // no exemplar; their override supplies the label/color instead.
-              estimate_line_item_id: reviewOverride
-                ? reviewOverride.estimateLineItemId
-                : (exemplar?.estimateLineItemId ?? null),
-              library_item_id: reviewOverride
-                ? reviewOverride.libraryItemId
-                : (exemplar?.libraryItemId ?? null),
-              tool_type: "count",
-              label: reviewOverride?.label || exemplar?.label || "AI-assisted count",
-              unit: reviewOverride?.unit || exemplar?.unit || "EA",
-              quantity: points.length,
-              waste_pct: reviewOverride ? 0 : (exemplar?.wastePct ?? 0),
-              color: reviewOverride?.color || exemplar?.color || "#d97706",
-              geometry: geometryFromPoints(points, viewSize),
-              notes: [
-                `AI-assisted count — sheet ${sheetTag}. Every point was reviewed and accepted by hand.`,
-                scopeBriefSource
-                  ? `Started from Scope Brief ${scopeBriefSource.sheetNumber || sheetTag} ${scopeBriefSource.sourceLine}, decision v${scopeBriefSource.version}.`
-                  : "",
-              ]
-                .filter(Boolean)
-                .join(" "),
-              created_by_ai: true,
-              ai_operation_id: lastOperationId,
-              ai_proposal_source: Array.from(acceptedSources).sort().join("+").slice(0, 32),
-              ai_confidence: minimumConfidence,
-              ai_original_geometry: geometryFromPoints(acceptedOriginalPoints, viewSize),
-              ai_review_action: wasNudged ? "nudged" : "accepted",
-            },
+            data: { ...command, operation_key: operationKey },
           });
+          releasePlanRoomOperationKey(measurementOperationKeysRef.current, operationKey);
           aiMeasurementsRef.current.set(sheetId, {
             id: result.measurement.id,
+            version: result.measurement.version,
             points,
             originalPoints: acceptedOriginalPoints,
             minimumConfidence,
@@ -1286,22 +1301,33 @@ export function useAiAssist({
           const sources = new Set([...existing.sources, ...acceptedSources]);
           const nextMinimumConfidence = Math.min(existing.minimumConfidence, minimumConfidence);
           const nextWasNudged = existing.nudged || wasNudged;
-          await updateMeasurementFn({
-            data: {
-              id: existing.id,
-              patch: {
-                geometry: geometryFromPoints(points, viewSize),
-                quantity: points.length,
-                ai_operation_id: lastOperationId,
-                ai_proposal_source: Array.from(sources).sort().join("+").slice(0, 32),
-                ai_confidence: nextMinimumConfidence,
-                ai_original_geometry: geometryFromPoints(originalPoints, viewSize),
-                ai_review_action: nextWasNudged ? "nudged" : "accepted",
-              },
+          const command = {
+            id: existing.id,
+            estimate_id: estimateId,
+            expected_version: existing.version,
+            recalculate_from_geometry: false,
+            patch: {
+              geometry: geometryFromPoints(points, viewSize),
+              quantity: points.length,
+              ai_operation_id: lastOperationId,
+              ai_proposal_source: Array.from(sources).sort().join("+").slice(0, 32),
+              ai_confidence: nextMinimumConfidence,
+              ai_original_geometry: geometryFromPoints(originalPoints, viewSize),
+              ai_review_action: nextWasNudged ? ("nudged" as const) : ("accepted" as const),
             },
+          };
+          const fingerprint = planRoomOperationFingerprint("ai-measurement-update", command);
+          const operationKey = retainPlanRoomOperationKey(
+            measurementOperationKeysRef.current,
+            fingerprint,
+          );
+          const result = await updateMeasurementFn({
+            data: { ...command, operation_key: operationKey },
           });
+          releasePlanRoomOperationKey(measurementOperationKeysRef.current, operationKey);
           aiMeasurementsRef.current.set(sheetId, {
             id: existing.id,
+            version: result.measurement.version,
             points,
             originalPoints,
             minimumConfidence: nextMinimumConfidence,

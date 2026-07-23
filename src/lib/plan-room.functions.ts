@@ -14,7 +14,6 @@ import {
   SAMPLE_PLAN_SET_MIME,
   takeoffUnitsCompatible,
 } from "@/lib/plan-room-math";
-import { calculateAuthoritativeTakeoff } from "@/lib/plan-room-quantity";
 import {
   normalizeScaleAssessment,
   SCALE_ASSURANCE_TOLERANCE_PCT,
@@ -62,6 +61,61 @@ const num = (value: unknown, fallback = 0) => {
   return Number.isFinite(next) ? next : fallback;
 };
 const clean = (value: string, max = 500) => value.trim().slice(0, max);
+
+function takeoffCommandPending(error: DynamicSupabaseError | null | undefined) {
+  return Boolean(
+    error &&
+    (error.code === "PGRST202" ||
+      /schema cache|could not find the function|does not exist/i.test(error.message)),
+  );
+}
+
+function requireCommandObject(
+  result: DynamicSupabaseResult<unknown>,
+  fallbackMessage: string,
+): Record<string, unknown> {
+  if (result.error) {
+    if (takeoffCommandPending(result.error)) {
+      throw new Error(
+        "Plan Room write authority is still being enabled. Nothing changed; retry in a few minutes.",
+      );
+    }
+    throw new Error(result.error.message);
+  }
+  if (!result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+    throw new Error(fallbackMessage);
+  }
+  return result.data as Record<string, unknown>;
+}
+
+function normalizeTakeoffSync(value: unknown) {
+  const row =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const blocked = Array.isArray(row.blocked_measurements)
+    ? row.blocked_measurements
+        .filter((item): item is Record<string, unknown> =>
+          Boolean(item && typeof item === "object"),
+        )
+        .map((item) => ({ id: str(item.id), status: str(item.status, "review_required") }))
+    : [];
+  return {
+    conflict: Boolean(row.conflict),
+    unit_conflict: Boolean(row.unit_conflict),
+    calculation_conflict: Boolean(row.calculation_conflict),
+    quantity: num(row.quantity),
+    takeoff_quantity: num(row.takeoff_quantity),
+    takeoff_unit: str(row.takeoff_unit),
+    line_unit: str(row.line_unit),
+    measurement_count: Math.max(0, Math.round(num(row.measurement_count))),
+    blocked_measurements: blocked,
+  };
+}
+
+function normalizeTakeoffSyncs(value: unknown) {
+  return Array.isArray(value) ? value.map(normalizeTakeoffSync) : [];
+}
 
 function isMissingPlanRoomSchemaError(error: DynamicSupabaseError | null | undefined) {
   const message = error?.message?.toLowerCase() ?? "";
@@ -150,6 +204,7 @@ export type TakeoffCalculationStatus = "current" | "unverified_scale" | "stale" 
 
 export interface TakeoffMeasurementRow {
   id: string;
+  version: number;
   estimate_id: string;
   plan_sheet_id: string;
   estimate_line_item_id: string | null;
@@ -247,6 +302,7 @@ const normalizePlanSheet = (row: Record<string, unknown>): PlanSheetRow => ({
 
 const normalizeTakeoffMeasurement = (row: Record<string, unknown>): TakeoffMeasurementRow => ({
   id: str(row.id),
+  version: Math.max(1, Math.round(num(row.version, 1))),
   estimate_id: str(row.estimate_id),
   plan_sheet_id: str(row.plan_sheet_id),
   estimate_line_item_id: (row.estimate_line_item_id as string | null) ?? null,
@@ -607,6 +663,7 @@ const applyScaleToSheetsInput = z.object({
 
 const measurementInput = z.object({
   estimate_id: z.string().uuid(),
+  operation_key: z.string().trim().min(1).max(200),
   plan_sheet_id: z.string().uuid(),
   estimate_line_item_id: z.string().uuid().nullable().optional(),
   library_item_id: z.string().uuid().nullable().optional(),
@@ -633,9 +690,17 @@ const measurementInput = z.object({
 const updateMeasurementInput = z
   .object({
     id: z.string().uuid(),
+    estimate_id: z.string().uuid(),
+    expected_version: z.number().int().min(1),
+    operation_key: z.string().trim().min(1).max(200),
     recalculate_from_geometry: z.boolean().optional().default(false),
     patch: measurementInput
-      .omit({ estimate_id: true, plan_sheet_id: true, scope_brief_review_id: true })
+      .omit({
+        estimate_id: true,
+        operation_key: true,
+        plan_sheet_id: true,
+        scope_brief_review_id: true,
+      })
       .partial(),
   })
   .refine(
@@ -646,6 +711,8 @@ const updateMeasurementInput = z
 const recalculateSheetTakeoffsInput = z.object({
   estimate_id: z.string().uuid(),
   plan_sheet_id: z.string().uuid(),
+  expected_scale_revision: z.number().int().min(1),
+  operation_key: z.string().trim().min(1).max(200),
 });
 
 const scaleAssurancePointInput = z.object({
@@ -670,20 +737,45 @@ const recordScaleAssessmentInput = z.object({
 
 const deleteMeasurementInput = z.object({
   id: z.string().uuid(),
+  estimate_id: z.string().uuid(),
+  expected_version: z.number().int().min(1),
+  operation_key: z.string().trim().min(1).max(200),
 });
 
-const createLineForTakeoffsInput = z.object({
-  estimate_id: z.string().uuid(),
-  measurement_ids: z.array(z.string().uuid()).min(1).max(200),
-  source: z.discriminatedUnion("type", [
-    z.object({ type: z.literal("library"), library_item_id: z.string().uuid() }),
-    z.object({
-      type: z.literal("label"),
-      description: z.string().min(1).max(500),
-      unit: z.string().min(1).max(16),
-    }),
-  ]),
-});
+const createLineForTakeoffsInput = z
+  .object({
+    estimate_id: z.string().uuid(),
+    measurement_ids: z.array(z.string().uuid()).min(1).max(200),
+    expected_versions: z.array(z.number().int().min(1)).min(1).max(200),
+    operation_key: z.string().trim().min(1).max(200),
+    source: z.discriminatedUnion("type", [
+      z.object({ type: z.literal("library"), library_item_id: z.string().uuid() }),
+      z.object({
+        type: z.literal("label"),
+        description: z.string().min(1).max(500),
+        unit: z.string().min(1).max(16),
+      }),
+    ]),
+  })
+  .refine(
+    (input) => input.measurement_ids.length === input.expected_versions.length,
+    "Every takeoff needs its expected version.",
+  );
+
+const linkTakeoffGroupInput = z
+  .object({
+    estimate_id: z.string().uuid(),
+    measurement_ids: z.array(z.string().uuid()).min(1).max(200),
+    expected_versions: z.array(z.number().int().min(1)).min(1).max(200),
+    estimate_line_item_id: z.string().uuid().nullable(),
+    operation_key: z.string().trim().min(1).max(200),
+    force: z.boolean().optional().default(false),
+    force_unit: z.boolean().optional().default(false),
+  })
+  .refine(
+    (input) => input.measurement_ids.length === input.expected_versions.length,
+    "Every takeoff needs its expected version.",
+  );
 
 const syncTakeoffInput = z.object({
   estimate_id: z.string().uuid(),
@@ -1047,53 +1139,6 @@ function isMissingTakeoffTrustColumn(error: DynamicSupabaseError | null | undefi
   );
 }
 
-function withoutTakeoffTrustColumns(payload: Record<string, unknown>) {
-  const legacyPayload = { ...payload };
-  for (const column of TAKEOFF_TRUST_COLUMNS) delete legacyPayload[column];
-  return legacyPayload;
-}
-
-async function loadMeasurementSheet(
-  context: { supabase: unknown },
-  sheetId: string,
-  estimateId: string,
-) {
-  const result = await dynamicTable(context.supabase, "estimate_plan_sheets")
-    .select("*")
-    .eq("id", sheetId)
-    .eq("estimate_id", estimateId)
-    .single();
-  if (result.error || !result.data) {
-    throw new Error(result.error?.message ?? "Takeoff sheet was not found.");
-  }
-  return result.data as Record<string, unknown>;
-}
-
-function calculatedTakeoffPayload(calculation: ReturnType<typeof calculateAuthoritativeTakeoff>) {
-  return {
-    quantity: calculation.quantity,
-    calculation_method: calculation.method,
-    calculation_status: calculation.status,
-    calculated_quantity: calculation.quantity,
-    calculation_scale_revision: calculation.scaleRevision,
-    calculated_at: new Date().toISOString(),
-    calculation_context: calculation.context as Json,
-    override_reason: "",
-  };
-}
-
-function isMissingScopeBriefTakeoffProvenanceColumn(
-  error: DynamicSupabaseError | null | undefined,
-) {
-  const message = error?.message?.toLowerCase() ?? "";
-  return Boolean(
-    error &&
-    (error.code === "42703" ||
-      error.code === "PGRST204" ||
-      message.includes("scope_brief_review_id")),
-  );
-}
-
 async function validateScopeBriefTakeoffSource({
   context,
   reviewId,
@@ -1143,8 +1188,6 @@ export const createTakeoffMeasurement = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof measurementInput>) => measurementInput.parse(input))
   .handler(async ({ data, context }) => {
-    await loadEstimate(context, data.estimate_id);
-    const sheet = await loadMeasurementSheet(context, data.plan_sheet_id, data.estimate_id);
     if (data.scope_brief_review_id) {
       await validateScopeBriefTakeoffSource({
         context,
@@ -1154,21 +1197,13 @@ export const createTakeoffMeasurement = createServerFn({ method: "POST" })
         tool: data.tool_type,
       });
     }
-    const calculation = calculateAuthoritativeTakeoff({
-      tool: data.tool_type,
-      geometry: data.geometry,
-      sheet,
-    });
-    const insertPayload: Record<string, unknown> = {
-      estimate_id: data.estimate_id,
+    const patch: Record<string, unknown> = {
       plan_sheet_id: data.plan_sheet_id,
       estimate_line_item_id: data.estimate_line_item_id ?? null,
       library_item_id: data.library_item_id ?? null,
-      created_by: context.userId,
       tool_type: data.tool_type,
       label: clean(data.label, 240),
       unit: clean(data.unit.toUpperCase(), 16),
-      ...calculatedTakeoffPayload(calculation),
       waste_pct: data.waste_pct,
       color: clean(data.color, 40) || "#1b7a6e",
       geometry: data.geometry as Json,
@@ -1181,43 +1216,30 @@ export const createTakeoffMeasurement = createServerFn({ method: "POST" })
         ? ((data.ai_original_geometry ?? data.geometry) as Json)
         : null,
       ai_review_action: data.created_by_ai ? (data.ai_review_action ?? "accepted") : null,
-      ai_reviewed_by: data.created_by_ai ? context.userId : null,
-      ai_reviewed_at: data.created_by_ai ? new Date().toISOString() : null,
       scope_brief_review_id: data.scope_brief_review_id ?? null,
     };
-    let { data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-      .insert(insertPayload)
-      .select("*")
-      .single();
-    // Pre-migration fallback: before the created_by_ai column lands, human
-    // takeoffs keep saving exactly as they always have.
-    if (error && isMissingScopeBriefTakeoffProvenanceColumn(error)) {
-      if (data.scope_brief_review_id) {
-        throw new Error("Scope Brief takeoff status isn't available yet.");
-      }
-      const legacyPayload = { ...insertPayload };
-      delete legacyPayload.scope_brief_review_id;
-      ({ data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-        .insert(legacyPayload)
-        .select("*")
-        .single());
+    const summary = requireCommandObject(
+      await dynamicRpc(context.supabase, "mutate_estimate_takeoff_measurement_atomic", {
+        p_estimate_id: data.estimate_id,
+        p_measurement_id: null,
+        p_expected_version: null,
+        p_action: "create",
+        p_patch: patch,
+        p_recalculate_from_geometry: true,
+        p_operation_key: data.operation_key,
+        p_force_manual: false,
+        p_force_unit: false,
+      }),
+      "Takeoff did not save.",
+    );
+    const row = summary.measurement;
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new Error("Takeoff did not save.");
     }
-    if (error && (isMissingCreatedByAiColumn(error) || isMissingTakeoffTrustColumn(error))) {
-      const legacyPayload = withoutTakeoffTrustColumns(insertPayload);
-      delete legacyPayload.scope_brief_review_id;
-      if (isMissingCreatedByAiColumn(error)) delete legacyPayload.created_by_ai;
-      ({ data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-        .insert(legacyPayload)
-        .select("*")
-        .single());
-    }
-    if (error || !row) throw new Error(error?.message ?? "Takeoff did not save.");
-
-    let sync = null;
-    if (data.estimate_line_item_id) {
-      sync = await syncTakeoffQuantityToLine(context, data.estimate_id, data.estimate_line_item_id);
-    }
-    return { measurement: normalizeTakeoffMeasurement(row as Record<string, unknown>), sync };
+    return {
+      measurement: normalizeTakeoffMeasurement(row as Record<string, unknown>),
+      sync: summary.sync == null ? null : normalizeTakeoffSync(summary.sync),
+    };
   });
 
 export const updateTakeoffMeasurement = createServerFn({ method: "POST" })
@@ -1226,111 +1248,39 @@ export const updateTakeoffMeasurement = createServerFn({ method: "POST" })
     updateMeasurementInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    const current = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-      .select("*")
-      .eq("id", data.id)
-      .single();
-    if (current.error || !current.data) {
-      throw new Error(current.error?.message ?? "Takeoff was not found.");
-    }
-    const currentRow = current.data as Record<string, unknown>;
-    const currentMeasurement = normalizeTakeoffMeasurement(currentRow);
-    const estimateId = currentMeasurement.estimate_id;
-    const previousLineId = currentMeasurement.estimate_line_item_id;
     const patch: Record<string, unknown> = { ...data.patch };
     if (typeof patch.label === "string") patch.label = clean(patch.label, 240);
     if (typeof patch.unit === "string") patch.unit = clean(patch.unit.toUpperCase(), 16);
     if (typeof patch.color === "string") patch.color = clean(patch.color, 40);
     if (typeof patch.notes === "string") patch.notes = clean(patch.notes, 2000);
     if (patch.geometry != null) patch.geometry = patch.geometry as Json;
-
-    const nextTool = (patch.tool_type ?? currentMeasurement.tool_type) as TakeoffToolType;
-    const nextGeometry = patch.geometry ?? currentMeasurement.geometry;
-    const sheet = await loadMeasurementSheet(context, currentMeasurement.plan_sheet_id, estimateId);
-    const quantityChanged =
-      typeof patch.quantity === "number" &&
-      Math.abs(patch.quantity - currentMeasurement.quantity) > 0.00005;
-    const geometryChanged = patch.geometry !== undefined || patch.tool_type !== undefined;
-
-    if (data.recalculate_from_geometry || geometryChanged) {
-      const calculation = calculateAuthoritativeTakeoff({
-        tool: nextTool,
-        geometry: nextGeometry,
-        sheet,
-      });
-      Object.assign(patch, calculatedTakeoffPayload(calculation));
-    } else if (quantityChanged) {
-      const overrideReason = clean(str(patch.override_reason), 1000);
-      if (overrideReason.length < 3) {
-        throw new Error("Explain why this takeoff quantity is being manually overridden.");
-      }
-      const calculation = calculateAuthoritativeTakeoff({
-        tool: nextTool,
-        geometry: nextGeometry,
-        sheet,
-      });
-      Object.assign(patch, {
-        calculation_method: "manual_override",
-        calculation_status: "current",
-        calculated_quantity: calculation.quantity,
-        calculation_scale_revision: calculation.scaleRevision,
-        calculated_at: new Date().toISOString(),
-        calculation_context: calculation.context as Json,
-        override_reason: overrideReason,
-      });
-    } else {
-      // Older UI versions send the displayed quantity with every edit. An
-      // unchanged copy is not evidence of a manual override and must never
-      // replace the server-owned quantity.
-      delete patch.quantity;
-      if (
-        currentMeasurement.calculation_method === "manual_override" &&
-        typeof patch.override_reason === "string"
-      ) {
-        const overrideReason = clean(patch.override_reason, 1000);
-        if (overrideReason.length < 3) {
-          throw new Error("Keep a clear reason for this manual quantity override.");
-        }
-        patch.override_reason = overrideReason;
-      } else {
-        delete patch.override_reason;
-      }
-    }
-    if (
-      currentMeasurement.created_by_ai &&
-      (geometryChanged ||
-        patch.ai_operation_id !== undefined ||
-        patch.ai_confidence !== undefined ||
-        patch.ai_review_action !== undefined)
-    ) {
-      patch.ai_reviewed_by = context.userId;
-      patch.ai_reviewed_at = new Date().toISOString();
+    if (typeof patch.override_reason === "string") {
+      patch.override_reason = clean(patch.override_reason, 1000);
     }
 
-    let { data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-      .update(patch)
-      .eq("id", data.id)
-      .select("*")
-      .single();
-    if (error && isMissingTakeoffTrustColumn(error)) {
-      ({ data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-        .update(withoutTakeoffTrustColumns(patch))
-        .eq("id", data.id)
-        .select("*")
-        .single());
+    const summary = requireCommandObject(
+      await dynamicRpc(context.supabase, "mutate_estimate_takeoff_measurement_atomic", {
+        p_estimate_id: data.estimate_id,
+        p_measurement_id: data.id,
+        p_expected_version: data.expected_version,
+        p_action: "update",
+        p_patch: patch,
+        p_recalculate_from_geometry: data.recalculate_from_geometry,
+        p_operation_key: data.operation_key,
+        p_force_manual: false,
+        p_force_unit: false,
+      }),
+      "Takeoff did not update.",
+    );
+    const row = summary.measurement;
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new Error("Takeoff did not update.");
     }
-    if (error || !row) throw new Error(error?.message ?? "Takeoff did not update.");
-
-    const measurement = normalizeTakeoffMeasurement(row as Record<string, unknown>);
-    const nextLineId = measurement.estimate_line_item_id;
-    const syncResults = [];
-    if (previousLineId && previousLineId !== nextLineId) {
-      syncResults.push(await syncTakeoffQuantityToLine(context, estimateId, previousLineId));
-    }
-    if (nextLineId) {
-      syncResults.push(await syncTakeoffQuantityToLine(context, estimateId, nextLineId));
-    }
-    return { measurement, sync: syncResults.at(-1) ?? null };
+    return {
+      measurement: normalizeTakeoffMeasurement(row as Record<string, unknown>),
+      sync: summary.sync == null ? null : normalizeTakeoffSync(summary.sync),
+      syncs: normalizeTakeoffSyncs(summary.syncs),
+    };
   });
 
 export const recalculateSheetTakeoffs = createServerFn({ method: "POST" })
@@ -1339,57 +1289,26 @@ export const recalculateSheetTakeoffs = createServerFn({ method: "POST" })
     recalculateSheetTakeoffsInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    await loadEstimate(context, data.estimate_id);
-    const sheet = await loadMeasurementSheet(context, data.plan_sheet_id, data.estimate_id);
-    const measurementsResult = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-      .select("*")
-      .eq("estimate_id", data.estimate_id)
-      .eq("plan_sheet_id", data.plan_sheet_id);
-    if (measurementsResult.error) throw new Error(measurementsResult.error.message);
-
-    const updated: TakeoffMeasurementRow[] = [];
-    const skippedManualOverrides: string[] = [];
-    const linkedLineIds = new Set<string>();
-    for (const raw of (measurementsResult.data ?? []) as Record<string, unknown>[]) {
-      const measurement = normalizeTakeoffMeasurement(raw);
-      if (measurement.calculation_method === "manual_override") {
-        skippedManualOverrides.push(measurement.id);
-        continue;
-      }
-      const calculation = calculateAuthoritativeTakeoff({
-        tool: measurement.tool_type,
-        geometry: measurement.geometry,
-        sheet,
-      });
-      const patch = calculatedTakeoffPayload(calculation);
-      let result = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-        .update(patch)
-        .eq("id", measurement.id)
-        .select("*")
-        .single();
-      if (result.error && isMissingTakeoffTrustColumn(result.error)) {
-        result = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-          .update({ quantity: calculation.quantity })
-          .eq("id", measurement.id)
-          .select("*")
-          .single();
-      }
-      if (result.error || !result.data) {
-        throw new Error(result.error?.message ?? "Takeoff did not recalculate.");
-      }
-      const next = normalizeTakeoffMeasurement(result.data as Record<string, unknown>);
-      updated.push(next);
-      if (next.estimate_line_item_id) linkedLineIds.add(next.estimate_line_item_id);
-    }
-
-    const syncResults = [];
-    for (const lineId of linkedLineIds) {
-      syncResults.push(await syncTakeoffQuantityToLine(context, data.estimate_id, lineId));
-    }
+    const summary = requireCommandObject(
+      await dynamicRpc(context.supabase, "recalculate_estimate_takeoff_sheet_atomic", {
+        p_estimate_id: data.estimate_id,
+        p_plan_sheet_id: data.plan_sheet_id,
+        p_expected_scale_revision: data.expected_scale_revision,
+        p_operation_key: data.operation_key,
+        p_force_manual: false,
+        p_force_unit: false,
+      }),
+      "Takeoffs did not recalculate.",
+    );
+    const rows = Array.isArray(summary.measurements) ? summary.measurements : [];
     return {
-      measurements: updated,
-      skipped_manual_overrides: skippedManualOverrides,
-      syncs: syncResults,
+      measurements: rows
+        .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+        .map(normalizeTakeoffMeasurement),
+      skipped_manual_overrides: Array.isArray(summary.skipped_manual_overrides)
+        ? summary.skipped_manual_overrides.map((id) => str(id)).filter(Boolean)
+        : [],
+      syncs: normalizeTakeoffSyncs(summary.syncs),
     };
   });
 
@@ -1399,31 +1318,26 @@ export const deleteTakeoffMeasurement = createServerFn({ method: "POST" })
     deleteMeasurementInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    const current = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-      .select("estimate_id,estimate_line_item_id")
-      .eq("id", data.id)
-      .single();
-    if (current.error || !current.data) {
-      throw new Error(current.error?.message ?? "Takeoff was not found.");
-    }
-    const estimateId = str((current.data as Record<string, unknown>).estimate_id);
-    const lineId = (current.data as Record<string, unknown>).estimate_line_item_id as string | null;
-    const { error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-      .delete()
-      .eq("id", data.id);
-    if (error) throw new Error(error.message);
-    if (lineId) await syncTakeoffQuantityToLine(context, estimateId, lineId);
-    return { ok: true };
+    const summary = requireCommandObject(
+      await dynamicRpc(context.supabase, "mutate_estimate_takeoff_measurement_atomic", {
+        p_estimate_id: data.estimate_id,
+        p_measurement_id: data.id,
+        p_expected_version: data.expected_version,
+        p_action: "delete",
+        p_patch: {},
+        p_recalculate_from_geometry: false,
+        p_operation_key: data.operation_key,
+        p_force_manual: false,
+        p_force_unit: false,
+      }),
+      "Takeoff did not delete.",
+    );
+    return {
+      ok: Boolean(summary.ok),
+      measurement_id: str(summary.measurement_id, data.id),
+      syncs: normalizeTakeoffSyncs(summary.syncs),
+    };
   });
-
-function isMissingCreatedByAiColumn(error: DynamicSupabaseError | null | undefined) {
-  const message = error?.message ?? "";
-  return Boolean(
-    error &&
-    (error.code === "PGRST204" || error.code === "42703") &&
-    /created_by_ai/i.test(message),
-  );
-}
 
 async function syncTakeoffQuantityToLine(
   context: { supabase: unknown },
@@ -1580,21 +1494,47 @@ async function syncTakeoffQuantityToLine(
   };
 }
 
-// Link-or-create: a takeoff can become an estimate row in one gesture.
-// Library source prices the row through the item's labor basis; label source
-// creates a $0 "needs pricing" row so the contractor labels now, prices later.
-// The caller runs the normal sync afterwards, so the Phase 1/2 waste, unit,
-// and anti-clobber guards all apply unchanged.
+export const linkTakeoffGroupToEstimateLine = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof linkTakeoffGroupInput>) =>
+    linkTakeoffGroupInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const summary = requireCommandObject(
+      await dynamicRpc(context.supabase, "link_estimate_takeoff_group_atomic", {
+        p_estimate_id: data.estimate_id,
+        p_measurement_ids: data.measurement_ids,
+        p_expected_versions: data.expected_versions,
+        p_line_item_id: data.estimate_line_item_id,
+        p_operation_key: data.operation_key,
+        p_force_manual: data.force,
+        p_force_unit: data.force_unit,
+      }),
+      "Takeoffs did not link.",
+    );
+    const rows = Array.isArray(summary.measurements) ? summary.measurements : [];
+    return {
+      ok: Boolean(summary.ok),
+      line_item_id: summary.line_item_id == null ? null : str(summary.line_item_id),
+      measurements: rows
+        .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+        .map(normalizeTakeoffMeasurement),
+      sync: summary.sync == null ? null : normalizeTakeoffSync(summary.sync),
+      syncs: normalizeTakeoffSyncs(summary.syncs),
+    };
+  });
+
+// Link-or-create: a takeoff becomes an estimate row in one retry-safe gesture.
+// The line command is replayable and the group-link command owns measurement
+// versions plus quantity rollup. If the network drops between the two RPCs,
+// retrying the same caller key reuses the line and finishes the link.
 export const createLineItemForTakeoffs = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof createLineForTakeoffsInput>) =>
     createLineForTakeoffsInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    await loadEstimate(context, data.estimate_id);
-
     let insertRow: Record<string, unknown>;
-    let libraryItemId: string | null = null;
     if (data.source.type === "library") {
       const itemResult = await dynamicTable(context.supabase, "cost_library_items")
         .select("*")
@@ -1617,9 +1557,7 @@ export const createLineItemForTakeoffs = createServerFn({ method: "POST" })
           item.productivity_per_hour == null ? null : num(item.productivity_per_hour),
       });
       if (!resolved.ok) throw new Error(resolved.message);
-      libraryItemId = str(item.id);
       insertRow = {
-        estimate_id: data.estimate_id,
         csi_division: str(item.csi_division),
         cost_code: str(item.csi_code),
         description: str(item.description),
@@ -1627,51 +1565,62 @@ export const createLineItemForTakeoffs = createServerFn({ method: "POST" })
         quantity: 0,
         material_unit_cost_cents: resolved.material_cost_cents,
         labor_unit_cost_cents: resolved.labor_cost_cents,
-        library_item_id: libraryItemId,
+        library_item_id: str(item.id),
+        scope_group: "",
         notes: "Created from a Plan Room takeoff.",
       };
     } else {
       insertRow = {
-        estimate_id: data.estimate_id,
+        csi_division: "",
+        cost_code: "",
         description: clean(data.source.description, 500),
         unit: clean(data.source.unit.toUpperCase(), 16),
         quantity: 0,
         material_unit_cost_cents: 0,
         labor_unit_cost_cents: 0,
+        library_item_id: null,
+        scope_group: "",
         notes: "Created from a Plan Room takeoff. Needs pricing.",
       };
     }
 
-    const orderResult = await dynamicTable(context.supabase, "estimate_line_items")
-      .select("sort_order")
-      .eq("estimate_id", data.estimate_id)
-      .order("sort_order", { ascending: false })
-      .limit(1);
-    if (orderResult.error) throw new Error(orderResult.error.message);
-    const maxOrder = ((orderResult.data ?? []) as Record<string, unknown>[]).reduce(
-      (max, row) => Math.max(max, Math.round(num(row.sort_order))),
-      0,
+    const lineSummary = requireCommandObject(
+      await dynamicRpc(context.supabase, "create_estimate_line_items_atomic", {
+        p_estimate_id: data.estimate_id,
+        p_lines: [insertRow],
+        p_operation_key: data.operation_key,
+      }),
+      "Estimate row did not save.",
     );
-
-    const lineResult = await dynamicTable(context.supabase, "estimate_line_items")
-      .insert({ ...insertRow, sort_order: maxOrder + 1 })
-      .select("id")
-      .single();
-    if (lineResult.error || !lineResult.data) {
-      throw new Error(lineResult.error?.message ?? "Estimate row did not save.");
+    const createdLines = Array.isArray(lineSummary.line_items) ? lineSummary.line_items : [];
+    const createdLine = createdLines[0];
+    if (!createdLine || typeof createdLine !== "object" || Array.isArray(createdLine)) {
+      throw new Error("Estimate row did not save.");
     }
-    const lineId = str((lineResult.data as Record<string, unknown>).id);
+    const lineId = str((createdLine as Record<string, unknown>).id);
+    if (!lineId) throw new Error("Estimate row did not save.");
 
-    const linkResult = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-      .update({
-        estimate_line_item_id: lineId,
-        ...(libraryItemId ? { library_item_id: libraryItemId } : {}),
-      })
-      .eq("estimate_id", data.estimate_id)
-      .in("id", data.measurement_ids);
-    if (linkResult.error) throw new Error(linkResult.error.message);
-
-    return { line_item_id: lineId };
+    const linkSummary = requireCommandObject(
+      await dynamicRpc(context.supabase, "link_estimate_takeoff_group_atomic", {
+        p_estimate_id: data.estimate_id,
+        p_measurement_ids: data.measurement_ids,
+        p_expected_versions: data.expected_versions,
+        p_line_item_id: lineId,
+        p_operation_key: data.operation_key,
+        p_force_manual: false,
+        p_force_unit: false,
+      }),
+      "Estimate row saved, but its takeoffs did not link. Retry the same action to finish safely.",
+    );
+    const linkedRows = Array.isArray(linkSummary.measurements) ? linkSummary.measurements : [];
+    return {
+      line_item_id: lineId,
+      measurements: linkedRows
+        .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+        .map(normalizeTakeoffMeasurement),
+      sync: linkSummary.sync == null ? null : normalizeTakeoffSync(linkSummary.sync),
+      syncs: normalizeTakeoffSyncs(linkSummary.syncs),
+    };
   });
 
 export const syncTakeoffToEstimateLine = createServerFn({ method: "POST" })
