@@ -372,8 +372,8 @@ describe("AuthCallbackPage single-flight (StrictMode + rapid clicks)", () => {
     });
 
     expect(verifyOtp).toHaveBeenCalledTimes(1);
-    // Button disabled while in flight.
-    expect(button.hasAttribute("disabled")).toBe(true);
+    // Button disabled while in flight (re-query to observe committed state).
+    expect((container.querySelector("button") as HTMLButtonElement).disabled).toBe(true);
 
     // Now resolve; still exactly one call, navigation happens.
     await act(async () => {
