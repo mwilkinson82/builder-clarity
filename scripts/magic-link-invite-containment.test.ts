@@ -27,7 +27,10 @@ const portfolioCaller = readFileSync(
 
 describe("magic-link invite-context containment — client helper", () => {
   it("requires inviteId on the input contract for invite contexts", () => {
-    expect(clientHelper).toContain("inviteId?: string");
+    // Discriminated union: invite contexts REQUIRE inviteId at the type
+    // layer, non-invite contexts never accept it.
+    expect(clientHelper).toContain("InviteMagicLinkInput");
+    expect(clientHelper).toMatch(/context:\s*"company_invite"\s*\|\s*"portfolio_invite";\s*\n\s*inviteId:\s*string;/);
     expect(clientHelper).toMatch(/INVITE_CONTEXTS[\s\S]*company_invite[\s\S]*portfolio_invite/);
     expect(clientHelper).toContain(
       "An invite id is required to send an invite magic link.",
