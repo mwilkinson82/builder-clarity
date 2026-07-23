@@ -24,11 +24,10 @@ const migration = readFileSync(
 describe("account provisioning — disabled-seat containment (tracked, unapplied)", () => {
   it("ensure_user_account no longer contains a same-email invite auto-accept loop", () => {
     // The loop `FOR v_invite IN SELECT ... FROM organization_invites`
-    // is removed. Only finalize_invite_acceptance() may accept invites.
+    // is removed. Only finalize_invite_acceptance() may accept invites
+    // (which correctly writes v_invite.role into a membership for the
+    // SINGLE clicked invite — that INSERT stays).
     expect(migration).not.toMatch(/FOR\s+v_invite\s+IN\s+SELECT/i);
-    expect(migration).not.toMatch(
-      /INSERT INTO public\.organization_memberships[\s\S]{0,400}v_invite\.role/,
-    );
     // No alias-clone block that copied role/capabilities from another
     // UUID sharing a mutable profile email.
     expect(migration).not.toMatch(/WITH alias_source AS/);
