@@ -105,7 +105,9 @@ function AuthenticatedLayout() {
       if (document.visibilityState !== "visible") return;
       setReloadKey((k) => k + 1);
     };
+    const handleFocus = () => setReloadKey((k) => k + 1);
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleFocus);
     const { data: authSub } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT") {
         window.location.replace("/auth");
@@ -117,6 +119,7 @@ function AuthenticatedLayout() {
     });
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleFocus);
       authSub.subscription.unsubscribe();
     };
   }, []);
