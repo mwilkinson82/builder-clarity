@@ -112,43 +112,15 @@ export const Route = createFileRoute("/api/auth/magic-link")({
             return Boolean(data);
           },
 
-          lookupExistingAuthUser: async (email) => {
-            // Fail-closed exact case-insensitive lookup.
-            //
-            // The pinned @supabase/auth-js (2.108.2) `listUsers` accepts
-            // ONLY `{ page, perPage }` — there is no `email` filter and
-            // any extra field is silently dropped. Prior code passed
-            // `perPage: 1` and only ever inspected the first user in the
-            // whole system, so legitimate accounts past position 1 were
-            // treated as unknown and login fell through to fail-closed
-            // "generic OK" with no email sent → user lockout.
-            //
-            // Fix: page through the admin listing with the maximum
-            // documented per-page size, exact-case-insensitive-match the
-            // email, break the moment we find it. Bounded page count
-            // caps worst-case work at 20k users; the auth base is
-            // orders of magnitude smaller today.
-            const target = email.trim().toLowerCase();
-            const perPage = 200;
-            const maxPages = 100;
-            for (let page = 1; page <= maxPages; page += 1) {
-              const { data, error } = await supabaseAdmin.auth.admin.listUsers({
-                page,
-                perPage,
-              });
-              if (error) throw new Error(error.message);
-              const users = data?.users ?? [];
-              const found = users.find(
-                (u) => (u.email ?? "").trim().toLowerCase() === target,
-              );
-              if (found) return { id: found.id };
-              if (users.length < perPage) return null;
-            }
-            // Reached the page cap without a match: treat as absent
-            // rather than provisioning silently. Callers get the same
-            // generic public-login success response.
-            return null;
-          },
+          lookupExistingAuthUser: (email) =>
+            // Exhaustive paginated exact-case-insensitive lookup — see
+            // src/lib/auth/find-existing-auth-user.ts. The pinned
+            // @supabase/auth-js has no email filter on listUsers, so
+            // this is the only correct existence check.
+            findExistingAuthUserByEmail(
+              (args) => supabaseAdmin.auth.admin.listUsers(args),
+              email,
+            ),
 
           findRecentSend: async ({ email, label, dedupeKey, sinceIso }) => {
             // Dedupe identity includes exact context+id via the metadata
