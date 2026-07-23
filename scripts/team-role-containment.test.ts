@@ -16,6 +16,10 @@ import {
   type CallerAuthority,
 } from "@/lib/team/role-containment";
 import { ROLE_PRESETS, type CapabilitySet } from "@/lib/capabilities";
+import {
+  assertInviteSeatAvailable,
+  findExactPendingInvite,
+} from "@/lib/team/invite-seat-containment";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p: string) => readFileSync(join(root, p), "utf8");
@@ -132,6 +136,54 @@ describe("team role-containment guards", () => {
   });
 });
 
+describe("team invite seat containment", () => {
+  it("matches normalized email exactly without treating SQL wildcard characters as patterns", () => {
+    const rows = [
+      { id: "underscore", email: "John_Doe@Example.com" },
+      { id: "different", email: "johnXdoe@example.com" },
+      { id: "percent", email: "sales%ops@example.com" },
+    ];
+
+    expect(findExactPendingInvite(rows, "john_doe@example.com")?.id).toBe("underscore");
+    expect(findExactPendingInvite(rows, "johnxdoe@example.com")?.id).toBe("different");
+    expect(findExactPendingInvite(rows, "sales%ops@example.com")?.id).toBe("percent");
+  });
+
+  it("fails closed when duplicate normalized pending invites already exist", () => {
+    expect(() =>
+      findExactPendingInvite(
+        [
+          { id: "first", email: "Invitee@Example.com" },
+          { id: "second", email: "invitee@example.com" },
+        ],
+        "invitee@example.com",
+      ),
+    ).toThrow(/multiple pending invitations/i);
+  });
+
+  it("allows reissuing the exact pending invite when all seats are claimed", () => {
+    expect(() =>
+      assertInviteSeatAvailable({
+        seatLimit: 4,
+        activeSeats: 3,
+        pendingInvites: 1,
+        existingPendingInviteId: "existing-invite",
+      }),
+    ).not.toThrow();
+  });
+
+  it("blocks a genuinely new invite when all seats are claimed", () => {
+    expect(() =>
+      assertInviteSeatAvailable({
+        seatLimit: 4,
+        activeSeats: 3,
+        pendingInvites: 1,
+        existingPendingInviteId: null,
+      }),
+    ).toThrow(/4-seat limit/i);
+  });
+});
+
 describe("team.functions.ts source wiring", () => {
   const src = read("src/lib/team.functions.ts");
 
@@ -150,7 +202,21 @@ describe("team.functions.ts source wiring", () => {
     expect(insertIdx).toBeGreaterThan(guardIdx);
   });
 
-  it("updateTeamMember loads authority and gates role/self/target/grant BEFORE the member write", () => {
+  it("resolves an existing pending invite before applying the new-seat ceiling", () => {
+    const start = src.indexOf("export const createTeamInvite");
+    const end = src.indexOf("export const ", start + 1);
+    const body = src.slice(start, end === -1 ? undefined : end);
+    const pendingLookupIdx = body.indexOf('.select("id, email")');
+    const exactLookupIdx = body.indexOf("findExactPendingInvite(");
+    const seatGateIdx = body.indexOf("assertInviteSeatAvailable({");
+    expect(pendingLookupIdx).toBeGreaterThan(-1);
+    expect(exactLookupIdx).toBeGreaterThan(pendingLookupIdx);
+    expect(seatGateIdx).toBeGreaterThan(exactLookupIdx);
+    expect(body).not.toContain(".ilike(");
+    expect(body).toContain("existingPendingInviteId: existing?.id ?? null");
+  });
+
+  it("updateTeamMember loads authority and gates role/self/target/grant BEFORE the bounded member RPC", () => {
     const start = src.indexOf("export const updateTeamMember");
     expect(start).toBeGreaterThan(-1);
     const end = src.indexOf("export const ", start + 1);
@@ -162,14 +228,17 @@ describe("team.functions.ts source wiring", () => {
     expect(body).toContain(
       "assertCanGrantCapabilities(authority, nextCapsForGuard, targetCurrentCaps)",
     );
-    // Guards must precede the membership update.
+    // Guards must precede the membership command, and this flow must never
+    // fall back to an authenticated raw table mutation.
     const guardIdx = body.indexOf("assertCanTargetMember");
-    const updateIdx = body.indexOf('.from("organization_memberships")\n      .update(');
-    // Fallback: just require an .update( call after the guard somewhere.
-    const anyUpdate = body.indexOf(".update(", guardIdx);
+    const rpcIdx = body.indexOf('.rpc("update_organization_membership_authority"');
     expect(guardIdx).toBeGreaterThan(-1);
-    expect(anyUpdate).toBeGreaterThan(guardIdx);
-    void updateIdx;
+    expect(rpcIdx).toBeGreaterThan(guardIdx);
+    expect(body).not.toMatch(/\.from\("organization_memberships"\)[\s\S]*?\.update\(/);
+    expect(body).toContain("p_membership_id: data.membershipId");
+    expect(body).toContain("p_role: data.role ?? null");
+    expect(body).toContain("p_status: data.status ?? null");
+    expect(body).toContain("p_capabilities: changes.capabilities ?? null");
   });
 });
 

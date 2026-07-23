@@ -28,7 +28,10 @@ interface ClientPortalWorkspaceProps {
 }
 
 type AccessPermissionField =
-  "can_view_change_orders" | "can_view_daily_reports" | "can_view_billing" | "can_view_selections";
+  | "can_view_change_orders"
+  | "can_view_daily_reports"
+  | "can_view_billing"
+  | "can_view_selections";
 
 interface AccessPermissionInput {
   accessId: string;
@@ -166,7 +169,6 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
       await updateAccess({
         data: {
           accessId: access.id,
-          status: "pending",
           last_sent_at: new Date().toISOString(),
         },
       });

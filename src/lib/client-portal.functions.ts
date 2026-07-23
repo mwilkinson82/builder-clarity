@@ -11,6 +11,10 @@ import type {
 } from "@/lib/projects.functions";
 import type { BillingLineItemRow } from "@/lib/billing.functions";
 import { requireProjectOrgCapability } from "@/lib/capabilities-server";
+import {
+  buildClientAccessGrantWrite,
+  findExactNormalizedEmailRow,
+} from "@/lib/client-portal/access-grant-containment";
 import { ORGANIZATION_STRIPE_SELECT, stripeConnectionForMode } from "@/lib/stripe-mode";
 
 export type ClientAccessStatus = "pending" | "active" | "revoked";
@@ -632,15 +636,18 @@ export const upsertClientContact = createServerFn({ method: "POST" })
       status: "active",
     };
 
-    const { data: existing, error: findError } = await db(context)
+    const { data: existingRows, error: findError } = await db(context)
       .from("client_contacts")
       .select("*")
       .eq("organization_id", project.organization_id)
-      .ilike("email", email)
       .neq("status", "inactive")
-      .maybeSingle();
+      .order("created_at", { ascending: true });
     if (findError) throw new Error(findError.message);
-    const existingContact = existing ? record(existing) : null;
+    const existingContact = findExactNormalizedEmailRow(
+      rows(existingRows),
+      email,
+      "client contact",
+    );
 
     const query = existingContact
       ? db(context).from("client_contacts").update(payload).eq("id", existingContact.id)
@@ -669,26 +676,25 @@ export const grantClientProjectAccess = createServerFn({ method: "POST" })
     }
 
     const email = str(contactRow.email).trim().toLowerCase();
-    const payload = {
+    const grantBase = {
       project_id: data.projectId,
       contact_id: data.contactId,
       email,
-      role: "client",
-      status: "pending" as ClientAccessStatus,
-      can_view_change_orders: true,
-      can_view_daily_reports: false,
-      can_view_billing: false,
+      role: "client" as const,
       invited_by: (context as ServerContext).userId,
     };
-    const { data: existing, error: findError } = await db(context)
+    const { data: existingRows, error: findError } = await db(context)
       .from("project_client_access")
       .select("*")
       .eq("project_id", data.projectId)
-      .ilike("email", email)
       .neq("status", "revoked")
-      .maybeSingle();
+      .order("created_at", { ascending: true });
     if (findError) throw new Error(findError.message);
-    const existingAccess = existing ? record(existing) : null;
+    const existingAccess = findExactNormalizedEmailRow(rows(existingRows), email, "client access");
+    const payload = buildClientAccessGrantWrite(
+      grantBase,
+      typeof existingAccess?.id === "string" ? existingAccess.id : null,
+    );
 
     const query = existingAccess
       ? db(context).from("project_client_access").update(payload).eq("id", existingAccess.id)
