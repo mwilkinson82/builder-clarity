@@ -56,8 +56,8 @@ describe("authenticated access-mode layout", () => {
 
 describe("resolveAccessMode helper", () => {
   it("uses ensure_current_user_account (history-safe) not ensure_user_account", () => {
-    expect(accessMode).toContain('rpc("ensure_current_user_account")');
-    expect(accessMode).not.toContain('rpc("ensure_user_account"');
+    expect(accessMode).toMatch(/rpc\(\s*"ensure_current_user_account"/);
+    expect(accessMode).not.toMatch(/rpc\(\s*"ensure_user_account"/);
   });
 
   it("classifies four discrete modes", () => {
