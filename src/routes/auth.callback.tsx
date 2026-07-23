@@ -132,7 +132,11 @@ function AuthCallbackPage() {
       setExchangeInFlight(true);
 
       try {
-        setConfirmationRequired(false);
+        // NOTE: do NOT clear confirmationRequired here — keep the Continue
+        // button rendered but disabled while the exchange is in flight so
+        // rapid double-clicks hit both the synchronous ref guard AND a
+        // disabled DOM element. Confirmation state is cleared only when the
+        // flow transitions to recovery.
         const sessionFromUrl = await establishSessionFromUrl(url);
         if (sessionFromUrl) {
           consumedRef.current = true;
@@ -159,6 +163,7 @@ function AuthCallbackPage() {
         if (!isCancelled()) {
           consumedRef.current = true;
           originalUrlRef.current = null;
+          setConfirmationRequired(false);
           setShowRecovery(true);
           setMessage("No active session was found. Request a fresh magic link and open it once.");
         }
@@ -180,6 +185,7 @@ function AuthCallbackPage() {
           // required — no reconstruction of a URL carrying secrets.
           consumedRef.current = true;
           originalUrlRef.current = null;
+          setConfirmationRequired(false);
           setShowRecovery(true);
           setMessage(callbackFailureMessage(err));
         }
