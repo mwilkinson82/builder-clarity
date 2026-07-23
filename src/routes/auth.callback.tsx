@@ -58,6 +58,12 @@ function readInviteId(url: URL): string | null {
   return UUID_RE.test(raw) ? raw : null;
 }
 
+function readClientAccessId(url: URL): string | null {
+  const raw = url.searchParams.get("client_access_id");
+  if (!raw) return null;
+  return UUID_RE.test(raw) ? raw : null;
+}
+
 async function establishSessionFromUrl(url: URL) {
   const code = url.searchParams.get("code");
   if (code) {
@@ -112,6 +118,30 @@ async function finalizeExactInvite(inviteId: string): Promise<{ ok: true } | { o
   if (error) return { ok: false, reason: error.message };
   if (!data) return { ok: false, reason: "This invitation is no longer valid for your account." };
   return { ok: true };
+}
+
+/**
+ * Exact client-access finalizer. Binds one exact pending/active
+ * unexpired non-revoked project_client_access row to auth.uid() +
+ * caller email. Rejects every other status so revocation/expiry
+ * fails closed.
+ */
+async function finalizeExactClientAccess(
+  accessId: string,
+): Promise<
+  | { ok: true; projectId: string }
+  | { ok: false; reason: string }
+> {
+  const rpc = supabase.rpc as unknown as (
+    fn: "finalize_client_access",
+    params: { p_access_id: string },
+  ) => Promise<{ data: string | null; error: { message: string } | null }>;
+  const { data, error } = await rpc("finalize_client_access", {
+    p_access_id: accessId,
+  });
+  if (error) return { ok: false, reason: error.message };
+  if (!data) return { ok: false, reason: "This client-portal link is no longer valid for your account." };
+  return { ok: true, projectId: data };
 }
 
 function AuthCallbackPage() {
