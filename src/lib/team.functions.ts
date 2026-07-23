@@ -12,6 +12,13 @@ import {
   type CapabilityKey,
   type CapabilitySet,
 } from "@/lib/capabilities";
+import {
+  assertCanAssignRole,
+  assertCanGrantCapabilities,
+  assertCanTargetMember,
+  assertCannotSelfElevate,
+  type CallerAuthority,
+} from "@/lib/team/role-containment";
 import { stripeConnectionForMode, type StripeMode } from "@/lib/stripe-mode";
 
 const ACCOUNT_ROLES = [
@@ -459,6 +466,41 @@ async function requireOrgCapability(
     throw new Error(error.message);
   }
   if (!allowed) throw new Error(message);
+}
+
+/**
+ * Resolve the caller's authority for team-role containment checks: whether
+ * they hold super-admin, whether their active membership row is Owner, and
+ * their effective capability set. Used by createTeamInvite /
+ * updateTeamMember to gate Owner minting/promotion, self-elevation, and
+ * grants above the caller's own capability ceiling. See
+ * `src/lib/team/role-containment.ts` for the enforcement rules.
+ */
+async function loadCallerAuthority(
+  context: TeamServerContext,
+  organizationId: string,
+): Promise<CallerAuthority> {
+  const [membershipRes, superAdminRes] = await Promise.all([
+    context.supabase
+      .from("organization_memberships")
+      .select("role,status,capabilities")
+      .eq("organization_id", organizationId)
+      .eq("user_id", context.userId)
+      .maybeSingle(),
+    context.supabase.rpc("is_super_admin"),
+  ]);
+  const isSuperAdmin = !superAdminRes.error && Boolean(superAdminRes.data);
+  const row = (membershipRes.data ?? null) as {
+    role?: string | null;
+    status?: string | null;
+    capabilities?: unknown;
+  } | null;
+  if (!row || row.status !== "active") {
+    return { isSuperAdmin, isOwner: false, role: null, capabilities: {} };
+  }
+  const role = (row.role as AccountRole) ?? "member";
+  const capabilities = effectiveCapabilities({ role, capabilities: row.capabilities });
+  return { isSuperAdmin, isOwner: role === "owner", role, capabilities };
 }
 
 async function requireCanManageProject(context: TeamServerContext, projectId: string) {
@@ -1309,6 +1351,14 @@ export const createTeamInvite = createServerFn({ method: "POST" })
       ? normalizeCapabilities(data.capabilities)
       : { ...ROLE_PRESETS[data.role] };
 
+    // P0 team-role containment: company.manage_team is day-to-day admin,
+    // not Owner authority. Only current Owners / super admins may invite
+    // Owners, and non-owner managers cannot grant capabilities they don't
+    // hold. Server-side, before any invite write.
+    const authority = await loadCallerAuthority(context, organizationId);
+    assertCanAssignRole(authority, data.role);
+    assertCanGrantCapabilities(authority, inviteCapabilities, null);
+
     const { data: organization, error: orgError } = await context.supabase
       .from("organizations")
       .select("id, seat_limit")
@@ -1444,6 +1494,36 @@ export const updateTeamMember = createServerFn({ method: "POST" })
     }
 
     const currentRole = str(membership.role, "member") as AccountRole;
+    const targetCurrentCaps = effectiveCapabilities({
+      role: currentRole,
+      capabilities: (membership as Record<string, unknown>).capabilities,
+    });
+    const nextCapsForGuard = data.capabilities
+      ? normalizeCapabilities(data.capabilities)
+      : data.role
+        ? { ...ROLE_PRESETS[data.role] }
+        : undefined;
+
+    // P0 team-role containment: gate promotion-to-Owner, self-elevation,
+    // target-exceeds-caller, and grants-above-caller-ceiling BEFORE the
+    // Owner-immutability and self-manage_team checks below, so the guard
+    // messages surface even when the same edit would also violate those
+    // downstream rules.
+    const authority = await loadCallerAuthority(context, organizationId);
+    assertCanAssignRole(authority, data.role);
+    const isSelf = membership.user_id === context.userId;
+    assertCannotSelfElevate(
+      authority,
+      isSelf,
+      data.role,
+      currentRole,
+      nextCapsForGuard,
+      targetCurrentCaps,
+    );
+    assertCanTargetMember(authority, targetCurrentCaps);
+    if (nextCapsForGuard) {
+      assertCanGrantCapabilities(authority, nextCapsForGuard, targetCurrentCaps);
+    }
 
     // Nobody edits an owner's access. Owners hold the full capability set by
     // definition; changing that means changing who the owner is, which is not
@@ -1454,20 +1534,11 @@ export const updateTeamMember = createServerFn({ method: "POST" })
 
     // Nobody removes their own team-management access — that path strands a
     // company with no one able to manage it from the screen they just used.
-    if (membership.user_id === context.userId) {
-      const currentCaps = effectiveCapabilities({
-        role: currentRole,
-        capabilities: (membership as Record<string, unknown>).capabilities,
-      });
-      const nextCaps = data.capabilities
-        ? normalizeCapabilities(data.capabilities)
-        : data.role
-          ? ROLE_PRESETS[data.role]
-          : undefined;
+    if (isSelf) {
       if (
-        hasCapability(currentCaps, "company.manage_team") &&
-        nextCaps &&
-        !hasCapability(nextCaps, "company.manage_team")
+        hasCapability(targetCurrentCaps, "company.manage_team") &&
+        nextCapsForGuard &&
+        !hasCapability(nextCapsForGuard, "company.manage_team")
       ) {
         throw new Error("You can't remove your own people-management access.");
       }

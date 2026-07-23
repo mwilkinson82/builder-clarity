@@ -1214,6 +1214,14 @@ function InviteByMagicLinkButton() {
     );
   }, [team]);
 
+  // P0 team-role containment: only current Owners or Overwatch super
+  // admins may pick "Owner". Non-owner team managers see a role list
+  // without Owner and cannot edit an Owner's row or their own row.
+  const canAssignOwner = Boolean(team?.isSuperAdmin) || team?.currentUserRole === "owner";
+  const visibleRoleOptions = canAssignOwner
+    ? roleOptions
+    : roleOptions.filter((option) => option.value !== "owner");
+
   const refreshTeam = async () => {
     await Promise.all([
       qc.invalidateQueries({ queryKey: ["team-workspace"] }),
@@ -1426,7 +1434,7 @@ function InviteByMagicLinkButton() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {roleOptions.map((option) => (
+                    {visibleRoleOptions.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
                       </SelectItem>
@@ -1457,70 +1465,78 @@ function InviteByMagicLinkButton() {
                   No company members yet.
                 </div>
               ) : (
-                team.members.map((member) => (
-                  <div
-                    key={member.id}
-                    className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_190px_150px] md:items-center"
-                  >
-                    <div>
-                      <div className="font-medium">{member.full_name || member.email}</div>
-                      <div className="text-xs text-muted-foreground">{member.email}</div>
+                team.members.map((member) => {
+                  const isOwnerRow = member.role === "owner";
+                  const isSelf = member.user_id === team.currentProfile.id;
+                  // P0 team-role containment: Owner rows are immutable in
+                  // the UI; a non-owner manager cannot edit their own row.
+                  const canEditRow =
+                    team.canManageTeam && !isOwnerRow && (canAssignOwner || !isSelf);
+                  return (
+                    <div
+                      key={member.id}
+                      className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_190px_150px] md:items-center"
+                    >
+                      <div>
+                        <div className="font-medium">{member.full_name || member.email}</div>
+                        <div className="text-xs text-muted-foreground">{member.email}</div>
+                      </div>
+                      {canEditRow ? (
+                        <>
+                          <Select
+                            value={member.role}
+                            onValueChange={(v) =>
+                              memberMutation.mutate({
+                                membershipId: member.id,
+                                role: v as AccountRole,
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {visibleRoleOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            value={member.status === "pending" ? "active" : member.status}
+                            onValueChange={(v) =>
+                              memberMutation.mutate({
+                                membershipId: member.id,
+                                status: v as MemberStatus,
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {memberStatusOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-sm text-muted-foreground">
+                            {roleLabel(member.role)}
+                          </div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            {member.status}
+                          </div>
+                        </>
+                      )}
                     </div>
-                    {team.canManageTeam ? (
-                      <>
-                        <Select
-                          value={member.role}
-                          onValueChange={(v) =>
-                            memberMutation.mutate({
-                              membershipId: member.id,
-                              role: v as AccountRole,
-                            })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {roleOptions.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={member.status === "pending" ? "active" : member.status}
-                          onValueChange={(v) =>
-                            memberMutation.mutate({
-                              membershipId: member.id,
-                              status: v as MemberStatus,
-                            })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {memberStatusOptions.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </>
-                    ) : (
-                      <>
-                        <div className="text-sm text-muted-foreground">
-                          {roleLabel(member.role)}
-                        </div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                          {member.status}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
