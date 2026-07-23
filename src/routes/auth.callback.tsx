@@ -103,12 +103,17 @@ function AuthCallbackPage() {
   // remains latched so the token can never be replayed.
   const consumptionInFlightRef = useRef(false);
   const consumedRef = useRef(false);
+  // React StrictMode intentionally runs an effect setup/cleanup/setup cycle.
+  // The first setup may own the single-flight exchange while the second setup
+  // remains mounted. Track component lifetime independently from either
+  // effect instance so that exchange result can still finish the visible UI.
+  const mountedRef = useRef(false);
 
   const finishSignIn = useCallback(
-    async (allowTokenConsumption: boolean, isCancelled: () => boolean) => {
+    async (allowTokenConsumption: boolean) => {
       const url = originalUrlRef.current;
       if (!url) {
-        if (!isCancelled()) {
+        if (mountedRef.current) {
           setShowRecovery(true);
           setMessage("No active session was found. Request a fresh magic link and open it once.");
         }
@@ -147,7 +152,7 @@ function AuthCallbackPage() {
         }
 
         const started = Date.now();
-        while (!isCancelled() && Date.now() - started < 3000) {
+        while (mountedRef.current && Date.now() - started < 3000) {
           const { data, error } = await supabase.auth.getSession();
           if (error) throw error;
           if (data.session) {
@@ -160,7 +165,7 @@ function AuthCallbackPage() {
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
-        if (!isCancelled()) {
+        if (mountedRef.current) {
           consumedRef.current = true;
           originalUrlRef.current = null;
           setConfirmationRequired(false);
@@ -172,14 +177,14 @@ function AuthCallbackPage() {
         const { data } = await supabase.auth
           .getSession()
           .catch(() => ({ data: { session: null } }));
-        if (data.session && !isCancelled()) {
+        if (data.session && mountedRef.current) {
           consumedRef.current = true;
           originalUrlRef.current = null;
           void notifyLogin(data.session);
           navigate({ to: next as never, replace: true });
           return;
         }
-        if (!isCancelled()) {
+        if (mountedRef.current) {
           // Definitive exchange failure: latch consumed so the token cannot
           // be retried automatically, transition to recovery UI. Fresh link
           // required — no reconstruction of a URL carrying secrets.
@@ -191,13 +196,14 @@ function AuthCallbackPage() {
         }
       } finally {
         consumptionInFlightRef.current = false;
-        setExchangeInFlight(false);
+        if (mountedRef.current) setExchangeInFlight(false);
       }
     },
     [navigate],
   );
 
   useEffect(() => {
+    mountedRef.current = true;
     // Capture the full original URL (credentials + hash) in a ref, then
     // immediately scrub the address bar / history so no secret is visible
     // during the human confirmation screen or the network exchange.
@@ -213,11 +219,10 @@ function AuthCallbackPage() {
       }
     }
 
-    let cancelled = false;
-    void finishSignIn(false, () => cancelled);
+    void finishSignIn(false);
 
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
     };
   }, [finishSignIn]);
 
@@ -239,7 +244,7 @@ function AuthCallbackPage() {
               // double-clicks before the first await schedules a no-op.
               if (consumedRef.current || consumptionInFlightRef.current) return;
               setMessage("Completing sign-in...");
-              void finishSignIn(true, () => false);
+              void finishSignIn(true);
             }}
             className="mt-6 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
           >
