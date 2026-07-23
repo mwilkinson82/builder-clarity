@@ -389,9 +389,7 @@ describe("AuthCallbackPage single-flight (StrictMode + rapid clicks)", () => {
   });
 
   it("failed exchange: one verifyOtp call, recovery UI shown, no automatic retry loop", async () => {
-    setHref(
-      "https://app.test/auth/callback?token_hash=BAD_HASH&type=email&confirm=1&next=%2F",
-    );
+    setHref("https://app.test/auth/callback?token_hash=BAD_HASH&type=email&confirm=1&next=%2F");
     const Component = await loadComponent();
     verifyOtp.mockResolvedValue({
       data: { session: null },
@@ -427,9 +425,7 @@ describe("AuthCallbackPage single-flight (StrictMode + rapid clicks)", () => {
   });
 
   it("StrictMode + failed exchange: still exactly one verifyOtp call", async () => {
-    setHref(
-      "https://app.test/auth/callback?token_hash=BAD&type=email&confirm=1&next=%2F",
-    );
+    setHref("https://app.test/auth/callback?token_hash=BAD&type=email&confirm=1&next=%2F");
     const Component = await loadComponent();
     verifyOtp.mockResolvedValue({
       data: { session: null },
