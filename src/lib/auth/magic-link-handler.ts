@@ -89,7 +89,7 @@ export type MagicLinkDeps = {
     redirectTo?: string;
     next?: string;
     isProd: boolean;
-  }) => ResolveMagicLinkRedirectResult;
+  }) => ResolveRedirectResult;
 
   // Admin / auth. All calls here talk to the service-role client on the
   // server route; tests inject spies.
