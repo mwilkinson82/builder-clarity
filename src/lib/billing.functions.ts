@@ -910,11 +910,14 @@ export const getBillingWorkspace = createServerFn({ method: "GET" })
       allocations: loaded.allocations,
     });
 
-    const [certificationRes, handoffRes, reviewedWipRes] = await Promise.all([
+    const [certificationRes, invalidationRes, handoffRes, reviewedWipRes] = await Promise.all([
       dynamicTable(ctx.supabase, "production_sov_certifications")
         .select("*")
         .eq("project_id", data.projectId)
         .order("certified_at", { ascending: false }),
+      dynamicTable(ctx.supabase, "production_sov_certification_invalidations")
+        .select("production_sov_certification_id")
+        .eq("project_id", data.projectId),
       dynamicTable(ctx.supabase, "production_sov_billing_handoffs")
         .select("*")
         .eq("project_id", data.projectId)
@@ -933,16 +936,26 @@ export const getBillingWorkspace = createServerFn({ method: "GET" })
       handoffRes.error,
       "production_sov_billing_handoffs",
     );
+    const invalidationRelationMissing = isMissingRestRelation(
+      invalidationRes.error,
+      "production_sov_certification_invalidations",
+    );
     const reviewedWipRelationMissing = isMissingRestRelation(
       reviewedWipRes.error,
       "daily_wip_entries",
     );
     const certifiedSovHandoffReady =
-      !certificationRelationMissing && !handoffRelationMissing && !reviewedWipRelationMissing;
+      !certificationRelationMissing &&
+      !invalidationRelationMissing &&
+      !handoffRelationMissing &&
+      !reviewedWipRelationMissing;
     if (certificationRes.error && !certificationRelationMissing) {
       throw new Error(certificationRes.error.message);
     }
     if (handoffRes.error && !handoffRelationMissing) throw new Error(handoffRes.error.message);
+    if (invalidationRes.error && !invalidationRelationMissing) {
+      throw new Error(invalidationRes.error.message);
+    }
     if (reviewedWipRes.error && !reviewedWipRelationMissing) {
       throw new Error(reviewedWipRes.error.message);
     }
@@ -957,6 +970,13 @@ export const getBillingWorkspace = createServerFn({ method: "GET" })
       : ((handoffRes.data ?? []) as Record<string, unknown>[]).map(
           normalizeProductionSovBillingHandoff,
         );
+    const invalidatedCertificationIds = new Set(
+      invalidationRes.error
+        ? []
+        : ((invalidationRes.data ?? []) as Record<string, unknown>[]).map((row) =>
+            str(row.production_sov_certification_id),
+          ),
+    );
     const latestReviewByBucket = new Map<string, string>();
     for (const row of (reviewedWipRes.data ?? []) as Record<string, unknown>[]) {
       const bucketId = str(row.cost_bucket_id);
@@ -997,7 +1017,9 @@ export const getBillingWorkspace = createServerFn({ method: "GET" })
           ...certification,
           certified_by_name:
             profileNameById.get(certification.certified_by) ?? certification.certified_by_name,
-          is_stale: Boolean(reviewedAt && reviewedAt > certification.certified_at),
+          is_stale:
+            invalidatedCertificationIds.has(certification.id) ||
+            Boolean(reviewedAt && reviewedAt > certification.certified_at),
           is_superseded: isSuperseded,
         };
       },

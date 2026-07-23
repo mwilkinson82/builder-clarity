@@ -111,6 +111,7 @@ describe("SOV completion recommendation", () => {
           percent_basis: "sov",
           percent_complete: 70,
           wip_reviewed_at: null,
+          review_version: 0,
         },
         {
           id: "reviewed",
@@ -120,6 +121,7 @@ describe("SOV completion recommendation", () => {
           percent_basis: "sov",
           percent_complete: 55,
           wip_reviewed_at: "2026-07-14T13:00:00Z",
+          review_version: 3,
         },
       ],
       [
@@ -138,6 +140,7 @@ describe("SOV completion recommendation", () => {
       sourceEntryId: "reviewed",
       currentSovPercent: 40,
       recommendedPercent: 55,
+      sourceReviewVersion: 3,
     });
   });
 });

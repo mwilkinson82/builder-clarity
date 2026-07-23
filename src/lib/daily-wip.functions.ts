@@ -6,7 +6,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { resolvePercentReview, sumLineItems, type CostLineItem } from "@/lib/daily-wip";
+import { sumLineItems, type CostLineItem } from "@/lib/daily-wip";
+import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -21,6 +22,13 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   maybeSingle(): Promise<DynamicSupabaseResult>;
 };
 type DynamicSupabaseClient = { from(relation: string): DynamicSupabaseQuery };
+
+type RpcSupabaseClient = {
+  rpc(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<DynamicSupabaseResult<Record<string, unknown>>>;
+};
 
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
@@ -40,7 +48,7 @@ const normalizeItems = (value: unknown): CostLineItem[] => {
     const item = (entry ?? {}) as Record<string, unknown>;
     return {
       description: str(item.description),
-      amount: num(item.amount),
+      amount: item.amount_cents == null ? num(item.amount) : centsToDollars(num(item.amount_cents)),
       quantity: num(item.quantity),
       unit: str(item.unit),
     };
@@ -68,20 +76,11 @@ function isMissingDailyWipTable(error: DynamicSupabaseError | null) {
   const message = error?.message ?? "";
   return (
     error?.code === "PGRST205" ||
-    /daily_wip_entries|schema cache|does not exist|relation/i.test(message)
+    /daily_wip_entries|save_daily_wip_entry_atomic|void_daily_wip_entry_atomic|schema cache|does not exist|relation/i.test(
+      message,
+    )
   );
 }
-
-// The percent_basis / quantity_items columns ship in the
-// 20260713140000 migration; before the desk applies it, a write that includes
-// them errors on the unknown column. Strip both and retry so the line still
-// saves (without the new fields). Mirrors billing.functions' isMissingWipOffsetColumn.
-const isMissingDailyWipLineColumn = (message: string) =>
-  /percent_basis|quantity_items|unmatched_vendor_name|people_per_crew|target_production_rate|wip_reviewed_at|wip_reviewed_by/i.test(
-    message,
-  );
-
-const isMissingUnmatchedVendorColumn = (message: string) => /unmatched_vendor_name/i.test(message);
 
 export interface DailyWipEntryRow {
   id: string;
@@ -120,6 +119,8 @@ export interface DailyWipEntryRow {
   percent_overridden_at: string | null;
   wip_reviewed_at: string | null;
   wip_reviewed_by: string | null;
+  version: number;
+  review_version: number;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -155,6 +156,8 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   percent_overridden_at: (row.percent_overridden_at as string | null) ?? null,
   wip_reviewed_at: (row.wip_reviewed_at as string | null) ?? null,
   wip_reviewed_by: (row.wip_reviewed_by as string | null) ?? null,
+  version: Math.max(1, Math.trunc(num(row.version) || 1)),
+  review_version: Math.max(0, Math.trunc(num(row.review_version))),
   notes: str(row.notes),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
@@ -230,7 +233,12 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
     z
-      .object({ projectId: z.string().uuid(), id: z.string().uuid().optional() })
+      .object({
+        projectId: z.string().uuid(),
+        id: z.string().uuid().optional(),
+        expected_version: z.number().int().nonnegative(),
+        operation_key: z.string().trim().min(1).max(200),
+      })
       .merge(entryFieldsInput)
       .parse(input),
   )
@@ -240,7 +248,7 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
     }
     // percent_source is a write-time discriminator, not a column — keep it out of
     // the DB payload.
-    const { projectId, id, percent_source, ...fields } = data;
+    const { projectId, id, expected_version, operation_key, percent_source, ...fields } = data;
     // Items are the source of truth: when a list is present, the lump cost is its
     // cents-safe sum so material_cost / equipment_cost can never drift from the
     // lines. An empty list falls back to the directly-supplied lump (older callers
@@ -258,94 +266,83 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
     const primaryQuantity = fields.quantity_items.length ? fields.quantity_items[0] : null;
     const quantity = primaryQuantity ? primaryQuantity.quantity : fields.quantity;
     const unit = primaryQuantity ? primaryQuantity.unit : fields.unit;
-    const table = dynamicTable(context.supabase, "daily_wip_entries");
-    // Split the super's field % from the PM's reviewed %. On an update, the
-    // resolution depends on the row's current review state, so read it first
-    // (degrades to null — a fresh insert — if the row or columns aren't there).
-    let existingReview = null as Parameters<typeof resolvePercentReview>[2];
-    if (id) {
-      const { data: cur } = await table
-        .select("percent_complete, field_percent_complete, percent_overridden_at")
-        .eq("id", id)
-        .single();
-      if (cur) {
-        const c = cur as Record<string, unknown>;
-        existingReview = {
-          percent_complete: num(c.percent_complete),
-          field_percent_complete: num(c.field_percent_complete),
-          percent_overridden_at: (c.percent_overridden_at as string | null) ?? null,
+    const canonicalItems = (items: CostLineItem[]) =>
+      items.map((item) => {
+        const amountCents = dollarsToCents(item.amount);
+        return {
+          description: item.description,
+          amount: centsToDollars(amountCents),
+          amount_cents: amountCents,
+          quantity: item.quantity ?? 0,
+          unit: item.unit ?? "",
         };
-      }
-    }
-    const review = resolvePercentReview(
-      percent_source,
-      fields.percent_complete,
-      existingReview,
-      new Date().toISOString(),
-    );
-    const reviewedAt = percent_source === "costing" ? new Date().toISOString() : null;
+      });
     const payload = {
-      project_id: projectId,
       ...fields,
-      material_cost,
-      equipment_cost,
+      material_cost_cents: dollarsToCents(material_cost),
+      equipment_cost_cents: dollarsToCents(equipment_cost),
+      labor_rate_cents: dollarsToCents(fields.labor_rate),
+      material_items: canonicalItems(fields.material_items),
+      equipment_items: canonicalItems(fields.equipment_items),
       quantity,
       unit,
-      percent_complete: review.percent_complete,
-      field_percent_complete: review.field_percent_complete,
-      percent_overridden_at: review.percent_overridden_at,
-      ...(reviewedAt ? { wip_reviewed_at: reviewedAt, wip_reviewed_by: context.userId } : {}),
+      percent_source,
     };
-    // Existing row → update; new row → insert. Not an upsert-on-conflict: a day
-    // holds many activity rows, so (project, date) is not unique.
-    const runSave = (body: Record<string, unknown>) =>
-      id
-        ? table.update(body).eq("id", id).select("*").single()
-        : table.insert(body).select("*").single();
-    let saveRes = await runSave(payload);
-    // Pre-migration: optional line-detail columns may not exist yet. Existing
-    // self-perform / canonical-sub rows still save through the compatibility
-    // retry. Never discard a typed unmatched vendor name: fail clearly so the
-    // superintendent cannot believe that attribution was saved when it was not.
-    if (saveRes.error && isMissingDailyWipLineColumn(saveRes.error.message)) {
-      if (
-        isMissingUnmatchedVendorColumn(saveRes.error.message) &&
-        fields.unmatched_vendor_name.trim()
-      ) {
-        throw new Error("Unlisted vendor names aren't available yet. Try again in a few minutes.");
-      }
-      const {
-        percent_basis: _pb,
-        quantity_items: _qi,
-        unmatched_vendor_name: _uv,
-        people_per_crew: _pc,
-        target_production_rate: _tr,
-        wip_reviewed_at: _wrAt,
-        wip_reviewed_by: _wrBy,
-        ...withoutLineCols
-      } = payload;
-      saveRes = await runSave(withoutLineCols);
-    }
-    const { data: row, error } = saveRes;
+    const { data: result, error } = await (context.supabase as unknown as RpcSupabaseClient).rpc(
+      "save_daily_wip_entry_atomic",
+      {
+        p_project_id: projectId,
+        p_entry_id: id ?? null,
+        p_expected_version: expected_version,
+        p_payload: payload,
+        p_operation_key: operation_key,
+      },
+    );
     if (error) {
       if (isMissingDailyWipTable(error)) {
-        throw new Error(
-          "Daily WIP isn't enabled on this workspace yet — the daily_wip_entries table hasn't been applied.",
-        );
+        throw new Error("Daily WIP's audited save workflow isn't enabled on this workspace yet.");
       }
       throw new Error(error.message);
+    }
+    const row = result?.entry;
+    if (!row || typeof row !== "object") {
+      throw new Error(
+        "Daily WIP saved without returning the authoritative row. Refresh and try again.",
+      );
     }
     return normalizeEntry(row as Record<string, unknown>);
   });
 
 export const deleteDailyWipEntry = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input) =>
+    z
+      .object({
+        projectId: z.string().uuid(),
+        id: z.string().uuid(),
+        expected_version: z.number().int().positive(),
+        reason: z.string().trim().min(1).max(1000),
+        operation_key: z.string().trim().min(1).max(200),
+      })
+      .parse(input),
+  )
   .handler(async ({ data, context }) => {
-    const { error } = await dynamicTable(context.supabase, "daily_wip_entries")
-      .delete()
-      .eq("id", data.id);
-    if (error && !isMissingDailyWipTable(error)) throw new Error(error.message);
+    const { error } = await (context.supabase as unknown as RpcSupabaseClient).rpc(
+      "void_daily_wip_entry_atomic",
+      {
+        p_project_id: data.projectId,
+        p_entry_id: data.id,
+        p_expected_version: data.expected_version,
+        p_reason: data.reason,
+        p_operation_key: data.operation_key,
+      },
+    );
+    if (error) {
+      if (isMissingDailyWipTable(error)) {
+        throw new Error("Daily WIP's audited removal workflow isn't enabled yet.");
+      }
+      throw new Error(error.message);
+    }
     return { id: data.id };
   });
 

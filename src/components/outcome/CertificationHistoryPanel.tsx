@@ -58,6 +58,14 @@ export function CertificationHistoryPanel({
 }: CertificationHistoryPanelProps) {
   const [showAll, setShowAll] = useState(false);
   const bucketById = new Map(buckets.map((bucket) => [bucket.id, bucket]));
+  const latestValidCertificationIds = new Set<string>();
+  const seenValidBuckets = new Set<string>();
+  for (const certification of certifications) {
+    if (certification.invalidated_at || seenValidBuckets.has(certification.cost_bucket_id))
+      continue;
+    seenValidBuckets.add(certification.cost_bucket_id);
+    latestValidCertificationIds.add(certification.id);
+  }
   const visibleCertifications = showAll
     ? certifications
     : certifications.slice(0, RECENT_CERTIFICATION_LIMIT);
@@ -99,9 +107,9 @@ export function CertificationHistoryPanel({
         </div>
       ) : (
         <div className="mt-4 divide-y divide-hairline rounded-lg border border-hairline">
-          {visibleCertifications.map((certification, index) => {
+          {visibleCertifications.map((certification) => {
             const bucket = bucketById.get(certification.cost_bucket_id);
-            const isLatest = index === 0;
+            const isLatest = latestValidCertificationIds.has(certification.id);
             return (
               <article key={certification.id} className="px-4 py-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -114,6 +122,11 @@ export function CertificationHistoryPanel({
                       {isLatest ? (
                         <Badge variant="outline" className="border-success/30 text-success">
                           <CheckCircle2 className="mr-1 h-3 w-3" /> Latest
+                        </Badge>
+                      ) : null}
+                      {certification.invalidated_at ? (
+                        <Badge variant="outline" className="border-danger/30 text-danger">
+                          Invalidated
                         </Badge>
                       ) : null}
                     </div>
@@ -129,6 +142,18 @@ export function CertificationHistoryPanel({
                     {dateOnly(certification.source_period_end)}
                   </div>
                 </div>
+
+                {certification.invalidated_at ? (
+                  <div className="mt-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2.5">
+                    <div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-danger">
+                      Not eligible for Billing
+                    </div>
+                    <p className="mt-1 text-sm leading-relaxed text-foreground">
+                      {certification.invalidation_reason_detail ||
+                        "The reviewed Daily WIP evidence is no longer current. Create a new certification from the latest review."}
+                    </p>
+                  </div>
+                ) : null}
 
                 <div className="mt-4 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline sm:grid-cols-3">
                   <div className="bg-surface px-3 py-3">

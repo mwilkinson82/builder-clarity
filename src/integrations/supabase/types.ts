@@ -2922,12 +2922,15 @@ export type Database = {
           crew_count: number
           entry_date: string
           equipment_cost: number
+          equipment_cost_cents: number
           equipment_items: Json
           field_percent_complete: number
           hours: number
           id: string
           labor_rate: number
+          labor_rate_cents: number
           material_cost: number
+          material_cost_cents: number
           material_items: Json
           notes: string
           people_per_crew: number
@@ -2937,12 +2940,17 @@ export type Database = {
           project_id: string
           quantity: number
           quantity_items: Json
+          review_version: number
           schedule_activity_id: string | null
           subcontractor_id: string | null
           target_production_rate: number | null
           unit: string
           unmatched_vendor_name: string
           updated_at: string
+          version: number
+          void_reason: string
+          voided_at: string | null
+          voided_by: string | null
           wip_reviewed_at: string | null
           wip_reviewed_by: string | null
         }
@@ -2954,12 +2962,15 @@ export type Database = {
           crew_count?: number
           entry_date: string
           equipment_cost?: number
+          equipment_cost_cents?: number
           equipment_items?: Json
           field_percent_complete?: number
           hours?: number
           id?: string
           labor_rate?: number
+          labor_rate_cents?: number
           material_cost?: number
+          material_cost_cents?: number
           material_items?: Json
           notes?: string
           people_per_crew?: number
@@ -2969,12 +2980,17 @@ export type Database = {
           project_id: string
           quantity?: number
           quantity_items?: Json
+          review_version?: number
           schedule_activity_id?: string | null
           subcontractor_id?: string | null
           target_production_rate?: number | null
           unit?: string
           unmatched_vendor_name?: string
           updated_at?: string
+          version?: number
+          void_reason?: string
+          voided_at?: string | null
+          voided_by?: string | null
           wip_reviewed_at?: string | null
           wip_reviewed_by?: string | null
         }
@@ -2986,12 +3002,15 @@ export type Database = {
           crew_count?: number
           entry_date?: string
           equipment_cost?: number
+          equipment_cost_cents?: number
           equipment_items?: Json
           field_percent_complete?: number
           hours?: number
           id?: string
           labor_rate?: number
+          labor_rate_cents?: number
           material_cost?: number
+          material_cost_cents?: number
           material_items?: Json
           notes?: string
           people_per_crew?: number
@@ -3001,12 +3020,17 @@ export type Database = {
           project_id?: string
           quantity?: number
           quantity_items?: Json
+          review_version?: number
           schedule_activity_id?: string | null
           subcontractor_id?: string | null
           target_production_rate?: number | null
           unit?: string
           unmatched_vendor_name?: string
           updated_at?: string
+          version?: number
+          void_reason?: string
+          voided_at?: string | null
+          voided_by?: string | null
           wip_reviewed_at?: string | null
           wip_reviewed_by?: string | null
         }
@@ -3037,6 +3061,50 @@ export type Database = {
             columns: ["subcontractor_id"]
             isOneToOne: false
             referencedRelation: "subcontractors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_wip_entry_events: {
+        Row: {
+          after_snapshot: Json | null
+          before_snapshot: Json | null
+          created_at: string
+          created_by: string
+          daily_wip_entry_id: string
+          event_type: string
+          id: string
+          operation_key: string
+          project_id: string
+        }
+        Insert: {
+          after_snapshot?: Json | null
+          before_snapshot?: Json | null
+          created_at?: string
+          created_by: string
+          daily_wip_entry_id: string
+          event_type: string
+          id?: string
+          operation_key: string
+          project_id: string
+        }
+        Update: {
+          after_snapshot?: Json | null
+          before_snapshot?: Json | null
+          created_at?: string
+          created_by?: string
+          daily_wip_entry_id?: string
+          event_type?: string
+          id?: string
+          operation_key?: string
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_wip_entry_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
             referencedColumns: ["id"]
           },
         ]
@@ -6945,6 +7013,51 @@ export type Database = {
           },
         ]
       }
+      production_sov_certification_invalidations: {
+        Row: {
+          id: string
+          invalidated_at: string
+          invalidated_by: string | null
+          production_sov_certification_id: string
+          project_id: string
+          reason_code: string
+          reason_detail: string
+        }
+        Insert: {
+          id?: string
+          invalidated_at?: string
+          invalidated_by?: string | null
+          production_sov_certification_id: string
+          project_id: string
+          reason_code: string
+          reason_detail?: string
+        }
+        Update: {
+          id?: string
+          invalidated_at?: string
+          invalidated_by?: string | null
+          production_sov_certification_id?: string
+          project_id?: string
+          reason_code?: string
+          reason_detail?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_sov_certification__production_sov_certification_fkey"
+            columns: ["production_sov_certification_id"]
+            isOneToOne: true
+            referencedRelation: "production_sov_certifications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_sov_certification_invalidations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       production_sov_certifications: {
         Row: {
           calculation_version: string
@@ -6964,6 +7077,9 @@ export type Database = {
           source_period_end: string
           source_period_start: string
           source_wip_entry_id: string | null
+          source_wip_review_version: number | null
+          source_wip_reviewed_at: string | null
+          source_wip_updated_at: string | null
           target_date: string | null
           unit: string | null
         }
@@ -6985,6 +7101,9 @@ export type Database = {
           source_period_end: string
           source_period_start: string
           source_wip_entry_id?: string | null
+          source_wip_review_version?: number | null
+          source_wip_reviewed_at?: string | null
+          source_wip_updated_at?: string | null
           target_date?: string | null
           unit?: string | null
         }
@@ -7006,6 +7125,9 @@ export type Database = {
           source_period_end?: string
           source_period_start?: string
           source_wip_entry_id?: string | null
+          source_wip_review_version?: number | null
+          source_wip_reviewed_at?: string | null
+          source_wip_updated_at?: string | null
           target_date?: string | null
           unit?: string | null
         }
@@ -10398,6 +10520,18 @@ export type Database = {
       can_view_financials: { Args: { p_project_id: string }; Returns: boolean }
       can_write_cost_library: { Args: { p_org_id: string }; Returns: boolean }
       can_write_crm: { Args: { p_org_id: string }; Returns: boolean }
+      certify_production_sov_position_atomic: {
+        Args: {
+          p_cost_bucket_id: string
+          p_expected_current_sov_percent: number
+          p_expected_source_review_version: number
+          p_expected_source_wip_entry_id: string
+          p_operation_key: string
+          p_payload: Json
+          p_project_id: string
+        }
+        Returns: Json
+      }
       complete_estimate_measurement_scope_item: {
         Args: { p_scope_item_id: string; p_takeoff_measurement_id: string }
         Returns: {
@@ -11204,6 +11338,16 @@ export type Database = {
           library_item_id: string
         }[]
       }
+      save_daily_wip_entry_atomic: {
+        Args: {
+          p_entry_id: string
+          p_expected_version: number
+          p_operation_key: string
+          p_payload: Json
+          p_project_id: string
+        }
+        Returns: Json
+      }
       save_estimate_plan_revision_decisions: {
         Args: { p_decisions: Json; p_revision_plan_set_id: string }
         Returns: {
@@ -11531,6 +11675,16 @@ export type Database = {
           p_cost_actual_id: string
           p_idempotency_key: string
           p_notes: string
+        }
+        Returns: Json
+      }
+      void_daily_wip_entry_atomic: {
+        Args: {
+          p_entry_id: string
+          p_expected_version: number
+          p_operation_key: string
+          p_project_id: string
+          p_reason: string
         }
         Returns: Json
       }

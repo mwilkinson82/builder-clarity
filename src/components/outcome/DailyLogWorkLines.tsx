@@ -164,6 +164,9 @@ function resourceRowHasContent(row: FieldResourceDraft): boolean {
   );
 }
 
+const newDailyWipOperationKey = (action: string) =>
+  `daily-wip:${action}:${globalThis.crypto.randomUUID()}`;
+
 // "500 LF conduit · 24 junction boxes" — the itemized quantities for a saved row,
 // falling back to the scalar quantity/unit for rows predating the list.
 function quantitiesSummary(entry: DailyWipEntryRow): string | null {
@@ -240,6 +243,7 @@ function DailyLogWorkLinesImpl(
   const [draft, setDraft] = useState<LineDraft>(createEmptyLine);
   // The row being edited — held so we can preserve its money fields on save.
   const [editing, setEditing] = useState<DailyWipEntryRow | null>(null);
+  const formOperationKeyRef = useRef(newDailyWipOperationKey("create"));
   // "Add line" and the parent report Save can fire within the same render.
   // Both paths must await this one promise or the same draft can insert twice.
   const inFlightSaveRef = useRef<Promise<void> | null>(null);
@@ -327,6 +331,7 @@ function DailyLogWorkLinesImpl(
   const resetForm = () => {
     setDraft(createEmptyLine());
     setEditing(null);
+    formOperationKeyRef.current = newDailyWipOperationKey("create");
   };
 
   const saveMutation = useMutation({
@@ -343,7 +348,16 @@ function DailyLogWorkLinesImpl(
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => removeEntry({ data: { id } }),
+    mutationFn: ({ entry, reason }: { entry: DailyWipEntryRow; reason: string }) =>
+      removeEntry({
+        data: {
+          projectId,
+          id: entry.id,
+          expected_version: entry.version,
+          reason,
+          operation_key: newDailyWipOperationKey("void"),
+        },
+      }),
     onSuccess: () => {
       toast.success("Work line removed");
       invalidate();
@@ -354,6 +368,7 @@ function DailyLogWorkLinesImpl(
 
   const startEdit = (entry: DailyWipEntryRow) => {
     setEditing(entry);
+    formOperationKeyRef.current = newDailyWipOperationKey("update");
     setDraft({
       id: entry.id,
       cost_bucket_id: entry.cost_bucket_id ?? "",
@@ -449,6 +464,8 @@ function DailyLogWorkLinesImpl(
     return {
       projectId,
       id: draft.id,
+      expected_version: editing?.version ?? 0,
+      operation_key: formOperationKeyRef.current,
       entry_date: reportDate,
       cost_bucket_id: draft.cost_bucket_id || null,
       schedule_activity_id: draft.schedule_activity_id || null,
@@ -644,7 +661,14 @@ function DailyLogWorkLinesImpl(
                     variant="ghost"
                     className="h-7 w-7 text-muted-foreground hover:text-danger"
                     aria-label="Remove work line"
-                    onClick={() => deleteMutation.mutate(entry.id)}
+                    onClick={() => {
+                      const reason = window.prompt(
+                        "Why should this Daily WIP line be removed? The original record will remain in the audit history.",
+                      );
+                      if (reason?.trim()) {
+                        deleteMutation.mutate({ entry, reason: reason.trim() });
+                      }
+                    }}
                     disabled={deleteMutation.isPending}
                   >
                     <Trash2 className="h-3.5 w-3.5" />

@@ -6,7 +6,7 @@
 //
 // The dependency rule: this FEEDS billing; billing never waits on it. Recording
 // here is optional and additive.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -109,6 +109,8 @@ interface DailyWipWorkspaceProps {
 interface SaveWipInput {
   projectId: string;
   id?: string;
+  expected_version: number;
+  operation_key: string;
   cost_bucket_id: string | null;
   schedule_activity_id: string | null;
   subcontractor_id: string | null;
@@ -136,6 +138,9 @@ interface SaveWipInput {
   percent_source: "field" | "costing";
   notes: string;
 }
+
+const newDailyWipOperationKey = (action: string) =>
+  `daily-wip:${action}:${globalThis.crypto.randomUUID()}`;
 
 interface EntryDraft {
   cost_bucket_id: string;
@@ -287,6 +292,7 @@ export function DailyWipWorkspace({
   // never leak into the next open (the Radix-onOpenChange-skips-programmatic-
   // close trap from the cost dialog review).
   const [formOpen, setFormOpen] = useState(false);
+  const formOperationKeyRef = useRef(newDailyWipOperationKey("create"));
   // The dark stat panel's Day / Week / Month lens — presentation-only.
   const [statScope, setStatScope] = useState<StatScope>("day");
   const [workspaceMode, setWorkspaceMode] = useState<WipWorkspaceMode>(initialMode);
@@ -294,10 +300,12 @@ export function DailyWipWorkspace({
     setFormOpen(false);
     setEditingId(null);
     setDraft(emptyDraft);
+    formOperationKeyRef.current = newDailyWipOperationKey("create");
   };
   const openAddForm = () => {
     setEditingId(null);
     setDraft(emptyDraft);
+    formOperationKeyRef.current = newDailyWipOperationKey("create");
     setFormOpen(true);
   };
 
@@ -604,7 +612,16 @@ export function DailyWipWorkspace({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => removeEntry({ data: { id } }),
+    mutationFn: ({ entry, reason }: { entry: DailyWipEntryRow; reason: string }) =>
+      removeEntry({
+        data: {
+          projectId,
+          id: entry.id,
+          expected_version: entry.version,
+          reason,
+          operation_key: newDailyWipOperationKey("void"),
+        },
+      }),
     onSuccess: () => invalidate(),
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not remove the entry"),
@@ -704,6 +721,8 @@ export function DailyWipWorkspace({
     saveMutation.mutate({
       projectId,
       id: editingId ?? undefined,
+      expected_version: editingEntry?.version ?? 0,
+      operation_key: formOperationKeyRef.current,
       cost_bucket_id: draft.cost_bucket_id || null,
       schedule_activity_id: draft.schedule_activity_id || null,
       subcontractor_id: draft.subcontractor_id || null,
@@ -736,6 +755,7 @@ export function DailyWipWorkspace({
   // equipment) or adjust it. entry_date comes from selectedDate on save.
   const startEdit = (entry: DailyWipEntryRow) => {
     setEditingId(entry.id);
+    formOperationKeyRef.current = newDailyWipOperationKey("update");
     setDraft({
       cost_bucket_id: entry.cost_bucket_id ?? "",
       schedule_activity_id: entry.schedule_activity_id ?? "",
@@ -1101,7 +1121,14 @@ export function DailyWipWorkspace({
                       profit={profitByEntry.get(entry.id) ?? null}
                       editing={editingId === entry.id}
                       onEdit={() => startEdit(entry)}
-                      onDelete={() => deleteMutation.mutate(entry.id)}
+                      onDelete={() => {
+                        const reason = window.prompt(
+                          "Why should this Daily WIP line be removed? The original record will remain in the audit history.",
+                        );
+                        if (reason?.trim()) {
+                          deleteMutation.mutate({ entry, reason: reason.trim() });
+                        }
+                      }}
                       deleting={deleteMutation.isPending}
                     />
                   ))

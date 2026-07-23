@@ -46,6 +46,7 @@ export interface SovRecommendationInput {
   percent_basis: "sov" | "cpm";
   percent_complete: number;
   wip_reviewed_at: string | null;
+  review_version: number;
 }
 
 export interface SovRecommendationBucket {
@@ -64,6 +65,7 @@ export interface SovCompletionRecommendation {
   evidenceDate: string;
   reviewedAt: string;
   sourceEntryId: string;
+  sourceReviewVersion: number;
 }
 
 function parseIsoDate(value: string): Date | null {
@@ -255,6 +257,7 @@ export function buildSovCompletionRecommendations(
           evidenceDate: entry.entry_date,
           reviewedAt: entry.wip_reviewed_at ?? entry.updated_at,
           sourceEntryId: entry.id,
+          sourceReviewVersion: entry.review_version,
         },
       ];
     })
