@@ -1,20 +1,21 @@
 /**
  * P0 auth callback secret scrubbing.
  *
- * Requirement: token_hash / type / confirm / code / access_token / refresh_token
- * / auth error params / hash must NEVER be present in the visible URL or
- * browser history while the confirmation screen or exchange is displayed.
- * The Continue button must still be able to consume the original in-memory
- * token exactly once.
+ * Callback credentials (token_hash / type / confirm / code / access_token /
+ * refresh_token / auth errors / hash) MUST be removed from the visible URL
+ * and browser history immediately, before the confirmation screen or the
+ * network exchange runs. The Continue button must still consume the
+ * in-memory secret exactly once.
  */
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { render, screen, waitFor, act, fireEvent, cleanup } from "@testing-library/react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  scrubbedCallbackUrl,
   callbackUrlHasSecrets,
   safeAuthNext,
+  scrubbedCallbackUrl,
 } from "@/lib/auth/magic-link-url";
 
 const verifyOtp = vi.fn();
@@ -39,39 +40,94 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
 }));
 
-vi.mock("@/lib/email/send", () => ({ sendTransactionalEmail: vi.fn(() => Promise.resolve()) }));
+vi.mock("@/lib/email/send", () => ({
+  sendTransactionalEmail: vi.fn(() => Promise.resolve()),
+}));
 
 async function loadComponent() {
   const mod = await import("../src/routes/auth.callback");
-  // The route file `export const Route = createFileRoute(...)({ component })`.
-  // Our mock returns the config object, so read the component from it.
-  const RouteConfig = mod.Route as unknown as { component: () => JSX.Element };
-  return RouteConfig.component;
+  const routeConfig = mod.Route as unknown as { component: () => JSX.Element };
+  return routeConfig.component;
 }
 
 function setHref(href: string) {
-  // happy-dom lets us reassign location.href.
-  window.history.replaceState(null, "", href.replace(/^https?:\/\/[^/]+/, ""));
-  // Force full URL for reads via window.location.href:
+  const url = new URL(href);
   Object.defineProperty(window, "location", {
     writable: true,
-    value: new URL(href),
+    configurable: true,
+    value: {
+      ...url,
+      href: url.href,
+      origin: url.origin,
+      pathname: url.pathname,
+      search: url.search,
+      hash: url.hash,
+      host: url.host,
+      hostname: url.hostname,
+      protocol: url.protocol,
+      port: url.port,
+    },
+  });
+  // Keep history state consistent with the URL.
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  // Wire replaceState so it updates our fake window.location too.
+  const originalReplace = window.history.replaceState.bind(window.history);
+  window.history.replaceState = ((state: unknown, unused: string, path?: string) => {
+    if (typeof path === "string") {
+      const nu = new URL(path, url.origin);
+      Object.defineProperty(window, "location", {
+        writable: true,
+        configurable: true,
+        value: {
+          ...nu,
+          href: nu.href,
+          origin: nu.origin,
+          pathname: nu.pathname,
+          search: nu.search,
+          hash: nu.hash,
+          host: nu.host,
+          hostname: nu.hostname,
+          protocol: nu.protocol,
+          port: nu.port,
+        },
+      });
+    }
+    return originalReplace(state as never, unused, path);
+  }) as typeof window.history.replaceState;
+}
+
+let container: HTMLDivElement;
+let root: Root;
+
+async function mount(Component: () => JSX.Element) {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  await act(async () => {
+    root = createRoot(container);
+    root.render(<Component />);
+  });
+  // Let queued microtasks (finishSignIn) run.
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
   });
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
   verifyOtp.mockReset();
   exchangeCodeForSession.mockReset();
   setSession.mockReset();
   getSession.mockReset();
   getSession.mockResolvedValue({ data: { session: null }, error: null });
+  navigate.mockReset();
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  act(() => root?.unmount());
+  container?.remove();
+});
 
 describe("scrubbedCallbackUrl helper", () => {
-  it("drops token_hash, type, confirm from the URL and preserves safe next", () => {
+  it("drops token_hash / type / confirm, preserves safe next", () => {
     const scrubbed = scrubbedCallbackUrl(
       "https://app.test/auth/callback?token_hash=abc&type=email&confirm=1&next=%2Fteam",
     );
@@ -80,8 +136,9 @@ describe("scrubbedCallbackUrl helper", () => {
   });
 
   it("drops legacy code param", () => {
-    const scrubbed = scrubbedCallbackUrl("https://app.test/auth/callback?code=xyz&next=%2F");
-    expect(scrubbed).toBe("/auth/callback");
+    expect(scrubbedCallbackUrl("https://app.test/auth/callback?code=xyz&next=%2F")).toBe(
+      "/auth/callback",
+    );
   });
 
   it("drops the entire hash (access_token / refresh_token)", () => {
@@ -90,18 +147,18 @@ describe("scrubbedCallbackUrl helper", () => {
     );
     expect(scrubbed).toBe("/auth/callback");
     expect(scrubbed).not.toContain("access_token");
-    expect(scrubbed).not.toContain("refresh_token");
     expect(scrubbed).not.toContain("#");
   });
 
-  it("drops error params from the hash and query", () => {
-    const scrubbed = scrubbedCallbackUrl(
-      "https://app.test/auth/callback?error=access_denied&error_description=bad#error=x",
-    );
-    expect(scrubbed).toBe("/auth/callback");
+  it("drops auth error params from the query", () => {
+    expect(
+      scrubbedCallbackUrl(
+        "https://app.test/auth/callback?error=access_denied&error_description=bad",
+      ),
+    ).toBe("/auth/callback");
   });
 
-  it("normalizes an unsafe next to root", () => {
+  it("collapses unsafe / external / protocol-relative next to '/'", () => {
     expect(scrubbedCallbackUrl("https://app.test/auth/callback?next=https://evil.test")).toBe(
       "/auth/callback",
     );
@@ -112,80 +169,81 @@ describe("scrubbedCallbackUrl helper", () => {
   });
 });
 
-describe("AuthCallbackPage secret scrubbing", () => {
-  it("token_hash flow: scrubs URL before exchange and consumes token from memory on explicit confirm", async () => {
+describe("AuthCallbackPage secret scrubbing (mounted)", () => {
+  it("token_hash flow: URL scrubbed before exchange; Continue consumes token from memory exactly once", async () => {
     setHref(
       "https://app.test/auth/callback?token_hash=SECRET_HASH&type=email&confirm=1&next=%2Fteam",
     );
     const Component = await loadComponent();
-
     verifyOtp.mockResolvedValue({
       data: { session: { user: { id: "u1", email: "a@b.co" } } },
       error: null,
     });
 
-    render(<Component />);
+    await mount(Component);
 
-    // URL is scrubbed synchronously on mount, BEFORE any network call.
-    await waitFor(() => {
-      expect(window.location.search).toBe("?next=%2Fteam");
-    });
-    expect(window.location.search).not.toContain("SECRET_HASH");
+    // Scrubbed synchronously on mount, before any Supabase call.
+    expect(window.location.search).toBe("?next=%2Fteam");
     expect(window.location.hash).toBe("");
+    expect(window.location.search).not.toContain("SECRET_HASH");
     expect(verifyOtp).not.toHaveBeenCalled();
 
-    // Confirmation button rendered — click consumes the in-memory token exactly once.
-    const button = await screen.findByRole("button", { name: /continue to overwatch/i });
+    const button = container.querySelector("button");
+    expect(button?.textContent).toMatch(/continue to overwatch/i);
+
     await act(async () => {
-      fireEvent.click(button);
+      button!.click();
+      await new Promise((r) => setTimeout(r, 0));
     });
 
-    await waitFor(() => expect(verifyOtp).toHaveBeenCalledTimes(1));
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
     expect(verifyOtp).toHaveBeenCalledWith({ token_hash: "SECRET_HASH", type: "email" });
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/team", replace: true }));
+    expect(navigate).toHaveBeenCalledWith({ to: "/team", replace: true });
 
-    // Address bar still scrubbed after success.
+    // Second click cannot re-consume: in-memory secret cleared post-success.
+    await act(async () => {
+      button!.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
+
+    // Address bar still scrubbed.
     expect(window.location.search).toBe("?next=%2Fteam");
   });
 
-  it("legacy code flow: scrubs URL before exchange and consumes code from memory", async () => {
+  it("legacy code flow: URL scrubbed before exchange; code consumed from memory", async () => {
     setHref("https://app.test/auth/callback?code=SECRET_CODE&next=%2F");
     const Component = await loadComponent();
-
     exchangeCodeForSession.mockResolvedValue({
       data: { session: { user: { id: "u1", email: "a@b.co" } } },
       error: null,
     });
 
-    render(<Component />);
+    await mount(Component);
 
-    await waitFor(() => expect(exchangeCodeForSession).toHaveBeenCalledWith("SECRET_CODE"));
-    // Scrub happened before network call — search now has no `code`.
+    expect(exchangeCodeForSession).toHaveBeenCalledWith("SECRET_CODE");
     expect(window.location.search).toBe("");
     expect(window.location.search).not.toContain("SECRET_CODE");
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/", replace: true }));
+    expect(navigate).toHaveBeenCalledWith({ to: "/", replace: true });
   });
 
-  it("hash access/refresh flow: scrubs hash before setSession runs", async () => {
-    setHref(
-      "https://app.test/auth/callback#access_token=AT&refresh_token=RT&expires_in=3600",
-    );
+  it("hash access/refresh flow: hash scrubbed before setSession runs", async () => {
+    setHref("https://app.test/auth/callback#access_token=AT&refresh_token=RT&expires_in=3600");
     const Component = await loadComponent();
-
     setSession.mockResolvedValue({
       data: { session: { user: { id: "u1", email: "a@b.co" } } },
       error: null,
     });
 
-    render(<Component />);
+    await mount(Component);
 
-    await waitFor(() => expect(setSession).toHaveBeenCalledTimes(1));
+    expect(setSession).toHaveBeenCalledTimes(1);
     expect(setSession).toHaveBeenCalledWith({ access_token: "AT", refresh_token: "RT" });
     expect(window.location.hash).toBe("");
     expect(window.location.search).toBe("");
   });
 
-  it("malicious external / protocol-relative next collapses to '/' and no secret survives", async () => {
+  it("malicious external next collapses to '/'; no secret survives in the address bar", async () => {
     setHref(
       "https://app.test/auth/callback?token_hash=X&type=email&confirm=1&next=https%3A%2F%2Fevil.test",
     );
@@ -195,22 +253,18 @@ describe("AuthCallbackPage secret scrubbing", () => {
       error: null,
     });
 
-    render(<Component />);
+    await mount(Component);
 
-    await waitFor(() => {
-      // next scrubbed to nothing (root default); token_hash removed.
-      expect(window.location.search).toBe("");
-    });
+    expect(window.location.search).toBe("");
     expect(window.location.search).not.toContain("evil.test");
     expect(window.location.search).not.toContain("token_hash");
 
-    const button = await screen.findByRole("button", { name: /continue to overwatch/i });
-    await act(async () => fireEvent.click(button));
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/", replace: true }));
-
-    // Second click must NOT re-verify — the in-memory secret was cleared.
-    await act(async () => fireEvent.click(button));
-    expect(verifyOtp).toHaveBeenCalledTimes(1);
+    const button = container.querySelector("button");
+    await act(async () => {
+      button!.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(navigate).toHaveBeenCalledWith({ to: "/", replace: true });
   });
 
   it("protocol-relative next also collapses to '/'", async () => {
@@ -220,23 +274,31 @@ describe("AuthCallbackPage secret scrubbing", () => {
       data: { session: { user: { id: "u1", email: "a@b.co" } } },
       error: null,
     });
-    render(<Component />);
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/", replace: true }));
+
+    await mount(Component);
+
+    expect(navigate).toHaveBeenCalledWith({ to: "/", replace: true });
     expect(window.location.search).toBe("");
   });
 });
 
 describe("source wiring: recovery link never reconstructs the secret", () => {
-  it("recovery UI links only to /auth?next=..., never to /auth/callback with credentials", () => {
-    const source = readFileSync(resolve(process.cwd(), "src/routes/auth.callback.tsx"), "utf8");
-    // No callback-retry link that could leak the original URL.
+  const source = readFileSync(resolve(process.cwd(), "src/routes/auth.callback.tsx"), "utf8");
+
+  it("no callback retry link that would leak the original URL", () => {
     expect(source).not.toMatch(/href=\{callbackHref\(/);
     expect(source).not.toContain("token_hash=${");
     expect(source).not.toContain("?code=${");
-    // Scrub must call replaceState with the scrubbed URL before any exchange.
+  });
+
+  it("scrub runs via history.replaceState before any exchange", () => {
     expect(source).toContain("scrubbedCallbackUrl");
     expect(source).toContain("window.history.replaceState");
-    // Original URL retained in a ref, not re-read from window.location during exchange.
+  });
+
+  it("original URL is retained in a ref, not re-read from window.location", () => {
     expect(source).toContain("originalUrlRef");
+    // finishSignIn reads the URL from the ref, not window.location.
+    expect(source).toMatch(/originalUrlRef\.current/);
   });
 });
