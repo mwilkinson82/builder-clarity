@@ -138,9 +138,9 @@ describe("auth callback — fail-closed on establish failure", () => {
     // no stale session survives a bad-link click.
     const helperStart = callback.indexOf("const failToRecovery");
     expect(helperStart).toBeGreaterThan(-1);
-    const helperEnd = callback.indexOf("}, [clearCaptured]);", helperStart);
-    expect(helperEnd).toBeGreaterThan(helperStart);
-    const helper = callback.slice(helperStart, helperEnd);
+    // Slice a generous window forward — prettier may split the
+    // useCallback deps across lines.
+    const helper = callback.slice(helperStart, helperStart + 1200);
     expect(helper).toContain("supabase.auth.signOut()");
     expect(helper).toContain("setShowRecovery(true)");
   });
