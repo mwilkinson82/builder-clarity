@@ -462,7 +462,39 @@ async function requireOrgCapability(
     if (isMissingRestFunction(error, "has_org_capability")) {
       await requireCanManageOrganization(context, organizationId);
       return;
-    }
+}
+
+/**
+ * Resolve the caller's authority for team-role containment checks: whether
+ * they hold super-admin, whether their active membership row is Owner, and
+ * their effective capability set. Used by createTeamInvite /
+ * updateTeamMember to gate Owner minting/promotion, self-elevation, and
+ * grants above the caller's own capability ceiling. See
+ * `src/lib/team/role-containment.ts` for the enforcement rules.
+ */
+async function loadCallerAuthority(
+  context: TeamServerContext,
+  organizationId: string,
+): Promise<CallerAuthority> {
+  const [membershipRes, superAdminRes] = await Promise.all([
+    context.supabase
+      .from("organization_memberships")
+      .select("role,status,capabilities")
+      .eq("organization_id", organizationId)
+      .eq("user_id", context.userId)
+      .maybeSingle(),
+    context.supabase.rpc("is_super_admin"),
+  ]);
+  const isSuperAdmin = !superAdminRes.error && Boolean(superAdminRes.data);
+  const row = (membershipRes.data ?? null) as
+    | { role?: string | null; status?: string | null; capabilities?: unknown }
+    | null;
+  if (!row || row.status !== "active") {
+    return { isSuperAdmin, isOwner: false, role: null, capabilities: {} };
+  }
+  const role = (row.role as AccountRole) ?? "member";
+  const capabilities = effectiveCapabilities({ role, capabilities: row.capabilities });
+  return { isSuperAdmin, isOwner: role === "owner", role, capabilities };
     throw new Error(error.message);
   }
   if (!allowed) throw new Error(message);
