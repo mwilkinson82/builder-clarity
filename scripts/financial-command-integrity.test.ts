@@ -6,10 +6,10 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
 const dailyWipMigration = read(
-  "supabase/migrations/20260723021909_daily_wip_command_integrity.sql",
+  "supabase/migrations/20260723115340_ceb0a640-4b93-4d97-b6d2-d765d1013e64.sql",
 );
 const certificationMigration = read(
-  "supabase/migrations/20260723021911_production_sov_certification_integrity.sql",
+  "supabase/migrations/20260723115553_881ff883-6c89-48d4-911c-77c3feea8665.sql",
 );
 const dailyWipFunctions = read("src/lib/daily-wip.functions.ts");
 const productionForecastFunctions = read("src/lib/production-forecast.functions.ts");
