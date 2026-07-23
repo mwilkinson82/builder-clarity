@@ -388,19 +388,28 @@ describe("magic-link handler — invite authorization gate", () => {
     expect(JSON.stringify(logCall)).not.toContain("good");
   });
 
-  it("H2. documented duplicate-user code (email_exists) is swallowed and the send proceeds", async () => {
-    // Supabase returns a usable link even for duplicate — swallow the
-    // error and continue.
+  it("H2. duplicate-user code (email_exists) triggers exact re-resolve + retry as kind:'magiclink' — send proceeds", async () => {
+    // Provider rejected creation because the user already exists.
+    // Handler must NOT trust any link returned in that response —
+    // it re-resolves the exact user via paginated lookup and issues
+    // a fresh generateMagicLink with kind:"magiclink".
+    const generateMagicLink = vi
+      .fn()
+      .mockResolvedValueOnce({
+        hashedToken: null,
+        userId: null,
+        error: { message: "already exists", code: "email_exists" },
+      })
+      .mockResolvedValueOnce({
+        hashedToken: "hash2",
+        userId: "existing-user-1",
+        error: null,
+      });
+    const lookupExistingAuthUser = vi.fn(async () => ({ id: "existing-user-1" }));
     const deps = buildDeps({
       fetchInviteById: vi.fn(async () => goodInvite()),
-      generateMagicLink: vi.fn(async () => ({
-        hashedToken: "hash",
-        userId: "existing-user-1",
-        error: {
-          message: "A user with this email already exists",
-          code: "email_exists",
-        },
-      })),
+      generateMagicLink,
+      lookupExistingAuthUser,
     });
     const result = await handleMagicLinkRequest({
       requestUrl: REQ_URL,
@@ -409,18 +418,30 @@ describe("magic-link handler — invite authorization gate", () => {
       deps,
     });
     expect(result.ok).toBe(true);
-    expect(deps.generateMagicLink).toHaveBeenCalledTimes(1);
+    expect(lookupExistingAuthUser).toHaveBeenCalledWith("invitee@example.com");
+    expect(generateMagicLink).toHaveBeenCalledTimes(2);
+    expect(generateMagicLink.mock.calls[0][0]).toMatchObject({ kind: "invite" });
+    expect(generateMagicLink.mock.calls[1][0]).toMatchObject({ kind: "magiclink" });
     expect(deps.sendEmail).toHaveBeenCalledTimes(1);
   });
 
-  it("H3. documented duplicate-user code (user_already_exists) is also swallowed", async () => {
+  it("H3. duplicate-user code (user_already_exists) — same re-resolve + magiclink retry path", async () => {
+    const generateMagicLink = vi
+      .fn()
+      .mockResolvedValueOnce({
+        hashedToken: null,
+        userId: null,
+        error: { message: "duplicate", code: "user_already_exists" },
+      })
+      .mockResolvedValueOnce({
+        hashedToken: "hash2",
+        userId: "existing-user-1",
+        error: null,
+      });
     const deps = buildDeps({
       fetchInviteById: vi.fn(async () => goodInvite()),
-      generateMagicLink: vi.fn(async () => ({
-        hashedToken: "hash",
-        userId: "existing-user-1",
-        error: { message: "duplicate", code: "user_already_exists" },
-      })),
+      generateMagicLink,
+      lookupExistingAuthUser: vi.fn(async () => ({ id: "existing-user-1" })),
     });
     const result = await handleMagicLinkRequest({
       requestUrl: REQ_URL,
@@ -429,7 +450,33 @@ describe("magic-link handler — invite authorization gate", () => {
       deps,
     });
     expect(result.ok).toBe(true);
+    expect(generateMagicLink).toHaveBeenCalledTimes(2);
+    expect(generateMagicLink.mock.calls[1][0]).toMatchObject({ kind: "magiclink" });
     expect(deps.sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("H3b. duplicate-user code with UNRESOLVED lookup aborts — no send, generic error, no provider code leak", async () => {
+    const generateMagicLink = vi.fn(async () => ({
+      hashedToken: null,
+      userId: null,
+      error: { message: "already exists", code: "email_exists" },
+    }));
+    const deps = buildDeps({
+      fetchInviteById: vi.fn(async () => goodInvite()),
+      generateMagicLink,
+      lookupExistingAuthUser: vi.fn(async () => null),
+    });
+    const result = await handleMagicLinkRequest({
+      requestUrl: REQ_URL,
+      body: inviteBody,
+      authorizationHeader: "Bearer good",
+      deps,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(500);
+    expect(deps.sendEmail).not.toHaveBeenCalled();
+    expect(generateMagicLink).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result.body)).not.toContain("email_exists");
   });
 
   it("H4. non-duplicate generateLink error aborts, records failure, and does NOT leak provider code to the client", async () => {
