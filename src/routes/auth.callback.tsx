@@ -89,11 +89,20 @@ function AuthCallbackPage() {
   const [nextPath, setNextPath] = useState("/");
   const [showRecovery, setShowRecovery] = useState(false);
   const [confirmationRequired, setConfirmationRequired] = useState(false);
+  const [exchangeInFlight, setExchangeInFlight] = useState(false);
 
   // Original callback URL (with token_hash / code / hash tokens) is captured
   // exactly once in memory and NEVER re-read from window.location, which is
   // scrubbed immediately below. Cleared after success or definitive failure.
   const originalUrlRef = useRef<URL | null>(null);
+  // Synchronous single-flight / credential-consumption guard. Set BEFORE any
+  // await that consumes the one-time token. A second call while consumption
+  // is in flight — from React <StrictMode> double-invoked effects, rapid
+  // Continue clicks, or any parallel invocation — is a no-op. Once the
+  // credential has been consumed (success or definitive failure), the guard
+  // remains latched so the token can never be replayed.
+  const consumptionInFlightRef = useRef(false);
+  const consumedRef = useRef(false);
 
   const finishSignIn = useCallback(
     async (allowTokenConsumption: boolean, isCancelled: () => boolean) => {
@@ -105,19 +114,28 @@ function AuthCallbackPage() {
         }
         return;
       }
+
+      const next = safeAuthNext(url);
+      setNextPath(next);
+
+      if (requiresExplicitMagicLinkConfirmation(url) && !allowTokenConsumption) {
+        setConfirmationRequired(true);
+        setMessage("Your secure link is ready. Continue to finish signing in.");
+        return;
+      }
+
+      // Synchronous single-flight: any second entry (StrictMode re-invoke,
+      // double click, race) short-circuits BEFORE hitting Supabase, so the
+      // one-time credential is consumed exactly once.
+      if (consumedRef.current || consumptionInFlightRef.current) return;
+      consumptionInFlightRef.current = true;
+      setExchangeInFlight(true);
+
       try {
-        const next = safeAuthNext(url);
-        setNextPath(next);
-
-        if (requiresExplicitMagicLinkConfirmation(url) && !allowTokenConsumption) {
-          setConfirmationRequired(true);
-          setMessage("Your secure link is ready. Continue to finish signing in.");
-          return;
-        }
-
         setConfirmationRequired(false);
         const sessionFromUrl = await establishSessionFromUrl(url);
         if (sessionFromUrl) {
+          consumedRef.current = true;
           originalUrlRef.current = null;
           void notifyLogin(sessionFromUrl);
           navigate({ to: next as never, replace: true });
@@ -129,6 +147,7 @@ function AuthCallbackPage() {
           const { data, error } = await supabase.auth.getSession();
           if (error) throw error;
           if (data.session) {
+            consumedRef.current = true;
             originalUrlRef.current = null;
             void notifyLogin(data.session);
             navigate({ to: next as never, replace: true });
@@ -138,6 +157,7 @@ function AuthCallbackPage() {
         }
 
         if (!isCancelled()) {
+          consumedRef.current = true;
           originalUrlRef.current = null;
           setShowRecovery(true);
           setMessage("No active session was found. Request a fresh magic link and open it once.");
@@ -148,17 +168,24 @@ function AuthCallbackPage() {
           .getSession()
           .catch(() => ({ data: { session: null } }));
         if (data.session && !isCancelled()) {
-          const next = safeAuthNext(url);
+          consumedRef.current = true;
           originalUrlRef.current = null;
           void notifyLogin(data.session);
           navigate({ to: next as never, replace: true });
           return;
         }
         if (!isCancelled()) {
+          // Definitive exchange failure: latch consumed so the token cannot
+          // be retried automatically, transition to recovery UI. Fresh link
+          // required — no reconstruction of a URL carrying secrets.
+          consumedRef.current = true;
           originalUrlRef.current = null;
           setShowRecovery(true);
           setMessage(callbackFailureMessage(err));
         }
+      } finally {
+        consumptionInFlightRef.current = false;
+        setExchangeInFlight(false);
       }
     },
     [navigate],
@@ -168,7 +195,7 @@ function AuthCallbackPage() {
     // Capture the full original URL (credentials + hash) in a ref, then
     // immediately scrub the address bar / history so no secret is visible
     // during the human confirmation screen or the network exchange.
-    if (!originalUrlRef.current) {
+    if (!originalUrlRef.current && !consumedRef.current) {
       const captured = new URL(window.location.href);
       originalUrlRef.current = captured;
       setNextPath(safeAuthNext(captured));
@@ -193,17 +220,24 @@ function AuthCallbackPage() {
       <div className="max-w-sm text-center">
         <div className="mx-auto h-2 w-12 rounded-full bg-primary/70" />
         <h1 className="mt-6 font-serif text-3xl">Opening OverWatch</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+        <p className="mt-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+          {message}
+        </p>
         {confirmationRequired && (
           <button
             type="button"
+            disabled={exchangeInFlight}
+            aria-busy={exchangeInFlight}
             onClick={() => {
+              // Synchronous guard mirrors the one in finishSignIn so rapid
+              // double-clicks before the first await schedules a no-op.
+              if (consumedRef.current || consumptionInFlightRef.current) return;
               setMessage("Completing sign-in...");
               void finishSignIn(true, () => false);
             }}
-            className="mt-6 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+            className="mt-6 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Continue to Overwatch
+            {exchangeInFlight ? "Signing in…" : "Continue to Overwatch"}
           </button>
         )}
         {showRecovery && !confirmationRequired && (
