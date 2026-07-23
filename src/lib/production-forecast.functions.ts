@@ -135,7 +135,8 @@ export const loadProductionForecastContext = createServerFn({ method: "GET" })
         return {
           nextBillingDate:
             ((projectResult.data as Record<string, unknown> | null)?.next_billing_date as
-              string | null) ?? null,
+              | string
+              | null) ?? null,
           certifications: [],
           certificationEnabled: false,
         };
@@ -154,7 +155,8 @@ export const loadProductionForecastContext = createServerFn({ method: "GET" })
         return {
           nextBillingDate:
             ((projectResult.data as Record<string, unknown> | null)?.next_billing_date as
-              string | null) ?? null,
+              | string
+              | null) ?? null,
           certifications: [],
           certificationEnabled: false,
         };
@@ -200,7 +202,8 @@ export const loadProductionForecastContext = createServerFn({ method: "GET" })
     return {
       nextBillingDate:
         ((projectResult.data as Record<string, unknown> | null)?.next_billing_date as
-          string | null) ?? null,
+          | string
+          | null) ?? null,
       certifications: certifications.map((certification) => ({
         ...certification,
         certified_by_name: certifierNameById.get(certification.certified_by) ?? null,

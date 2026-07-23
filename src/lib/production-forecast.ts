@@ -6,7 +6,13 @@ import {
 } from "@/lib/production-analytics";
 
 export type ProductionForecastStatus =
-  "ahead" | "on-pace" | "behind" | "complete" | "missing-plan" | "missing-date" | "no-evidence";
+  | "ahead"
+  | "on-pace"
+  | "behind"
+  | "complete"
+  | "missing-plan"
+  | "missing-date"
+  | "no-evidence";
 
 export interface ProductionScopePlan {
   performerKey: string;
