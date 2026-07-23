@@ -116,4 +116,3 @@ describe("magic-link callers pass the exact created invite id", () => {
     );
   });
 });
-});
