@@ -1,11 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { sendTransactionalEmail } from "@/lib/email/send";
 import {
   emailOtpTypeFromUrl,
   requiresExplicitMagicLinkConfirmation,
   safeAuthNext,
+  scrubbedCallbackUrl,
 } from "@/lib/auth/magic-link-url";
 
 async function notifyLogin(session: { user: { id: string; email?: string | null } }) {
@@ -36,16 +37,8 @@ export const Route = createFileRoute("/auth/callback")({
   component: AuthCallbackPage,
 });
 
-function callbackHref(next: string) {
-  return `/auth/callback?next=${encodeURIComponent(next)}`;
-}
-
 function authHref(next: string) {
   return `/auth?next=${encodeURIComponent(next)}`;
-}
-
-function cleanCallbackUrl(url: URL) {
-  if (url.hash) window.history.replaceState(null, "", `${url.pathname}${url.search}`);
 }
 
 function callbackFailureMessage(err: unknown) {
@@ -76,25 +69,18 @@ async function establishSessionFromUrl(url: URL) {
 
   const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
   const authError = hashParams.get("error_description") ?? hashParams.get("error");
-  if (authError) {
-    cleanCallbackUrl(url);
-    throw new Error(authError);
-  }
+  if (authError) throw new Error(authError);
 
   const accessToken = hashParams.get("access_token");
   const refreshToken = hashParams.get("refresh_token");
   if (!accessToken || !refreshToken) return null;
 
-  try {
-    const { data, error } = await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-    if (error) throw error;
-    return data.session ?? null;
-  } finally {
-    cleanCallbackUrl(url);
-  }
+  const { data, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+  if (error) throw error;
+  return data.session ?? null;
 }
 
 function AuthCallbackPage() {
@@ -104,10 +90,22 @@ function AuthCallbackPage() {
   const [showRecovery, setShowRecovery] = useState(false);
   const [confirmationRequired, setConfirmationRequired] = useState(false);
 
+  // Original callback URL (with token_hash / code / hash tokens) is captured
+  // exactly once in memory and NEVER re-read from window.location, which is
+  // scrubbed immediately below. Cleared after success or definitive failure.
+  const originalUrlRef = useRef<URL | null>(null);
+
   const finishSignIn = useCallback(
     async (allowTokenConsumption: boolean, isCancelled: () => boolean) => {
+      const url = originalUrlRef.current;
+      if (!url) {
+        if (!isCancelled()) {
+          setShowRecovery(true);
+          setMessage("No active session was found. Request a fresh magic link and open it once.");
+        }
+        return;
+      }
       try {
-        const url = new URL(window.location.href);
         const next = safeAuthNext(url);
         setNextPath(next);
 
@@ -120,6 +118,7 @@ function AuthCallbackPage() {
         setConfirmationRequired(false);
         const sessionFromUrl = await establishSessionFromUrl(url);
         if (sessionFromUrl) {
+          originalUrlRef.current = null;
           void notifyLogin(sessionFromUrl);
           navigate({ to: next as never, replace: true });
           return;
@@ -130,6 +129,7 @@ function AuthCallbackPage() {
           const { data, error } = await supabase.auth.getSession();
           if (error) throw error;
           if (data.session) {
+            originalUrlRef.current = null;
             void notifyLogin(data.session);
             navigate({ to: next as never, replace: true });
             return;
@@ -138,22 +138,24 @@ function AuthCallbackPage() {
         }
 
         if (!isCancelled()) {
+          originalUrlRef.current = null;
           setShowRecovery(true);
           setMessage("No active session was found. Request a fresh magic link and open it once.");
         }
       } catch (err) {
         console.error(err);
-        // If another callback path completed before an error surfaced, trust the
-        // established session instead of showing a false expired-link loop.
         const { data } = await supabase.auth
           .getSession()
           .catch(() => ({ data: { session: null } }));
         if (data.session && !isCancelled()) {
+          const next = safeAuthNext(url);
+          originalUrlRef.current = null;
           void notifyLogin(data.session);
-          navigate({ to: safeAuthNext(new URL(window.location.href)) as never, replace: true });
+          navigate({ to: next as never, replace: true });
           return;
         }
         if (!isCancelled()) {
+          originalUrlRef.current = null;
           setShowRecovery(true);
           setMessage(callbackFailureMessage(err));
         }
@@ -163,6 +165,21 @@ function AuthCallbackPage() {
   );
 
   useEffect(() => {
+    // Capture the full original URL (credentials + hash) in a ref, then
+    // immediately scrub the address bar / history so no secret is visible
+    // during the human confirmation screen or the network exchange.
+    if (!originalUrlRef.current) {
+      const captured = new URL(window.location.href);
+      originalUrlRef.current = captured;
+      setNextPath(safeAuthNext(captured));
+      try {
+        const scrubbed = scrubbedCallbackUrl(window.location.href);
+        window.history.replaceState(null, "", scrubbed);
+      } catch {
+        /* replaceState best-effort */
+      }
+    }
+
     let cancelled = false;
     void finishSignIn(false, () => cancelled);
 
@@ -196,12 +213,6 @@ function AuthCallbackPage() {
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
             >
               Request fresh magic link
-            </a>
-            <a
-              href={callbackHref(nextPath)}
-              className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-            >
-              Retry callback
             </a>
           </div>
         )}
