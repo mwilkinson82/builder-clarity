@@ -111,3 +111,33 @@ For every route and role, verify:
 
 Do not call a release complete from source assertions alone. Reproduce the exact
 customer gesture against the exact production DOM target.
+
+## 6. Sign-In P0 maintenance window checklist
+
+The forward migration that closes the disabled-seat + demo-trigger findings
+is staged unapplied at
+`supabase/verification/20260723210000_account_provisioning_history_containment.sql`.
+Apply only during a scheduled maintenance window:
+
+1. **Announce** the window in the ops channel and pause any bulk user-provisioning
+   automation.
+2. **Snapshot** the current `public.organizations`, `public.organization_memberships`,
+   `public.organization_invites`, `public.project_client_access`, and
+   `public.profiles` tables (or take a full DB snapshot per platform policy).
+3. **Move** the SQL file to `supabase/migrations/` using a timestamp later than
+   every currently-applied migration. Do NOT rename in-place; the platform ignores
+   `supabase/verification/`.
+4. **Apply** with the standard migration path (Lovable Cloud pickup or `psql` by
+   an operator with DB credentials). Re-run is safe (CREATE OR REPLACE / DROP IF
+   EXISTS only).
+5. **Verify** immediately after apply:
+   - `on_auth_user_created` no longer exists on `auth.users`.
+   - `has_function_privilege('authenticated','public.ensure_user_account(uuid,text,text)','EXECUTE')` returns `false`.
+   - `has_function_privilege('authenticated','public.ensure_current_user_account()','EXECUTE')` returns `true`.
+6. **Behavioral sanity**: sign in as a disabled-only-seat account. The user must
+   land on the "No active company access" screen — NOT a new personal company —
+   and no fresh `organizations` row for that user should appear.
+7. **Rollback plan**: if verification fails, re-apply `20260722233000` to restore
+   the prior `ensure_user_account`. The auth trigger drop is idempotent; if
+   demo-seeding is required, re-enable the org-scoped `seedDemoIfEmpty` bootstrap
+   in code before rolling back.
