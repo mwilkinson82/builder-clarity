@@ -1,19 +1,22 @@
 // Behavioral vitest for the magic-link handler (P0 corrections).
 //
-// Invokes handleMagicLinkRequest with spies and asserts the invite
-// authorization gate runs BEFORE any provisioning / email side effect.
-// createAuthUser, generateMagicLink, insertEmailSendLog, and sendEmail
-// must all remain at zero calls for every rejection path an invite
-// context can produce.
+// Invokes handleMagicLinkRequest with spies and asserts:
+//   - the invite / client_portal authorization gate runs BEFORE any
+//     provisioning or email side effect;
+//   - generateMagicLink is the SOLE auth-user creation boundary
+//     (there is no separate createAuthUser step);
+//   - documented Supabase duplicate-user codes are swallowed by CODE
+//     (email_exists, user_already_exists) — never by message heuristics;
+//   - login never generates a link or sends email for an unknown email
+//     (fail-closed existing-user lookup);
+//   - client_portal requires Bearer + exact clientAccessId + status not
+//     revoked + caller currently holds client_portal.manage;
+//   - failure paths preserve provider code in audit metadata but return
+//     a generic client-safe message (no provider code/message leaks);
+//   - bearer token never appears in the response body or logs.
 //
-// Also enforces:
-//   - AND-gate: invited_by = caller AND live company.manage_team
-//   - Documented Supabase duplicate-user CODE allowlist
-//     (email_exists, user_already_exists) — not message heuristics
-//   - Invite audit metadata (invite_id, organization_id, inviter_id) on
-//     both success and failure email_send_log rows
-//   - Bearer token never leaks to response body, logs, or metadata
-//   - Runtime Zod rejection of inviteId with non-invite context
+// The migration that lands finalize_invite_acceptance is tracked and
+// UNAPPLIED; see docs/RELEASE_GATE.md §6 for the apply checklist.
 
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -21,6 +24,8 @@ import {
   handleMagicLinkRequest,
   type MagicLinkDeps,
 } from "@/lib/auth/magic-link-handler";
+
+const CLIENT_ACCESS_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 
 function buildDeps(overrides: Partial<MagicLinkDeps> = {}): MagicLinkDeps {
   return {
@@ -40,11 +45,18 @@ function buildDeps(overrides: Partial<MagicLinkDeps> = {}): MagicLinkDeps {
     })),
     fetchInviteById: vi.fn(async () => null),
     callerHasManageTeam: vi.fn(async () => true),
+    fetchClientAccessById: vi.fn(async () => null),
+    callerHasClientAccessManagement: vi.fn(async () => true),
+    lookupExistingAuthUser: vi.fn(async () => ({ id: "existing-user-1" })),
     findRecentSend: vi.fn(async () => null),
-    createAuthUser: vi.fn(async () => ({ error: null })),
-    generateMagicLink: vi.fn(async () => ({ hashedToken: "hash", error: null })),
+    generateMagicLink: vi.fn(async () => ({
+      hashedToken: "hash",
+      userId: "user-1",
+      error: null,
+    })),
     insertEmailSendLog: vi.fn(async () => {}),
     updateEmailSendLogStatus: vi.fn(async () => {}),
+    updateEmailSendLogFailed: vi.fn(async () => {}),
     sendEmail: vi.fn(async () => {}),
     ...overrides,
   };
@@ -52,7 +64,6 @@ function buildDeps(overrides: Partial<MagicLinkDeps> = {}): MagicLinkDeps {
 
 function expectNoSideEffects(deps: MagicLinkDeps) {
   expect(deps.findRecentSend).not.toHaveBeenCalled();
-  expect(deps.createAuthUser).not.toHaveBeenCalled();
   expect(deps.generateMagicLink).not.toHaveBeenCalled();
   expect(deps.insertEmailSendLog).not.toHaveBeenCalled();
   expect(deps.sendEmail).not.toHaveBeenCalled();
@@ -75,10 +86,27 @@ function goodInvite(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function goodClientAccess(overrides: Record<string, unknown> = {}) {
+  return {
+    id: CLIENT_ACCESS_ID,
+    project_id: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    organization_id: ORG_ID,
+    email: "client@example.com",
+    status: "pending",
+    ...overrides,
+  };
+}
+
 const inviteBody = {
   email: "invitee@example.com",
   context: "company_invite" as const,
   inviteId: INVITE_ID,
+};
+
+const clientPortalBody = {
+  email: "client@example.com",
+  context: "client_portal" as const,
+  clientAccessId: CLIENT_ACCESS_ID,
 };
 
 describe("magic-link handler — invite authorization gate", () => {
@@ -244,8 +272,7 @@ describe("magic-link handler — invite authorization gate", () => {
     });
     expect(result.status).toBe(403);
     // AND-gate: invited_by check happens first, so capability lookup
-    // must not even fire — no bearer round-trip against RLS for a
-    // caller who is provably not the inviter.
+    // must not even fire.
     expect(deps.callerHasManageTeam).not.toHaveBeenCalled();
     expectNoSideEffects(deps);
   });
@@ -283,7 +310,7 @@ describe("magic-link handler — invite authorization gate", () => {
     expectNoSideEffects(deps);
   });
 
-  it("H. valid fresh invite (BOTH invited_by AND manage_team) proceeds with exact call order and counts", async () => {
+  it("H. valid fresh invite (BOTH invited_by AND manage_team) proceeds; generateMagicLink is the sole creation boundary", async () => {
     const calls: string[] = [];
     const deps = buildDeps({
       fetchInviteById: vi.fn(async () => {
@@ -298,13 +325,9 @@ describe("magic-link handler — invite authorization gate", () => {
         calls.push("findRecentSend");
         return null;
       }),
-      createAuthUser: vi.fn(async () => {
-        calls.push("createAuthUser");
-        return { error: null };
-      }),
       generateMagicLink: vi.fn(async () => {
         calls.push("generateMagicLink");
-        return { hashedToken: "hash", error: null };
+        return { hashedToken: "hash", userId: "auth-user-1", error: null };
       }),
       insertEmailSendLog: vi.fn(async () => {
         calls.push("insertEmailSendLog");
@@ -329,23 +352,31 @@ describe("magic-link handler — invite authorization gate", () => {
       "fetchInviteById",
       "callerHasManageTeam",
       "findRecentSend",
-      "createAuthUser",
       "generateMagicLink",
       "insertEmailSendLog",
       "sendEmail",
       "updateEmailSendLogStatus",
     ]);
-    expect(deps.createAuthUser).toHaveBeenCalledTimes(1);
     expect(deps.generateMagicLink).toHaveBeenCalledTimes(1);
+    // generateMagicLink used with kind:"invite" — that IS the creation boundary.
+    expect(deps.generateMagicLink).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "invite" }),
+    );
+    // The exact clicked invite_id is baked into redirectTo so the
+    // auth callback can finalize the correct invite.
+    const linkArgs = (
+      deps.generateMagicLink as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls[0][0] as { redirectTo: string };
+    expect(linkArgs.redirectTo).toContain(`invite_id=${INVITE_ID}`);
     expect(deps.insertEmailSendLog).toHaveBeenCalledTimes(1);
     expect(deps.sendEmail).toHaveBeenCalledTimes(1);
     expect(deps.updateEmailSendLogStatus).toHaveBeenCalledWith(
       expect.any(String),
       "sent",
+      expect.any(Object),
     );
 
-    // Audit metadata is persisted on the success email_send_log row and
-    // bearer never appears.
+    // Audit metadata on the success email_send_log row; bearer never appears.
     const logCall = (
       deps.insertEmailSendLog as unknown as { mock: { calls: unknown[][] } }
     ).mock.calls[0][0] as { metadata?: Record<string, unknown> };
@@ -358,10 +389,17 @@ describe("magic-link handler — invite authorization gate", () => {
   });
 
   it("H2. documented duplicate-user code (email_exists) is swallowed and the send proceeds", async () => {
+    // Supabase returns a usable link even for duplicate — swallow the
+    // error and continue.
     const deps = buildDeps({
       fetchInviteById: vi.fn(async () => goodInvite()),
-      createAuthUser: vi.fn(async () => ({
-        error: { message: "A user with this email already exists", code: "email_exists" },
+      generateMagicLink: vi.fn(async () => ({
+        hashedToken: "hash",
+        userId: "existing-user-1",
+        error: {
+          message: "A user with this email already exists",
+          code: "email_exists",
+        },
       })),
     });
     const result = await handleMagicLinkRequest({
@@ -378,7 +416,9 @@ describe("magic-link handler — invite authorization gate", () => {
   it("H3. documented duplicate-user code (user_already_exists) is also swallowed", async () => {
     const deps = buildDeps({
       fetchInviteById: vi.fn(async () => goodInvite()),
-      createAuthUser: vi.fn(async () => ({
+      generateMagicLink: vi.fn(async () => ({
+        hashedToken: "hash",
+        userId: "existing-user-1",
         error: { message: "duplicate", code: "user_already_exists" },
       })),
     });
@@ -392,12 +432,15 @@ describe("magic-link handler — invite authorization gate", () => {
     expect(deps.sendEmail).toHaveBeenCalledTimes(1);
   });
 
-  it("H4. false-positive 'does not exist' message with a non-duplicate code aborts (no message heuristics)", async () => {
+  it("H4. non-duplicate generateLink error aborts, records failure, and does NOT leak provider code to the client", async () => {
     // Prior implementation matched /already|registered|exist/i and would
-    // swallow this. Code-based allowlist must NOT.
+    // swallow this. Code-based allowlist must NOT — and the client
+    // response must NOT expose the internal provider code either.
     const deps = buildDeps({
       fetchInviteById: vi.fn(async () => goodInvite()),
-      createAuthUser: vi.fn(async () => ({
+      generateMagicLink: vi.fn(async () => ({
+        hashedToken: null,
+        userId: null,
         error: {
           message: "database instance does not exist",
           code: "internal_server_error",
@@ -412,13 +455,12 @@ describe("magic-link handler — invite authorization gate", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.status).toBe(500);
-    expect(deps.generateMagicLink).not.toHaveBeenCalled();
     expect(deps.sendEmail).not.toHaveBeenCalled();
-    // Original error code is preserved on the response and in the
-    // failure email_send_log metadata.
-    expect((result as { body: { code?: string } }).body.code).toBe(
-      "internal_server_error",
-    );
+    // Provider message and code MUST NOT appear on the client response.
+    const bodyJson = JSON.stringify(result.body);
+    expect(bodyJson).not.toContain("internal_server_error");
+    expect(bodyJson).not.toContain("database instance does not exist");
+    // Failure row IS inserted and carries the provider code + invite audit.
     const failureRow = (
       deps.insertEmailSendLog as unknown as { mock: { calls: unknown[][] } }
     ).mock.calls[0][0] as { metadata?: Record<string, unknown>; status: string };
@@ -430,7 +472,28 @@ describe("magic-link handler — invite authorization gate", () => {
     });
   });
 
-  it("I. login context never accepts inviteId path and never calls createAuthUser", async () => {
+  it("I. login context for an UNKNOWN email returns generic success and generates no link / sends no email", async () => {
+    // Public login must never provision an unknown auth user, and the
+    // response must not enumerate accounts.
+    const deps = buildDeps({
+      lookupExistingAuthUser: vi.fn(async () => null),
+    });
+    const result = await handleMagicLinkRequest({
+      requestUrl: REQ_URL,
+      body: { email: "stranger@example.com", context: "login" },
+      authorizationHeader: null,
+      deps,
+    });
+    expect(result.ok).toBe(true);
+    expect(deps.lookupExistingAuthUser).toHaveBeenCalledTimes(1);
+    expect(deps.getAuthUserFromBearer).not.toHaveBeenCalled();
+    expect(deps.fetchInviteById).not.toHaveBeenCalled();
+    expect(deps.generateMagicLink).not.toHaveBeenCalled();
+    expect(deps.insertEmailSendLog).not.toHaveBeenCalled();
+    expect(deps.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("I2. login context for a KNOWN email proceeds with kind:'magiclink' (never kind:'invite')", async () => {
     const deps = buildDeps();
     const result = await handleMagicLinkRequest({
       requestUrl: REQ_URL,
@@ -441,20 +504,84 @@ describe("magic-link handler — invite authorization gate", () => {
     expect(result.ok).toBe(true);
     expect(deps.getAuthUserFromBearer).not.toHaveBeenCalled();
     expect(deps.fetchInviteById).not.toHaveBeenCalled();
-    expect(deps.createAuthUser).not.toHaveBeenCalled();
+    expect(deps.generateMagicLink).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "magiclink" }),
+    );
     expect(deps.sendEmail).toHaveBeenCalledTimes(1);
   });
 
-  it("J. client_portal context never calls createAuthUser", async () => {
-    const deps = buildDeps();
-    const result = await handleMagicLinkRequest({
+  it("J. client_portal without Bearer / clientAccessId is rejected with no side effects", async () => {
+    const depsNoBearer = buildDeps();
+    const r1 = await handleMagicLinkRequest({
+      requestUrl: REQ_URL,
+      body: clientPortalBody,
+      authorizationHeader: null,
+      deps: depsNoBearer,
+    });
+    expect(r1.status).toBe(401);
+    expectNoSideEffects(depsNoBearer);
+
+    const depsNoId = buildDeps();
+    const r2 = await handleMagicLinkRequest({
       requestUrl: REQ_URL,
       body: { email: "client@example.com", context: "client_portal" },
-      authorizationHeader: null,
+      authorizationHeader: "Bearer good",
+      deps: depsNoId,
+    });
+    expect(r2.ok).toBe(false);
+    expect(r2.status).toBe(400);
+    expectNoSideEffects(depsNoId);
+  });
+
+  it("J2. client_portal with revoked access row returns 409 and performs no side effects", async () => {
+    const deps = buildDeps({
+      fetchClientAccessById: vi.fn(async () =>
+        goodClientAccess({ status: "revoked" }),
+      ),
+    });
+    const result = await handleMagicLinkRequest({
+      requestUrl: REQ_URL,
+      body: clientPortalBody,
+      authorizationHeader: "Bearer good",
+      deps,
+    });
+    expect(result.status).toBe(409);
+    expectNoSideEffects(deps);
+  });
+
+  it("J3. client_portal without client_portal.manage on the project org returns 403 — no side effects", async () => {
+    const deps = buildDeps({
+      fetchClientAccessById: vi.fn(async () => goodClientAccess()),
+      callerHasClientAccessManagement: vi.fn(async () => false),
+    });
+    const result = await handleMagicLinkRequest({
+      requestUrl: REQ_URL,
+      body: clientPortalBody,
+      authorizationHeader: "Bearer good",
+      deps,
+    });
+    expect(result.status).toBe(403);
+    expectNoSideEffects(deps);
+  });
+
+  it("J4. valid client_portal proceeds with kind:'invite', bakes client_access_id into redirectTo, no createUser step", async () => {
+    const deps = buildDeps({
+      fetchClientAccessById: vi.fn(async () => goodClientAccess()),
+    });
+    const result = await handleMagicLinkRequest({
+      requestUrl: REQ_URL,
+      body: clientPortalBody,
+      authorizationHeader: "Bearer good",
       deps,
     });
     expect(result.ok).toBe(true);
-    expect(deps.createAuthUser).not.toHaveBeenCalled();
+    expect(deps.generateMagicLink).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "invite" }),
+    );
+    const linkArgs = (
+      deps.generateMagicLink as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls[0][0] as { redirectTo: string };
+    expect(linkArgs.redirectTo).toContain(`client_access_id=${CLIENT_ACCESS_ID}`);
     expect(deps.sendEmail).toHaveBeenCalledTimes(1);
   });
 
@@ -473,12 +600,34 @@ describe("magic-link handler — invite authorization gate", () => {
     expect(deps.findRecentSend).not.toHaveBeenCalled();
   });
 
-  it("L. non-duplicate createUser error aborts before generateLink/email", async () => {
+  it("K2. recent-send dedupe key discriminates on the exact invite id (different invite is NOT suppressed)", async () => {
+    // findRecentSend receives a dedupeKey that includes the target
+    // invite id, so a link for invite B cannot be suppressed by a
+    // recent send for invite A.
+    const seen: string[] = [];
     const deps = buildDeps({
       fetchInviteById: vi.fn(async () => goodInvite()),
-      createAuthUser: vi.fn(async () => ({
-        error: { message: "database is on fire", code: "internal_server_error" },
-      })),
+      findRecentSend: vi.fn(async ({ dedupeKey }) => {
+        seen.push(dedupeKey);
+        return null;
+      }),
+    });
+    await handleMagicLinkRequest({
+      requestUrl: REQ_URL,
+      body: inviteBody,
+      authorizationHeader: "Bearer good",
+      deps,
+    });
+    expect(seen[0]).toContain(INVITE_ID);
+    expect(seen[0]).toContain("company_invite");
+  });
+
+  it("L. send failure updates the ORIGINAL pending row to failed (never inserts a second pending row)", async () => {
+    const deps = buildDeps({
+      fetchInviteById: vi.fn(async () => goodInvite()),
+      sendEmail: vi.fn(async () => {
+        throw new Error("smtp exploded");
+      }),
     });
     const result = await handleMagicLinkRequest({
       requestUrl: REQ_URL,
@@ -487,8 +636,15 @@ describe("magic-link handler — invite authorization gate", () => {
       deps,
     });
     expect(result.ok).toBe(false);
-    expect(deps.generateMagicLink).not.toHaveBeenCalled();
-    expect(deps.sendEmail).not.toHaveBeenCalled();
+    // Exactly one pending row inserted, then flipped to failed via update.
+    expect(deps.insertEmailSendLog).toHaveBeenCalledTimes(1);
+    const pendingRow = (
+      deps.insertEmailSendLog as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls[0][0] as { status: string };
+    expect(pendingRow.status).toBe("pending");
+    expect(deps.updateEmailSendLogFailed).toHaveBeenCalledTimes(1);
+    // Provider message must NOT leak to the client body.
+    expect(JSON.stringify(result.body)).not.toContain("smtp exploded");
   });
 
   it("M. bearer token never appears in the response body or logs", async () => {

@@ -55,16 +55,20 @@ describe("magic-link invite-context containment — API route + handler", () => 
   it("requires an authenticated bearer session before any provisioning", () => {
     expect(handler).toContain("You must be signed in to send an invite.");
     expect(handler).toContain("getAuthUserFromBearer");
-    // The invite gate MUST run BEFORE createUser / generateLink / email code.
-    const gateIdx = handler.indexOf("Invite-context authorization gate");
-    const createUserIdx = handler.indexOf("createAuthUser(");
+    // generateMagicLink IS the sole creation boundary in the new
+    // contract; assert it and every downstream side effect appear
+    // AFTER the invite authorization gate.
+    const gateIdx = handler.indexOf("Invite gate");
     const generateLinkIdx = handler.indexOf("generateMagicLink(");
     const emailLogIdx = handler.indexOf("insertEmailSendLog(");
     const sendEmailIdx = handler.indexOf("sendEmail(");
     expect(gateIdx).toBeGreaterThan(0);
-    for (const idx of [createUserIdx, generateLinkIdx, emailLogIdx, sendEmailIdx]) {
+    for (const idx of [generateLinkIdx, emailLogIdx, sendEmailIdx]) {
       expect(idx).toBeGreaterThan(gateIdx);
     }
+    // The handler must not carry a separate createAuthUser seam —
+    // generateLink type:"invite" is the auth-user creation boundary.
+    expect(handler).not.toMatch(/\bcreateAuthUser\b/);
   });
 
   it("looks up the exact invite row and verifies email/status/expiry", () => {
