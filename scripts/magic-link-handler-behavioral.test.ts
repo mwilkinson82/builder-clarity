@@ -611,9 +611,10 @@ describe("magic-link handler — invite authorization gate", () => {
     expectNoSideEffects(deps);
   });
 
-  it("J4. valid client_portal proceeds with kind:'invite', bakes client_access_id into redirectTo, no createUser step", async () => {
+  it("J4. valid client_portal proceeds with kind:'magiclink' (never invite), bakes client_access_id into redirectTo", async () => {
     const deps = buildDeps({
       fetchClientAccessById: vi.fn(async () => goodClientAccess()),
+      lookupExistingAuthUser: vi.fn(async () => ({ id: "existing-client-1" })),
     });
     const result = await handleMagicLinkRequest({
       requestUrl: REQ_URL,
@@ -622,14 +623,34 @@ describe("magic-link handler — invite authorization gate", () => {
       deps,
     });
     expect(result.ok).toBe(true);
+    expect(deps.lookupExistingAuthUser).toHaveBeenCalledWith("client@example.com");
     expect(deps.generateMagicLink).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "invite" }),
+      expect.objectContaining({ kind: "magiclink" }),
     );
     const linkArgs = (
       deps.generateMagicLink as unknown as { mock: { calls: unknown[][] } }
     ).mock.calls[0][0] as { redirectTo: string };
     expect(linkArgs.redirectTo).toContain(`client_access_id=${CLIENT_ACCESS_ID}`);
     expect(deps.sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("J5. client_portal for an UNKNOWN email returns 409 and performs no side effects (never creates users)", async () => {
+    const deps = buildDeps({
+      fetchClientAccessById: vi.fn(async () => goodClientAccess()),
+      lookupExistingAuthUser: vi.fn(async () => null),
+    });
+    const result = await handleMagicLinkRequest({
+      requestUrl: REQ_URL,
+      body: clientPortalBody,
+      authorizationHeader: "Bearer good",
+      deps,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(409);
+    expect(deps.lookupExistingAuthUser).toHaveBeenCalledWith("client@example.com");
+    expect(deps.generateMagicLink).not.toHaveBeenCalled();
+    expect(deps.sendEmail).not.toHaveBeenCalled();
+    expect(deps.insertEmailSendLog).not.toHaveBeenCalled();
   });
 
   it("K. recent-send shortcut only runs AFTER the invite gate passes", async () => {
