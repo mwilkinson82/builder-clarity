@@ -1214,6 +1214,14 @@ function InviteByMagicLinkButton() {
     );
   }, [team]);
 
+  // P0 team-role containment: only current Owners or Overwatch super
+  // admins may pick "Owner". Non-owner team managers see a role list
+  // without Owner and cannot edit an Owner's row or their own row.
+  const canAssignOwner = Boolean(team?.isSuperAdmin) || team?.currentUserRole === "owner";
+  const visibleRoleOptions = canAssignOwner
+    ? roleOptions
+    : roleOptions.filter((option) => option.value !== "owner");
+
   const refreshTeam = async () => {
     await Promise.all([
       qc.invalidateQueries({ queryKey: ["team-workspace"] }),
