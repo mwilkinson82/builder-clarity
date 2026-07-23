@@ -233,7 +233,8 @@ function AuthCallbackPage() {
         }
 
         // Exact client-access finalization: identical guarantees for
-        // /n/:projectId path. On success, route to the exact project.
+        // /client/projects/:projectId path. On success, route to the
+        // exact project.
         let clientTarget: string | null = null;
         if (clientAccessIdRef.current) {
           const res = await finalizeExactClientAccess(clientAccessIdRef.current);
@@ -241,7 +242,7 @@ function AuthCallbackPage() {
             await failToRecovery(res.reason);
             return;
           }
-          clientTarget = `/n/${res.projectId}`;
+          clientTarget = `/client/projects/${res.projectId}`;
         }
 
         consumedRef.current = true;
@@ -249,7 +250,7 @@ function AuthCallbackPage() {
         void notifyLogin(sessionFromUrl);
         navigate({ to: (clientTarget ?? next) as never, replace: true });
       } catch (err) {
-        console.error(err);
+        // Do not log raw errors (may include tokens / provider text).
         // Fail closed. No getSession() rescue: a stale prior session
         // must NEVER convert a bad/used link into a successful sign-in.
         await failToRecovery(callbackFailureMessage(err));
