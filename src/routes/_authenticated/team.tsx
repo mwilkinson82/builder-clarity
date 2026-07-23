@@ -967,6 +967,7 @@ function TeamPage() {
         email,
         next: `/client/projects/${projectId}`,
         context: "client_portal",
+        clientAccessId: access.id,
       });
       await updateClientAccess({
         data: { accessId: access.id, last_sent_at: new Date().toISOString() },
@@ -1028,6 +1029,7 @@ function TeamPage() {
         email: access.email,
         next: `/client/projects/${access.project_id}`,
         context: "client_portal",
+        clientAccessId: access.id,
       });
       await updateClientAccess({
         data: { accessId: access.id, last_sent_at: new Date().toISOString() },

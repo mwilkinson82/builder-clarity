@@ -31,7 +31,7 @@ export const Route = createFileRoute("/api/auth/magic-link")({
               .select("id, organization_id, email, status, expires_at, invited_by, role")
               .eq("id", inviteId)
               .maybeSingle();
-            if (error) throw error;
+            if (error) throw new Error(error.message);
             return data
               ? {
                   id: data.id as string,
@@ -46,7 +46,6 @@ export const Route = createFileRoute("/api/auth/magic-link")({
           },
 
           callerHasManageTeam: async ({ bearer, organizationId }) => {
-            // RLS-scoped authed client — the RPC runs as the caller's identity.
             const authedForCap = createClient(
               process.env.SUPABASE_URL!,
               process.env.SUPABASE_PUBLISHABLE_KEY!,
@@ -67,66 +66,149 @@ export const Route = createFileRoute("/api/auth/magic-link")({
             return Boolean(data);
           },
 
-          findRecentSend: async (email, label, sinceIso) => {
-            const { data } = await supabaseAdmin
+          fetchClientAccessById: async (accessId) => {
+            // Join to projects to resolve the access row's owning
+            // organization for the capability check. The service-role
+            // client bypasses RLS; it's used only after the handler
+            // has proven the caller is authenticated via Bearer.
+            const { data, error } = await supabaseAdmin
+              .from("project_client_access")
+              .select("id, project_id, email, status, projects!inner(organization_id)")
+              .eq("id", accessId)
+              .maybeSingle();
+            if (error) throw new Error(error.message);
+            if (!data) return null;
+            const projectsRel = (data as { projects?: { organization_id?: string } | null }).projects;
+            const organizationId = projectsRel?.organization_id ?? null;
+            if (!organizationId) return null;
+            return {
+              id: data.id as string,
+              project_id: data.project_id as string,
+              organization_id: organizationId as string,
+              email: data.email as string,
+              status: data.status as string,
+            };
+          },
+
+          callerHasClientAccessManagement: async ({ bearer, organizationId }) => {
+            const authedForCap = createClient(
+              process.env.SUPABASE_URL!,
+              process.env.SUPABASE_PUBLISHABLE_KEY!,
+              {
+                global: { headers: { Authorization: `Bearer ${bearer}` } },
+                auth: {
+                  storage: undefined,
+                  persistSession: false,
+                  autoRefreshToken: false,
+                },
+              },
+            );
+            const { data, error } = await authedForCap.rpc("has_org_capability", {
+              p_org_id: organizationId,
+              p_capability: "client_portal.manage",
+            });
+            if (error) throw new Error(error.message);
+            return Boolean(data);
+          },
+
+          lookupExistingAuthUser: async (email) => {
+            // Fail-closed: this MUST run for the public `login` context
+            // before any generateLink call. auth.admin.listUsers filters
+            // by email server-side; a match returns the user, no match
+            // returns an empty page.
+            const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+              page: 1,
+              perPage: 1,
+              // @ts-expect-error - filter param is supported by GoTrue admin API
+              email,
+            });
+            if (error) throw new Error(error.message);
+            const found = data?.users?.find(
+              (u) => (u.email ?? "").toLowerCase() === email.toLowerCase(),
+            );
+            return found ? { id: found.id } : null;
+          },
+
+          findRecentSend: async ({ email, label, dedupeKey, sinceIso }) => {
+            // Dedupe identity includes exact context+id via the metadata
+            // dedupe_key, so a different invite/client access can never
+            // suppress each other's send.
+            const { data, error } = await supabaseAdmin
               .from("email_send_log")
-              .select("id,status")
+              .select("id,status,metadata")
               .eq("recipient_email", email)
               .eq("template_name", label)
               .in("status", ["pending", "sent"])
               .gte("created_at", sinceIso)
-              .limit(1)
-              .maybeSingle();
-            return data ? { id: data.id as string, status: data.status as string } : null;
-          },
-
-          createAuthUser: async (email) => {
-            const { error } = await supabaseAdmin.auth.admin.createUser({
-              email,
-              email_confirm: true,
+              .order("created_at", { ascending: false })
+              .limit(20);
+            if (error) throw new Error(error.message);
+            const match = (data ?? []).find((row) => {
+              const md = (row as { metadata?: { dedupe_key?: string } | null }).metadata;
+              return md?.dedupe_key === dedupeKey;
             });
-            // Preserve Supabase's documented .code alongside the message
-            // so the handler can allowlist duplicate-user codes without
-            // relying on message-shape heuristics.
-            return {
-              error: error
-                ? {
-                    message: error.message,
-                    code: (error as { code?: string }).code,
-                  }
-                : null,
-            };
+            return match
+              ? { id: match.id as string, status: match.status as string }
+              : null;
           },
 
-          generateMagicLink: async ({ email, redirectTo }) => {
+          generateMagicLink: async ({ email, redirectTo, kind }) => {
             const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-              type: "magiclink",
+              type: kind === "invite" ? "invite" : "magiclink",
               email,
               options: { redirectTo },
             });
-            return {
-              hashedToken: (data.properties?.hashed_token as string | undefined) ?? null,
-              error,
-            };
+            if (error) {
+              return {
+                hashedToken: null,
+                userId: null,
+                error: { message: error.message, code: (error as { code?: string }).code },
+              };
+            }
+            const hashedToken =
+              (data?.properties?.hashed_token as string | undefined) ?? null;
+            const userId = (data?.user?.id as string | undefined) ?? null;
+            return { hashedToken, userId, error: null };
           },
 
           insertEmailSendLog: async (row) => {
-            await supabaseAdmin.from("email_send_log").insert(row as never);
+            const { error } = await supabaseAdmin
+              .from("email_send_log")
+              .insert(row as never);
+            if (error) throw new Error(error.message);
           },
 
-          updateEmailSendLogStatus: async (messageId, status) => {
-            await supabaseAdmin
+          updateEmailSendLogStatus: async (messageId, status, metadata) => {
+            const { error } = await supabaseAdmin
               .from("email_send_log")
-              .update({ status })
+              .update({ status, metadata: metadata as never })
               .eq("message_id", messageId);
+            if (error) throw new Error(error.message);
+          },
+
+          updateEmailSendLogFailed: async (messageId, errorMessage, metadata) => {
+            const { error } = await supabaseAdmin
+              .from("email_send_log")
+              .update({
+                status: "failed",
+                error_message: errorMessage,
+                metadata: metadata as never,
+              })
+              .eq("message_id", messageId);
+            if (error) throw new Error(error.message);
           },
 
           sendEmail: async (payload) => {
             const apiKey = process.env.LOVABLE_API_KEY!;
-            await sendLovableEmail(
+            const result = (await sendLovableEmail(
               payload as Parameters<typeof sendLovableEmail>[0],
               { apiKey, sendUrl: process.env.LOVABLE_SEND_URL },
-            );
+            )) as { success?: boolean; error?: { message?: string; code?: string } } | undefined;
+            if (result && result.success === false) {
+              const err = new Error(result.error?.message ?? "Email provider send failed");
+              (err as Error & { code?: string }).code = result.error?.code;
+              throw err;
+            }
           },
 
           logInfo: (msg, meta) => console.log(msg, meta),
