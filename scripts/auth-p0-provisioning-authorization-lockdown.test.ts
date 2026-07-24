@@ -333,4 +333,3 @@ describe("P0 provisioning and authorization forward migrations", () => {
     expect(harness).toContain("'30 seconds' IN pg_catalog.lower(v_reservation)");
   });
 });
-
