@@ -141,6 +141,7 @@ schema gate is green. Never run the new code against the old schema.
    - `20260724001300_auth_magic_link_send_reservation.sql`
    - `20260724001400_auth_p0_sandbox_execute_revocation.sql`
    - `20260724001500_auth_p0_final_connector_acl_seal.sql`
+   - `20260724001600_auth_p0_runtime_sql_expression_repair.sql`
 4. **Run the read-only Owner-seat preflight before any write.** Through the
    Lovable maintenance connection, run
    `supabase/verification/20260724000900_auth_p0_owner_seat_preflight.sql`.
@@ -153,10 +154,10 @@ schema gate is green. Never run the new code against the old schema.
    disposition. Never bulk-demote or infer ownership by email.
 5. **Apply the first seven database migrations one at a time through Lovable.**
    Apply `20260724000000` through `20260724001400` in the order above and capture
-   each Lovable migration result and ledger entry. Reserve `20260724001500` for
-   the final database operation after the rollback harness and read-only
-   contract audit. Stop on the first error. Do not publish code while any
-   migration is missing, partially reported, or unverifiable.
+   each Lovable migration result and ledger entry. Reserve `20260724001500` and
+   `20260724001600` for the final sealing sequence after the rollback harness
+   and read-only contract audit. Stop on the first error. Do not publish code
+   while any migration is missing, partially reported, or unverifiable.
 6. **Run the rollback-only proof harness.** Through the same maintenance
    connection, run
    `supabase/verification/20260724001000_auth_p0_transaction_rollback_harness.sql`.
@@ -181,19 +182,22 @@ schema gate is green. Never run the new code against the old schema.
      `service_role`;
    - project `owner_id` is attribution, not authorization, and project creation
      grants only the scoped project-manager role.
-8. **Apply the final connector ACL seal and stop querying the database.** Apply
-   `20260724001500_auth_p0_final_connector_acl_seal.sql` once through Lovable as
-   the last database operation. Require its in-transaction `$seal_and_verify$`
-   block to prove that `sandbox_exec` retains no direct or inherited `EXECUTE`
-   on the complete 28-function Auth/authorization surface. Do not call the
-   Lovable database-query connector after this migration; doing so recreates the
-   operational grants that the seal removes.
+8. **Apply the final repair-and-seal sequence and stop querying the database.**
+   Apply `20260724001500_auth_p0_final_connector_acl_seal.sql`, immediately
+   followed by
+   `20260724001600_auth_p0_runtime_sql_expression_repair.sql`, once each through
+   Lovable. Do not query between them. The runtime repair must be the last
+   database operation: it repairs the five deployed SECURITY DEFINER bodies,
+   reasserts their exact grants, and re-seals the complete 28-function
+   Auth/authorization surface. Require its in-transaction `$seal_and_verify$`
+   block to prove that `sandbox_exec` retains no direct or inherited `EXECUTE`.
+   Do not call the Lovable database-query connector afterward; doing so
+   recreates the operational grants that the seal removes.
 9. **Merge and publish the exact code SHA through Lovable.** Only after steps
    1–8 are green, let Lovable merge the reviewed code and publish it. Record the
    Lovable commit, build result, published SHA, and migration state separately.
 10. **Run production sign-in canaries against both Lovable domains.** Use
     resettable accounts and prove:
-
     - a known existing but unconfirmed Auth identity receives a MagicLink rather
       than being recreated or reinvited;
     - a genuinely new exact invite lands in the intended organization, role, and

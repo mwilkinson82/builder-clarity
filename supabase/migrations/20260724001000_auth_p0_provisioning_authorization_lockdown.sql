@@ -53,9 +53,9 @@ BEGIN
   );
 
   SELECT
-    pg_catalog.coalesce(u.email, ''),
-    pg_catalog.coalesce(
-      pg_catalog.nullif(p_full_name, ''),
+    coalesce(u.email, ''),
+    coalesce(
+      nullif(p_full_name, ''),
       u.raw_user_meta_data ->> 'full_name',
       u.raw_user_meta_data ->> 'name',
       ''
@@ -69,7 +69,7 @@ BEGIN
 
   -- Never trust a service caller to transfer an account by supplying another
   -- email. The canonical auth.users email is the profile identity.
-  IF pg_catalog.btrim(pg_catalog.coalesce(p_email, '')) <> ''
+  IF pg_catalog.btrim(coalesce(p_email, '')) <> ''
     AND pg_catalog.lower(pg_catalog.btrim(p_email))
       <> pg_catalog.lower(pg_catalog.btrim(v_auth_email)) THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'Account identity does not match.';
@@ -79,8 +79,8 @@ BEGIN
   VALUES (p_user_id, v_auth_email, v_auth_name, v_now)
   ON CONFLICT (id) DO UPDATE SET
     email = EXCLUDED.email,
-    full_name = pg_catalog.coalesce(
-      pg_catalog.nullif(public.profiles.full_name, ''),
+    full_name = coalesce(
+      nullif(public.profiles.full_name, ''),
       EXCLUDED.full_name
     ),
     updated_at = EXCLUDED.updated_at;
@@ -139,7 +139,7 @@ BEGIN
 
   SELECT
     u.email,
-    pg_catalog.coalesce(
+    coalesce(
       u.raw_user_meta_data ->> 'full_name',
       u.raw_user_meta_data ->> 'name',
       ''
@@ -185,7 +185,7 @@ BEGIN
   SELECT u.email INTO v_caller_email
   FROM auth.users AS u
   WHERE u.id = v_caller;
-  IF NOT FOUND OR pg_catalog.btrim(pg_catalog.coalesce(v_caller_email, '')) = '' THEN
+  IF NOT FOUND OR pg_catalog.btrim(coalesce(v_caller_email, '')) = '' THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'A verified email is required.';
   END IF;
 
@@ -230,8 +230,8 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'This company seat is disabled.';
   END IF;
 
-  v_invite_caps := pg_catalog.coalesce(
-    pg_catalog.nullif(v_invite.capabilities, '{}'::jsonb), public.role_preset_capabilities(v_invite.role)
+  v_invite_caps := coalesce(
+    nullif(v_invite.capabilities, '{}'::jsonb), public.role_preset_capabilities(v_invite.role)
   );
   IF pg_catalog.jsonb_typeof(v_invite_caps) <> 'object'
     OR EXISTS (
@@ -352,7 +352,7 @@ BEGIN
   SELECT u.email INTO v_caller_email
   FROM auth.users AS u
   WHERE u.id = v_caller;
-  IF NOT FOUND OR pg_catalog.btrim(pg_catalog.coalesce(v_caller_email, '')) = '' THEN
+  IF NOT FOUND OR pg_catalog.btrim(coalesce(v_caller_email, '')) = '' THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'A verified email is required.';
   END IF;
 
@@ -380,7 +380,7 @@ BEGIN
     AND (v_access.accepted_by IS NULL OR v_access.accepted_by = v_caller) THEN
     UPDATE public.project_client_access
     SET accepted_by = v_caller,
-        accepted_at = pg_catalog.coalesce(accepted_at, v_now),
+        accepted_at = coalesce(accepted_at, v_now),
         updated_at = v_now
     WHERE id = v_access.id
       AND status = 'active'
@@ -566,7 +566,7 @@ BEGIN
   IF NEW.organization_id IS NULL THEN
     SELECT
       u.email,
-      pg_catalog.coalesce(
+      coalesce(
         u.raw_user_meta_data ->> 'full_name',
         u.raw_user_meta_data ->> 'name',
         ''
