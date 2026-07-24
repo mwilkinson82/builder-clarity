@@ -164,6 +164,12 @@ describe("P0 provisioning and authorization forward migrations", () => {
     );
     expect(core).toContain("DROP POLICY IF EXISTS projects_owner_all");
     expect(core).toContain("DROP POLICY IF EXISTS daily_reports_storage_delete");
+    expect(core).toContain("IF pg_catalog.to_regclass('public.holds') IS NOT NULL");
+    expect(core).toContain('DROP POLICY IF EXISTS "holds_owner_via_project" ON public.holds');
+    for (const action of ["select", "insert", "update", "delete"]) {
+      expect(core).toContain(`DROP POLICY IF EXISTS holds_team_${action} ON public.holds`);
+      expect(core).toContain(`CREATE POLICY holds_team_${action} ON public.holds`);
+    }
   });
 
   it("makes ordinary membership authority changes RPC-only", () => {
