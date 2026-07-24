@@ -42,7 +42,6 @@ describe("P0 provisioning and authorization forward migrations", () => {
       expect(readFileSync(resolve(process.cwd(), path), "utf8").split("\n").length).toBeLessThan(
         850,
       );
-
     }
   });
 
