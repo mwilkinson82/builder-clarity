@@ -10899,6 +10899,13 @@ export type Database = {
         Args: { p_operation_key: string; p_project_id: string }
         Returns: Json
       }
+      lookup_auth_user_by_email_exact: {
+        Args: { p_email: string }
+        Returns: {
+          email_confirmed: boolean
+          user_id: string
+        }[]
+      }
       mark_all_notifications_read: {
         Args: { p_organization_id?: string }
         Returns: number
@@ -11321,6 +11328,22 @@ export type Database = {
       replace_subcontract_payment_allocations_atomic: {
         Args: { p_payment_id: string; p_rows?: Json }
         Returns: Json
+      }
+      reserve_auth_magic_link_send: {
+        Args: {
+          p_dedupe_key: string
+          p_message_id: string
+          p_metadata?: Json
+          p_recipient_email: string
+          p_template_name: string
+        }
+        Returns: {
+          created_at: string
+          id: string
+          message_id: string
+          reserved: boolean
+          status: string
+        }[]
       }
       role_preset_capabilities: {
         Args: { p_role: Database["public"]["Enums"]["account_role"] }
