@@ -1,5 +1,6 @@
 -- NOT EXECUTED by Codex.
--- Manual maintenance-window verification for migrations:
+-- Manual maintenance-window verification for the Auth P0 migration sequence:
+--   20260724000000_account_provisioning_history_containment.sql
 --   20260724000900_auth_p0_owner_seat_preflight.sql
 --   20260724001000_auth_p0_provisioning_authorization_lockdown.sql
 --   20260724001100_auth_p0_client_active_binding_lockdown.sql
@@ -7,10 +8,12 @@
 --   20260724001300_auth_magic_link_send_reservation.sql
 --   20260724001400_auth_p0_sandbox_execute_revocation.sql
 --   20260724001500_auth_p0_final_connector_acl_seal.sql
+--   20260724001600_auth_p0_runtime_sql_expression_repair.sql
 --
 -- Run only through the approved Lovable/Supabase maintenance connection after
--- all eight migrations report applied. This file is read-only and wrapped in a
--- transaction that always rolls back.
+-- the first seven migrations (00000 through 01400) report applied and before
+-- the final 01500/01600 repair-and-seal sequence. This file is read-only and
+-- wrapped in a transaction that always rolls back.
 --
 -- Operator checklist (record results beside the release SHA):
 -- [ ] Before applying any pending migration, run the read-only 20260724000900

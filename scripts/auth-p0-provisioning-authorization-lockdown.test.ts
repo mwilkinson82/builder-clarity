@@ -10,12 +10,28 @@ const migrationPaths = [
   "supabase/migrations/20260724001300_auth_magic_link_send_reservation.sql",
   "supabase/migrations/20260724001400_auth_p0_sandbox_execute_revocation.sql",
   "supabase/migrations/20260724001500_auth_p0_final_connector_acl_seal.sql",
+  "supabase/migrations/20260724001600_auth_p0_runtime_sql_expression_repair.sql",
 ] as const;
 
-const [ownerPreflight, core, client, authority, magicLink, sandboxRevocation, finalConnectorSeal] =
-  migrationPaths.map((path) => readFileSync(resolve(process.cwd(), path), "utf8"));
+const [
+  ownerPreflight,
+  core,
+  client,
+  authority,
+  magicLink,
+  sandboxRevocation,
+  finalConnectorSeal,
+  runtimeRepair,
+] = migrationPaths.map((path) => readFileSync(resolve(process.cwd(), path), "utf8"));
 const ownerPreflightHarness = readFileSync(
   resolve(process.cwd(), "supabase/verification/20260724000900_auth_p0_owner_seat_preflight.sql"),
+  "utf8",
+);
+const appliedCore = readFileSync(
+  resolve(
+    process.cwd(),
+    "supabase/migrations/20260724130414_20abd553-d59a-4199-a972-c18261b3fe5d.sql",
+  ),
   "utf8",
 );
 const harness = readFileSync(
@@ -47,12 +63,49 @@ describe("P0 provisioning and authorization forward migrations", () => {
   });
 
   it("does not schema-qualify SQL-only COALESCE syntax", () => {
-    for (const source of [client, authority, magicLink]) {
+    for (const source of [core, appliedCore, client, authority, magicLink]) {
       expect(source).not.toContain("pg_catalog.coalesce");
+      expect(source).not.toContain("pg_catalog.nullif");
     }
+    expect(core).toContain("full_name = coalesce(");
+    expect(core).toContain("nullif(public.profiles.full_name, '')");
     expect(client).toContain("accepted_at = coalesce(");
     expect(authority).toContain("v_next_role := coalesce(p_role, v_target.role)");
     expect(magicLink).toContain("coalesce(p_metadata, '{}'::jsonb)");
+  });
+
+  it("repairs every deployed runtime body and re-seals the connector role", () => {
+    expect(runtimeRepair).toContain("pg_catalog.pg_get_functiondef(v_function)");
+    expect(runtimeRepair).toContain("'pg_catalog.coalesce'");
+    expect(runtimeRepair).toContain("'coalesce'");
+    expect(runtimeRepair).toContain("'pg_catalog.nullif'");
+    expect(runtimeRepair).toContain("'nullif'");
+    expect(runtimeRepair).toContain("Runtime SQL expression repair did not converge");
+
+    for (const signature of [
+      "public.ensure_user_account(uuid,text,text)",
+      "public.ensure_current_user_account()",
+      "public.finalize_invite_acceptance(uuid)",
+      "public.finalize_client_access_acceptance(uuid)",
+      "public.tg_projects_ensure_organization()",
+    ]) {
+      expect(runtimeRepair).toContain(`'${signature}'::regprocedure`);
+    }
+
+    expect(runtimeRepair).toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.ensure_current_user_account\(\)[\s\S]*?TO authenticated, service_role;/,
+    );
+    expect(runtimeRepair).toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.ensure_user_account\(uuid, text, text\)[\s\S]*?TO service_role;/,
+    );
+    expect(runtimeRepair).toContain("'REVOKE ALL ON FUNCTION %s FROM sandbox_exec'");
+    expect(runtimeRepair).toContain(
+      "'public.reserve_auth_magic_link_send(text,text,text,text,jsonb)'::regprocedure",
+    );
+    expect(runtimeRepair).not.toContain(
+      "'public.reserve_auth_magic_link_send(text,text,text,text,text,jsonb)'::regprocedure",
+    );
+    expect(runtimeRepair).not.toMatch(/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+public\./i);
   });
 
   it("fails before cutover when a non-Owner invite still holds active Owner authority", () => {
@@ -243,6 +296,8 @@ describe("P0 provisioning and authorization forward migrations", () => {
     expect(sandboxRevocation).toContain("pg_catalog.has_function_privilege(");
     expect(finalConnectorSeal).toContain("'REVOKE ALL ON FUNCTION %s FROM sandbox_exec'");
     expect(finalConnectorSeal).toContain("Do not call Lovable");
+    expect(runtimeRepair).toContain("'REVOKE ALL ON FUNCTION %s FROM sandbox_exec'");
+    expect(runtimeRepair).toContain("Do not call Lovable");
     for (const signature of [
       "public.ensure_user_account(uuid,text,text)",
       "public.finalize_invite_acceptance(uuid)",
@@ -254,6 +309,7 @@ describe("P0 provisioning and authorization forward migrations", () => {
     ]) {
       expect(sandboxRevocation).toContain(`'${signature}'::regprocedure`);
       expect(finalConnectorSeal).toContain(`'${signature}'::regprocedure`);
+      expect(runtimeRepair).toContain(`'${signature}'::regprocedure`);
     }
   });
 
@@ -341,8 +397,10 @@ describe("P0 provisioning and authorization forward migrations", () => {
     expect(harness).toContain("legacy public.finalize_client_access(uuid) survived 01000");
     expect(harness).toContain("a public.finalize_client_access overload remains after 01000");
     expect(harness).toContain("to_regprocedure('public.finalize_client_access(uuid)')");
-    expect(harness).toContain("all eight migrations report applied");
-    expect(harness).not.toContain("all seven migrations report applied");
+    expect(harness).toContain("first seven migrations (00000 through 01400) report applied");
+    expect(harness).toContain("before");
+    expect(harness).toContain("final 01500/01600 repair-and-seal sequence");
+    expect(harness).not.toContain("all eight migrations report applied");
     expect(harness).toMatch(/^ROLLBACK;/m);
   });
 
