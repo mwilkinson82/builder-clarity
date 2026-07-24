@@ -307,12 +307,8 @@ describe("P0 provisioning and authorization forward migrations", () => {
     // Harness must assert the legacy regprocedure is absent and no overload
     // remains, and must still be rollback-only.
     expect(harness).toContain("legacy public.finalize_client_access(uuid) survived 01000");
-    expect(harness).toContain(
-      "a public.finalize_client_access overload remains after 01000",
-    );
-    expect(harness).toContain(
-      "to_regprocedure('public.finalize_client_access(uuid)')",
-    );
+    expect(harness).toContain("a public.finalize_client_access overload remains after 01000");
+    expect(harness).toContain("to_regprocedure('public.finalize_client_access(uuid)')");
     expect(harness).toContain("all six migrations report applied");
     expect(harness).not.toContain("all five migrations report applied");
     expect(harness).toMatch(/^ROLLBACK;/m);
