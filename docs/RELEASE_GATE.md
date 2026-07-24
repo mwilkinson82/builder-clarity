@@ -114,10 +114,11 @@ customer gesture against the exact production DOM target.
 
 ## 6. Sign-In P0 maintenance window checklist
 
-This cutover is **UNAPPLIED** until Marshall opens the overnight maintenance
-window. Database application, source merge, and production publication must all
-run through the Lovable Interconnector. Do not use local `psql`, Supabase CLI,
-Vercel, or a direct GitHub merge as a substitute.
+Treat this cutover as **incomplete** until the maintenance-window sequence below
+has finished and its evidence has been captured. Database application, source
+merge, and production publication must all run through the Lovable
+Interconnector. Do not use local `psql`, Supabase CLI, Vercel, or a direct GitHub
+merge as a substitute.
 
 The code release depends on the new finalizer, authority, lookup, and reservation
 RPCs. Apply and verify the database first; publish the code only after the
@@ -138,6 +139,8 @@ schema gate is green. Never run the new code against the old schema.
    - `20260724001100_auth_p0_client_active_binding_lockdown.sql`
    - `20260724001200_auth_p0_authority_mutation_guards.sql`
    - `20260724001300_auth_magic_link_send_reservation.sql`
+   - `20260724001400_auth_p0_sandbox_execute_revocation.sql`
+   - `20260724001500_auth_p0_final_connector_acl_seal.sql`
 4. **Run the read-only Owner-seat preflight before any write.** Through the
    Lovable maintenance connection, run
    `supabase/verification/20260724000900_auth_p0_owner_seat_preflight.sql`.
@@ -148,16 +151,22 @@ schema gate is green. Never run the new code against the old schema.
    If any row is unresolved, **stop**. Rerun until the exact non-Owner-invite
    candidate result is zero and every unmatched-review row has an approved
    disposition. Never bulk-demote or infer ownership by email.
-5. **Apply database migrations one at a time through Lovable.** Apply the six
-   files in the order above and capture each Lovable migration result and ledger
-   entry. Stop on the first error. Do not publish code while any migration is
-   missing, partially reported, or unverifiable.
+5. **Apply the first seven database migrations one at a time through Lovable.**
+   Apply `20260724000000` through `20260724001400` in the order above and capture
+   each Lovable migration result and ledger entry. Reserve `20260724001500` for
+   the final database operation after the rollback harness and read-only
+   contract audit. Stop on the first error. Do not publish code while any
+   migration is missing, partially reported, or unverifiable.
 6. **Run the rollback-only proof harness.** Through the same maintenance
    connection, run
    `supabase/verification/20260724001000_auth_p0_transaction_rollback_harness.sql`.
    Require every assertion to pass and the final transaction to `ROLLBACK`.
-   Record the output; the harness must never leave canary state behind.
-7. **Verify database contracts before publication.** At minimum, prove:
+   Record the output; the harness must never leave canary state behind. The
+   Lovable read-only database connector can restore its `sandbox_exec` grants
+   after a query completes, so this harness is deliberately run before the final
+   connector ACL seal.
+7. **Verify database contracts before the final connector seal.** At minimum,
+   prove:
    - both Auth-user provisioning triggers are absent;
    - ordinary login cannot create an organization, Owner seat, or accept an
      invite;
@@ -172,28 +181,37 @@ schema gate is green. Never run the new code against the old schema.
      `service_role`;
    - project `owner_id` is attribution, not authorization, and project creation
      grants only the scoped project-manager role.
-8. **Merge and publish the exact code SHA through Lovable.** Only after steps
-   1–7 are green, let Lovable merge the reviewed code and publish it. Record the
+8. **Apply the final connector ACL seal and stop querying the database.** Apply
+   `20260724001500_auth_p0_final_connector_acl_seal.sql` once through Lovable as
+   the last database operation. Require its in-transaction `$seal_and_verify$`
+   block to prove that `sandbox_exec` retains no direct or inherited `EXECUTE`
+   on the complete 28-function Auth/authorization surface. Do not call the
+   Lovable database-query connector after this migration; doing so recreates the
+   operational grants that the seal removes.
+9. **Merge and publish the exact code SHA through Lovable.** Only after steps
+   1–8 are green, let Lovable merge the reviewed code and publish it. Record the
    Lovable commit, build result, published SHA, and migration state separately.
-9. **Run production sign-in canaries against both Lovable domains.** Use
-   resettable accounts and prove:
-   - a known existing but unconfirmed Auth identity receives a MagicLink rather
-     than being recreated or reinvited;
-   - a genuinely new exact invite lands in the intended organization, role, and
-     default organization; a second pending invite for the same email is
-     untouched;
-   - repeat login, refresh, expired link, and already-used link show a stable
-     recovery path without a redirect/query loop or stale-session rescue;
-   - a disabled-only seat reaches "No active company access" and creates no
-     organization or Owner seat;
-   - resending an existing invite still works at the seat ceiling, while a new
-     invite is refused;
-   - resending/regranting an active bound client preserves active status,
-     binding, acceptance, and module permissions;
-   - pending client access is unreadable until the exact callback binds it;
-   - company-seat disable and client-access revoke take effect on the next
-     server-authorized operation in an already-open session.
-10. **Close only with production proof.** Run `bun run gate:live`, require the
+10. **Run production sign-in canaries against both Lovable domains.** Use
+    resettable accounts and prove:
+
+    - a known existing but unconfirmed Auth identity receives a MagicLink rather
+      than being recreated or reinvited;
+    - a genuinely new exact invite lands in the intended organization, role, and
+      default organization; a second pending invite for the same email is
+      untouched;
+    - repeat login, refresh, expired link, and already-used link show a stable
+      recovery path without a redirect/query loop or stale-session rescue;
+    - a disabled-only seat reaches "No active company access" and creates no
+      organization or Owner seat;
+    - resending an existing invite still works at the seat ceiling, while a new
+      invite is refused;
+    - resending/regranting an active bound client preserves active status,
+      binding, acceptance, and module permissions;
+    - pending client access is unreadable until the exact callback binds it;
+    - company-seat disable and client-access revoke take effect on the next
+      server-authorized operation in an already-open session.
+
+11. **Close only with production proof.** Run `bun run gate:live`, require the
     candidate SHA on both `builder-clarity.lovable.app` and
     `overwatch.alpcontractorcircle.com`, and attach canary results plus relevant
     4xx/5xx/auth-log review. Resume invitations only after this evidence is
