@@ -633,7 +633,6 @@ CREATE POLICY projects_team_insert
 -- Remove every legacy direct owner_id bypass; capability/team policies remain.
 DROP POLICY IF EXISTS projects_owner_all ON public.projects;
 DROP POLICY IF EXISTS "projects_owner_all" ON public.projects;
-DROP POLICY IF EXISTS "holds_owner_via_project" ON public.holds;
 DROP POLICY IF EXISTS change_orders_owner_via_project ON public.change_orders;
 DROP POLICY IF EXISTS daily_reports_owner_via_project ON public.daily_reports;
 DROP POLICY IF EXISTS decisions_owner_via_project ON public.decisions;
@@ -648,20 +647,52 @@ DROP POLICY IF EXISTS daily_reports_storage_insert ON storage.objects;
 DROP POLICY IF EXISTS daily_reports_storage_update ON storage.objects;
 DROP POLICY IF EXISTS daily_reports_storage_delete ON storage.objects;
 
-DROP POLICY IF EXISTS holds_team_select ON public.holds;
-CREATE POLICY holds_team_select ON public.holds
-  FOR SELECT TO authenticated USING (public.can_read_project(project_id));
-DROP POLICY IF EXISTS holds_team_insert ON public.holds;
-CREATE POLICY holds_team_insert ON public.holds
-  FOR INSERT TO authenticated WITH CHECK (public.can_manage_project(project_id));
-DROP POLICY IF EXISTS holds_team_update ON public.holds;
-CREATE POLICY holds_team_update ON public.holds
-  FOR UPDATE TO authenticated
-  USING (public.can_manage_project(project_id))
-  WITH CHECK (public.can_manage_project(project_id));
-DROP POLICY IF EXISTS holds_team_delete ON public.holds;
-CREATE POLICY holds_team_delete ON public.holds
-  FOR DELETE TO authenticated USING (public.can_manage_project(project_id));
+-- `public.holds` was removed by the tracked 20260611151449 migration, but
+-- older replay targets can still contain it. Harden its policies only when
+-- the relation exists so this forward migration is portable across both
+-- schema histories.
+DO $holds_policy_hardening$
+BEGIN
+  IF pg_catalog.to_regclass('public.holds') IS NOT NULL THEN
+    EXECUTE $policy$
+      DROP POLICY IF EXISTS "holds_owner_via_project" ON public.holds
+    $policy$;
+    EXECUTE $policy$
+      DROP POLICY IF EXISTS holds_team_select ON public.holds
+    $policy$;
+    EXECUTE $policy$
+      CREATE POLICY holds_team_select ON public.holds
+        FOR SELECT TO authenticated
+        USING (public.can_read_project(project_id))
+    $policy$;
+    EXECUTE $policy$
+      DROP POLICY IF EXISTS holds_team_insert ON public.holds
+    $policy$;
+    EXECUTE $policy$
+      CREATE POLICY holds_team_insert ON public.holds
+        FOR INSERT TO authenticated
+        WITH CHECK (public.can_manage_project(project_id))
+    $policy$;
+    EXECUTE $policy$
+      DROP POLICY IF EXISTS holds_team_update ON public.holds
+    $policy$;
+    EXECUTE $policy$
+      CREATE POLICY holds_team_update ON public.holds
+        FOR UPDATE TO authenticated
+        USING (public.can_manage_project(project_id))
+        WITH CHECK (public.can_manage_project(project_id))
+    $policy$;
+    EXECUTE $policy$
+      DROP POLICY IF EXISTS holds_team_delete ON public.holds
+    $policy$;
+    EXECUTE $policy$
+      CREATE POLICY holds_team_delete ON public.holds
+        FOR DELETE TO authenticated
+        USING (public.can_manage_project(project_id))
+    $policy$;
+  END IF;
+END;
+$holds_policy_hardening$;
 
 -- SECURITY DEFINER RPCs are opt-in endpoints, not PUBLIC APIs.
 REVOKE ALL ON FUNCTION public.ensure_user_account(uuid, text, text)
