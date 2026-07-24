@@ -5,9 +5,10 @@
 --   20260724001100_auth_p0_client_active_binding_lockdown.sql
 --   20260724001200_auth_p0_authority_mutation_guards.sql
 --   20260724001300_auth_magic_link_send_reservation.sql
+--   20260724001400_auth_p0_sandbox_execute_revocation.sql
 --
 -- Run only through the approved Lovable/Supabase maintenance connection after
--- all six migrations report applied. This file is read-only and wrapped in a
+-- all seven migrations report applied. This file is read-only and wrapped in a
 -- transaction that always rolls back.
 --
 -- Operator checklist (record results beside the release SHA):
@@ -96,53 +97,53 @@ BEGIN
   );
 
   -- zero-history account resolution: profile + existing active seat only.
-  IF pg_catalog.position(
+  IF position(
     'insert into public.organizations' IN pg_catalog.lower(v_ensure)
   ) > 0
-    OR pg_catalog.position(
+    OR position(
       'insert into public.organization_memberships' IN pg_catalog.lower(v_ensure)
     ) > 0
-    OR pg_catalog.position(
+    OR position(
       'organization_invites' IN pg_catalog.lower(v_ensure)
     ) > 0
-    OR pg_catalog.position(
+    OR position(
       'overwatch_access_email_key' IN pg_catalog.lower(v_ensure)
     ) > 0
-    OR pg_catalog.position(
+    OR position(
       'm.status = ''active''' IN pg_catalog.lower(v_ensure)
     ) = 0 THEN
     RAISE EXCEPTION 'zero-history provisioning is not fail-closed';
   END IF;
 
   -- Exact invite/client finalizers; no same-email sweep or pending authority.
-  IF pg_catalog.position(
+  IF position(
     'i.id = p_invite_id' IN pg_catalog.lower(v_invite)
   ) = 0
-    OR pg_catalog.position(
+    OR position(
       'for update of i' IN pg_catalog.lower(v_invite)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'overwatch_access_email_key' IN pg_catalog.lower(v_invite)
     ) > 0
-    OR pg_catalog.position(
+    OR position(
       'inviter.status = ''active''' IN pg_catalog.lower(v_invite)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'company.manage_team' IN pg_catalog.lower(v_invite)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'access_row.id = p_client_access_id' IN pg_catalog.lower(v_client_finalize)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'access_row.status = ''active''' IN pg_catalog.lower(v_client_read)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'access_row.client_user_id = auth.uid()' IN pg_catalog.lower(v_client_read)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'access_row.accepted_by = auth.uid()' IN pg_catalog.lower(v_client_read)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'auth.jwt()' IN pg_catalog.lower(v_client_read)
     ) > 0 THEN
     RAISE EXCEPTION 'exact invite/client acceptance containment failed';
@@ -150,17 +151,17 @@ BEGIN
 
   -- owner_id is attribution, never live authorization. Project creation may
   -- add only a scoped project manager assignment.
-  IF pg_catalog.position(
+  IF position(
     'owner_id = auth.uid()' IN pg_catalog.lower(v_project_read)
   ) > 0
-    OR pg_catalog.position(
+    OR position(
       'owner_id = auth.uid()' IN pg_catalog.lower(v_project_manage)
     ) > 0
-    OR pg_catalog.position(
+    OR position(
       'values (new.id, new.owner_id, ''manager'', ''active'')'
       IN pg_catalog.lower(v_project_assignment)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'values (new.id, new.owner_id, ''owner'', ''active'')'
       IN pg_catalog.lower(v_project_assignment)
     ) > 0 THEN
@@ -217,23 +218,23 @@ BEGIN
     RAISE EXCEPTION 'direct membership DML remains available to authenticated';
   END IF;
 
-  IF pg_catalog.position(
+  IF position(
     'self-directed authority changes are not allowed'
     IN pg_catalog.lower(v_member_update)
   ) = 0
-    OR pg_catalog.position(
+    OR position(
       'existing owner access requires a dedicated transfer workflow'
       IN pg_catalog.lower(v_member_update)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'delegated authority exceeds the caller'
       IN pg_catalog.lower(v_member_update)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'new.invited_by is distinct from v_caller'
       IN pg_catalog.lower(v_invite_guard)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'new.expires_at <= pg_catalog.clock_timestamp()'
       IN pg_catalog.lower(v_invite_guard)
     ) = 0 THEN
@@ -242,32 +243,32 @@ BEGIN
 
   -- Mid-session revocation compatibility is a database invariant: every call
   -- re-reads active membership/client state and no owner_id branch survives.
-  IF pg_catalog.position(
+  IF position(
     'has_org_capability' IN pg_catalog.lower(v_project_read)
   ) = 0
-    OR pg_catalog.position(
+    OR position(
       'has_org_capability' IN pg_catalog.lower(v_project_manage)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'status = ''active''' IN pg_catalog.lower(v_client_read)
     ) = 0 THEN
     RAISE EXCEPTION 'authorization helpers do not re-read revocable state';
   END IF;
 
-  IF pg_catalog.position(
+  IF position(
     'pg_advisory_xact_lock' IN pg_catalog.lower(v_reservation)
   ) = 0
-    OR pg_catalog.position(
+    OR position(
       'send_log.status in (''pending'', ''sent'')'
       IN pg_catalog.lower(v_reservation)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       '30 seconds' IN pg_catalog.lower(v_reservation)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'from auth.users as auth_user' IN pg_catalog.lower(v_auth_lookup)
     ) = 0
-    OR pg_catalog.position(
+    OR position(
       'auth_user.email_confirmed_at is not null'
       IN pg_catalog.lower(v_auth_lookup)
     ) = 0 THEN
