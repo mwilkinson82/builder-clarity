@@ -95,8 +95,8 @@ BEGIN
       MESSAGE = 'Existing Owner access requires a dedicated transfer workflow.';
   END IF;
 
-  v_next_role := pg_catalog.coalesce(p_role, v_target.role);
-  v_next_status := pg_catalog.coalesce(p_status, v_target.status);
+  v_next_role := coalesce(p_role, v_target.role);
+  v_next_status := coalesce(p_status, v_target.status);
   v_next_capabilities := CASE
     WHEN v_next_role = 'owner'::public.account_role
       THEN public.role_preset_capabilities('owner'::public.account_role)

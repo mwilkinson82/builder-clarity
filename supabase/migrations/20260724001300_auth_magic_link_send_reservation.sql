@@ -33,18 +33,18 @@ SET search_path = ''
 AS $fn$
 DECLARE
   v_dedupe_key text := pg_catalog.btrim(
-    pg_catalog.coalesce(p_dedupe_key, '')
+    coalesce(p_dedupe_key, '')
   );
   v_message_id text := pg_catalog.btrim(
-    pg_catalog.coalesce(p_message_id, '')
+    coalesce(p_message_id, '')
   );
   v_template_name text := pg_catalog.btrim(
-    pg_catalog.coalesce(p_template_name, '')
+    coalesce(p_template_name, '')
   );
   v_recipient_email text := pg_catalog.lower(
-    pg_catalog.btrim(pg_catalog.coalesce(p_recipient_email, ''))
+    pg_catalog.btrim(coalesce(p_recipient_email, ''))
   );
-  v_metadata jsonb := pg_catalog.coalesce(p_metadata, '{}'::jsonb);
+  v_metadata jsonb := coalesce(p_metadata, '{}'::jsonb);
   v_id uuid;
   v_existing_message_id text;
   v_status text;
@@ -182,7 +182,7 @@ SET search_path = ''
 AS $fn$
 DECLARE
   v_normalized_email text := pg_catalog.lower(
-    pg_catalog.btrim(pg_catalog.coalesce(p_email, ''))
+    pg_catalog.btrim(coalesce(p_email, ''))
   );
   v_match_count bigint;
   v_user_id uuid;

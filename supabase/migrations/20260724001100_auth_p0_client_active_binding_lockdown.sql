@@ -46,7 +46,7 @@ BEGIN
 
   UPDATE public.project_client_access AS access_row
   SET accepted_by = access_row.client_user_id,
-      accepted_at = pg_catalog.coalesce(
+      accepted_at = coalesce(
         access_row.accepted_at,
         pg_catalog.clock_timestamp()
       ),
@@ -229,14 +229,14 @@ BEGIN
   )
   VALUES (
     v_project_id, p_change_order_id, v_contact_id, v_user_id,
-    pg_catalog.coalesce(v_email, ''), p_decision,
-    pg_catalog.coalesce(p_notes, ''), pg_catalog.coalesce(p_user_agent, '')
+    coalesce(v_email, ''), p_decision,
+    coalesce(p_notes, ''), coalesce(p_user_agent, '')
   )
   RETURNING id INTO v_approval_id;
 
   UPDATE public.change_orders
   SET client_status = v_client_status,
-      client_notes = pg_catalog.coalesce(p_notes, ''),
+      client_notes = coalesce(p_notes, ''),
       client_decided_at = CASE
         WHEN p_decision IN ('approved', 'rejected') THEN v_now
         ELSE client_decided_at
@@ -318,11 +318,11 @@ BEGIN
   VALUES (
     v_selection.project_id, v_selection.id,
     CASE WHEN p_decision = 'approved' THEN v_option.id ELSE NULL END,
-    v_contact_id, v_user_id, pg_catalog.coalesce(v_email, ''), p_decision,
-    pg_catalog.left(pg_catalog.coalesce(p_notes, ''), 4000),
+    v_contact_id, v_user_id, coalesce(v_email, ''), p_decision,
+    pg_catalog.left(coalesce(p_notes, ''), 4000),
     v_selection.version, pg_catalog.to_jsonb(v_selection),
     CASE WHEN p_decision = 'approved' THEN pg_catalog.to_jsonb(v_option) ELSE NULL END,
-    pg_catalog.left(pg_catalog.coalesce(p_user_agent, ''), 1000)
+    pg_catalog.left(coalesce(p_user_agent, ''), 1000)
   )
   RETURNING id INTO v_decision_id;
 
