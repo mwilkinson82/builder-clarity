@@ -10786,7 +10786,10 @@ export type Database = {
         Args: { p_snapshot: Json }
         Returns: string
       }
-      finalize_client_access: { Args: { p_access_id: string }; Returns: string }
+      finalize_client_access_acceptance: {
+        Args: { p_client_access_id: string }
+        Returns: string
+      }
       finalize_invite_acceptance: {
         Args: { p_invite_id: string }
         Returns: string
