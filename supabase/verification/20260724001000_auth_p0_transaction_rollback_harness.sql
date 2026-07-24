@@ -7,7 +7,7 @@
 --   20260724001300_auth_magic_link_send_reservation.sql
 --
 -- Run only through the approved Lovable/Supabase maintenance connection after
--- all five migrations report applied. This file is read-only and wrapped in a
+-- all six migrations report applied. This file is read-only and wrapped in a
 -- transaction that always rolls back.
 --
 -- Operator checklist (record results beside the release SHA):
