@@ -9,11 +9,11 @@ const migrationPaths = [
   "supabase/migrations/20260724001200_auth_p0_authority_mutation_guards.sql",
   "supabase/migrations/20260724001300_auth_magic_link_send_reservation.sql",
   "supabase/migrations/20260724001400_auth_p0_sandbox_execute_revocation.sql",
+  "supabase/migrations/20260724001500_auth_p0_final_connector_acl_seal.sql",
 ] as const;
 
-const [ownerPreflight, core, client, authority, magicLink, sandboxRevocation] = migrationPaths.map(
-  (path) => readFileSync(resolve(process.cwd(), path), "utf8"),
-);
+const [ownerPreflight, core, client, authority, magicLink, sandboxRevocation, finalConnectorSeal] =
+  migrationPaths.map((path) => readFileSync(resolve(process.cwd(), path), "utf8"));
 const ownerPreflightHarness = readFileSync(
   resolve(process.cwd(), "supabase/verification/20260724000900_auth_p0_owner_seat_preflight.sql"),
   "utf8",
@@ -241,6 +241,8 @@ describe("P0 provisioning and authorization forward migrations", () => {
     }
     expect(sandboxRevocation).toContain("'REVOKE ALL ON FUNCTION %s FROM sandbox_exec'");
     expect(sandboxRevocation).toContain("pg_catalog.has_function_privilege(");
+    expect(finalConnectorSeal).toContain("'REVOKE ALL ON FUNCTION %s FROM sandbox_exec'");
+    expect(finalConnectorSeal).toContain("Do not call Lovable");
     for (const signature of [
       "public.ensure_user_account(uuid,text,text)",
       "public.finalize_invite_acceptance(uuid)",
@@ -251,6 +253,7 @@ describe("P0 provisioning and authorization forward migrations", () => {
       "public.lookup_auth_user_by_email_exact(text)",
     ]) {
       expect(sandboxRevocation).toContain(`'${signature}'::regprocedure`);
+      expect(finalConnectorSeal).toContain(`'${signature}'::regprocedure`);
     }
   });
 
@@ -338,8 +341,8 @@ describe("P0 provisioning and authorization forward migrations", () => {
     expect(harness).toContain("legacy public.finalize_client_access(uuid) survived 01000");
     expect(harness).toContain("a public.finalize_client_access overload remains after 01000");
     expect(harness).toContain("to_regprocedure('public.finalize_client_access(uuid)')");
-    expect(harness).toContain("all seven migrations report applied");
-    expect(harness).not.toContain("all six migrations report applied");
+    expect(harness).toContain("all eight migrations report applied");
+    expect(harness).not.toContain("all seven migrations report applied");
     expect(harness).toMatch(/^ROLLBACK;/m);
   });
 
