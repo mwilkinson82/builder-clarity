@@ -11655,6 +11655,32 @@ export type Database = {
         }
         Returns: Json
       }
+      update_organization_membership_authority: {
+        Args: {
+          p_capabilities?: Json
+          p_membership_id: string
+          p_role?: Database["public"]["Enums"]["account_role"]
+          p_status?: Database["public"]["Enums"]["member_status"]
+        }
+        Returns: {
+          capabilities: Json
+          created_at: string
+          id: string
+          invited_by: string | null
+          invited_email: string
+          organization_id: string
+          role: Database["public"]["Enums"]["account_role"]
+          status: Database["public"]["Enums"]["member_status"]
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organization_memberships"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       update_project_financial_header_atomic: {
         Args: {
           p_expected_updated_at: string
