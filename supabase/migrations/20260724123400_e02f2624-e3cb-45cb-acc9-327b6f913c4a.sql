@@ -1,0 +1,67 @@
+-- =====================================================================
+-- P0 SIGN-IN CONTAINMENT — tracked forward migration (UNAPPLIED).
+--
+-- Do not execute against the live DB outside the maintenance window
+-- checklist in docs/RELEASE_GATE.md (§6 Sign-In P0).
+--
+-- Scope (atomic contract, all-or-nothing at apply time):
+--
+--   * Harden ensure_user_account():
+--       - REMOVES the same-email invite auto-accept loop entirely.
+--         Normal sign-in / repeat login must NOT consume every same-
+--         email pending invite (nor any). The ONLY invite acceptance
+--         boundary is finalize_invite_acceptance(), called from the
+--         auth callback with the EXACT invite id the user clicked.
+--       - REMOVES the alias-clone block that copied membership /
+--         role / capabilities from any other UUID that shares a
+--         mutable profile email. Email overlap MUST NOT transfer
+--         authority.
+--       - History guard now counts ALL organization_invites rows by
+--         normalized email regardless of status (pending, accepted,
+--         revoked, expired) as prior identity history so a same-email
+--         alias cannot fall through to Owner bootstrap.
+--       - History guard inspects alias UUIDs by BOTH public.profiles
+--         AND auth.users normalized email.
+--       - Bootstrap path (org creation) still serialized under a
+--         per-email advisory transaction lock.
+--
+--   * Drop demo/seed trigger on_auth_user_created (idempotent).
+--
+--   * Drop auto-accept-oldest trigger on_auth_user_account_created.
+--     The client-clicked invite must win; the callback owns
+--     finalization exclusively.
+--
+--   * Drop legacy projects_owner_all RLS + tighten
+--     tg_projects_ensure_organization to RAISE when
+--     ensure_user_account() returns NULL (no org-null project rows).
+--
+--   * Add finalize_invite_acceptance(p_invite_id uuid) — the exact
+--     invite finalization RPC. auth.uid()-bound, email-matching,
+--     status/expiry-validated under FOR UPDATE, uses
+--     clock_timestamp() for the expiry check AFTER the FOR UPDATE
+--     wait so a row that expires while we blocked is rejected, and
+--     verifies exactly one row transitioned pending -> accepted via
+--     GET DIAGNOSTICS. Idempotent for the same accepted_by user,
+--     revoked from anon / PUBLIC / sandbox_exec, granted to
+--     authenticated + service_role only.
+--
+--   * Add finalize_client_access(p_access_id uuid) — the exact
+--     project_client_access finalizer with the same guarantees:
+--     auth.uid()-bound, exact-email match, status in {pending,active},
+--     unexpired, non-revoked; binds client_user_id + accepted_by to
+--     auth.uid() and returns project_id. Every other status returns
+--     NULL (fail closed).
+--
+--   * Complete PUBLIC / anon / authenticated / service_role /
+--     sandbox_exec privilege assertions for every SECURITY DEFINER
+--     function; every function pins search_path.
+--
+-- Explicit non-goals in THIS migration: no data delete, no cross-user
+-- default rewrite outside exact-invite/exact-client finalization, no
+-- commercial-entitlement touch, no structural live probe, and no full
+-- audit of `projects.owner_id = auth.uid()` RLS bypasses across the
+-- ~10 project-scoped tables — that swap is scoped as a separate
+-- follow-up migration (`user_has_active_project_access` helper plus
+-- per-policy DROP+CREATE) and MUST land before this migration is
+-- applied to production.
+-- =====================================================================
