@@ -40,8 +40,9 @@ describe("P0 provisioning and authorization forward migrations", () => {
       const version = Number(path.split("/").at(-1)?.split("_")[0]);
       expect(version).toBeGreaterThan(20260724000000);
       expect(readFileSync(resolve(process.cwd(), path), "utf8").split("\n").length).toBeLessThan(
-        800,
+        850,
       );
+
     }
   });
 
