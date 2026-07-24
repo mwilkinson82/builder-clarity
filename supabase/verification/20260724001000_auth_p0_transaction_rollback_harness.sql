@@ -6,9 +6,10 @@
 --   20260724001200_auth_p0_authority_mutation_guards.sql
 --   20260724001300_auth_magic_link_send_reservation.sql
 --   20260724001400_auth_p0_sandbox_execute_revocation.sql
+--   20260724001500_auth_p0_final_connector_acl_seal.sql
 --
 -- Run only through the approved Lovable/Supabase maintenance connection after
--- all seven migrations report applied. This file is read-only and wrapped in a
+-- all eight migrations report applied. This file is read-only and wrapped in a
 -- transaction that always rolls back.
 --
 -- Operator checklist (record results beside the release SHA):
