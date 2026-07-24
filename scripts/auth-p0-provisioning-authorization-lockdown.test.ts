@@ -45,6 +45,15 @@ describe("P0 provisioning and authorization forward migrations", () => {
     }
   });
 
+  it("does not schema-qualify SQL-only COALESCE syntax", () => {
+    for (const source of [client, authority, magicLink]) {
+      expect(source).not.toContain("pg_catalog.coalesce");
+    }
+    expect(client).toContain("accepted_at = coalesce(");
+    expect(authority).toContain("v_next_role := coalesce(p_role, v_target.role)");
+    expect(magicLink).toContain("coalesce(p_metadata, '{}'::jsonb)");
+  });
+
   it("fails before cutover when a non-Owner invite still holds active Owner authority", () => {
     for (const source of [ownerPreflight, ownerPreflightHarness]) {
       expect(source).toContain("public.organization_memberships");
