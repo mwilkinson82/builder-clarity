@@ -7,7 +7,7 @@
 --   20260724001300_auth_magic_link_send_reservation.sql
 --
 -- Run only through the approved Lovable/Supabase maintenance connection after
--- all five migrations report applied. This file is read-only and wrapped in a
+-- all six migrations report applied. This file is read-only and wrapped in a
 -- transaction that always rolls back.
 --
 -- Operator checklist (record results beside the release SHA):
@@ -337,6 +337,23 @@ BEGIN
     ) THEN
     RAISE EXCEPTION 'sandbox_exec retains a P0 Auth capability';
   END IF;
+
+  -- Legacy finalize_client_access(uuid) retirement proof. The sole supported
+  -- client callback finalizer is public.finalize_client_access_acceptance(uuid).
+  IF pg_catalog.to_regprocedure('public.finalize_client_access(uuid)') IS NOT NULL THEN
+    RAISE EXCEPTION 'legacy public.finalize_client_access(uuid) survived 01000';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = 'finalize_client_access'
+  ) THEN
+    RAISE EXCEPTION 'a public.finalize_client_access overload remains after 01000';
+  END IF;
+
 END;
 $auth_p0_verify$;
 

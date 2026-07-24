@@ -681,6 +681,25 @@ REVOKE ALL ON FUNCTION public.finalize_client_access_acceptance(uuid)
 GRANT EXECUTE ON FUNCTION public.finalize_client_access_acceptance(uuid)
   TO authenticated, service_role;
 
+-- Legacy finalize_client_access(uuid) retirement. The sole supported client
+-- callback finalizer is public.finalize_client_access_acceptance(uuid). Revoke
+-- every possible role grant on the legacy SECURITY DEFINER RPC (including the
+-- optional sandbox_user role when it exists) and then DROP it. project_client_access
+-- has no expires_at column and no expiry logic is introduced here.
+DO $retire_legacy_finalize_client_access$
+BEGIN
+  IF pg_catalog.to_regprocedure('public.finalize_client_access(uuid)') IS NOT NULL THEN
+    REVOKE ALL ON FUNCTION public.finalize_client_access(uuid)
+      FROM PUBLIC, anon, authenticated, service_role;
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'sandbox_user') THEN
+      EXECUTE 'REVOKE ALL ON FUNCTION public.finalize_client_access(uuid) FROM sandbox_user';
+    END IF;
+  END IF;
+END;
+$retire_legacy_finalize_client_access$;
+
+DROP FUNCTION IF EXISTS public.finalize_client_access(uuid);
+
 DO $verify$
 DECLARE
   v_function regprocedure;

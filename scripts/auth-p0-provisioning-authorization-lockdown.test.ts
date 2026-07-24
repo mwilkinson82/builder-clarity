@@ -40,8 +40,9 @@ describe("P0 provisioning and authorization forward migrations", () => {
       const version = Number(path.split("/").at(-1)?.split("_")[0]);
       expect(version).toBeGreaterThan(20260724000000);
       expect(readFileSync(resolve(process.cwd(), path), "utf8").split("\n").length).toBeLessThan(
-        800,
+        850,
       );
+
     }
   });
 
@@ -282,6 +283,42 @@ describe("P0 provisioning and authorization forward migrations", () => {
     );
   });
 
+  it("retires the legacy public.finalize_client_access(uuid) RPC in the definitive migration", () => {
+    // The sole supported client callback finalizer is
+    // public.finalize_client_access_acceptance(uuid). The legacy SECURITY
+    // DEFINER RPC must be revoked from every role and dropped in 01000.
+    expect(core).toMatch(
+      /REVOKE ALL ON FUNCTION public\.finalize_client_access\(uuid\)[\s\S]*?FROM PUBLIC, anon, authenticated, service_role;/,
+    );
+    expect(core).toMatch(
+      /rolname = 'sandbox_user'[\s\S]*?REVOKE ALL ON FUNCTION public\.finalize_client_access\(uuid\) FROM sandbox_user/,
+    );
+    expect(core).toMatch(/DROP FUNCTION IF EXISTS public\.finalize_client_access\(uuid\);/);
+    // No expires_at column exists on project_client_access; the retirement
+    // block must not introduce expiry logic.
+    const retireStart = core.indexOf("retire_legacy_finalize_client_access");
+    expect(retireStart).toBeGreaterThan(0);
+    const retireEnd = core.indexOf(
+      "DROP FUNCTION IF EXISTS public.finalize_client_access(uuid);",
+      retireStart,
+    );
+    expect(retireEnd).toBeGreaterThan(retireStart);
+    expect(core.slice(retireStart, retireEnd)).not.toMatch(/expires?_at/i);
+
+    // Harness must assert the legacy regprocedure is absent and no overload
+    // remains, and must still be rollback-only.
+    expect(harness).toContain("legacy public.finalize_client_access(uuid) survived 01000");
+    expect(harness).toContain(
+      "a public.finalize_client_access overload remains after 01000",
+    );
+    expect(harness).toContain(
+      "to_regprocedure('public.finalize_client_access(uuid)')",
+    );
+    expect(harness).toContain("all six migrations report applied");
+    expect(harness).not.toContain("all five migrations report applied");
+    expect(harness).toMatch(/^ROLLBACK;/m);
+  });
+
   it("ships a manual, rollback-only maintenance proof harness", () => {
     expect(harness).toContain("NOT EXECUTED");
     expect(harness).toContain("maintenance mode");
@@ -297,3 +334,4 @@ describe("P0 provisioning and authorization forward migrations", () => {
     expect(harness).toContain("'30 seconds' IN pg_catalog.lower(v_reservation)");
   });
 });
+
