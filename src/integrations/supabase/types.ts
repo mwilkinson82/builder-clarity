@@ -10786,6 +10786,11 @@ export type Database = {
         Args: { p_snapshot: Json }
         Returns: string
       }
+      finalize_client_access: { Args: { p_access_id: string }; Returns: string }
+      finalize_invite_acceptance: {
+        Args: { p_invite_id: string }
+        Returns: string
+      }
       generate_billing_line_items_atomic: {
         Args: { p_billing_application_id: string; p_project_id: string }
         Returns: Json
