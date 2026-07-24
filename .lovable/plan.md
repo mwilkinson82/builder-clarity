@@ -1,40 +1,37 @@
-## Capability: apply one named migration file at a pinned commit
+# Read-only release preflight — restore-point availability
 
-**Documentation only.** No repo reads, no DB reads, no edits, no deploy performed for this check.
+**Scope:** Evidence gathering only at source SHA `1ba90d3416718c175a6ce98b406606e23d8b3cc0`. No code edits, no SQL, no migration, no deploy, no backup creation.
 
-### Can I do it?
-Yes, via `supabase--migration`, which is the only Lovable path that writes `supabase_migrations.schema_migrations`. One tool call = one transaction = one ledger row (or none, on failure).
+## Finding
 
-### Operator prompt I require (all five)
-1. Exact repo path under `supabase/migrations/`.
-2. Full 40-char Git commit SHA to read the file at.
-3. Explicit "apply as-is, do not modify, do not stack" authorization.
-4. Confirmation the file is self-contained (no companion files, no manual pre/post steps).
-5. Acknowledgement of the failure policy: abort → no ledger row → stop, no retry, no partial reapply, no edits, until you say otherwise.
+**No restore point, snapshot, or PITR timestamp is confirmed through Lovable's connected tools.**
 
-Missing any of the five → I will not run it.
+## Evidence gathered (read-only)
 
-### Execution
-- Tool: `supabase--migration`, SQL passed as a single `query`.
-- Atomicity: single transaction; all-or-nothing; ledger row written only on full commit.
-- Approval gate: the tool surfaces the SQL to you before execution.
+- `supabase--project_info` — returns project ref (`ehotrggjfkxejktsgdor`), instance size (Tiny), region pooler host, paused=false. **No backup/snapshot/PITR fields exposed.**
+- `supabase--cloud_status` — `ACTIVE_HEALTHY`. **No backup metadata surfaced.**
+- `supabase--db_health` — DB up, PgBouncer up, 202.6 MB, WAL 128.0 MB, 0 restarts since boot. **No backup catalog, snapshot ID, WAL-archive horizon, or PITR earliest/latest recovery timestamp.**
 
-### Fields I can return on success
-- `version` (assigned by the tool at invocation time — generally NOT equal to the file's own timestamp prefix).
-- Generated migration name recorded alongside the version.
-- `created_by` as recorded by Cloud (agent/Lovable actor; no per-human operator identity).
-- Statements count (parsed from the file; ledger `statements` array can be echoed via a follow-up read of `supabase_migrations.schema_migrations`).
-- Provenance I add explicitly: repo path, pinned commit SHA, SHA-256 of the exact SQL text submitted.
+No other connected tool (`supabase--read_query`, `analytics_query`, `slow_queries`, `linter`, `migration`, `restart`, `pause/resume`) exposes a backup listing, snapshot identifier, or PITR window. There is no `supabase--list_backups` / `restore_point` / `pitr_status` capability in the Lovable-Supabase connector surface available to this agent.
 
-Cannot return: a `version` matching the file's own prefix, or a GitHub-identity `created_by`.
+## Exact limitation
 
-### Failure reporting
-- Transaction rolls back; no ledger row.
-- I report: Postgres error message/code, failing statement index if surfaced, submitted SHA-256, pinned commit + path, and "NOT APPLIED — no ledger row written; awaiting operator instruction."
-- I will not retry, edit SQL, split the file, or apply a variant.
+The Lovable agent's Supabase connector does **not** expose the Supabase Platform Backups API (`GET /v1/projects/{ref}/database/backups`) or any PITR status endpoint. Restore points, daily physical backups, and PITR earliest-recovery timestamps live in the Supabase Platform control plane and are only visible to a caller holding a Supabase Management API token for this project — which the Lovable agent does not hold and cannot mint. Lovable Cloud additionally hides the Supabase dashboard from end users, so I cannot direct you to a UI path either.
 
-### Raw query connector ledger behavior
-`supabase--read_query` and any direct/raw SQL path do NOT insert into `supabase_migrations.schema_migrations`. Only `supabase--migration` writes the ledger. Raw-query application would change the database while leaving the ledger silent — the exact drift the release gate exists to catch.
+Instance size is **Tiny**. On Supabase's stock plan matrix, Tiny/Free-tier projects historically do not have PITR enabled by default (PITR is a paid add-on that requires a larger compute add-on). I cannot confirm the current add-on state from any tool I have; treat this only as a reason to verify, not as a conclusion.
 
-### Next step
-When you open a real window, reply with the five operator-prompt items and I'll queue the migration for your approval.
+## What would count as confirmation (not performed)
+
+Any of the following, obtained out-of-band by an operator with platform access, would satisfy the preflight:
+
+1. Supabase Management API: `GET https://api.supabase.com/v1/projects/ehotrggjfkxejktsgdor/database/backups` — returns `physical_backup_data.earliest_physical_backup_date_unix` / `latest_physical_backup_date_unix` plus the `backups[]` array with `inserted_at` timestamps and `status`.
+2. Supabase Studio → Project Settings → Database → Backups: the most recent daily backup timestamp and, if PITR is enabled, the earliest recoverable timestamp.
+3. A manually created logical dump (`pg_dump`) captured immediately before the batch, with its file path/checksum recorded.
+
+## Recommendation for the maintenance window
+
+Do not open the Auth P0 window until one of (1)–(3) is captured and its identifier + UTC timestamp is recorded in the release log alongside SHA `1ba90d34…`. Per `docs/RELEASE_GATE.md` §6 step 2 ("Snapshot and inventory through Lovable"), a platform-approved snapshot is a precondition to step 5 (applying the six migrations), and this agent cannot produce or verify that snapshot from inside Lovable.
+
+## Nothing changed
+
+No files were read for edit, no SQL executed, no migration queued, no restart or backup issued.
