@@ -8,10 +8,11 @@ const migrationPaths = [
   "supabase/migrations/20260724001100_auth_p0_client_active_binding_lockdown.sql",
   "supabase/migrations/20260724001200_auth_p0_authority_mutation_guards.sql",
   "supabase/migrations/20260724001300_auth_magic_link_send_reservation.sql",
+  "supabase/migrations/20260724001400_auth_p0_sandbox_execute_revocation.sql",
 ] as const;
 
-const [ownerPreflight, core, client, authority, magicLink] = migrationPaths.map((path) =>
-  readFileSync(resolve(process.cwd(), path), "utf8"),
+const [ownerPreflight, core, client, authority, magicLink, sandboxRevocation] = migrationPaths.map(
+  (path) => readFileSync(resolve(process.cwd(), path), "utf8"),
 );
 const ownerPreflightHarness = readFileSync(
   resolve(process.cwd(), "supabase/verification/20260724000900_auth_p0_owner_seat_preflight.sql"),
@@ -238,6 +239,19 @@ describe("P0 provisioning and authorization forward migrations", () => {
     for (const source of [core, client, authority, magicLink]) {
       expect(source).toContain("sandbox_exec");
     }
+    expect(sandboxRevocation).toContain("'REVOKE ALL ON FUNCTION %s FROM sandbox_exec'");
+    expect(sandboxRevocation).toContain("pg_catalog.has_function_privilege(");
+    for (const signature of [
+      "public.ensure_user_account(uuid,text,text)",
+      "public.finalize_invite_acceptance(uuid)",
+      "public.finalize_client_access_acceptance(uuid)",
+      "public.can_manage_project(uuid)",
+      "public.update_organization_membership_authority(uuid,public.account_role,public.member_status,jsonb)",
+      "public.reserve_auth_magic_link_send(text,text,text,text,jsonb)",
+      "public.lookup_auth_user_by_email_exact(text)",
+    ]) {
+      expect(sandboxRevocation).toContain(`'${signature}'::regprocedure`);
+    }
   });
 
   it("permits secure pending-invite reissue without permitting inviter forgery", () => {
@@ -324,8 +338,8 @@ describe("P0 provisioning and authorization forward migrations", () => {
     expect(harness).toContain("legacy public.finalize_client_access(uuid) survived 01000");
     expect(harness).toContain("a public.finalize_client_access overload remains after 01000");
     expect(harness).toContain("to_regprocedure('public.finalize_client_access(uuid)')");
-    expect(harness).toContain("all six migrations report applied");
-    expect(harness).not.toContain("all five migrations report applied");
+    expect(harness).toContain("all seven migrations report applied");
+    expect(harness).not.toContain("all six migrations report applied");
     expect(harness).toMatch(/^ROLLBACK;/m);
   });
 
@@ -342,5 +356,6 @@ describe("P0 provisioning and authorization forward migrations", () => {
     expect(harness).toContain("direct membership DML");
     expect(harness).toContain("secure invite reissue");
     expect(harness).toContain("'30 seconds' IN pg_catalog.lower(v_reservation)");
+    expect(harness).not.toContain("pg_catalog.position(");
   });
 });
