@@ -387,8 +387,10 @@ function proveGeneratedSourcesCurrent(beforeBuild) {
 function currentGitCommit() {
   const configured = process.env.OVERWATCH_EXPECTED_COMMIT?.trim() ?? "";
   const commit = configured || runGit(["rev-parse", "HEAD"]);
-  if (!/^[0-9a-f]{7,40}$/i.test(commit)) {
-    throw new Error(`Expected release commit is invalid: ${commit || "(empty)"}`);
+  if (!/^[0-9a-f]{40}$/i.test(commit)) {
+    throw new Error(
+      `Expected release commit must be the exact 40-character SHA: ${commit || "(empty)"}`,
+    );
   }
   return commit.toLowerCase();
 }
@@ -422,12 +424,15 @@ async function deployedCommit(baseUrl, surface) {
   if (!response.ok) {
     throw new Error(`${surface} returned ${response.status} at ${route}.`);
   }
+  const effectiveUrl = verifiedReleaseUrl(response.url || route, `${surface} effective URL`);
   const html = await response.text();
-  const commit = html.match(/data-commit-sha="([0-9a-f]{7,40})"/i)?.[1]?.toLowerCase() ?? "";
+  const commit = html.match(/data-commit-sha="([0-9a-f]{40})"/i)?.[1]?.toLowerCase() ?? "";
   if (!commit) {
-    throw new Error(`${surface} did not expose data-commit-sha at ${route}.`);
+    throw new Error(`${surface} did not expose an exact 40-character data-commit-sha at ${route}.`);
   }
-  console.log(`${surface}: ${route.origin} is serving ${commit}`);
+  console.log(
+    `${surface}: requested ${route}; effective ${effectiveUrl}; serving exact commit ${commit}`,
+  );
   return commit;
 }
 
@@ -450,20 +455,16 @@ async function proveLovablePublication() {
   );
   const lovableCommit = await deployedCommit(lovableUrl, "Lovable published domain");
   const customCommit = await deployedCommit(customUrl, "Custom production domain");
-  const expectedPrefix = expected.slice(0, 8);
 
   for (const [surface, commit] of [
     ["Lovable published domain", lovableCommit],
     ["Custom production domain", customCommit],
   ]) {
-    if (!commit.startsWith(expectedPrefix)) {
+    if (commit !== expected) {
       throw new Error(`${surface} is serving ${commit}; expected ${expected}.`);
     }
   }
-  if (
-    !lovableCommit.startsWith(customCommit.slice(0, 8)) &&
-    !customCommit.startsWith(lovableCommit.slice(0, 8))
-  ) {
+  if (lovableCommit !== customCommit) {
     throw new Error(
       `Published surfaces disagree: Lovable=${lovableCommit}, custom=${customCommit}.`,
     );
